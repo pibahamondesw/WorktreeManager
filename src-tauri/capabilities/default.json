@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for WorktreeManager",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "store:default",
+    "opener:default",
+    "dialog:default",
+    "shell:allow-open",
+    "shell:allow-execute"
+  ]
+}
