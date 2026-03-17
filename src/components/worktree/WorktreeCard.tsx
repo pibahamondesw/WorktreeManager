@@ -144,7 +144,9 @@ export function WorktreeCard({
 
   const handleOpenLinear = (e: React.MouseEvent) => {
     e.stopPropagation();
-    openUrl(`https://linear.app/issue/${worktree.linearIssueIdentifier}`);
+    if (worktree.linearIssueIdentifier) {
+      openUrl(`https://linear.app/issue/${worktree.linearIssueIdentifier}`);
+    }
   };
 
   const handleCopyPath = (e: React.MouseEvent) => {
@@ -179,14 +181,20 @@ export function WorktreeCard({
         <div className="min-w-0 flex-1">
           {/* Row 1: identifier + status + age */}
           <div className="flex items-center gap-2 mb-1">
-            <button
-              onClick={handleOpenLinear}
-              className="text-xs font-mono text-accent hover:text-accent-hover transition-colors flex-shrink-0 cursor-pointer inline-flex items-center gap-1"
-              title="Open on Linear"
-            >
-              {worktree.linearIssueIdentifier}
-              <ExternalLinkIcon size={10} />
-            </button>
+            {worktree.linearIssueIdentifier ? (
+              <button
+                onClick={handleOpenLinear}
+                className="text-xs font-mono text-accent hover:text-accent-hover transition-colors flex-shrink-0 cursor-pointer inline-flex items-center gap-1"
+                title="Open on Linear"
+              >
+                {worktree.linearIssueIdentifier}
+                <ExternalLinkIcon size={10} />
+              </button>
+            ) : (
+              <span className="text-xs font-mono text-text-muted flex-shrink-0">
+                No issue
+              </span>
+            )}
             {status && (
               <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
             )}
@@ -205,7 +213,7 @@ export function WorktreeCard({
 
           {/* Row 2: title */}
           <h3 className="text-sm font-medium text-text-primary truncate">
-            {worktree.linearIssueTitle}
+            {worktree.linearIssueTitle || worktree.branchName}
           </h3>
 
           {/* Row 3: branch + git status */}
@@ -333,7 +341,7 @@ export function WorktreeCard({
           onClick={(e) => e.stopPropagation()}
         >
           <span className="text-xs text-text-secondary truncate">
-            Delete <strong className="text-text-primary">{worktree.linearIssueIdentifier}</strong>{" "}
+            Delete <strong className="text-text-primary">{worktree.linearIssueIdentifier || worktree.branchName}</strong>{" "}
             and remove from disk?
           </span>
           <div className="flex gap-2 flex-shrink-0">

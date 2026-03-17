@@ -22,11 +22,18 @@ export function timeAgo(epoch: number): { label: string; stale: boolean; verySta
  * Normalize raw repo objects from the store, filling in defaults for
  * fields that may be missing in data from older versions.
  */
-export function migrateRepos(rawRepos: any[]): Repo[] {
-  return rawRepos.map((r: any) => ({
+export function migrateRepos(rawRepos: any[], globalLinearApiKey?: string | null): Repo[] {
+  const repos = rawRepos.map((r: any) => ({
     id: r.id,
     name: r.name,
     localPath: r.localPath ?? "",
     worktreeBasePath: r.worktreeBasePath ?? "",
+    linearApiKey: r.linearApiKey ?? null,
   }));
+
+  if (globalLinearApiKey && repos.length > 0 && repos.every((r) => !r.linearApiKey)) {
+    for (const r of repos) r.linearApiKey = globalLinearApiKey;
+  }
+
+  return repos;
 }

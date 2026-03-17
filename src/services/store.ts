@@ -30,7 +30,13 @@ export async function loadState(): Promise<AppState> {
   const worktrees = await s.get<Worktree[]>("worktrees");
   const selectedRepoId = await s.get<string | null>("selectedRepoId");
 
-  const repos = migrateRepos(rawRepos ?? []);
+  const repos = migrateRepos(rawRepos ?? [], setup?.linearApiKey);
+
+  // Persist migrated repos if the global key was copied to repos
+  if (setup?.linearApiKey && rawRepos?.length && rawRepos.every((r: any) => !r.linearApiKey)) {
+    await s.set("repos", repos);
+    await s.save();
+  }
 
   return {
     setup: setup ?? DEFAULT_STATE.setup,
