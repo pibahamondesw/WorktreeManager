@@ -16,6 +16,7 @@ interface RepoListProps {
   onCloseAddExternal?: () => void;
   themeId: string;
   onThemeChange: (themeId: string) => void;
+  defaultLinearApiKey?: string | null;
 }
 
 export function RepoList({
@@ -29,6 +30,7 @@ export function RepoList({
   onCloseAddExternal,
   themeId,
   onThemeChange,
+  defaultLinearApiKey,
 }: RepoListProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -136,6 +138,7 @@ export function RepoList({
           onAdd(repo);
           closeAdd();
         }}
+        defaultLinearApiKey={defaultLinearApiKey}
       />
 
       {removeRepo && (
