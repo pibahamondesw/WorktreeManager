@@ -3,15 +3,16 @@ export interface Repo {
   name: string;
   localPath: string;
   worktreeBasePath: string;
+  linearApiKey?: string | null;
 }
 
 export interface Worktree {
   id: string;
   repoId: string;
   branchName: string;
-  linearIssueId: string;
-  linearIssueTitle: string;
-  linearIssueIdentifier: string;
+  linearIssueId?: string;
+  linearIssueTitle?: string;
+  linearIssueIdentifier?: string;
   path: string;
   createdAt: string;
 }

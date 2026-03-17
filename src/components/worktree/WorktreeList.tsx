@@ -49,7 +49,9 @@ export function WorktreeList({
   };
 
   const fetchLinearInfo = useCallback(async () => {
-    const issueIds = worktrees.map((wt) => wt.linearIssueId);
+    const issueIds = worktrees
+      .map((wt) => wt.linearIssueId)
+      .filter((id): id is string => !!id);
     if (issueIds.length === 0 || !linear) {
       setLinearInfo({});
       return;
@@ -114,11 +116,11 @@ export function WorktreeList({
       Escape: { handler: () => setSelectedIndex(-1) },
       l: {
         handler: () => {
-          if (selectedWorktree) {
+          if (selectedWorktree?.linearIssueIdentifier) {
             openUrl(`https://linear.app/issue/${selectedWorktree.linearIssueIdentifier}`);
           }
         },
-        enabled: !!selectedWorktree,
+        enabled: !!selectedWorktree?.linearIssueIdentifier,
       },
       "meta+d": { handler: () => setDeleteRequested(true), enabled: !!selectedWorktree && !!repo },
       "meta+b": {
@@ -218,7 +220,7 @@ export function WorktreeList({
                 worktree={wt}
                 repo={repo}
                 onDelete={onWorktreeDeleted}
-                linearInfo={linearInfo[wt.linearIssueId]}
+                linearInfo={wt.linearIssueId ? linearInfo[wt.linearIssueId] : undefined}
                 gitStatus={gitStatuses[wt.path]}
                 selected={i === selectedIndex}
                 index={i + 1}

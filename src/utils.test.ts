@@ -67,11 +67,13 @@ describe("migrateRepos", () => {
     expect(migrateRepos([])).toEqual([]);
   });
 
-  it("passes through complete repo objects", () => {
+  it("passes through complete repo objects and adds linearApiKey null", () => {
     const repos = [
       { id: "1", name: "app", localPath: "/code/app", worktreeBasePath: "/wt/app" },
     ];
-    expect(migrateRepos(repos)).toEqual(repos);
+    expect(migrateRepos(repos)).toEqual([
+      { id: "1", name: "app", localPath: "/code/app", worktreeBasePath: "/wt/app", linearApiKey: null },
+    ]);
   });
 
   it("fills in missing localPath with empty string", () => {
@@ -94,6 +96,7 @@ describe("migrateRepos", () => {
       name: "legacy",
       localPath: "",
       worktreeBasePath: "",
+      linearApiKey: null,
     });
   });
 
@@ -108,5 +111,38 @@ describe("migrateRepos", () => {
     expect(result[1].worktreeBasePath).toBe("");
     expect(result[2].localPath).toBe("");
     expect(result[2].worktreeBasePath).toBe("");
+  });
+
+  it("copies global Linear API key to all repos when none have one", () => {
+    const repos = [
+      { id: "1", name: "app1", localPath: "/a", worktreeBasePath: "/wt/a" },
+      { id: "2", name: "app2", localPath: "/b", worktreeBasePath: "/wt/b" },
+    ];
+    const result = migrateRepos(repos, "lin_api_global");
+    expect(result[0].linearApiKey).toBe("lin_api_global");
+    expect(result[1].linearApiKey).toBe("lin_api_global");
+  });
+
+  it("does not overwrite existing per-repo Linear API key with global key", () => {
+    const repos = [
+      { id: "1", name: "app1", localPath: "/a", worktreeBasePath: "/wt/a", linearApiKey: "lin_api_existing" },
+      { id: "2", name: "app2", localPath: "/b", worktreeBasePath: "/wt/b" },
+    ];
+    const result = migrateRepos(repos, "lin_api_global");
+    expect(result[0].linearApiKey).toBe("lin_api_existing");
+    expect(result[1].linearApiKey).toBeNull();
+  });
+
+  it("does not apply global key when no repos exist", () => {
+    const result = migrateRepos([], "lin_api_global");
+    expect(result).toEqual([]);
+  });
+
+  it("does not apply global key when it is null", () => {
+    const repos = [
+      { id: "1", name: "app1", localPath: "/a", worktreeBasePath: "/wt/a" },
+    ];
+    const result = migrateRepos(repos, null);
+    expect(result[0].linearApiKey).toBeNull();
   });
 });
