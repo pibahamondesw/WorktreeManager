@@ -5,24 +5,67 @@ import { homeDir } from "@tauri-apps/api/path";
 import { Modal } from "../ui/Modal";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
+import { SuccessCircleIcon } from "../ui/Icons";
+import { validateLinearToken } from "../../services/linear";
 import { Repo } from "../../types";
 
 interface AddRepoModalProps {
   open: boolean;
   onClose: () => void;
   onAdd: (repo: Repo) => void;
+  defaultLinearApiKey?: string | null;
 }
 
-export function AddRepoModal({ open, onClose, onAdd }: AddRepoModalProps) {
+export function AddRepoModal({ open, onClose, onAdd, defaultLinearApiKey }: AddRepoModalProps) {
   const [name, setName] = useState("");
   const [localPath, setLocalPath] = useState("");
   const [worktreeBase, setWorktreeBase] = useState("");
   const [home, setHome] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [linearKey, setLinearKey] = useState("");
+  const [linearValid, setLinearValid] = useState(false);
+  const [linearUser, setLinearUser] = useState<string | null>(null);
+  const [linearValidating, setLinearValidating] = useState(false);
+  const [linearError, setLinearError] = useState<string | null>(null);
 
   useEffect(() => {
     homeDir().then(setHome);
   }, []);
+
+  useEffect(() => {
+    if (open && defaultLinearApiKey && !linearKey) {
+      setLinearKey(defaultLinearApiKey);
+      setLinearValid(false);
+      setLinearUser(null);
+      setLinearError(null);
+      // Auto-validate the pre-filled key
+      setLinearValidating(true);
+      validateLinearToken(defaultLinearApiKey)
+        .then((result) => {
+          setLinearValid(result.valid);
+          setLinearUser(result.name ?? null);
+          if (!result.valid) setLinearError(result.error ?? "Invalid key");
+        })
+        .catch(() => setLinearError("Validation failed"))
+        .finally(() => setLinearValidating(false));
+    }
+  }, [open, defaultLinearApiKey]);
+
+  const handleValidateLinear = async () => {
+    if (!linearKey.trim()) return;
+    setLinearValidating(true);
+    setLinearError(null);
+    try {
+      const result = await validateLinearToken(linearKey.trim());
+      setLinearValid(result.valid);
+      setLinearUser(result.name ?? null);
+      if (!result.valid) setLinearError(result.error ?? "Validation failed");
+    } catch {
+      setLinearError("Validation failed");
+    } finally {
+      setLinearValidating(false);
+    }
+  };
 
   const computeDefaultWorktreeBase = (projectName: string) => {
     if (!home || !projectName.trim()) return "";
@@ -88,12 +131,17 @@ export function AddRepoModal({ open, onClose, onAdd }: AddRepoModalProps) {
       name: name.trim(),
       localPath: localPath.trim(),
       worktreeBasePath: finalWorktreeBase,
+      linearApiKey: linearValid ? linearKey.trim() : null,
     });
 
     setName("");
     setLocalPath("");
     setWorktreeBase("");
     setError(null);
+    setLinearKey("");
+    setLinearValid(false);
+    setLinearUser(null);
+    setLinearError(null);
   };
 
   return (
@@ -130,6 +178,51 @@ export function AddRepoModal({ open, onClose, onAdd }: AddRepoModalProps) {
           onChange={(e) => setWorktreeBase(e.target.value)}
           hint="Where new worktrees will be created (each branch gets a subfolder)"
         />
+
+        {/* Linear API Key (optional) */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-text-secondary">Linear API key (optional)</label>
+          <div className="flex gap-2">
+            <input
+              className={`flex-1 rounded-lg border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none transition-colors focus:border-accent ${
+                linearError ? "border-danger" : "border-border"
+              }`}
+              placeholder="lin_api_..."
+              value={linearKey}
+              onChange={(e) => {
+                setLinearKey(e.target.value);
+                setLinearValid(false);
+                setLinearUser(null);
+                setLinearError(null);
+              }}
+              type="password"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleValidateLinear();
+                }
+              }}
+            />
+            <Button
+              variant="secondary"
+              onClick={handleValidateLinear}
+              loading={linearValidating}
+              disabled={!linearKey.trim() || linearValid}
+            >
+              {linearValid ? "Valid" : "Validate"}
+            </Button>
+          </div>
+          {linearValid && linearUser && (
+            <div className="flex items-center gap-1.5 text-xs text-success">
+              <SuccessCircleIcon size={12} />
+              Connected as {linearUser}
+            </div>
+          )}
+          {linearError && <p className="text-xs text-danger">{linearError}</p>}
+          <p className="text-xs text-text-muted">
+            Connect Linear to search issues when creating worktrees
+          </p>
+        </div>
 
         {error && <p className="text-sm text-danger select-text">{error}</p>}
 

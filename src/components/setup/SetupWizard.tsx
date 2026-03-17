@@ -17,7 +17,7 @@ export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
 
   const handleFinish = () => {
     onComplete({
-      linearApiKey: linearKey,
+      linearApiKey: linearValid ? linearKey : null,
       isComplete: true,
     });
   };
@@ -32,7 +32,7 @@ export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
           </div>
           <h1 className="text-xl font-semibold text-text-primary">WorktreeManager</h1>
           <p className="text-sm text-text-secondary text-center">
-            Connect your Linear account to get started
+            Manage git worktrees with ease
           </p>
         </div>
 
@@ -58,11 +58,22 @@ export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
         </div>
 
         {/* Finish */}
-        <div className="flex items-center justify-end w-full">
+        <div className="flex items-center justify-between w-full">
+          <button
+            onClick={handleFinish}
+            className="text-sm text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+          >
+            Skip for now
+          </button>
           <Button onClick={handleFinish} disabled={!linearValid}>
             Get Started
           </Button>
         </div>
+        {!linearValid && (
+          <p className="text-xs text-text-muted text-center -mt-4">
+            You can configure Linear per-project later
+          </p>
+        )}
       </div>
     </div>
   );

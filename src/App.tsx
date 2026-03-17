@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { RepoList } from "./components/sidebar/RepoList";
 import { WorktreeList } from "./components/worktree/WorktreeList";
@@ -30,6 +30,11 @@ function App() {
 
   const [showAddProject, setShowAddProject] = useState(false);
 
+  const defaultLinearApiKey = useMemo(() => {
+    const lastRepoWithKey = [...state.repos].reverse().find((r) => r.linearApiKey);
+    return lastRepoWithKey?.linearApiKey ?? state.setup.linearApiKey ?? null;
+  }, [state.repos, state.setup.linearApiKey]);
+
   useKeyboardShortcuts({
     p: { handler: () => setShowAddProject(true), enabled: state.setup.isComplete },
   });
@@ -47,7 +52,7 @@ function App() {
   }
 
   return (
-    <LinearProvider apiKey={state.setup.linearApiKey}>
+    <LinearProvider apiKey={selectedRepo?.linearApiKey ?? null}>
       <div className="flex h-full relative">
         {/* Full-width drag region at the very top for window dragging */}
         <div className="absolute top-0 left-0 right-0 h-[38px] z-[5]" data-tauri-drag-region />
@@ -76,6 +81,7 @@ function App() {
             onCloseAddExternal={() => setShowAddProject(false)}
             themeId={themeId}
             onThemeChange={updateThemeId}
+            defaultLinearApiKey={defaultLinearApiKey}
           />
         </ErrorBoundary>
         <ErrorBoundary fallbackClassName="flex-1">
