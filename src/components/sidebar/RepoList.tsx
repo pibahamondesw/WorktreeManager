@@ -104,17 +104,17 @@ export function RepoList({
               </div>
             </div>
 
-            {hoveredId === repo.id && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRemoveRepo(repo);
-                }}
-                className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-danger transition-colors cursor-pointer"
-              >
-                <CloseIcon size={12} />
-              </button>
-            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setRemoveRepo(repo);
+              }}
+              className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-danger transition-colors cursor-pointer ${
+                hoveredId === repo.id ? "opacity-100" : "opacity-0 pointer-events-none"
+              }`}
+            >
+              <CloseIcon size={12} />
+            </button>
           </div>
         ))}
       </div>
