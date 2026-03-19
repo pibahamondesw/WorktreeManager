@@ -21,6 +21,11 @@ export function WorktreeCardSkeleton({ index }: { index: number }) {
             <div className="h-3 w-40 rounded bg-bg-tertiary" />
             <div className="h-3 w-8 rounded bg-bg-tertiary" />
           </div>
+          {/* Row 4: PR link */}
+          <div className="flex items-center gap-1.5 mt-2">
+            <div className="h-3 w-3 rounded bg-bg-tertiary" />
+            <div className="h-3 w-36 rounded bg-bg-tertiary" />
+          </div>
         </div>
       </div>
     </div>
