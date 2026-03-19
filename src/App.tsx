@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { RepoList } from "./components/sidebar/RepoList";
 import { WorktreeList } from "./components/worktree/WorktreeList";
@@ -29,6 +29,37 @@ function App() {
   } = useStore();
 
   const [showAddProject, setShowAddProject] = useState(false);
+  const [pendingRepoId, setPendingRepoId] = useState<string | null>(null);
+
+  const handleSelectRepo = useCallback(
+    (repoId: string) => {
+      if (repoId === state.selectedRepoId) return;
+      setPendingRepoId(repoId);
+    },
+    [state.selectedRepoId]
+  );
+
+  // rAF + setTimeout(0): rAF fires right before the browser paints the
+  // skeleton. After the rAF returns the browser paints. setTimeout(0) creates
+  // a new macrotask that runs AFTER that paint, guaranteeing the skeleton is
+  // on screen before selectRepo triggers the heavier card render.
+  useEffect(() => {
+    if (!pendingRepoId) return;
+    let cancelled = false;
+    let timerId: number;
+    const rafId = requestAnimationFrame(() => {
+      timerId = window.setTimeout(() => {
+        if (cancelled) return;
+        selectRepo(pendingRepoId);
+        setPendingRepoId(null);
+      }, 0);
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      clearTimeout(timerId);
+    };
+  }, [pendingRepoId, selectRepo]);
 
   const defaultLinearApiKey = useMemo(() => {
     const lastRepoWithKey = [...state.repos].reverse().find((r) => r.linearApiKey);
@@ -74,7 +105,7 @@ function App() {
             repos={state.repos}
             worktrees={state.worktrees}
             selectedRepoId={state.selectedRepoId}
-            onSelect={selectRepo}
+            onSelect={handleSelectRepo}
             onAdd={addRepo}
             onRemove={removeRepo}
             showAddExternal={showAddProject}
@@ -92,6 +123,7 @@ function App() {
             onWorktreeDeleted={removeWorktree}
             editorApp={editorApp}
             onEditorChange={updateEditorApp}
+            repoSwitching={pendingRepoId !== null}
           />
         </ErrorBoundary>
       </div>

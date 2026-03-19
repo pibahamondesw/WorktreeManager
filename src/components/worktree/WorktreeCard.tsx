@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "../ui/Badge";
@@ -39,7 +39,7 @@ const stateVariant: Record<string, "success" | "warning" | "accent" | "danger" |
   triage: "warning",
 };
 
-export function WorktreeCard({
+export const WorktreeCard = memo(function WorktreeCard({
   worktree,
   repo,
   onDelete,
@@ -362,7 +362,7 @@ export function WorktreeCard({
       )}
     </div>
   );
-}
+});
 
 function MenuButton({
   onClick,

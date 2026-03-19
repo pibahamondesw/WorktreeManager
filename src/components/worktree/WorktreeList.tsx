@@ -1,14 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { WorktreeCard } from "./WorktreeCard";
+import { WorktreeCardSkeleton } from "./WorktreeCardSkeleton";
 import { NewWorktreeModal } from "./NewWorktreeModal";
 import { Button } from "../ui/Button";
 import { EditorPicker } from "../ui/EditorPicker";
 import { FolderIcon, RefreshIcon, PlusIcon, CodeBranchIcon } from "../ui/Icons";
-import { useLinear } from "../../contexts/LinearContext";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
-import { Worktree, Repo, EditorApp, GitStatus, IssueLinearInfo } from "../../types";
+import { useWorktreeData } from "../../hooks/useWorktreeData";
+import { Worktree, Repo, EditorApp } from "../../types";
 
 interface WorktreeListProps {
   worktrees: Worktree[];
@@ -17,6 +18,7 @@ interface WorktreeListProps {
   onWorktreeDeleted: (worktreeId: string) => void;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
+  repoSwitching?: boolean;
 }
 
 export function WorktreeList({
@@ -26,15 +28,14 @@ export function WorktreeList({
   onWorktreeDeleted,
   editorApp,
   onEditorChange,
+  repoSwitching,
 }: WorktreeListProps) {
   const [showNew, setShowNew] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [linearInfo, setLinearInfo] = useState<Record<string, IssueLinearInfo>>({});
-  const [gitStatuses, setGitStatuses] = useState<Record<string, GitStatus>>({});
-  const linear = useLinear();
+
+  const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(worktrees, repo);
 
   const toastTimer = useRef<number>(undefined!);
 
@@ -48,49 +49,7 @@ export function WorktreeList({
     toastTimer.current = window.setTimeout(() => setToast(null), msg.length > 40 ? 4000 : 1500);
   };
 
-  const fetchLinearInfo = useCallback(async () => {
-    const issueIds = worktrees
-      .map((wt) => wt.linearIssueId)
-      .filter((id): id is string => !!id);
-    if (issueIds.length === 0 || !linear) {
-      setLinearInfo({});
-      return;
-    }
-    const info = await linear.fetchIssueLinearInfoBatch(issueIds);
-    setLinearInfo(info);
-  }, [worktrees, linear]);
-
-  const fetchGitStatuses = useCallback(async () => {
-    if (worktrees.length === 0 || !repo) {
-      setGitStatuses({});
-      return;
-    }
-    try {
-      const statuses = await invoke<Record<string, GitStatus>>("git_worktree_status_batch", {
-        worktreePaths: worktrees.map((wt) => wt.path),
-        repoPath: repo.localPath,
-      });
-      setGitStatuses(statuses);
-    } catch {
-      /* git status is best-effort */
-    }
-  }, [worktrees, repo]);
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await Promise.all([fetchLinearInfo(), fetchGitStatuses()]);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [fetchLinearInfo, fetchGitStatuses]);
-
-  useEffect(() => {
-    setSelectedIndex(-1);
-  }, [repo?.id]);
-
-  useEffect(() => { fetchLinearInfo(); }, [fetchLinearInfo]);
-  useEffect(() => { fetchGitStatuses(); }, [fetchGitStatuses]);
+  useEffect(() => { setSelectedIndex(-1); }, [repo?.id]);
 
   const selectedWorktree =
     selectedIndex >= 0 && selectedIndex < worktrees.length ? worktrees[selectedIndex] : null;
@@ -200,7 +159,13 @@ export function WorktreeList({
 
       {/* Worktree cards */}
       <div className="flex-1 overflow-y-auto p-6">
-        {worktrees.length === 0 ? (
+        {repoSwitching ? (
+          <div className="grid gap-3">
+            {Array.from({ length: Math.max(worktrees.length, 3) }).map((_, i) => (
+              <WorktreeCardSkeleton key={i} index={i + 1} />
+            ))}
+          </div>
+        ) : worktrees.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-12 h-12 rounded-xl bg-bg-tertiary flex items-center justify-center mx-auto mb-3">
