@@ -19,7 +19,6 @@ interface WorktreeListProps {
   onWorktreeDeleted: (worktreeId: string) => void;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
-  repoSwitching?: boolean;
 }
 
 export function WorktreeList({
@@ -29,14 +28,13 @@ export function WorktreeList({
   onWorktreeDeleted,
   editorApp,
   onEditorChange,
-  repoSwitching,
 }: WorktreeListProps) {
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const { toast, showToast } = useEphemeralToast();
 
-  const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(worktrees, repo);
+  const { linearInfo, gitStatuses, enrichmentLoading, refreshing, handleRefresh } = useWorktreeData(worktrees, repo);
 
   useEffect(() => {
     setSelectedIndex(-1);
@@ -58,15 +56,13 @@ export function WorktreeList({
     showToast,
   });
 
-  if (!repo) {
-    return <WorktreeNoRepoPlaceholder />;
-  }
+  if (!repo) return <WorktreeNoRepoPlaceholder />;
 
   return (
     <LinearProvider apiKey={repo.linearApiKey ?? null}>
       <div className="flex-1 flex flex-col min-h-0 relative">
         <WorktreeListHeader
-          repo={repo}
+          repoName={repo.name}
           worktreeCount={worktrees.length}
           editorApp={editorApp}
           onEditorChange={onEditorChange}
@@ -76,7 +72,7 @@ export function WorktreeList({
         />
 
         <div className="flex-1 overflow-y-auto p-6">
-          {repoSwitching ? (
+          {enrichmentLoading ? (
             <div className="grid gap-3">
               {Array.from({ length: Math.max(worktrees.length, 3) }).map((_, i) => (
                 <WorktreeCardSkeleton key={i} index={i + 1} />
