@@ -6,6 +6,7 @@ import { Worktree, Repo, GitStatus, IssueLinearInfo } from "../types";
 export function useWorktreeData(worktrees: Worktree[], repo: Repo | undefined) {
   const [linearInfo, setLinearInfo] = useState<Record<string, IssueLinearInfo>>({});
   const [gitStatuses, setGitStatuses] = useState<Record<string, GitStatus>>({});
+  const [enrichmentLoading, setEnrichmentLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const linear = useLinear();
 
@@ -46,8 +47,13 @@ export function useWorktreeData(worktrees: Worktree[], repo: Repo | undefined) {
     }
   }, [fetchLinearInfo, fetchGitStatuses]);
 
-  useEffect(() => { fetchLinearInfo(); }, [fetchLinearInfo]);
-  useEffect(() => { fetchGitStatuses(); }, [fetchGitStatuses]);
+  useEffect(() => {
+    let stale = false;
+    setEnrichmentLoading(true);
+    Promise.all([fetchLinearInfo(), fetchGitStatuses()])
+      .finally(() => { if (!stale) setEnrichmentLoading(false); });
+    return () => { stale = true; };
+  }, [fetchLinearInfo, fetchGitStatuses]);
 
-  return { linearInfo, gitStatuses, refreshing, handleRefresh };
+  return { linearInfo, gitStatuses, enrichmentLoading, refreshing, handleRefresh };
 }

@@ -1,10 +1,10 @@
 import { Button } from "../ui/Button";
 import { EditorPicker } from "../ui/EditorPicker";
 import { RefreshIcon, PlusIcon } from "../ui/Icons";
-import { Repo, EditorApp } from "../../types";
+import { EditorApp } from "../../types";
 
 interface WorktreeListHeaderProps {
-  repo: Repo;
+  repoName: string;
   worktreeCount: number;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
@@ -14,7 +14,7 @@ interface WorktreeListHeaderProps {
 }
 
 export function WorktreeListHeader({
-  repo,
+  repoName,
   worktreeCount,
   editorApp,
   onEditorChange,
@@ -31,7 +31,7 @@ export function WorktreeListHeader({
       >
         <div className="flex items-center gap-3" data-tauri-drag-region>
           <h2 className="text-sm font-semibold text-text-primary" data-tauri-drag-region>
-            {repo.name}
+            {repoName}
           </h2>
           <span className="text-xs text-text-muted">
             {worktreeCount} worktree{worktreeCount !== 1 ? "s" : ""}
