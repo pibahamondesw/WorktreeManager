@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { LinearProvider } from "../../contexts/LinearContext";
+import { LinearService } from "../../services/linear";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { useWorktreeData } from "../../hooks/useWorktreeData";
@@ -38,7 +39,12 @@ export function WorktreeList({
   const [deleteRequested, setDeleteRequested] = useState(false);
   const { toast, showToast } = useEphemeralToast();
 
-  const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(worktrees, repo, onRepoReady);
+  const linearService = useMemo(
+    () => (repo?.linearApiKey ? new LinearService(repo.linearApiKey) : null),
+    [repo?.linearApiKey]
+  );
+
+  const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(worktrees, repo, linearService, onRepoReady);
 
   useEffect(() => {
     setSelectedIndex(-1);
