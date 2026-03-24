@@ -46,7 +46,7 @@ export function RepoList({
   return (
     <aside className="w-60 h-full bg-bg-secondary border-r border-border flex flex-col">
       {/* Titlebar drag area */}
-      <div className="h-[38px] flex-shrink-0" data-tauri-drag-region />
+      <div className="h-[32px] flex-shrink-0" data-tauri-drag-region />
       {/* Header */}
       <div
         className="flex items-center justify-between px-4 h-12 border-b border-border flex-shrink-0"

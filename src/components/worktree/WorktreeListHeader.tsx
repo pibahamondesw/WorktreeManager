@@ -24,7 +24,7 @@ export function WorktreeListHeader({
 }: WorktreeListHeaderProps) {
   return (
     <>
-      <div className="h-[38px] flex-shrink-0" data-tauri-drag-region />
+      <div className="h-[32px] flex-shrink-0" data-tauri-drag-region />
       <div
         className="flex items-center justify-between px-6 h-12 border-b border-border flex-shrink-0"
         data-tauri-drag-region

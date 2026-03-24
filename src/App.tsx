@@ -63,9 +63,9 @@ function App() {
   return (
     <div className="flex h-full relative">
       {/* Full-width drag region at the very top for window dragging */}
-      <div className="absolute top-0 left-0 right-0 h-[38px] z-[5]" data-tauri-drag-region />
+      <div className="absolute top-0 left-0 right-0 h-[32px] z-[5]" data-tauri-drag-region />
       {/* Titlebar divider — spans full width at bottom of macOS traffic lights area */}
-      <div className="absolute top-[38px] left-0 right-0 h-px bg-border z-10 pointer-events-none" />
+      <div className="absolute top-[32px] left-0 right-0 h-px bg-border z-10 pointer-events-none" />
       {persistError && (
         <div className="absolute top-[39px] left-0 right-0 z-20 px-4 py-2 bg-danger/10 border-b border-danger/20 flex items-center justify-between">
           <span className="text-xs text-danger">{persistError}</span>
