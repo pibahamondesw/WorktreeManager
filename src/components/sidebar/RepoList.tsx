@@ -68,7 +68,7 @@ export function RepoList({
       </div>
 
       {/* Repo list */}
-      <div className="flex-1 overflow-y-auto py-2">
+      <div className="flex-1 overflow-y-auto py-2 space-y-0.5">
         {repos.length === 0 && (
           <div className="px-4 py-8 text-center">
             <p className="text-sm text-text-muted">No projects yet</p>
