@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useLinear } from "../contexts/LinearContext";
+import { LinearService } from "../services/linear";
 import { Worktree, Repo, GitStatus, IssueLinearInfo } from "../types";
 
-export function useWorktreeData(worktrees: Worktree[], repo: Repo | undefined, onReady?: () => void) {
+export function useWorktreeData(worktrees: Worktree[], repo: Repo | undefined, linear: LinearService | null, onReady?: () => void) {
   const [linearInfo, setLinearInfo] = useState<Record<string, IssueLinearInfo>>({});
   const [gitStatuses, setGitStatuses] = useState<Record<string, GitStatus>>({});
   const [refreshing, setRefreshing] = useState(false);
-  const linear = useLinear();
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
 
