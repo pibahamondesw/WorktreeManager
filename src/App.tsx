@@ -21,6 +21,8 @@ function App() {
     addRepo,
     removeRepo,
     selectRepo,
+    clearRepoSwitching,
+    repoSwitching,
     addWorktree,
     removeWorktree,
     updateEditorApp,
@@ -98,6 +100,8 @@ function App() {
           onWorktreeDeleted={removeWorktree}
           editorApp={editorApp}
           onEditorChange={updateEditorApp}
+          repoSwitching={repoSwitching}
+          onRepoReady={clearRepoSwitching}
         />
       </ErrorBoundary>
     </div>

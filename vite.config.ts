@@ -7,6 +7,9 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
+  define: {
+    "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV ?? "development"),
+  },
   build: {
     chunkSizeWarningLimit: 1500,
   },

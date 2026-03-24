@@ -19,6 +19,8 @@ interface WorktreeListProps {
   onWorktreeDeleted: (worktreeId: string) => void;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
+  repoSwitching: boolean;
+  onRepoReady: () => void;
 }
 
 export function WorktreeList({
@@ -28,13 +30,15 @@ export function WorktreeList({
   onWorktreeDeleted,
   editorApp,
   onEditorChange,
+  repoSwitching,
+  onRepoReady,
 }: WorktreeListProps) {
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const { toast, showToast } = useEphemeralToast();
 
-  const { linearInfo, gitStatuses, enrichmentLoading, refreshing, handleRefresh } = useWorktreeData(worktrees, repo);
+  const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(worktrees, repo, onRepoReady);
 
   useEffect(() => {
     setSelectedIndex(-1);
@@ -72,7 +76,7 @@ export function WorktreeList({
         />
 
         <div className="flex-1 overflow-y-auto p-6">
-          {enrichmentLoading ? (
+          {repoSwitching ? (
             <div className="grid gap-3">
               {Array.from({ length: Math.max(worktrees.length, 3) }).map((_, i) => (
                 <WorktreeCardSkeleton key={i} index={i + 1} />
