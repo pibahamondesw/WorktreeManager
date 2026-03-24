@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { loadState, loadEditorApp, loadThemeId, persist } from "../services/store";
 import { AppState, DEFAULT_STATE, EditorApp, Repo, Worktree } from "../types";
 import { applyTheme } from "../themes";
@@ -8,6 +8,7 @@ export function useStore() {
   const [loading, setLoading] = useState(true);
   const [editorApp, setEditorAppState] = useState<EditorApp>("cursor");
   const [themeId, setThemeIdState] = useState("default");
+  const [repoSwitching, setRepoSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,19 +91,24 @@ export function useStore() {
     }
   }, []);
 
-  const selectRepo = useCallback(async (repoId: string) => {
+  const selectRepo = useCallback((repoId: string) => {
     let snapshot: AppState;
     setState((prev) => {
       snapshot = prev;
       return { ...prev, selectedRepoId: repoId };
     });
-    try {
-      await persist([["selectedRepoId", repoId]]);
-    } catch {
-      setState(snapshot!);
-      setPersistError("Failed to save selection");
-    }
+    setRepoSwitching(true);
+    setTimeout(async () => {
+      try {
+        await persist([["selectedRepoId", repoId]]);
+      } catch {
+        setState(snapshot!);
+        setPersistError("Failed to save selection");
+      }
+    }, 0);
   }, []);
+
+  const clearRepoSwitching = useCallback(() => setRepoSwitching(false), []);
 
   const addWorktree = useCallback(async (worktree: Worktree) => {
     let snapshot: AppState;
@@ -166,8 +172,14 @@ export function useStore() {
     }
   }, []);
 
-  const selectedRepo = state.repos.find((r) => r.id === state.selectedRepoId);
-  const selectedWorktrees = state.worktrees.filter((w) => w.repoId === state.selectedRepoId);
+  const selectedRepo = useMemo(
+    () => state.repos.find((r) => r.id === state.selectedRepoId),
+    [state.repos, state.selectedRepoId]
+  );
+  const selectedWorktrees = useMemo(
+    () => state.worktrees.filter((w) => w.repoId === state.selectedRepoId),
+    [state.worktrees, state.selectedRepoId]
+  );
 
   return {
     state,
@@ -176,12 +188,14 @@ export function useStore() {
     themeId,
     selectedRepo,
     selectedWorktrees,
+    repoSwitching,
     persistError,
     dismissPersistError,
     updateSetup,
     addRepo,
     removeRepo,
     selectRepo,
+    clearRepoSwitching,
     addWorktree,
     removeWorktree,
     updateEditorApp,

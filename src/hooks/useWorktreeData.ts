@@ -1,14 +1,15 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useLinear } from "../contexts/LinearContext";
 import { Worktree, Repo, GitStatus, IssueLinearInfo } from "../types";
 
-export function useWorktreeData(worktrees: Worktree[], repo: Repo | undefined) {
+export function useWorktreeData(worktrees: Worktree[], repo: Repo | undefined, onReady?: () => void) {
   const [linearInfo, setLinearInfo] = useState<Record<string, IssueLinearInfo>>({});
   const [gitStatuses, setGitStatuses] = useState<Record<string, GitStatus>>({});
-  const [enrichmentLoading, setEnrichmentLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const linear = useLinear();
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
 
   const fetchLinearInfo = useCallback(async () => {
     const issueIds = worktrees
@@ -49,11 +50,10 @@ export function useWorktreeData(worktrees: Worktree[], repo: Repo | undefined) {
 
   useEffect(() => {
     let stale = false;
-    setEnrichmentLoading(true);
     Promise.all([fetchLinearInfo(), fetchGitStatuses()])
-      .finally(() => { if (!stale) setEnrichmentLoading(false); });
+      .finally(() => { if (!stale) onReadyRef.current?.(); });
     return () => { stale = true; };
   }, [fetchLinearInfo, fetchGitStatuses]);
 
-  return { linearInfo, gitStatuses, enrichmentLoading, refreshing, handleRefresh };
+  return { linearInfo, gitStatuses, refreshing, handleRefresh };
 }

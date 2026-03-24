@@ -228,18 +228,22 @@ pub fn git_worktree_status(
 }
 
 #[tauri::command]
-pub fn git_worktree_status_batch(
+pub async fn git_worktree_status_batch(
     worktree_paths: Vec<String>,
     repo_path: String,
 ) -> Result<HashMap<String, WorktreeStatus>, String> {
-    let default_branch = detect_default_branch(&repo_path);
-    let upstream = format!("origin/{}", default_branch);
+    tauri::async_runtime::spawn_blocking(move || {
+        let default_branch = detect_default_branch(&repo_path);
+        let upstream = format!("origin/{}", default_branch);
 
-    let mut result = HashMap::new();
-    for path in &worktree_paths {
-        result.insert(path.clone(), compute_worktree_status(path, &upstream));
-    }
-    Ok(result)
+        let mut result = HashMap::new();
+        for path in &worktree_paths {
+            result.insert(path.clone(), compute_worktree_status(path, &upstream));
+        }
+        result
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))
 }
 
 #[tauri::command]
