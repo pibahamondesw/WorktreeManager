@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { v4 as uuid } from "uuid";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
@@ -27,43 +27,52 @@ export function AddRepoModal({ open, onClose, onAdd, defaultLinearApiKey }: AddR
   const [linearUser, setLinearUser] = useState<string | null>(null);
   const [linearValidating, setLinearValidating] = useState(false);
   const [linearError, setLinearError] = useState<string | null>(null);
+  const validatingKeyRef = useRef("");
 
   useEffect(() => {
     homeDir().then(setHome);
   }, []);
 
   useEffect(() => {
-    if (open && defaultLinearApiKey && !linearKey) {
-      setLinearKey(defaultLinearApiKey);
+    if (!open) {
+      setName("");
+      setLocalPath("");
+      setWorktreeBase("");
+      setError(null);
+      setLinearKey("");
       setLinearValid(false);
       setLinearUser(null);
+      setLinearValidating(false);
       setLinearError(null);
-      // Auto-validate the pre-filled key
-      setLinearValidating(true);
-      validateLinearToken(defaultLinearApiKey)
-        .then((result) => {
-          setLinearValid(result.valid);
-          setLinearUser(result.name ?? null);
-          if (!result.valid) setLinearError(result.error ?? "Invalid key");
-        })
-        .catch(() => setLinearError("Validation failed"))
-        .finally(() => setLinearValidating(false));
+      validatingKeyRef.current = "";
+      return;
     }
-  }, [open, defaultLinearApiKey]);
+    if (defaultLinearApiKey) {
+      setLinearKey(defaultLinearApiKey);
+      runValidation(defaultLinearApiKey);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-  const handleValidateLinear = async () => {
-    if (!linearKey.trim()) return;
-    setLinearValidating(true);
+  const runValidation = async (key: string) => {
+    const trimmed = key.trim();
+    if (!trimmed) return;
+    validatingKeyRef.current = trimmed;
+    setLinearValid(false);
+    setLinearUser(null);
     setLinearError(null);
+    setLinearValidating(true);
     try {
-      const result = await validateLinearToken(linearKey.trim());
+      const result = await validateLinearToken(trimmed);
+      if (validatingKeyRef.current !== trimmed) return;
       setLinearValid(result.valid);
       setLinearUser(result.name ?? null);
       if (!result.valid) setLinearError(result.error ?? "Validation failed");
     } catch {
+      if (validatingKeyRef.current !== trimmed) return;
       setLinearError("Validation failed");
     } finally {
-      setLinearValidating(false);
+      if (validatingKeyRef.current === trimmed) setLinearValidating(false);
     }
   };
 
@@ -133,15 +142,6 @@ export function AddRepoModal({ open, onClose, onAdd, defaultLinearApiKey }: AddR
       worktreeBasePath: finalWorktreeBase,
       linearApiKey: linearValid ? linearKey.trim() : null,
     });
-
-    setName("");
-    setLocalPath("");
-    setWorktreeBase("");
-    setError(null);
-    setLinearKey("");
-    setLinearValid(false);
-    setLinearUser(null);
-    setLinearError(null);
   };
 
   return (
@@ -194,18 +194,19 @@ export function AddRepoModal({ open, onClose, onAdd, defaultLinearApiKey }: AddR
                 setLinearValid(false);
                 setLinearUser(null);
                 setLinearError(null);
+                validatingKeyRef.current = "";
               }}
               type="password"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  handleValidateLinear();
+                  runValidation(linearKey);
                 }
               }}
             />
             <Button
               variant="secondary"
-              onClick={handleValidateLinear}
+              onClick={() => runValidation(linearKey)}
               loading={linearValidating}
               disabled={!linearKey.trim() || linearValid}
             >
