@@ -61,6 +61,22 @@ export function useStore() {
     }
   }, []);
 
+  const updateRepo = useCallback(async (repoId: string, updates: Partial<Pick<Repo, "name" | "linearApiKey">>) => {
+    let snapshot: AppState;
+    let newRepos: Repo[];
+    setState((prev) => {
+      snapshot = prev;
+      newRepos = prev.repos.map((r) => (r.id === repoId ? { ...r, ...updates } : r));
+      return { ...prev, repos: newRepos };
+    });
+    try {
+      await persist([["repos", newRepos!]]);
+    } catch {
+      setState(snapshot!);
+      setPersistError("Failed to save project changes");
+    }
+  }, []);
+
   const removeRepo = useCallback(async (repoId: string) => {
     let snapshot: AppState;
     let newRepos: Repo[];
@@ -193,6 +209,7 @@ export function useStore() {
     dismissPersistError,
     updateSetup,
     addRepo,
+    updateRepo,
     removeRepo,
     selectRepo,
     clearRepoSwitching,

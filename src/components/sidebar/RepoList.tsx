@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Repo, Worktree } from "../../types";
 import { AddRepoModal } from "./AddRepoModal";
+import { EditRepoModal } from "./EditRepoModal";
 import { RemoveRepoModal } from "./RemoveRepoModal";
 import { ThemePicker } from "../ui/ThemePicker";
-import { PlusIcon, CloseIcon, SunIcon } from "../ui/Icons";
+import { PlusIcon, CloseIcon, GearIcon, SunIcon } from "../ui/Icons";
 
 interface RepoListProps {
   repos: Repo[];
@@ -11,6 +12,7 @@ interface RepoListProps {
   selectedRepoId: string | null;
   onSelect: (repoId: string) => void;
   onAdd: (repo: Repo) => void;
+  onUpdate: (repoId: string, updates: { name?: string; linearApiKey?: string | null }) => void;
   onRemove: (repoId: string) => void;
   showAddExternal?: boolean;
   onCloseAddExternal?: () => void;
@@ -25,6 +27,7 @@ export function RepoList({
   selectedRepoId,
   onSelect,
   onAdd,
+  onUpdate,
   onRemove,
   showAddExternal,
   onCloseAddExternal,
@@ -34,6 +37,7 @@ export function RepoList({
 }: RepoListProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [editRepo, setEditRepo] = useState<Repo | null>(null);
   const [removeRepo, setRemoveRepo] = useState<Repo | null>(null);
   const [showThemes, setShowThemes] = useState(false);
 
@@ -104,17 +108,29 @@ export function RepoList({
               </div>
             </div>
 
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setRemoveRepo(repo);
-              }}
-              className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-danger transition-colors cursor-pointer ${
-                hoveredId === repo.id ? "opacity-100" : "opacity-0 pointer-events-none"
-              }`}
-            >
-              <CloseIcon size={12} />
-            </button>
+            <div className={`flex items-center gap-0.5 flex-shrink-0 ${
+              hoveredId === repo.id ? "opacity-100" : "opacity-0 pointer-events-none"
+            }`}>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditRepo(repo);
+                }}
+                className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                title="Project settings"
+              >
+                <GearIcon size={12} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRemoveRepo(repo);
+                }}
+                className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-danger transition-colors cursor-pointer"
+              >
+                <CloseIcon size={12} />
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -140,6 +156,15 @@ export function RepoList({
         }}
         defaultLinearApiKey={defaultLinearApiKey}
       />
+
+      {editRepo && (
+        <EditRepoModal
+          open={!!editRepo}
+          onClose={() => setEditRepo(null)}
+          repo={editRepo}
+          onSave={onUpdate}
+        />
+      )}
 
       {removeRepo && (
         <RemoveRepoModal

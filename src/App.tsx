@@ -19,6 +19,7 @@ function App() {
     dismissPersistError,
     updateSetup,
     addRepo,
+    updateRepo,
     removeRepo,
     selectRepo,
     clearRepoSwitching,
@@ -84,6 +85,7 @@ function App() {
           selectedRepoId={state.selectedRepoId}
           onSelect={handleSelectRepo}
           onAdd={addRepo}
+          onUpdate={updateRepo}
           onRemove={removeRepo}
           showAddExternal={showAddProject}
           onCloseAddExternal={() => setShowAddProject(false)}
