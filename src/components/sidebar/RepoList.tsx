@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Repo, Worktree } from "../../types";
 import { AddRepoModal } from "./AddRepoModal";
 import { EditRepoModal } from "./EditRepoModal";
@@ -40,6 +40,14 @@ export function RepoList({
   const [editRepo, setEditRepo] = useState<Repo | null>(null);
   const [removeRepo, setRemoveRepo] = useState<Repo | null>(null);
   const [showThemes, setShowThemes] = useState(false);
+
+  const worktreeCountByRepoId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const w of worktrees) {
+      m.set(w.repoId, (m.get(w.repoId) ?? 0) + 1);
+    }
+    return m;
+  }, [worktrees]);
 
   const addOpen = showAdd || !!showAddExternal;
   const closeAdd = () => {
@@ -85,54 +93,69 @@ export function RepoList({
           </div>
         )}
 
-        {repos.map((repo) => (
-          <div
-            key={repo.id}
-            onClick={() => onSelect(repo.id)}
-            onMouseEnter={() => setHoveredId(repo.id)}
-            onMouseLeave={() => setHoveredId(null)}
-            className={`group flex items-center justify-between px-4 py-2.5 mx-2 rounded-lg cursor-pointer transition-colors ${
-              selectedRepoId === repo.id
-                ? "bg-bg-active text-text-primary"
-                : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-            }`}
-          >
-            <div className="flex items-center gap-3 min-w-0">
+        {repos.map((repo) => {
+          const activeWtCount = worktreeCountByRepoId.get(repo.id) ?? 0;
+          return (
+            <div
+              key={repo.id}
+              onClick={() => onSelect(repo.id)}
+              onMouseEnter={() => setHoveredId(repo.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              className={`group flex items-center justify-between gap-2 px-4 py-2.5 mx-2 rounded-lg cursor-pointer transition-colors ${
+                selectedRepoId === repo.id
+                  ? "bg-bg-active text-text-primary"
+                  : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+              }`}
+            >
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div
+                  className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    selectedRepoId === repo.id ? "bg-accent" : "bg-border-light"
+                  }`}
+                />
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate min-w-0">{repo.name}</p>
+                  <span
+                    className={`inline-flex flex-shrink-0 items-center justify-center min-w-[1.125rem] rounded px-1 py-0.5 text-[10px] font-semibold tabular-nums ${
+                      selectedRepoId === repo.id
+                        ? "bg-bg-secondary text-text-muted"
+                        : "bg-bg-hover text-text-muted"
+                    }`}
+                    title={`${activeWtCount} active worktree${activeWtCount !== 1 ? "s" : ""}`}
+                  >
+                    {activeWtCount}
+                  </span>
+                </div>
+              </div>
+
               <div
-                className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  selectedRepoId === repo.id ? "bg-accent" : "bg-border-light"
+                className={`flex items-center gap-0.5 flex-shrink-0 ${
+                  hoveredId === repo.id ? "opacity-100" : "opacity-0 pointer-events-none"
                 }`}
-              />
-              <div className="min-w-0">
-                <p className="text-sm font-medium truncate">{repo.name}</p>
+              >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditRepo(repo);
+                  }}
+                  className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                  title="Project settings"
+                >
+                  <GearIcon size={12} />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRemoveRepo(repo);
+                  }}
+                  className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-danger transition-colors cursor-pointer"
+                >
+                  <CloseIcon size={12} />
+                </button>
               </div>
             </div>
-
-            <div className={`flex items-center gap-0.5 flex-shrink-0 ${
-              hoveredId === repo.id ? "opacity-100" : "opacity-0 pointer-events-none"
-            }`}>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditRepo(repo);
-                }}
-                className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary transition-colors cursor-pointer"
-                title="Project settings"
-              >
-                <GearIcon size={12} />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRemoveRepo(repo);
-                }}
-                className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-danger transition-colors cursor-pointer"
-              >
-                <CloseIcon size={12} />
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Footer: theme settings */}
