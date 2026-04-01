@@ -130,6 +130,16 @@ pub fn git_worktree_add(
 
 #[tauri::command]
 pub fn git_worktree_remove(repo_path: String, worktree_path: String) -> Result<String, String> {
+    let wt_path = std::path::Path::new(&worktree_path);
+
+    if !wt_path.exists() {
+        // Directory already gone — prune stale git worktree references
+        let _ = Command::new("git")
+            .args(["-C", &repo_path, "worktree", "prune"])
+            .output();
+        return Ok("Worktree directory already removed".to_string());
+    }
+
     let output = Command::new("git")
         .args([
             "-C",
@@ -145,7 +155,16 @@ pub fn git_worktree_remove(repo_path: String, worktree_path: String) -> Result<S
     if output.status.success() {
         Ok("Worktree removed successfully".to_string())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        // "not a working tree" means git no longer tracks it — prune and succeed
+        if stderr.contains("not a working tree") {
+            let _ = Command::new("git")
+                .args(["-C", &repo_path, "worktree", "prune"])
+                .output();
+            Ok("Worktree reference cleaned up".to_string())
+        } else {
+            Err(stderr)
+        }
     }
 }
 

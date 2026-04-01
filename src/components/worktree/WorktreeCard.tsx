@@ -57,6 +57,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   const pr = linearInfo ? linearInfo.pr : undefined;
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -95,6 +96,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   const handleDeleteConfirm = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setConfirmDelete(false);
+    setDeleteError(null);
     setDeleting(true);
     try {
       await invoke<string>("git_worktree_remove", {
@@ -104,14 +106,21 @@ export const WorktreeCard = memo(function WorktreeCard({
       onDelete(worktree.id);
     } catch (e) {
       const msg = typeof e === "string" ? e : "Failed to remove worktree from disk";
-      onToast?.(msg);
+      setDeleteError(msg);
       setDeleting(false);
     }
+  };
+
+  const handleForceRemove = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteError(null);
+    onDelete(worktree.id);
   };
 
   const handleDeleteCancel = (e: React.MouseEvent) => {
     e.stopPropagation();
     setConfirmDelete(false);
+    setDeleteError(null);
   };
 
   const handlePrClick = async (e: React.MouseEvent) => {
@@ -357,6 +366,33 @@ export const WorktreeCard = memo(function WorktreeCard({
             >
               Delete
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Git removal failed — offer force-remove from app */}
+      {deleteError && (
+        <div
+          className="mt-3 pt-3 border-t border-border space-y-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-xs text-danger leading-relaxed">{deleteError}</p>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-text-secondary">Remove from app anyway?</span>
+            <div className="flex gap-2 flex-shrink-0">
+              <button
+                onClick={handleDeleteCancel}
+                className="px-3 py-1 text-xs rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover border border-border transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleForceRemove}
+                className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
+              >
+                Remove
+              </button>
+            </div>
           </div>
         </div>
       )}
