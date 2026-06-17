@@ -81,7 +81,11 @@ export const WorktreeCard = memo(function WorktreeCard({
 
   const handleOpen = async () => {
     try {
-      await invoke<string>("open_editor", { editor: editorApp, path: worktree.path });
+      await invoke<string>("open_editor", {
+        editor: editorApp,
+        path: worktree.path,
+        branchName: worktree.branchName,
+      });
     } catch (e) {
       const msg = typeof e === "string" ? e : `Failed to open ${editorApp}`;
       onOpenError?.(msg);
@@ -147,6 +151,18 @@ export const WorktreeCard = memo(function WorktreeCard({
       case "copy-path":
         navigator.clipboard.writeText(worktree.path);
         onToast?.("Worktree path copied");
+        break;
+      case "open-claude-code":
+        try {
+          await invoke<string>("open_editor", {
+            editor: "claude-code",
+            path: worktree.path,
+            branchName: worktree.branchName,
+          });
+        } catch (e) {
+          const msg = typeof e === "string" ? e : "Failed to open Claude Code";
+          onOpenError?.(msg);
+        }
         break;
     }
   };
@@ -326,6 +342,9 @@ export const WorktreeCard = memo(function WorktreeCard({
                 </MenuButton>
                 <MenuButton label="⌘⇧C" onClick={() => handleMenuAction("copy-path")}>
                   Copy worktree path
+                </MenuButton>
+                <MenuButton onClick={() => handleMenuAction("open-claude-code")}>
+                  Open in Claude Code
                 </MenuButton>
               </div>
             )}

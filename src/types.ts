@@ -66,11 +66,19 @@ export interface IssueLinearInfo {
   pr: PullRequestInfo | null;
 }
 
-export type EditorApp = "cursor" | "vscode" | "claude-code" | "opencode";
+export type EditorApp =
+  | "cursor"
+  | "vscode"
+  | "cursor-claude"
+  | "vscode-claude"
+  | "claude-code"
+  | "opencode";
 
 export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "cursor", label: "Cursor", isCli: false },
   { id: "vscode", label: "VS Code", isCli: false },
+  { id: "cursor-claude", label: "Cursor + Claude", isCli: false },
+  { id: "vscode-claude", label: "VS Code + Claude", isCli: false },
   { id: "opencode", label: "OpenCode", isCli: false },
   { id: "claude-code", label: "Claude Code", isCli: true },
 ];

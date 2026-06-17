@@ -155,7 +155,11 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
 
       setCreatingStatus("Opening editor...");
       try {
-        await invoke<string>("open_editor", { editor: editorApp, path: worktreePath });
+        await invoke<string>("open_editor", {
+          editor: editorApp,
+          path: worktreePath,
+          branchName,
+        });
       } catch (editorErr) {
         console.warn("Could not open editor:", editorErr);
       }
