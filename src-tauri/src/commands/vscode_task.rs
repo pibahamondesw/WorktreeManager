@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 
 pub const WM_CLAUDE_TASK_LABEL: &str = "WM: Start Claude";
 
+/// Marker under `.vscode/` — when present and matching the session slug, use `--resume`.
+pub const WM_CLAUDE_SESSION_MARKER: &str = ".vscode/.wm-claude-session-init";
+
 /// PATH + profile sources (same for tasks, Terminal, and `claude` install probe).
 fn claude_env_prelude() -> &'static str {
     r#"export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; [ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile"; [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"; [ -f "$HOME/.profile" ] && source "$HOME/.profile"; [ -f "$HOME/.bash_profile" ] && source "$HOME/.bash_profile""#
@@ -63,15 +66,33 @@ pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -
 }
 
 /// Full one-line zsh script: prelude, session export, cd, resume or new named session.
+///
+/// `claude --resume` does not exit non-zero when no session exists (it prompts interactively),
+/// so we use a worktree marker file to distinguish first launch (`-n`) from later (`--resume`).
 pub fn build_claude_worktree_shell_command(canonical_dir: &str, session_slug: &str) -> String {
     let slug_q = shell_single_quoted(session_slug);
     let dir_q = shell_single_quoted(canonical_dir);
     format!(
-        "export WORKTREE_MANAGER_CLAUDE_SESSION_NAME={}; {}; cd {} && claude --resume \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\" || exec claude -n \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\"",
+        "export WORKTREE_MANAGER_CLAUDE_SESSION_NAME={}; {}; cd {} && if [ -f {marker} ] && [ \"$(cat {marker})\" = \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\" ]; then exec claude --resume \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\"; else mkdir -p .vscode && printf '%s' \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\" > {marker} && exec claude -n \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\"; fi",
         slug_q,
         claude_env_prelude(),
-        dir_q
+        dir_q,
+        marker = WM_CLAUDE_SESSION_MARKER,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_command_uses_marker_not_resume_or_fallback() {
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch");
+        assert!(cmd.contains(WM_CLAUDE_SESSION_MARKER));
+        assert!(cmd.contains("claude -n"));
+        assert!(cmd.contains("claude --resume"));
+        assert!(!cmd.contains("|| exec claude"));
+    }
 }
 
 /// True if `claude` resolves after the same PATH/profile prelude as launch scripts.
