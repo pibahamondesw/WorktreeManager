@@ -32,7 +32,7 @@ export function EditorPicker({ value, onChange }: EditorPickerProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const current = EDITOR_APPS.find((e) => e.id === value)!;
+  const current = EDITOR_APPS.find((e) => e.id === value) ?? EDITOR_APPS[0];
 
   return (
     <div className="relative" ref={ref}>
