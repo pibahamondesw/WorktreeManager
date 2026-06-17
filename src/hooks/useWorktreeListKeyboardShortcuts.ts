@@ -55,6 +55,7 @@ export function useWorktreeListKeyboardShortcuts({
             invoke<string>("open_editor", {
               editor: editorApp,
               path: selectedWorktree.path,
+              branchName: selectedWorktree.branchName,
             }).catch((err) =>
               showToast(typeof err === "string" ? err : `Failed to open ${editorApp}`)
             );

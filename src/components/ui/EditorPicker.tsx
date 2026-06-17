@@ -42,12 +42,12 @@ export function EditorPicker({ value, onChange }: EditorPickerProps) {
         title="Select default editor"
       >
         <EditorIcon editor={value} size={14} />
-        <span className="max-w-[80px] truncate">{current.label}</span>
+        <span className="max-w-[100px] truncate">{current.label}</span>
         <ChevronDownIcon className="opacity-50" />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-9 z-50 w-52 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
+        <div className="absolute right-0 top-9 z-50 w-60 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
           {EDITOR_APPS.map((app) => {
             const installed = installedMap[app.id];
             const isSelected = app.id === value;
@@ -97,6 +97,24 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
           <path d="M11.5 1L6 6.5 3.5 4.5 1 6.5v3L3.5 11.5 6 9.5 11.5 15 15 13.5v-11L11.5 1zM3.5 9.5l-1-1.5 1-1.5L6 9.5l-2.5 0zm8-5v7L7 8l4.5-3.5z" />
         </svg>
       );
+    case "cursor-claude":
+      return (
+        <span className="flex items-center gap-0.5 flex-shrink-0" aria-hidden>
+          <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor">
+            <path d="M2 2l12 6-12 6V9l7-1-7-1V2z" />
+          </svg>
+          <ClaudeMiniIcon s={Math.max(10, s - 4)} />
+        </span>
+      );
+    case "vscode-claude":
+      return (
+        <span className="flex items-center gap-0.5 flex-shrink-0" aria-hidden>
+          <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor">
+            <path d="M11.5 1L6 6.5 3.5 4.5 1 6.5v3L3.5 11.5 6 9.5 11.5 15 15 13.5v-11L11.5 1zM3.5 9.5l-1-1.5 1-1.5L6 9.5l-2.5 0zm8-5v7L7 8l4.5-3.5z" />
+          </svg>
+          <ClaudeMiniIcon s={Math.max(10, s - 4)} />
+        </span>
+      );
     case "claude-code":
       return (
         <svg
@@ -128,4 +146,21 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
         </svg>
       );
   }
+}
+
+function ClaudeMiniIcon({ s }: { s: number }) {
+  return (
+    <svg
+      width={s}
+      height={s}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      className="flex-shrink-0 opacity-80"
+    >
+      <rect x="1.5" y="3" width="13" height="10" rx="1.5" />
+      <path d="M4 8.5l2 2 3.5-4" />
+    </svg>
+  );
 }
