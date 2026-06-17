@@ -1,5 +1,5 @@
 import { load, Store } from "@tauri-apps/plugin-store";
-import { AppState, DEFAULT_STATE, EditorApp, Worktree } from "../types";
+import { AppState, DEFAULT_STATE, EDITOR_APPS, EditorApp, Worktree } from "../types";
 import { migrateRepos } from "../utils";
 
 let store: Store | null = null;
@@ -53,5 +53,7 @@ export async function loadThemeId(): Promise<string> {
 
 export async function loadEditorApp(): Promise<EditorApp> {
   const s = await getStore();
-  return (await s.get<EditorApp>("editorApp")) ?? "cursor";
+  const stored = await s.get<EditorApp>("editorApp");
+  // Guard against stale values persisted by older builds whose editor ids no longer exist.
+  return EDITOR_APPS.some((e) => e.id === stored) ? stored! : "cursor";
 }
