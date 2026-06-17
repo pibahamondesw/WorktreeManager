@@ -8,8 +8,13 @@ use std::path::{Path, PathBuf};
 
 pub const WM_CLAUDE_TASK_LABEL: &str = "WM: Start Claude";
 
-/// Marker under `.vscode/` — when present and matching the session slug, use `--resume`.
+/// Marker under `.vscode/` — when present and matching the session slug, continue (`-c`)
+/// instead of starting a new named session.
 pub const WM_CLAUDE_SESSION_MARKER: &str = ".vscode/.wm-claude-session-init";
+
+/// Env var holding the per-worktree session name. Long, prefixed name avoids clashing with
+/// anything a user might already export in their shell.
+const WM_SESSION_ENV: &str = "WORKTREE_MANAGER_CLAUDE_SESSION_NAME";
 
 /// PATH + profile sources (same for tasks, Terminal, and `claude` install probe).
 fn claude_env_prelude() -> &'static str {
@@ -65,19 +70,30 @@ pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -
     out
 }
 
-/// Full one-line zsh script: prelude, session export, cd, resume or new named session.
+/// Full one-line zsh script: prelude, session export, cd, then continue or start the session.
 ///
-/// `claude --resume` does not exit non-zero when no session exists (it prompts interactively),
-/// so we use a worktree marker file to distinguish first launch (`-n`) from later (`--resume`).
+/// First launch starts a new named session (`claude -n <name>`) so it shows up in the prompt
+/// bar and `/resume`, and writes the marker. Later launches use `claude -c`, which continues
+/// the most recent session in this worktree directory. We deliberately avoid `claude --resume
+/// <name>`: an ambiguous name opens the interactive session picker, which would block this
+/// non-interactive task. `-c` is directory-scoped and never prompts.
 pub fn build_claude_worktree_shell_command(canonical_dir: &str, session_slug: &str) -> String {
-    let slug_q = shell_single_quoted(session_slug);
-    let dir_q = shell_single_quoted(canonical_dir);
+    let set_session = format!("export {WM_SESSION_ENV}={}", shell_single_quoted(session_slug));
+    let prelude = claude_env_prelude();
+    let goto_dir = format!("cd {}", shell_single_quoted(canonical_dir));
+
+    let marker = WM_CLAUDE_SESSION_MARKER;
+    let marker_matches_session =
+        format!("[ -f {marker} ] && [ \"$(cat {marker})\" = \"${WM_SESSION_ENV}\" ]");
+    let continue_session = "exec claude -c";
+    let start_named_session = format!(
+        "mkdir -p .vscode && printf '%s' \"${WM_SESSION_ENV}\" > {marker} && exec claude -n \"${WM_SESSION_ENV}\""
+    );
+
     format!(
-        "export WORKTREE_MANAGER_CLAUDE_SESSION_NAME={}; {}; cd {} && if [ -f {marker} ] && [ \"$(cat {marker})\" = \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\" ]; then exec claude --resume \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\"; else mkdir -p .vscode && printf '%s' \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\" > {marker} && exec claude -n \"$WORKTREE_MANAGER_CLAUDE_SESSION_NAME\"; fi",
-        slug_q,
-        claude_env_prelude(),
-        dir_q,
-        marker = WM_CLAUDE_SESSION_MARKER,
+        "{set_session}; {prelude}; {goto_dir} && \
+         if {marker_matches_session}; then {continue_session}; \
+         else {start_named_session}; fi"
     )
 }
 
@@ -90,7 +106,8 @@ mod tests {
         let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch");
         assert!(cmd.contains(WM_CLAUDE_SESSION_MARKER));
         assert!(cmd.contains("claude -n"));
-        assert!(cmd.contains("claude --resume"));
+        assert!(cmd.contains("claude -c"));
+        assert!(!cmd.contains("claude --resume"));
         assert!(!cmd.contains("|| exec claude"));
     }
 }
