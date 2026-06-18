@@ -128,6 +128,55 @@ pub fn git_worktree_add(
     }
 }
 
+/// Recursively copy a file or directory from `src` to `dst`.
+fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if src.is_dir() {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+    } else {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(src, dst)?;
+    }
+    Ok(())
+}
+
+/// Copy gitignored local config (repo-relative `paths`) from the base repo into a
+/// new worktree, skipping any path that's missing in the source or already present
+/// in the worktree. Returns the paths actually copied.
+#[tauri::command]
+pub fn copy_local_configs(
+    source_repo: String,
+    worktree_path: String,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let src_root = std::path::Path::new(&source_repo);
+    let dst_root = std::path::Path::new(&worktree_path);
+    let mut copied = Vec::new();
+
+    for rel in paths {
+        // Guard against absolute paths and traversal escaping the repo root.
+        if rel.is_empty() || std::path::Path::new(&rel).is_absolute() || rel.contains("..") {
+            continue;
+        }
+
+        let src = src_root.join(&rel);
+        let dst = dst_root.join(&rel);
+
+        // Only copy what exists in the base repo and is missing in the worktree.
+        if src.exists() && !dst.exists() {
+            copy_recursive(&src, &dst).map_err(|e| format!("Failed to copy {}: {}", rel, e))?;
+            copied.push(rel);
+        }
+    }
+
+    Ok(copied)
+}
+
 #[tauri::command]
 pub fn git_worktree_remove(repo_path: String, worktree_path: String) -> Result<String, String> {
     let wt_path = std::path::Path::new(&worktree_path);

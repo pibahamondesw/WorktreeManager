@@ -19,6 +19,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::git::git_worktree_add,
+            commands::git::copy_local_configs,
             commands::git::git_worktree_remove,
             commands::git::git_worktree_list,
             commands::git::git_worktree_status,

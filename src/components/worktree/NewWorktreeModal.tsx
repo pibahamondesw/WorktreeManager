@@ -7,7 +7,14 @@ import { Badge } from "../ui/Badge";
 import { SpinnerIcon, SearchIcon, ChevronLeftIcon } from "../ui/Icons";
 import { useDebounce } from "../../hooks/useDebounce";
 import { useLinear } from "../../contexts/LinearContext";
-import { EditorApp, LinearIssue, Repo, Worktree } from "../../types";
+import {
+  ALWAYS_COPIED_CONFIG_PATHS,
+  EDITOR_CONFIG_PATHS,
+  EditorApp,
+  LinearIssue,
+  Repo,
+  Worktree,
+} from "../../types";
 
 interface NewWorktreeModalProps {
   open: boolean;
@@ -131,6 +138,20 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
         worktreePath,
         branchName,
       });
+
+      // Copy local (gitignored) config so the worktree doesn't start from
+      // scratch — editor config for the editor in use + env files.
+      // Best-effort: a copy failure must not abort worktree creation.
+      setCreatingStatus("Copying local config...");
+      try {
+        await invoke<string[]>("copy_local_configs", {
+          sourceRepo: repo.localPath,
+          worktreePath,
+          paths: [...EDITOR_CONFIG_PATHS[editorApp], ...ALWAYS_COPIED_CONFIG_PATHS],
+        });
+      } catch (cfgErr) {
+        console.warn("Could not copy local config:", cfgErr);
+      }
 
       if (selected && linear) {
         setCreatingStatus("Updating Linear issue...");

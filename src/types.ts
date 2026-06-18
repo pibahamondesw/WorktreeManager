@@ -74,6 +74,28 @@ export type EditorApp =
   | "claude-code"
   | "opencode";
 
+/**
+ * Editor-specific local config directories carried into a new worktree.
+ * `git worktree add` only checks out tracked files, so gitignored editor config
+ * would be lost. Only the dir for the editor in use is copied.
+ */
+export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
+  cursor: [".cursor"],
+  vscode: [".vscode"],
+  "cursor-claude": [".cursor", ".claude"],
+  "vscode-claude": [".vscode", ".claude"],
+  "claude-code": [".claude"],
+  opencode: [".opencode"],
+};
+
+/** Editor-agnostic local config copied into every new worktree. */
+export const ALWAYS_COPIED_CONFIG_PATHS: string[] = [
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.development.local",
+];
+
 export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "cursor", label: "Cursor", isCli: false },
   { id: "vscode", label: "VS Code", isCli: false },
