@@ -40,19 +40,19 @@ export function useStore() {
   const addRepo = useCallback(async (repo: Repo) => {
     let snapshot: AppState;
     let newRepos: Repo[];
-    let shouldSelectNew = false;
     setState((prev) => {
       snapshot = prev;
       newRepos = [...prev.repos, repo];
-      shouldSelectNew = prev.selectedRepoId === null;
       return {
         ...prev,
         repos: newRepos,
-        selectedRepoId: prev.selectedRepoId ?? repo.id,
+        selectedRepoId: repo.id,
       };
     });
-    const entries: [string, unknown][] = [["repos", newRepos!]];
-    if (shouldSelectNew) entries.push(["selectedRepoId", repo.id]);
+    const entries: [string, unknown][] = [
+      ["repos", newRepos!],
+      ["selectedRepoId", repo.id],
+    ];
     try {
       await persist(entries);
     } catch {
