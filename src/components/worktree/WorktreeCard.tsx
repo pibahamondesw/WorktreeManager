@@ -174,16 +174,22 @@ export const WorktreeCard = memo(function WorktreeCard({
     }
   };
 
-  const handleCopyPath = (e: React.MouseEvent) => {
+  const copyToClipboard = (e: React.MouseEvent, text: string, toastMsg: string) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(worktree.path);
-    onToast?.("Worktree path copied");
+    navigator.clipboard.writeText(text);
+    onToast?.(toastMsg);
   };
 
-  const handleCopyBranch = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(worktree.branchName);
-    onToast?.("Branch name copied");
+  const handleCopyPath = (e: React.MouseEvent) =>
+    copyToClipboard(e, worktree.path, "Worktree path copied");
+
+  const handleCopyBranch = (e: React.MouseEvent) =>
+    copyToClipboard(e, worktree.branchName, "Branch name copied");
+
+  const handleCopyLinear = (e: React.MouseEvent) => {
+    if (worktree.linearIssueIdentifier) {
+      copyToClipboard(e, worktree.linearIssueIdentifier, "Linear ID copied");
+    }
   };
 
   const age = gitStatus ? timeAgo(gitStatus.last_commit_epoch) : null;
@@ -207,14 +213,23 @@ export const WorktreeCard = memo(function WorktreeCard({
           {/* Row 1: identifier + status + age */}
           <div className="flex items-center gap-2 mb-1">
             {worktree.linearIssueIdentifier ? (
-              <button
-                onClick={handleOpenLinear}
-                className="text-xs font-mono text-accent hover:text-accent-hover transition-colors flex-shrink-0 cursor-pointer inline-flex items-center gap-1"
-                title="Open on Linear"
-              >
-                {worktree.linearIssueIdentifier}
-                <ExternalLinkIcon size={10} />
-              </button>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  onClick={handleOpenLinear}
+                  className="text-xs font-mono text-accent hover:text-accent-hover transition-colors cursor-pointer inline-flex items-center gap-1"
+                  title="Open on Linear"
+                >
+                  {worktree.linearIssueIdentifier}
+                  <ExternalLinkIcon size={10} />
+                </button>
+                <button
+                  onClick={handleCopyLinear}
+                  className="text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                  title="Copy Linear ID"
+                >
+                  <CopyIcon size={12} />
+                </button>
+              </div>
             ) : (
               <span className="text-xs font-mono text-text-muted flex-shrink-0">
                 No issue
