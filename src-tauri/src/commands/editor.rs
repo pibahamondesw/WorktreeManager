@@ -35,6 +35,18 @@ pub fn open_editor(
             }
             open_gui_editor("Visual Studio Code", &path)
         }
+        "zed" => open_gui_editor("Zed", &path),
+        "zed-claude" => {
+            if let Err(e) = vscode_task::ensure_zed_claude_task(&path, branch) {
+                eprintln!("WorktreeManager: ensure_zed_claude_task: {e}");
+            }
+            open_gui_editor("Zed", &path)?;
+            // Zed can't auto-run the task on open, so tell the user how to start it.
+            Ok(format!(
+                "Zed opened — run the “{}” task (⇧⌘P → “task: spawn”) to start Claude Code.",
+                vscode_task::WM_CLAUDE_TASK_LABEL
+            ))
+        }
         _ => Err(format!("Unknown editor: {}", editor)),
     }
 }
@@ -54,6 +66,8 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
         "vscode-claude" => {
             Ok(gui_app_exists("Visual Studio Code") && vscode_task::claude_cli_available())
         }
+        "zed" => Ok(gui_app_exists("Zed")),
+        "zed-claude" => Ok(gui_app_exists("Zed") && vscode_task::claude_cli_available()),
         _ => Err(format!("Unknown editor: {}", editor)),
     }
 }
@@ -116,7 +130,7 @@ fn open_claude_in_terminal(
     let canon = canonical_worktree_path(worktree_path);
     let canon_str = canon.to_string_lossy();
     let slug = vscode_task::branch_to_session_slug(branch_name, &canon_str);
-    let shell_cmd = vscode_task::build_claude_worktree_shell_command(&canon_str, &slug);
+    let shell_cmd = vscode_task::build_claude_worktree_shell_command(&canon_str, &slug, ".vscode");
     open_terminal_applescript("claude", &canon_str, &shell_cmd)
 }
 

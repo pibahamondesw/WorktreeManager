@@ -1,8 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { Worktree, Repo, EditorApp } from "../types";
+import { openEditorForWorktree } from "../services/openEditor";
 
 interface Params {
   repo: Repo | undefined;
@@ -52,12 +52,11 @@ export function useWorktreeListKeyboardShortcuts({
       Enter: {
         handler: () => {
           if (selectedWorktree) {
-            invoke<string>("open_editor", {
-              editor: editorApp,
-              path: selectedWorktree.path,
-              branchName: selectedWorktree.branchName,
-            }).catch((err) =>
-              showToast(typeof err === "string" ? err : `Failed to open ${editorApp}`)
+            void openEditorForWorktree(
+              editorApp,
+              selectedWorktree.path,
+              selectedWorktree.branchName,
+              { onMessage: showToast, onError: showToast }
             );
           }
         },

@@ -177,6 +177,27 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
           <ClaudeMiniIcon s={Math.max(10, s - 4)} />
         </span>
       );
+    case "zed":
+      return (
+        <svg
+          width={s}
+          height={s}
+          viewBox="0 0 16 16"
+          fill="currentColor"
+          className="flex-shrink-0"
+        >
+          <path d="M3.5 3h9v2L7 11h5.5v2h-9v-2L9 5H3.5z" />
+        </svg>
+      );
+    case "zed-claude":
+      return (
+        <span className="flex items-center gap-0.5 flex-shrink-0" aria-hidden>
+          <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor">
+            <path d="M3.5 3h9v2L7 11h5.5v2h-9v-2L9 5H3.5z" />
+          </svg>
+          <ClaudeMiniIcon s={Math.max(10, s - 4)} />
+        </span>
+      );
   }
 }
 

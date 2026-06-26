@@ -74,7 +74,9 @@ export type EditorApp =
   | "claude-code"
   | "opencode"
   | "neovim"
-  | "neovim-claude";
+  | "neovim-claude"
+  | "zed"
+  | "zed-claude";
 
 /**
  * Editor-specific local config directories carried into a new worktree.
@@ -90,6 +92,8 @@ export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
   opencode: [".opencode"],
   neovim: [],
   "neovim-claude": [".claude"],
+  zed: [".zed"],
+  "zed-claude": [".zed", ".claude"],
 };
 
 /** Editor-agnostic local config copied into every new worktree. */
@@ -109,6 +113,8 @@ export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "claude-code", label: "Claude Code", isCli: true },
   { id: "neovim", label: "Neovim", isCli: true },
   { id: "neovim-claude", label: "Neovim + Claude", isCli: true },
+  { id: "zed", label: "Zed", isCli: false },
+  { id: "zed-claude", label: "Zed + Claude", isCli: false },
 ];
 
 export const DEFAULT_STATE: AppState = {

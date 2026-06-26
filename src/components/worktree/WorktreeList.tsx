@@ -124,6 +124,7 @@ export function WorktreeList({
           repo={repo}
           onCreated={onWorktreeCreated}
           editorApp={editorApp}
+          onOpenHint={showToast}
         />
       </div>
     </LinearProvider>
