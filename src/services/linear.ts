@@ -231,7 +231,8 @@ export class LinearService {
     const issue = await this.client.issue(issueId);
     const currentState = await issue.state;
 
-    if (currentState && currentState.type !== "backlog" && currentState.type !== "unstarted") {
+    const startableTypes = ["triage", "backlog", "unstarted"];
+    if (currentState && !startableTypes.includes(currentState.type)) {
       return;
     }
 
