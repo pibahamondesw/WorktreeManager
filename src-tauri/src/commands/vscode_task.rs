@@ -78,7 +78,10 @@ pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -
 /// <name>`: an ambiguous name opens the interactive session picker, which would block this
 /// non-interactive task. `-c` is directory-scoped and never prompts.
 pub fn build_claude_worktree_shell_command(canonical_dir: &str, session_slug: &str) -> String {
-    let set_session = format!("export {WM_SESSION_ENV}={}", shell_single_quoted(session_slug));
+    let set_session = format!(
+        "export {WM_SESSION_ENV}={}",
+        shell_single_quoted(session_slug)
+    );
     let prelude = claude_env_prelude();
     let goto_dir = format!("cd {}", shell_single_quoted(canonical_dir));
 
@@ -95,21 +98,6 @@ pub fn build_claude_worktree_shell_command(canonical_dir: &str, session_slug: &s
          if {marker_matches_session}; then {continue_session}; \
          else {start_named_session}; fi"
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn launch_command_uses_marker_not_resume_or_fallback() {
-        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch");
-        assert!(cmd.contains(WM_CLAUDE_SESSION_MARKER));
-        assert!(cmd.contains("claude -n"));
-        assert!(cmd.contains("claude -c"));
-        assert!(!cmd.contains("claude --resume"));
-        assert!(!cmd.contains("|| exec claude"));
-    }
 }
 
 /// True if `claude` resolves after the same PATH/profile prelude as launch scripts.
@@ -146,9 +134,12 @@ fn task_json_object(command: &str) -> Value {
 }
 
 /// Create or merge `WM: Start Claude` into `<worktree>/.vscode/tasks.json`.
-pub fn ensure_vscode_claude_task(worktree_path: &str, branch_name: Option<&str>) -> Result<(), String> {
-    let canon: PathBuf = fs::canonicalize(worktree_path)
-        .unwrap_or_else(|_| PathBuf::from(worktree_path));
+pub fn ensure_vscode_claude_task(
+    worktree_path: &str,
+    branch_name: Option<&str>,
+) -> Result<(), String> {
+    let canon: PathBuf =
+        fs::canonicalize(worktree_path).unwrap_or_else(|_| PathBuf::from(worktree_path));
     let canon_str = canon.to_string_lossy().to_string();
 
     let slug = branch_to_session_slug(branch_name, &canon_str);
@@ -194,9 +185,25 @@ pub fn ensure_vscode_claude_task(worktree_path: &str, branch_name: Option<&str>)
         None => tasks_arr.push(task),
     }
 
-    let out = serde_json::to_string_pretty(&root).map_err(|e| format!("serialize tasks.json: {e}"))?;
+    let out =
+        serde_json::to_string_pretty(&root).map_err(|e| format!("serialize tasks.json: {e}"))?;
     fs::write(&tmp_path, out).map_err(|e| format!("write tasks temp: {e}"))?;
     fs::rename(&tmp_path, &tasks_path).map_err(|e| format!("rename tasks.json: {e}"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_command_uses_marker_not_resume_or_fallback() {
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch");
+        assert!(cmd.contains(WM_CLAUDE_SESSION_MARKER));
+        assert!(cmd.contains("claude -n"));
+        assert!(cmd.contains("claude -c"));
+        assert!(!cmd.contains("claude --resume"));
+        assert!(!cmd.contains("|| exec claude"));
+    }
 }
