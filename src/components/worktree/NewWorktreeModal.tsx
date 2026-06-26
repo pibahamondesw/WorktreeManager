@@ -227,7 +227,10 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
           {manualBranch.trim() && (
             <div className="flex flex-col gap-1.5">
               <p className="text-xs text-text-muted">Worktree path</p>
-              <code className="block text-sm text-text-secondary bg-bg-tertiary rounded px-3 py-2 font-mono text-xs select-text cursor-text">
+              <code
+                className="block truncate text-sm text-text-secondary bg-bg-tertiary rounded px-3 py-2 font-mono text-xs select-text cursor-text"
+                title={`${repo.worktreeBasePath}/${manualBranch.trim()}`}
+              >
                 {repo.worktreeBasePath}/{manualBranch.trim()}
               </code>
             </div>
@@ -299,14 +302,20 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
 
                   <div className="pt-2 border-t border-border">
                     <p className="text-xs text-text-muted mb-1">Branch name</p>
-                    <code className="block text-sm text-accent bg-bg-primary rounded px-3 py-2 font-mono select-text">
+                    <code
+                      className="block truncate text-sm text-accent bg-bg-primary rounded px-3 py-2 font-mono select-text"
+                      title={selected.branchName}
+                    >
                       {selected.branchName}
                     </code>
                   </div>
 
                   <div className="pt-1">
                     <p className="text-xs text-text-muted mb-1">Worktree path</p>
-                    <code className="block text-sm text-text-secondary bg-bg-primary rounded px-3 py-2 font-mono text-xs select-text cursor-text">
+                    <code
+                      className="block truncate text-sm text-text-secondary bg-bg-primary rounded px-3 py-2 font-mono text-xs select-text cursor-text"
+                      title={`${repo.worktreeBasePath}/${selected.branchName}`}
+                    >
                       {repo.worktreeBasePath}/{selected.branchName}
                     </code>
                   </div>

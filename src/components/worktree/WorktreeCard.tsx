@@ -252,7 +252,10 @@ export const WorktreeCard = memo(function WorktreeCard({
           </div>
 
           {/* Row 2: title */}
-          <h3 className="text-sm font-medium text-text-primary truncate">
+          <h3
+            className="text-sm font-medium text-text-primary truncate"
+            title={worktree.linearIssueTitle || worktree.branchName}
+          >
             {worktree.linearIssueTitle || worktree.branchName}
           </h3>
 
