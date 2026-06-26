@@ -1,7 +1,6 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { LinearService } from "../services/linear";
-
-const LinearContext = createContext<LinearService | null>(null);
+import { LinearContext } from "./useLinear";
 
 interface LinearProviderProps {
   apiKey: string | null;
@@ -17,8 +16,4 @@ export function LinearProvider({ apiKey, children }: LinearProviderProps) {
   return (
     <LinearContext.Provider value={service}>{children}</LinearContext.Provider>
   );
-}
-
-export function useLinear(): LinearService | null {
-  return useContext(LinearContext);
 }
