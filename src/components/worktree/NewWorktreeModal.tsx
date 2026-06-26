@@ -52,6 +52,7 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
   const [error, setError] = useState<string | null>(null);
   const [manualMode, setManualMode] = useState(false);
   const [manualBranch, setManualBranch] = useState("");
+  const [userSlug, setUserSlug] = useState("");
 
   const debouncedQuery = useDebounce(query, 300);
 
@@ -118,8 +119,16 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
     }
   }, [open]);
 
+  // The username used to namespace manual worktree paths, for the path preview.
+  useEffect(() => {
+    if (!open) return;
+    invoke<string>("git_user_slug", { repoPath: repo.localPath })
+      .then(setUserSlug)
+      .catch(() => setUserSlug(""));
+  }, [open, repo.localPath]);
+
   const handleCreate = async () => {
-    const branchName = selected?.branchName ?? manualBranch.trim();
+    let branchName = selected?.branchName ?? manualBranch.trim();
     if (!branchName) return;
     setCreating(true);
     setError(null);
@@ -130,7 +139,23 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
         setCreating(false);
         return;
       }
-      const worktreePath = `${repo.worktreeBasePath}/${branchName}`;
+      let worktreePath = `${repo.worktreeBasePath}/${branchName}`;
+
+      // Manual (non-Linear) worktrees aren't unique by construction the way Linear
+      // branch names are, so namespace them under the git username and append a unique
+      // suffix on collision — guaranteeing each gets its own distinct workspace.
+      if (!selected) {
+        const resolved = await invoke<{ branchName: string; path: string }>(
+          "resolve_manual_worktree",
+          {
+            repoPath: repo.localPath,
+            worktreeBasePath: repo.worktreeBasePath,
+            rawName: branchName,
+          },
+        );
+        branchName = resolved.branchName;
+        worktreePath = resolved.path;
+      }
 
       setCreatingStatus("Fetching latest from origin...");
       await invoke<string>("git_worktree_add", {
@@ -229,9 +254,10 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
               <p className="text-xs text-text-muted">Worktree path</p>
               <code
                 className="block truncate text-sm text-text-secondary bg-bg-tertiary rounded px-3 py-2 font-mono text-xs select-text cursor-text"
-                title={`${repo.worktreeBasePath}/${manualBranch.trim()}`}
+                title={`${repo.worktreeBasePath}/${userSlug ? `${userSlug}/` : ""}${manualBranch.trim()}`}
               >
-                {repo.worktreeBasePath}/{manualBranch.trim()}
+                {repo.worktreeBasePath}/{userSlug ? `${userSlug}/` : ""}
+                {manualBranch.trim()}
               </code>
             </div>
           )}
