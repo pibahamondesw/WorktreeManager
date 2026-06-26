@@ -72,7 +72,9 @@ export type EditorApp =
   | "cursor-claude"
   | "vscode-claude"
   | "claude-code"
-  | "opencode";
+  | "opencode"
+  | "neovim"
+  | "neovim-claude";
 
 /**
  * Editor-specific local config directories carried into a new worktree.
@@ -86,6 +88,8 @@ export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
   "vscode-claude": [".vscode", ".claude"],
   "claude-code": [".claude"],
   opencode: [".opencode"],
+  neovim: [],
+  "neovim-claude": [".claude"],
 };
 
 /** Editor-agnostic local config copied into every new worktree. */
@@ -103,6 +107,8 @@ export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "vscode-claude", label: "VS Code + Claude", isCli: false },
   { id: "opencode", label: "OpenCode", isCli: false },
   { id: "claude-code", label: "Claude Code", isCli: true },
+  { id: "neovim", label: "Neovim", isCli: true },
+  { id: "neovim-claude", label: "Neovim + Claude", isCli: true },
 ];
 
 export const DEFAULT_STATE: AppState = {

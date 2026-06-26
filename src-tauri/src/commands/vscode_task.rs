@@ -100,14 +100,27 @@ pub fn build_claude_worktree_shell_command(canonical_dir: &str, session_slug: &s
     )
 }
 
-/// True if `claude` resolves after the same PATH/profile prelude as launch scripts.
-pub fn claude_cli_available() -> bool {
-    let probe = format!("{}; command -v claude", claude_env_prelude());
+/// Build the shell command that opens nvim in the worktree: PATH/profile prelude,
+/// cd into the worktree, then exec nvim (replaces the shell so quitting closes the tab).
+pub fn build_nvim_worktree_shell_command(canonical_dir: &str) -> String {
+    let prelude = claude_env_prelude();
+    let goto_dir = format!("cd {}", shell_single_quoted(canonical_dir));
+    format!("{prelude}; {goto_dir} && exec nvim")
+}
+
+/// True if `bin` resolves after the same PATH/profile prelude as launch scripts.
+pub fn cli_available(bin: &str) -> bool {
+    let probe = format!("{}; command -v {bin}", claude_env_prelude());
     std::process::Command::new("/bin/zsh")
         .args(["-lc", &probe])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// True if `claude` resolves after the same PATH/profile prelude as launch scripts.
+pub fn claude_cli_available() -> bool {
+    cli_available("claude")
 }
 
 fn task_json_object(command: &str) -> Value {
