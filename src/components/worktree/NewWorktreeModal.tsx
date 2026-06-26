@@ -6,7 +6,7 @@ import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 import { SpinnerIcon, SearchIcon, ChevronLeftIcon } from "../ui/Icons";
 import { useDebounce } from "../../hooks/useDebounce";
-import { useLinear } from "../../contexts/LinearContext";
+import { useLinear } from "../../contexts/useLinear";
 import {
   ALWAYS_COPIED_CONFIG_PATHS,
   EDITOR_CONFIG_PATHS,

@@ -26,12 +26,14 @@ export function useKeyboardShortcuts(
 ): void {
   const parsedRef = useRef<ParsedShortcut[]>([]);
   const optionsRef = useRef(options);
-  optionsRef.current = options;
 
-  parsedRef.current = Object.entries(shortcuts).map(([combo, def]) => ({
-    ...parseKey(combo),
-    def,
-  }));
+  useEffect(() => {
+    optionsRef.current = options;
+    parsedRef.current = Object.entries(shortcuts).map(([combo, def]) => ({
+      ...parseKey(combo),
+      def,
+    }));
+  });
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

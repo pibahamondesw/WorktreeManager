@@ -39,9 +39,10 @@ export function WorktreeList({
   const [deleteRequested, setDeleteRequested] = useState(false);
   const { toast, showToast } = useEphemeralToast();
 
+  const linearApiKey = repo?.linearApiKey;
   const linearService = useMemo(
-    () => (repo?.linearApiKey ? new LinearService(repo.linearApiKey) : null),
-    [repo?.linearApiKey]
+    () => (linearApiKey ? new LinearService(linearApiKey) : null),
+    [linearApiKey]
   );
 
   const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(worktrees, repo, linearService, onRepoReady);

@@ -39,7 +39,9 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
         "opencode" => Ok(gui_app_exists("OpenCode")),
         "claude-code" => Ok(vscode_task::claude_cli_available()),
         "cursor-claude" => Ok(gui_app_exists("Cursor") && vscode_task::claude_cli_available()),
-        "vscode-claude" => Ok(gui_app_exists("Visual Studio Code") && vscode_task::claude_cli_available()),
+        "vscode-claude" => {
+            Ok(gui_app_exists("Visual Studio Code") && vscode_task::claude_cli_available())
+        }
         _ => Err(format!("Unknown editor: {}", editor)),
     }
 }
@@ -95,7 +97,10 @@ fn escape_applescript_string(s: &str) -> String {
     out
 }
 
-fn open_claude_in_terminal(worktree_path: &str, branch_name: Option<&str>) -> Result<String, String> {
+fn open_claude_in_terminal(
+    worktree_path: &str,
+    branch_name: Option<&str>,
+) -> Result<String, String> {
     let canon = canonical_worktree_path(worktree_path);
     let canon_str = canon.to_string_lossy();
     let slug = vscode_task::branch_to_session_slug(branch_name, &canon_str);
@@ -104,7 +109,11 @@ fn open_claude_in_terminal(worktree_path: &str, branch_name: Option<&str>) -> Re
 }
 
 /// Focus or create a Terminal.app tab running `shell_cmd`; tab title `WM:<tag>:<path>`.
-fn open_terminal_applescript(tag: &str, path_for_title: &str, shell_cmd: &str) -> Result<String, String> {
+fn open_terminal_applescript(
+    tag: &str,
+    path_for_title: &str,
+    shell_cmd: &str,
+) -> Result<String, String> {
     let tab_title = format!("WM:{tag}:{path_for_title}");
     let tab_title_esc = escape_applescript_string(&tab_title);
     let script_esc = escape_applescript_string(shell_cmd);
@@ -154,5 +163,8 @@ end tell
         .spawn()
         .map_err(|e| format!("Failed to open Terminal: {}", e))?;
 
-    Ok(format!("Claude opened in Terminal for path: {}", path_for_title))
+    Ok(format!(
+        "Claude opened in Terminal for path: {}",
+        path_for_title
+    ))
 }
