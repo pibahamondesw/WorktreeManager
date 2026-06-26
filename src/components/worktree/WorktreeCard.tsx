@@ -13,6 +13,7 @@ import {
   TrashIcon,
 } from "../ui/Icons";
 import { Worktree, Repo, EditorApp, GitStatus, IssueLinearInfo } from "../../types";
+import { openEditorForWorktree } from "../../services/openEditor";
 import { timeAgo } from "../../utils";
 
 interface WorktreeCardProps {
@@ -80,16 +81,10 @@ export const WorktreeCard = memo(function WorktreeCard({
   }, [menuOpen]);
 
   const handleOpen = async () => {
-    try {
-      await invoke<string>("open_editor", {
-        editor: editorApp,
-        path: worktree.path,
-        branchName: worktree.branchName,
-      });
-    } catch (e) {
-      const msg = typeof e === "string" ? e : `Failed to open ${editorApp}`;
-      onOpenError?.(msg);
-    }
+    await openEditorForWorktree(editorApp, worktree.path, worktree.branchName, {
+      onMessage: onToast,
+      onError: onOpenError,
+    });
   };
 
   const handleDeleteClick = (e: React.MouseEvent) => {

@@ -1,16 +1,19 @@
-//! Shared Claude launch script for Terminal.app and `.vscode/tasks.json`, plus task file merge.
+//! Shared Claude launch script for Terminal.app, `.vscode/tasks.json`, and `.zed/tasks.json`,
+//! plus task file merge.
 
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 pub const WM_CLAUDE_TASK_LABEL: &str = "WM: Start Claude";
 
-/// Marker under `.vscode/` — when present and matching the session slug, continue (`-c`)
-/// instead of starting a new named session.
-pub const WM_CLAUDE_SESSION_MARKER: &str = ".vscode/.wm-claude-session-init";
+/// Marker filename placed inside the editor's config dir (e.g. `.vscode/` or `.zed/`) —
+/// when present and matching the session slug, continue (`-c`) instead of starting a new
+/// named session.
+pub const WM_CLAUDE_SESSION_MARKER_FILE: &str = ".wm-claude-session-init";
 
 /// Env var holding the per-worktree session name. Long, prefixed name avoids clashing with
 /// anything a user might already export in their shell.
@@ -77,7 +80,11 @@ pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -
 /// the most recent session in this worktree directory. We deliberately avoid `claude --resume
 /// <name>`: an ambiguous name opens the interactive session picker, which would block this
 /// non-interactive task. `-c` is directory-scoped and never prompts.
-pub fn build_claude_worktree_shell_command(canonical_dir: &str, session_slug: &str) -> String {
+pub fn build_claude_worktree_shell_command(
+    canonical_dir: &str,
+    session_slug: &str,
+    config_dir: &str,
+) -> String {
     let set_session = format!(
         "export {WM_SESSION_ENV}={}",
         shell_single_quoted(session_slug)
@@ -85,12 +92,12 @@ pub fn build_claude_worktree_shell_command(canonical_dir: &str, session_slug: &s
     let prelude = claude_env_prelude();
     let goto_dir = format!("cd {}", shell_single_quoted(canonical_dir));
 
-    let marker = WM_CLAUDE_SESSION_MARKER;
+    let marker = format!("{config_dir}/{WM_CLAUDE_SESSION_MARKER_FILE}");
     let marker_matches_session =
         format!("[ -f {marker} ] && [ \"$(cat {marker})\" = \"${WM_SESSION_ENV}\" ]");
     let continue_session = "exec claude -c";
     let start_named_session = format!(
-        "mkdir -p .vscode && printf '%s' \"${WM_SESSION_ENV}\" > {marker} && exec claude -n \"${WM_SESSION_ENV}\""
+        "mkdir -p {config_dir} && printf '%s' \"${WM_SESSION_ENV}\" > {marker} && exec claude -n \"${WM_SESSION_ENV}\""
     );
 
     format!(
@@ -100,14 +107,27 @@ pub fn build_claude_worktree_shell_command(canonical_dir: &str, session_slug: &s
     )
 }
 
-/// True if `claude` resolves after the same PATH/profile prelude as launch scripts.
-pub fn claude_cli_available() -> bool {
-    let probe = format!("{}; command -v claude", claude_env_prelude());
+/// Build the shell command that opens nvim in the worktree: PATH/profile prelude,
+/// cd into the worktree, then exec nvim (replaces the shell so quitting closes the tab).
+pub fn build_nvim_worktree_shell_command(canonical_dir: &str) -> String {
+    let prelude = claude_env_prelude();
+    let goto_dir = format!("cd {}", shell_single_quoted(canonical_dir));
+    format!("{prelude}; {goto_dir} && exec nvim")
+}
+
+/// True if `bin` resolves after the same PATH/profile prelude as launch scripts.
+pub fn cli_available(bin: &str) -> bool {
+    let probe = format!("{}; command -v {bin}", claude_env_prelude());
     std::process::Command::new("/bin/zsh")
         .args(["-lc", &probe])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// True if `claude` resolves after the same PATH/profile prelude as launch scripts.
+pub fn claude_cli_available() -> bool {
+    cli_available("claude")
 }
 
 fn task_json_object(command: &str) -> Value {
@@ -143,7 +163,7 @@ pub fn ensure_vscode_claude_task(
     let canon_str = canon.to_string_lossy().to_string();
 
     let slug = branch_to_session_slug(branch_name, &canon_str);
-    let shell_cmd = build_claude_worktree_shell_command(&canon_str, &slug);
+    let shell_cmd = build_claude_worktree_shell_command(&canon_str, &slug, ".vscode");
 
     let vscode_dir = canon.join(".vscode");
     fs::create_dir_all(&vscode_dir).map_err(|e| format!("create .vscode: {e}"))?;
@@ -193,17 +213,89 @@ pub fn ensure_vscode_claude_task(
     Ok(())
 }
 
+/// Create or merge `WM: Start Claude` into `<worktree>/.zed/tasks.json`.
+///
+/// Zed has no run-on-open hook, so the task is launched manually (`task: spawn`). To avoid
+/// Zed's underspecified shell/command composition, the task runs a generated, executable
+/// script that holds the multi-statement launch command verbatim.
+pub fn ensure_zed_claude_task(
+    worktree_path: &str,
+    branch_name: Option<&str>,
+) -> Result<(), String> {
+    let canon: PathBuf =
+        fs::canonicalize(worktree_path).unwrap_or_else(|_| PathBuf::from(worktree_path));
+    let canon_str = canon.to_string_lossy().to_string();
+
+    let slug = branch_to_session_slug(branch_name, &canon_str);
+    let shell_cmd = build_claude_worktree_shell_command(&canon_str, &slug, ".zed");
+
+    let zed_dir = canon.join(".zed");
+    fs::create_dir_all(&zed_dir).map_err(|e| format!("create .zed: {e}"))?;
+
+    // Generated launch script — referenced by the task's `command`.
+    let script_path = zed_dir.join("wm-start-claude.sh");
+    let script = format!("#!/bin/zsh\n{shell_cmd}\n");
+    fs::write(&script_path, script).map_err(|e| format!("write zed launch script: {e}"))?;
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("chmod zed launch script: {e}"))?;
+
+    let task = json!({
+        "label": WM_CLAUDE_TASK_LABEL,
+        "command": script_path.to_string_lossy(),
+        "use_new_terminal": false,
+        "allow_concurrent_runs": false,
+        "reveal": "always",
+    });
+
+    let tasks_path = zed_dir.join("tasks.json");
+    let tmp_path = zed_dir.join("tasks.json.wm.tmp");
+
+    // Zed's tasks.json is a top-level array of task objects.
+    let mut tasks_arr = if tasks_path.exists() {
+        let text = fs::read_to_string(&tasks_path).map_err(|e| format!("read tasks.json: {e}"))?;
+        match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Array(a)) => a,
+            _ => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
+    let idx = tasks_arr
+        .iter()
+        .position(|t| t.get("label").and_then(|l| l.as_str()) == Some(WM_CLAUDE_TASK_LABEL));
+    match idx {
+        Some(i) => tasks_arr[i] = task,
+        None => tasks_arr.push(task),
+    }
+
+    let out = serde_json::to_string_pretty(&Value::Array(tasks_arr))
+        .map_err(|e| format!("serialize tasks.json: {e}"))?;
+    fs::write(&tmp_path, out).map_err(|e| format!("write tasks temp: {e}"))?;
+    fs::rename(&tmp_path, &tasks_path).map_err(|e| format!("rename tasks.json: {e}"))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn launch_command_uses_marker_not_resume_or_fallback() {
-        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch");
-        assert!(cmd.contains(WM_CLAUDE_SESSION_MARKER));
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch", ".vscode");
+        assert!(cmd.contains(WM_CLAUDE_SESSION_MARKER_FILE));
         assert!(cmd.contains("claude -n"));
         assert!(cmd.contains("claude -c"));
         assert!(!cmd.contains("claude --resume"));
         assert!(!cmd.contains("|| exec claude"));
+    }
+
+    #[test]
+    fn launch_command_honors_config_dir() {
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-x", ".zed");
+        assert!(cmd.contains(&format!(".zed/{WM_CLAUDE_SESSION_MARKER_FILE}")));
+        assert!(cmd.contains("mkdir -p .zed"));
+        assert!(!cmd.contains(".vscode"));
     }
 }

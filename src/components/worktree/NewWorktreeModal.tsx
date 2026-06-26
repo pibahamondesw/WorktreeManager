@@ -15,6 +15,7 @@ import {
   Repo,
   Worktree,
 } from "../../types";
+import { openEditorForWorktree } from "../../services/openEditor";
 
 interface NewWorktreeModalProps {
   open: boolean;
@@ -22,6 +23,7 @@ interface NewWorktreeModalProps {
   repo: Repo;
   onCreated: (worktree: Worktree) => void;
   editorApp: EditorApp;
+  onOpenHint?: (msg: string) => void;
 }
 
 const priorityLabels: Record<number, string> = {
@@ -39,7 +41,14 @@ const priorityVariants: Record<number, "danger" | "warning" | "accent" | "defaul
   4: "default",
 };
 
-export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: NewWorktreeModalProps) {
+export function NewWorktreeModal({
+  open,
+  onClose,
+  repo,
+  onCreated,
+  editorApp,
+  onOpenHint,
+}: NewWorktreeModalProps) {
   const linear = useLinear();
   const [query, setQuery] = useState("");
   const [cachedIssues, setCachedIssues] = useState<LinearIssue[]>([]);
@@ -200,15 +209,10 @@ export function NewWorktreeModal({ open, onClose, repo, onCreated, editorApp }: 
       onCreated(worktree);
 
       setCreatingStatus("Opening editor...");
-      try {
-        await invoke<string>("open_editor", {
-          editor: editorApp,
-          path: worktreePath,
-          branchName,
-        });
-      } catch (editorErr) {
-        console.warn("Could not open editor:", editorErr);
-      }
+      await openEditorForWorktree(editorApp, worktreePath, branchName, {
+        onMessage: onOpenHint,
+        onError: (msg) => console.warn("Could not open editor:", msg),
+      });
 
       onClose();
     } catch (e) {
