@@ -392,3 +392,154 @@ pub fn git_worktree_list(repo_path: String) -> Result<Vec<WorktreeInfo>, String>
 
     Ok(worktrees)
 }
+
+/// Slugify a string to lowercase `[a-z0-9-]`, collapsing runs of other chars into `-`.
+fn slugify(input: &str) -> String {
+    let mut s: String = input
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    while s.contains("--") {
+        s = s.replace("--", "-");
+    }
+    s.trim_matches('-').to_string()
+}
+
+/// Derive a short username slug used to namespace manual (non-Linear) worktrees, from the
+/// repo's git identity (`user.email` local-part, then `user.name`). Falls back to `"local"`.
+fn git_user_slug_internal(repo_path: &str) -> String {
+    let read = |key: &str| -> Option<String> {
+        let out = Command::new("git")
+            .args(["-C", repo_path, "config", key])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if v.is_empty() {
+            None
+        } else {
+            Some(v)
+        }
+    };
+
+    if let Some(slug) = read("user.email")
+        .and_then(|e| e.split('@').next().map(str::to_string))
+        .map(|local| slugify(&local))
+        .filter(|s| !s.is_empty())
+    {
+        return slug;
+    }
+
+    read("user.name")
+        .map(|n| slugify(&n))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "local".to_string())
+}
+
+#[tauri::command]
+pub fn git_user_slug(repo_path: String) -> Result<String, String> {
+    Ok(git_user_slug_internal(&repo_path))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedWorktree {
+    pub branch_name: String,
+    pub path: String,
+}
+
+/// Sanitize a user-typed branch name into a git-safe suffix: trim, turn whitespace into
+/// `-`, and collapse repeated/edge slashes. Keeps `/`, `.`, `_`, `-`, and alphanumerics.
+fn sanitize_branch_input(raw: &str) -> String {
+    let mut s: String = raw
+        .trim()
+        .chars()
+        .map(|c| if c.is_whitespace() { '-' } else { c })
+        .collect();
+    while s.contains("//") {
+        s = s.replace("//", "/");
+    }
+    s.trim_matches('/').to_string()
+}
+
+fn branch_exists(repo_path: &str, branch: &str) -> bool {
+    Command::new("git")
+        .args([
+            "-C",
+            repo_path,
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Resolve a distinct, namespaced branch + worktree path for a manual (non-Linear) worktree.
+/// Namespaces under the git username and appends `-2`, `-3`, … until neither the target
+/// directory nor a local branch of that name exists, guaranteeing a distinct workspace.
+#[tauri::command]
+pub fn resolve_manual_worktree(
+    repo_path: String,
+    worktree_base_path: String,
+    raw_name: String,
+) -> Result<ResolvedWorktree, String> {
+    let sanitized = sanitize_branch_input(&raw_name);
+    if sanitized.is_empty() {
+        return Err("Branch name is empty".to_string());
+    }
+    let slug = git_user_slug_internal(&repo_path);
+    let base_branch = format!("{slug}/{sanitized}");
+
+    let mut n: u32 = 1;
+    loop {
+        let candidate = if n == 1 {
+            base_branch.clone()
+        } else {
+            format!("{base_branch}-{n}")
+        };
+        let path = format!("{worktree_base_path}/{candidate}");
+        if !std::path::Path::new(&path).exists() && !branch_exists(&repo_path, &candidate) {
+            return Ok(ResolvedWorktree {
+                branch_name: candidate,
+                path,
+            });
+        }
+        n += 1;
+        if n > 1000 {
+            return Err("Could not find a unique worktree name".to_string());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugify_lowercases_and_collapses() {
+        assert_eq!(slugify("Pedro.Bahamondes"), "pedro-bahamondes");
+        assert_eq!(slugify("  --John__Doe-- "), "john-doe");
+        assert_eq!(slugify("a@@@b"), "a-b");
+    }
+
+    #[test]
+    fn sanitize_branch_input_normalizes() {
+        assert_eq!(sanitize_branch_input("  my fix  "), "my-fix");
+        assert_eq!(sanitize_branch_input("/feature//x/"), "feature/x");
+        assert_eq!(
+            sanitize_branch_input("feature/my-branch"),
+            "feature/my-branch"
+        );
+    }
+}
