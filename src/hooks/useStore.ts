@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { loadState, loadEditorApp, loadThemeId, persist } from "../services/store";
-import { AppState, DEFAULT_STATE, EditorApp, Repo, Worktree } from "../types";
+import { AppState, DEFAULT_STATE, EditorApp, Task, Workspace } from "../types";
 import { applyTheme } from "../themes";
 
 export function useStore() {
@@ -8,7 +8,7 @@ export function useStore() {
   const [loading, setLoading] = useState(true);
   const [editorApp, setEditorAppState] = useState<EditorApp>("cursor");
   const [themeId, setThemeIdState] = useState("default");
-  const [repoSwitching, setRepoSwitching] = useState(true);
+  const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,86 +37,91 @@ export function useStore() {
     }
   }, []);
 
-  const addRepo = useCallback(async (repo: Repo) => {
+  const addWorkspace = useCallback(async (workspace: Workspace) => {
     let snapshot: AppState;
-    let newRepos: Repo[];
+    let newWorkspaces: Workspace[];
     setState((prev) => {
       snapshot = prev;
-      newRepos = [...prev.repos, repo];
-      return {
-        ...prev,
-        repos: newRepos,
-        selectedRepoId: repo.id,
-      };
+      newWorkspaces = [...prev.workspaces, workspace];
+      return { ...prev, workspaces: newWorkspaces, selectedWorkspaceId: workspace.id };
     });
-    const entries: [string, unknown][] = [
-      ["repos", newRepos!],
-      ["selectedRepoId", repo.id],
-    ];
     try {
-      await persist(entries);
+      await persist([
+        ["workspaces", newWorkspaces!],
+        ["selectedWorkspaceId", workspace.id],
+      ]);
     } catch {
       setState(snapshot!);
-      setPersistError("Failed to save project");
+      setPersistError("Failed to save workspace");
     }
   }, []);
 
-  const updateRepo = useCallback(async (repoId: string, updates: Partial<Pick<Repo, "name" | "linearApiKey">>) => {
-    let snapshot: AppState;
-    let newRepos: Repo[];
-    setState((prev) => {
-      snapshot = prev;
-      newRepos = prev.repos.map((r) => (r.id === repoId ? { ...r, ...updates } : r));
-      return { ...prev, repos: newRepos };
-    });
-    try {
-      await persist([["repos", newRepos!]]);
-    } catch {
-      setState(snapshot!);
-      setPersistError("Failed to save project changes");
-    }
-  }, []);
+  const updateWorkspace = useCallback(
+    async (
+      workspaceId: string,
+      updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>,
+    ) => {
+      let snapshot: AppState;
+      let newWorkspaces: Workspace[];
+      setState((prev) => {
+        snapshot = prev;
+        newWorkspaces = prev.workspaces.map((w) =>
+          w.id === workspaceId ? { ...w, ...updates } : w,
+        );
+        return { ...prev, workspaces: newWorkspaces };
+      });
+      try {
+        await persist([["workspaces", newWorkspaces!]]);
+      } catch {
+        setState(snapshot!);
+        setPersistError("Failed to save workspace changes");
+      }
+    },
+    [],
+  );
 
-  const removeRepo = useCallback(async (repoId: string) => {
+  const removeWorkspace = useCallback(async (workspaceId: string) => {
     let snapshot: AppState;
-    let newRepos: Repo[];
-    let newWorktrees: Worktree[];
+    let newWorkspaces: Workspace[];
+    let newTasks: Task[];
     let newSelectedId: string | null;
     setState((prev) => {
       snapshot = prev;
-      newRepos = prev.repos.filter((r) => r.id !== repoId);
-      newWorktrees = prev.worktrees.filter((w) => w.repoId !== repoId);
+      newWorkspaces = prev.workspaces.filter((w) => w.id !== workspaceId);
+      newTasks = prev.tasks.filter((t) => t.workspaceId !== workspaceId);
       newSelectedId =
-        prev.selectedRepoId === repoId ? (newRepos[0]?.id ?? null) : prev.selectedRepoId;
+        prev.selectedWorkspaceId === workspaceId
+          ? (newWorkspaces[0]?.id ?? null)
+          : prev.selectedWorkspaceId;
       return {
         ...prev,
-        repos: newRepos,
-        worktrees: newWorktrees,
-        selectedRepoId: newSelectedId,
+        workspaces: newWorkspaces,
+        tasks: newTasks,
+        selectedWorkspaceId: newSelectedId,
       };
     });
     try {
       await persist([
-        ["repos", newRepos!],
-        ["worktrees", newWorktrees!],
-        ["selectedRepoId", newSelectedId!],
+        ["workspaces", newWorkspaces!],
+        ["tasks", newTasks!],
+        ["selectedWorkspaceId", newSelectedId!],
       ]);
     } catch {
       setState(snapshot!);
-      setPersistError("Failed to save project removal");
+      setPersistError("Failed to save workspace removal");
     }
   }, []);
 
-  const selectRepo = useCallback((repoId: string) => {
+  const selectWorkspace = useCallback((workspaceId: string) => {
     let snapshot: AppState;
     setState((prev) => {
       snapshot = prev;
-      return { ...prev, selectedRepoId: repoId };
+      return { ...prev, selectedWorkspaceId: workspaceId };
     });
-    setRepoSwitching(true);
+    setWorkspaceSwitching(true);
     setTimeout(async () => {
       try {
-        await persist([["selectedRepoId", repoId]]);
+        await persist([["selectedWorkspaceId", workspaceId]]);
       } catch {
         setState(snapshot!);
         setPersistError("Failed to save selection");
@@ -124,37 +129,37 @@ export function useStore() {
     }, 0);
   }, []);
 
-  const clearRepoSwitching = useCallback(() => setRepoSwitching(false), []);
+  const clearWorkspaceSwitching = useCallback(() => setWorkspaceSwitching(false), []);
 
-  const addWorktree = useCallback(async (worktree: Worktree) => {
+  const addTask = useCallback(async (task: Task) => {
     let snapshot: AppState;
-    let newWorktrees: Worktree[];
+    let newTasks: Task[];
     setState((prev) => {
       snapshot = prev;
-      newWorktrees = [...prev.worktrees, worktree];
-      return { ...prev, worktrees: newWorktrees };
+      newTasks = [...prev.tasks, task];
+      return { ...prev, tasks: newTasks };
     });
     try {
-      await persist([["worktrees", newWorktrees!]]);
+      await persist([["tasks", newTasks!]]);
     } catch {
       setState(snapshot!);
-      setPersistError("Failed to save worktree");
+      setPersistError("Failed to save task");
     }
   }, []);
 
-  const removeWorktree = useCallback(async (worktreeId: string) => {
+  const removeTask = useCallback(async (taskId: string) => {
     let snapshot: AppState;
-    let newWorktrees: Worktree[];
+    let newTasks: Task[];
     setState((prev) => {
       snapshot = prev;
-      newWorktrees = prev.worktrees.filter((w) => w.id !== worktreeId);
-      return { ...prev, worktrees: newWorktrees };
+      newTasks = prev.tasks.filter((t) => t.id !== taskId);
+      return { ...prev, tasks: newTasks };
     });
     try {
-      await persist([["worktrees", newWorktrees!]]);
+      await persist([["tasks", newTasks!]]);
     } catch {
       setState(snapshot!);
-      setPersistError("Failed to save worktree removal");
+      setPersistError("Failed to save task removal");
     }
   }, []);
 
@@ -188,13 +193,13 @@ export function useStore() {
     }
   }, []);
 
-  const selectedRepo = useMemo(
-    () => state.repos.find((r) => r.id === state.selectedRepoId),
-    [state.repos, state.selectedRepoId]
+  const selectedWorkspace = useMemo(
+    () => state.workspaces.find((w) => w.id === state.selectedWorkspaceId),
+    [state.workspaces, state.selectedWorkspaceId],
   );
-  const selectedWorktrees = useMemo(
-    () => state.worktrees.filter((w) => w.repoId === state.selectedRepoId),
-    [state.worktrees, state.selectedRepoId]
+  const selectedTasks = useMemo(
+    () => state.tasks.filter((t) => t.workspaceId === state.selectedWorkspaceId),
+    [state.tasks, state.selectedWorkspaceId],
   );
 
   return {
@@ -202,19 +207,19 @@ export function useStore() {
     loading,
     editorApp,
     themeId,
-    selectedRepo,
-    selectedWorktrees,
-    repoSwitching,
+    selectedWorkspace,
+    selectedTasks,
+    workspaceSwitching,
     persistError,
     dismissPersistError,
     updateSetup,
-    addRepo,
-    updateRepo,
-    removeRepo,
-    selectRepo,
-    clearRepoSwitching,
-    addWorktree,
-    removeWorktree,
+    addWorkspace,
+    updateWorkspace,
+    removeWorkspace,
+    selectWorkspace,
+    clearWorkspaceSwitching,
+    addTask,
+    removeTask,
     updateEditorApp,
     updateThemeId,
   };

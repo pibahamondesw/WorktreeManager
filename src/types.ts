@@ -1,19 +1,45 @@
-export interface Repo {
+/** A peer repo that belongs to a Workspace. No member is privileged. */
+export interface WorkspaceRepo {
   id: string;
   name: string;
   localPath: string;
   worktreeBasePath: string;
+}
+
+/** A named group of peer repos opened together. Replaces the old single-repo "Repo"/project. */
+export interface Workspace {
+  id: string;
+  name: string;
+  repos: WorkspaceRepo[];
   linearApiKey?: string | null;
 }
 
-export interface Worktree {
-  id: string;
+/** One repo's worktree within a task. */
+export interface TaskMember {
   repoId: string;
+  repoName: string;
+  /** The member repo's main clone (used for git operations on the worktree). */
+  localPath: string;
+  /** The worktree directory opened for this member. */
+  path: string;
+  branchName: string;
+}
+
+/**
+ * A unit of work spanning one or more member repos on a shared branch.
+ * Replaces the old single-repo "Worktree". Branch + Linear issue live at the task
+ * level; each member is a per-repo worktree so no repo is hoisted to the top.
+ */
+export interface Task {
+  id: string;
+  workspaceId: string;
   branchName: string;
   linearIssueId?: string;
   linearIssueTitle?: string;
   linearIssueIdentifier?: string;
-  path: string;
+  members: TaskMember[];
+  /** Generated .code-workspace file (Cursor/VS Code), when applicable. */
+  workspaceFilePath?: string | null;
   createdAt: string;
 }
 
@@ -22,9 +48,9 @@ export interface AppState {
     linearApiKey: string | null;
     isComplete: boolean;
   };
-  repos: Repo[];
-  worktrees: Worktree[];
-  selectedRepoId: string | null;
+  workspaces: Workspace[];
+  tasks: Task[];
+  selectedWorkspaceId: string | null;
 }
 
 export interface LinearIssue {
@@ -122,7 +148,7 @@ export const DEFAULT_STATE: AppState = {
     linearApiKey: null,
     isComplete: false,
   },
-  repos: [],
-  worktrees: [],
-  selectedRepoId: null,
+  workspaces: [],
+  tasks: [],
+  selectedWorkspaceId: null,
 };

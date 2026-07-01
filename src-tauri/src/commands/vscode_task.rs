@@ -20,12 +20,12 @@ pub const WM_CLAUDE_SESSION_MARKER_FILE: &str = ".wm-claude-session-init";
 const WM_SESSION_ENV: &str = "WORKTREE_MANAGER_CLAUDE_SESSION_NAME";
 
 /// PATH + profile sources (same for tasks, Terminal, and `claude` install probe).
-fn claude_env_prelude() -> &'static str {
+pub(crate) fn claude_env_prelude() -> &'static str {
     r#"export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; [ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile"; [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"; [ -f "$HOME/.profile" ] && source "$HOME/.profile"; [ -f "$HOME/.bash_profile" ] && source "$HOME/.bash_profile""#
 }
 
 /// Shell-safe single-quoted string (POSIX).
-fn shell_single_quoted(s: &str) -> String {
+pub(crate) fn shell_single_quoted(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -84,6 +84,7 @@ pub fn build_claude_worktree_shell_command(
     canonical_dir: &str,
     session_slug: &str,
     config_dir: &str,
+    extra_dirs: &[String],
 ) -> String {
     let set_session = format!(
         "export {WM_SESSION_ENV}={}",
@@ -92,12 +93,18 @@ pub fn build_claude_worktree_shell_command(
     let prelude = claude_env_prelude();
     let goto_dir = format!("cd {}", shell_single_quoted(canonical_dir));
 
+    // Additional repos in the workspace are surfaced to the one Claude session via `--add-dir`.
+    let add_dirs: String = extra_dirs
+        .iter()
+        .map(|d| format!(" --add-dir {}", shell_single_quoted(d)))
+        .collect();
+
     let marker = format!("{config_dir}/{WM_CLAUDE_SESSION_MARKER_FILE}");
     let marker_matches_session =
         format!("[ -f {marker} ] && [ \"$(cat {marker})\" = \"${WM_SESSION_ENV}\" ]");
-    let continue_session = "exec claude -c";
+    let continue_session = format!("exec claude -c{add_dirs}");
     let start_named_session = format!(
-        "mkdir -p {config_dir} && printf '%s' \"${WM_SESSION_ENV}\" > {marker} && exec claude -n \"${WM_SESSION_ENV}\""
+        "mkdir -p {config_dir} && printf '%s' \"${WM_SESSION_ENV}\" > {marker} && exec claude -n \"${WM_SESSION_ENV}\"{add_dirs}"
     );
 
     format!(
@@ -130,7 +137,7 @@ pub fn claude_cli_available() -> bool {
     cli_available("claude")
 }
 
-fn task_json_object(command: &str) -> Value {
+pub(crate) fn task_json_object(command: &str) -> Value {
     json!({
         "label": WM_CLAUDE_TASK_LABEL,
         "type": "shell",
@@ -163,7 +170,7 @@ pub fn ensure_vscode_claude_task(
     let canon_str = canon.to_string_lossy().to_string();
 
     let slug = branch_to_session_slug(branch_name, &canon_str);
-    let shell_cmd = build_claude_worktree_shell_command(&canon_str, &slug, ".vscode");
+    let shell_cmd = build_claude_worktree_shell_command(&canon_str, &slug, ".vscode", &[]);
 
     let vscode_dir = canon.join(".vscode");
     fs::create_dir_all(&vscode_dir).map_err(|e| format!("create .vscode: {e}"))?;
@@ -221,13 +228,14 @@ pub fn ensure_vscode_claude_task(
 pub fn ensure_zed_claude_task(
     worktree_path: &str,
     branch_name: Option<&str>,
+    extra_dirs: &[String],
 ) -> Result<(), String> {
     let canon: PathBuf =
         fs::canonicalize(worktree_path).unwrap_or_else(|_| PathBuf::from(worktree_path));
     let canon_str = canon.to_string_lossy().to_string();
 
     let slug = branch_to_session_slug(branch_name, &canon_str);
-    let shell_cmd = build_claude_worktree_shell_command(&canon_str, &slug, ".zed");
+    let shell_cmd = build_claude_worktree_shell_command(&canon_str, &slug, ".zed", extra_dirs);
 
     let zed_dir = canon.join(".zed");
     fs::create_dir_all(&zed_dir).map_err(|e| format!("create .zed: {e}"))?;
@@ -283,7 +291,7 @@ mod tests {
 
     #[test]
     fn launch_command_uses_marker_not_resume_or_fallback() {
-        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch", ".vscode");
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch", ".vscode", &[]);
         assert!(cmd.contains(WM_CLAUDE_SESSION_MARKER_FILE));
         assert!(cmd.contains("claude -n"));
         assert!(cmd.contains("claude -c"));
@@ -293,9 +301,25 @@ mod tests {
 
     #[test]
     fn launch_command_honors_config_dir() {
-        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-x", ".zed");
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-x", ".zed", &[]);
         assert!(cmd.contains(&format!(".zed/{WM_CLAUDE_SESSION_MARKER_FILE}")));
         assert!(cmd.contains("mkdir -p .zed"));
         assert!(!cmd.contains(".vscode"));
+    }
+
+    #[test]
+    fn launch_command_has_no_add_dir_without_extras() {
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-x", ".vscode", &[]);
+        assert!(!cmd.contains("--add-dir"));
+    }
+
+    #[test]
+    fn launch_command_includes_add_dir_per_extra_in_both_branches() {
+        let extra = vec!["/tmp/a".to_string(), "/tmp/b".to_string()];
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-x", ".vscode", &extra);
+        // Two extra dirs, appended in both the `-c` and `-n` branches => 4 occurrences.
+        assert_eq!(cmd.matches("--add-dir").count(), 4);
+        assert!(cmd.contains("--add-dir '/tmp/a'"));
+        assert!(cmd.contains("--add-dir '/tmp/b'"));
     }
 }

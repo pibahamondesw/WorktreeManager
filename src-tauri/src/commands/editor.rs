@@ -1,53 +1,196 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::vscode_task;
+use super::{vscode_task, workspace};
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenEditorResult {
+    pub message: String,
+    /// Absolute path to the `.code-workspace` file used, when one was generated.
+    pub workspace_file: Option<String>,
+}
+
+impl OpenEditorResult {
+    fn message(msg: String) -> Self {
+        Self {
+            message: msg,
+            workspace_file: None,
+        }
+    }
+}
+
+/// Open a set of repo folders together. `folders[0]` is used as the working directory for CLI
+/// launches, but carries no semantic priority — there is no "main" repo. Single-folder calls
+/// reproduce the original single-repo behavior exactly.
 #[tauri::command]
 pub fn open_editor(
     editor: String,
-    path: String,
+    folders: Vec<String>,
     branch_name: Option<String>,
-) -> Result<String, String> {
+    workspace_name: Option<String>,
+) -> Result<OpenEditorResult, String> {
+    if folders.is_empty() {
+        return Err("No folders to open".to_string());
+    }
     let branch = branch_name.as_deref();
+    let primary = folders[0].as_str();
+    let extra_canon: Vec<String> = folders[1..]
+        .iter()
+        .map(|d| canonical_worktree_path(d).to_string_lossy().to_string())
+        .collect();
+    let multi = folders.len() > 1;
+
     match editor.as_str() {
-        "cursor" => open_gui_editor("Cursor", &path),
-        "vscode" => open_gui_editor("Visual Studio Code", &path),
-        "opencode" => open_gui_editor("OpenCode", &path),
-        "claude-code" => open_claude_in_terminal(&path, branch),
-        "neovim" => open_neovim_in_terminal(&path),
+        "cursor" | "vscode" => {
+            let app = gui_app_name(&editor);
+            if multi {
+                let ws = workspace::ensure_code_workspace_file(
+                    workspace_name.as_deref(),
+                    branch,
+                    &folders,
+                    None,
+                )?;
+                open_gui_editor(app, &ws)?;
+                Ok(OpenEditorResult {
+                    message: format!("{app} opened workspace: {ws}"),
+                    workspace_file: Some(ws),
+                })
+            } else {
+                Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
+            }
+        }
+        "cursor-claude" | "vscode-claude" => {
+            let app = gui_app_name(&editor);
+            if multi {
+                let canon = canonical_worktree_path(primary);
+                let canon_str = canon.to_string_lossy().to_string();
+                let slug = vscode_task::branch_to_session_slug(branch, &canon_str);
+                let claude_cmd = vscode_task::build_claude_worktree_shell_command(
+                    &canon_str,
+                    &slug,
+                    ".vscode",
+                    &extra_canon,
+                );
+                let task = vscode_task::task_json_object(&claude_cmd);
+                let ws = workspace::ensure_code_workspace_file(
+                    workspace_name.as_deref(),
+                    branch,
+                    &folders,
+                    Some(task),
+                )?;
+                open_gui_editor(app, &ws)?;
+                Ok(OpenEditorResult {
+                    message: format!("{app} + Claude opened workspace: {ws}"),
+                    workspace_file: Some(ws),
+                })
+            } else {
+                if let Err(e) = vscode_task::ensure_vscode_claude_task(primary, branch) {
+                    eprintln!("WorktreeManager: ensure_vscode_claude_task: {e}");
+                }
+                Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
+            }
+        }
+        "claude-code" => Ok(OpenEditorResult::message(open_claude_in_terminal(
+            primary,
+            &extra_canon,
+            branch,
+        )?)),
+        "neovim" => {
+            let mut msg = open_neovim_in_terminal(primary)?;
+            if multi {
+                msg = format!("{msg}\n{}", dropped_folders_hint(&extra_canon, "Neovim"));
+            }
+            Ok(OpenEditorResult::message(msg))
+        }
         "neovim-claude" => {
-            // Open Claude in its own tab first, then nvim, so the nvim tab ends up focused.
-            if let Err(e) = open_claude_in_terminal(&path, branch) {
+            // Open Claude in its own tab first (spanning all repos), then nvim.
+            if let Err(e) = open_claude_in_terminal(primary, &extra_canon, branch) {
                 eprintln!("WorktreeManager: open_claude_in_terminal: {e}");
             }
-            open_neovim_in_terminal(&path)
-        }
-        "cursor-claude" => {
-            if let Err(e) = vscode_task::ensure_vscode_claude_task(&path, branch) {
-                eprintln!("WorktreeManager: ensure_vscode_claude_task: {e}");
+            let mut msg = open_neovim_in_terminal(primary)?;
+            if multi {
+                msg = format!("{msg}\n{}", dropped_folders_hint(&extra_canon, "Neovim"));
             }
-            open_gui_editor("Cursor", &path)
+            Ok(OpenEditorResult::message(msg))
         }
-        "vscode-claude" => {
-            if let Err(e) = vscode_task::ensure_vscode_claude_task(&path, branch) {
-                eprintln!("WorktreeManager: ensure_vscode_claude_task: {e}");
+        "opencode" => {
+            let mut msg = open_gui_editor("OpenCode", primary)?;
+            if multi {
+                msg = format!("{msg}\n{}", dropped_folders_hint(&extra_canon, "OpenCode"));
             }
-            open_gui_editor("Visual Studio Code", &path)
+            Ok(OpenEditorResult::message(msg))
         }
-        "zed" => open_gui_editor("Zed", &path),
+        "zed" => Ok(OpenEditorResult::message(open_zed(&folders)?)),
         "zed-claude" => {
-            if let Err(e) = vscode_task::ensure_zed_claude_task(&path, branch) {
+            let canon = canonical_worktree_path(primary);
+            let canon_str = canon.to_string_lossy().to_string();
+            if let Err(e) = vscode_task::ensure_zed_claude_task(&canon_str, branch, &extra_canon) {
                 eprintln!("WorktreeManager: ensure_zed_claude_task: {e}");
             }
-            open_gui_editor("Zed", &path)?;
+            open_zed(&folders)?;
             // Zed can't auto-run the task on open, so tell the user how to start it.
-            Ok(format!(
+            Ok(OpenEditorResult::message(format!(
                 "Zed opened — run the “{}” task (⇧⌘P → “task: spawn”) to start Claude Code.",
                 vscode_task::WM_CLAUDE_TASK_LABEL
-            ))
+            )))
         }
         _ => Err(format!("Unknown editor: {}", editor)),
+    }
+}
+
+/// macOS application name for a GUI editor id (Claude variants share the base app).
+fn gui_app_name(editor: &str) -> &'static str {
+    match editor {
+        "vscode" | "vscode-claude" => "Visual Studio Code",
+        _ => "Cursor",
+    }
+}
+
+/// One-line hint listing folders an editor without multi-root support could not open.
+fn dropped_folders_hint(extra: &[String], editor: &str) -> String {
+    let names: Vec<String> = extra
+        .iter()
+        .map(|p| {
+            Path::new(p)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(p)
+                .to_string()
+        })
+        .collect();
+    format!(
+        "{editor} has no multi-root support — opened the first folder only. Not opened: {}.",
+        names.join(", ")
+    )
+}
+
+/// Open all folders as one multi-root Zed window via the `zed` CLI. Falls back to opening the
+/// first folder with `open -a Zed` (plus a hint) when the CLI isn't on PATH.
+fn open_zed(folders: &[String]) -> Result<String, String> {
+    if vscode_task::cli_available("zed") {
+        let joined = folders
+            .iter()
+            .map(|f| vscode_task::shell_single_quoted(f))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cmd = format!("{}; zed {joined}", vscode_task::claude_env_prelude());
+        Command::new("/bin/zsh")
+            .args(["-lc", &cmd])
+            .spawn()
+            .map_err(|e| format!("Failed to launch Zed: {e}"))?;
+        Ok(format!("Zed opened {} folder(s)", folders.len()))
+    } else {
+        open_gui_editor("Zed", &folders[0])?;
+        if folders.len() > 1 {
+            Ok(format!(
+                "Zed opened for path: {}\n{}",
+                folders[0],
+                dropped_folders_hint(&folders[1..], "Zed (CLI not found)")
+            ))
+        } else {
+            Ok(format!("Zed opened for path: {}", folders[0]))
+        }
     }
 }
 
@@ -125,12 +268,14 @@ fn escape_applescript_string(s: &str) -> String {
 
 fn open_claude_in_terminal(
     worktree_path: &str,
+    extra_dirs: &[String],
     branch_name: Option<&str>,
 ) -> Result<String, String> {
     let canon = canonical_worktree_path(worktree_path);
     let canon_str = canon.to_string_lossy();
     let slug = vscode_task::branch_to_session_slug(branch_name, &canon_str);
-    let shell_cmd = vscode_task::build_claude_worktree_shell_command(&canon_str, &slug, ".vscode");
+    let shell_cmd =
+        vscode_task::build_claude_worktree_shell_command(&canon_str, &slug, ".vscode", extra_dirs);
     open_terminal_applescript("claude", &canon_str, &shell_cmd)
 }
 

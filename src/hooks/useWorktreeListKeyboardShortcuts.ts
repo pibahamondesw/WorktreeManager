@@ -1,13 +1,13 @@
 import type { Dispatch, SetStateAction } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
-import { Worktree, Repo, EditorApp } from "../types";
+import { Task, Workspace, EditorApp } from "../types";
 import { openEditorForWorktree } from "../services/openEditor";
 
 interface Params {
-  repo: Repo | undefined;
-  worktrees: Worktree[];
-  selectedWorktree: Worktree | null;
+  workspace: Workspace | undefined;
+  tasks: Task[];
+  selectedTask: Task | null;
   editorApp: EditorApp;
   showNew: boolean;
   setShowNew: (v: boolean) => void;
@@ -18,9 +18,9 @@ interface Params {
 }
 
 export function useWorktreeListKeyboardShortcuts({
-  repo,
-  worktrees,
-  selectedWorktree,
+  workspace,
+  tasks,
+  selectedTask,
   editorApp,
   showNew,
   setShowNew,
@@ -31,72 +31,73 @@ export function useWorktreeListKeyboardShortcuts({
 }: Params): void {
   useKeyboardShortcuts(
     {
-      n: { handler: () => setShowNew(true), enabled: !!repo },
-      r: { handler: () => handleRefresh(), enabled: !!repo },
+      n: { handler: () => setShowNew(true), enabled: !!workspace },
+      r: { handler: () => handleRefresh(), enabled: !!workspace },
       ArrowDown: {
-        handler: () => setSelectedIndex((i) => Math.min(i + 1, worktrees.length - 1)),
-        enabled: worktrees.length > 0,
+        handler: () => setSelectedIndex((i) => Math.min(i + 1, tasks.length - 1)),
+        enabled: tasks.length > 0,
       },
       j: {
-        handler: () => setSelectedIndex((i) => Math.min(i + 1, worktrees.length - 1)),
-        enabled: worktrees.length > 0,
+        handler: () => setSelectedIndex((i) => Math.min(i + 1, tasks.length - 1)),
+        enabled: tasks.length > 0,
       },
       ArrowUp: {
         handler: () => setSelectedIndex((i) => Math.max(i - 1, 0)),
-        enabled: worktrees.length > 0,
+        enabled: tasks.length > 0,
       },
       k: {
         handler: () => setSelectedIndex((i) => Math.max(i - 1, 0)),
-        enabled: worktrees.length > 0,
+        enabled: tasks.length > 0,
       },
       Enter: {
         handler: () => {
-          if (selectedWorktree) {
+          if (selectedTask) {
             void openEditorForWorktree(
               editorApp,
-              selectedWorktree.path,
-              selectedWorktree.branchName,
+              selectedTask.members.map((m) => m.path),
+              selectedTask.branchName,
+              workspace?.name,
               { onMessage: showToast, onError: showToast }
             );
           }
         },
-        enabled: !!selectedWorktree,
+        enabled: !!selectedTask,
       },
       Escape: { handler: () => setSelectedIndex(-1) },
       l: {
         handler: () => {
-          if (selectedWorktree?.linearIssueIdentifier) {
-            openUrl(`https://linear.app/issue/${selectedWorktree.linearIssueIdentifier}`);
+          if (selectedTask?.linearIssueIdentifier) {
+            openUrl(`https://linear.app/issue/${selectedTask.linearIssueIdentifier}`);
           }
         },
-        enabled: !!selectedWorktree?.linearIssueIdentifier,
+        enabled: !!selectedTask?.linearIssueIdentifier,
       },
       "meta+d": {
         handler: () => setDeleteRequested(true),
-        enabled: !!selectedWorktree && !!repo,
+        enabled: !!selectedTask && !!workspace,
       },
       "meta+b": {
         handler: () => {
-          if (selectedWorktree) {
-            navigator.clipboard.writeText(selectedWorktree.branchName);
+          if (selectedTask) {
+            navigator.clipboard.writeText(selectedTask.branchName);
             showToast("Branch name copied");
           }
         },
-        enabled: !!selectedWorktree,
+        enabled: !!selectedTask,
       },
       "meta+shift+c": {
         handler: () => {
-          if (selectedWorktree) {
-            navigator.clipboard.writeText(selectedWorktree.path);
+          if (selectedTask) {
+            navigator.clipboard.writeText(selectedTask.members.map((m) => m.path).join("\n"));
             showToast("Path copied");
           }
         },
-        enabled: !!selectedWorktree,
+        enabled: !!selectedTask,
       },
       ...Object.fromEntries(
         Array.from({ length: 9 }, (_, i) => [
           String(i + 1),
-          { handler: () => setSelectedIndex(i), enabled: i < worktrees.length },
+          { handler: () => setSelectedIndex(i), enabled: i < tasks.length },
         ])
       ),
     },

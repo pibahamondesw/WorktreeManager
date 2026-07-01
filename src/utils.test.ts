@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { timeAgo, migrateRepos } from "./utils";
+import {
+  timeAgo,
+  migrateLegacyToWorkspaces,
+  normalizeWorkspaces,
+  normalizeTasks,
+} from "./utils";
 
 describe("timeAgo", () => {
   afterEach(() => {
@@ -62,87 +67,128 @@ describe("timeAgo", () => {
   });
 });
 
-describe("migrateRepos", () => {
-  it("returns empty array for empty input", () => {
-    expect(migrateRepos([])).toEqual([]);
-  });
-
-  it("passes through complete repo objects and adds linearApiKey null", () => {
-    const repos = [
-      { id: "1", name: "app", localPath: "/code/app", worktreeBasePath: "/wt/app" },
-    ];
-    expect(migrateRepos(repos)).toEqual([
-      { id: "1", name: "app", localPath: "/code/app", worktreeBasePath: "/wt/app", linearApiKey: null },
-    ]);
-  });
-
-  it("fills in missing localPath with empty string", () => {
-    const repos = [{ id: "1", name: "app", worktreeBasePath: "/wt/app" }];
-    const result = migrateRepos(repos);
-    expect(result[0].localPath).toBe("");
-  });
-
-  it("fills in missing worktreeBasePath with empty string", () => {
-    const repos = [{ id: "1", name: "app", localPath: "/code/app" }];
-    const result = migrateRepos(repos);
-    expect(result[0].worktreeBasePath).toBe("");
-  });
-
-  it("fills in both missing fields for very old data", () => {
-    const repos = [{ id: "1", name: "legacy" }];
-    const result = migrateRepos(repos);
-    expect(result[0]).toEqual({
-      id: "1",
-      name: "legacy",
-      localPath: "",
-      worktreeBasePath: "",
-      linearApiKey: null,
+describe("migrateLegacyToWorkspaces", () => {
+  it("returns empty for empty/undefined input", () => {
+    expect(migrateLegacyToWorkspaces([], [])).toEqual({ workspaces: [], tasks: [] });
+    expect(migrateLegacyToWorkspaces(undefined, undefined)).toEqual({
+      workspaces: [],
+      tasks: [],
     });
   });
 
-  it("handles multiple repos with mixed completeness", () => {
-    const repos = [
-      { id: "1", name: "complete", localPath: "/a", worktreeBasePath: "/b" },
-      { id: "2", name: "partial", localPath: "/c" },
-      { id: "3", name: "minimal" },
-    ];
-    const result = migrateRepos(repos);
-    expect(result).toHaveLength(3);
-    expect(result[1].worktreeBasePath).toBe("");
-    expect(result[2].localPath).toBe("");
-    expect(result[2].worktreeBasePath).toBe("");
+  it("turns each legacy repo into a single-member workspace, preserving ids", () => {
+    const { workspaces } = migrateLegacyToWorkspaces(
+      [{ id: "r1", name: "app", localPath: "/code/app", worktreeBasePath: "/wt/app" }],
+      [],
+    );
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0].id).toBe("r1");
+    expect(workspaces[0].name).toBe("app");
+    expect(workspaces[0].repos).toEqual([
+      {
+        id: "r1",
+        name: "app",
+        localPath: "/code/app",
+        worktreeBasePath: "/wt/app",
+      },
+    ]);
   });
 
-  it("copies global Linear API key to all repos when none have one", () => {
-    const repos = [
-      { id: "1", name: "app1", localPath: "/a", worktreeBasePath: "/wt/a" },
-      { id: "2", name: "app2", localPath: "/b", worktreeBasePath: "/wt/b" },
-    ];
-    const result = migrateRepos(repos, "lin_api_global");
-    expect(result[0].linearApiKey).toBe("lin_api_global");
-    expect(result[1].linearApiKey).toBe("lin_api_global");
+  it("turns each legacy worktree into a single-member task tied to its workspace", () => {
+    const { tasks } = migrateLegacyToWorkspaces(
+      [{ id: "r1", name: "app", localPath: "/code/app", worktreeBasePath: "/wt/app" }],
+      [
+        {
+          id: "w1",
+          repoId: "r1",
+          branchName: "feature/x",
+          path: "/wt/app/feature/x",
+          createdAt: "2024-01-01T00:00:00Z",
+          linearIssueId: "iss1",
+          linearIssueTitle: "Do X",
+          linearIssueIdentifier: "ABC-1",
+        },
+      ],
+    );
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      id: "w1",
+      workspaceId: "r1",
+      branchName: "feature/x",
+      linearIssueId: "iss1",
+      linearIssueIdentifier: "ABC-1",
+      workspaceFilePath: null,
+    });
+    expect(tasks[0].members).toEqual([
+      {
+        repoId: "r1",
+        repoName: "app",
+        localPath: "/code/app",
+        path: "/wt/app/feature/x",
+        branchName: "feature/x",
+      },
+    ]);
   });
 
-  it("does not overwrite existing per-repo Linear API key with global key", () => {
-    const repos = [
-      { id: "1", name: "app1", localPath: "/a", worktreeBasePath: "/wt/a", linearApiKey: "lin_api_existing" },
-      { id: "2", name: "app2", localPath: "/b", worktreeBasePath: "/wt/b" },
-    ];
-    const result = migrateRepos(repos, "lin_api_global");
-    expect(result[0].linearApiKey).toBe("lin_api_existing");
-    expect(result[1].linearApiKey).toBeNull();
+  it("applies the global Linear key to workspaces when no repo has one", () => {
+    const { workspaces } = migrateLegacyToWorkspaces(
+      [
+        { id: "r1", name: "a", localPath: "/a", worktreeBasePath: "/wt/a" },
+        { id: "r2", name: "b", localPath: "/b", worktreeBasePath: "/wt/b" },
+      ],
+      [],
+      "lin_api_global",
+    );
+    expect(workspaces[0].linearApiKey).toBe("lin_api_global");
+    expect(workspaces[1].linearApiKey).toBe("lin_api_global");
   });
 
-  it("does not apply global key when no repos exist", () => {
-    const result = migrateRepos([], "lin_api_global");
-    expect(result).toEqual([]);
+  it("does not overwrite an existing per-repo Linear key with the global one", () => {
+    const { workspaces } = migrateLegacyToWorkspaces(
+      [
+        { id: "r1", name: "a", localPath: "/a", worktreeBasePath: "/wt/a", linearApiKey: "keep" },
+        { id: "r2", name: "b", localPath: "/b", worktreeBasePath: "/wt/b" },
+      ],
+      [],
+      "lin_api_global",
+    );
+    expect(workspaces[0].linearApiKey).toBe("keep");
+    // global only applied when *every* repo lacks a key, so r2 stays null
+    expect(workspaces[1].linearApiKey).toBeNull();
+  });
+});
+
+describe("normalizeWorkspaces / normalizeTasks", () => {
+  it("fills defaults for partial workspace/repo objects", () => {
+    const [w] = normalizeWorkspaces([{ id: "w1", repos: [{ id: "r1" }] }]);
+    expect(w).toEqual({
+      id: "w1",
+      name: "",
+      linearApiKey: null,
+      repos: [{ id: "r1", name: "", localPath: "", worktreeBasePath: "" }],
+    });
   });
 
-  it("does not apply global key when it is null", () => {
-    const repos = [
-      { id: "1", name: "app1", localPath: "/a", worktreeBasePath: "/wt/a" },
-    ];
-    const result = migrateRepos(repos, null);
-    expect(result[0].linearApiKey).toBeNull();
+  it("fills task member defaults", () => {
+    const [t] = normalizeTasks([
+      {
+        id: "t1",
+        workspaceId: "w1",
+        members: [{ repoId: "r1", path: "/a" }],
+      },
+    ]);
+    expect(t.members[0]).toEqual({
+      repoId: "r1",
+      repoName: "",
+      localPath: "",
+      path: "/a",
+      branchName: "",
+    });
+    expect(t.workspaceFilePath).toBeNull();
+  });
+
+  it("returns empty arrays for nullish input", () => {
+    expect(normalizeWorkspaces(undefined)).toEqual([]);
+    expect(normalizeTasks(null)).toEqual([]);
   });
 });

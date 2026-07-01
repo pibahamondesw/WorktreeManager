@@ -12,14 +12,14 @@ import {
   MoreVerticalIcon,
   TrashIcon,
 } from "../ui/Icons";
-import { Worktree, Repo, EditorApp, GitStatus, IssueLinearInfo } from "../../types";
+import { Task, Workspace, EditorApp, GitStatus, IssueLinearInfo } from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
 import { timeAgo } from "../../utils";
 
 interface WorktreeCardProps {
-  worktree: Worktree;
-  repo: Repo;
-  onDelete: (worktreeId: string) => void;
+  task: Task;
+  workspace: Workspace;
+  onDelete: (taskId: string) => void;
   linearInfo?: IssueLinearInfo;
   gitStatus?: GitStatus;
   selected?: boolean;
@@ -41,8 +41,8 @@ const stateVariant: Record<string, "success" | "warning" | "accent" | "danger" |
 };
 
 export const WorktreeCard = memo(function WorktreeCard({
-  worktree,
-  repo,
+  task,
+  workspace,
   onDelete,
   linearInfo,
   gitStatus,
@@ -61,6 +61,10 @@ export const WorktreeCard = memo(function WorktreeCard({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const folders = task.members.map((m) => m.path);
+  // Repo used for git-remote / PR-compare links: the first member (order = workspace repo order).
+  const primaryRepo = task.members[0];
 
   useEffect(() => {
     if (requestDelete) {
@@ -81,7 +85,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   }, [menuOpen]);
 
   const handleOpen = async () => {
-    await openEditorForWorktree(editorApp, worktree.path, worktree.branchName, {
+    await openEditorForWorktree(editorApp, folders, task.branchName, workspace.name, {
       onMessage: onToast,
       onError: onOpenError,
     });
@@ -92,28 +96,42 @@ export const WorktreeCard = memo(function WorktreeCard({
     setConfirmDelete(true);
   };
 
+  const cleanupWorkspaceFile = async () => {
+    if (!task.workspaceFilePath) return;
+    try {
+      await invoke("delete_workspace_file", { path: task.workspaceFilePath });
+    } catch {
+      /* workspace-file cleanup is best-effort */
+    }
+  };
+
   const handleDeleteConfirm = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setConfirmDelete(false);
     setDeleteError(null);
     setDeleting(true);
     try {
-      await invoke<string>("git_worktree_remove", {
-        repoPath: repo.localPath,
-        worktreePath: worktree.path,
-      });
-      onDelete(worktree.id);
+      // Remove the worktree for each member.
+      for (const m of task.members) {
+        await invoke<string>("git_worktree_remove", {
+          repoPath: m.localPath,
+          worktreePath: m.path,
+        });
+      }
+      await cleanupWorkspaceFile();
+      onDelete(task.id);
     } catch (e) {
-      const msg = typeof e === "string" ? e : "Failed to remove worktree from disk";
+      const msg = typeof e === "string" ? e : "Failed to remove one or more worktrees from disk";
       setDeleteError(msg);
       setDeleting(false);
     }
   };
 
-  const handleForceRemove = (e: React.MouseEvent) => {
+  const handleForceRemove = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setDeleteError(null);
-    onDelete(worktree.id);
+    await cleanupWorkspaceFile();
+    onDelete(task.id);
   };
 
   const handleDeleteCancel = (e: React.MouseEvent) => {
@@ -126,10 +144,12 @@ export const WorktreeCard = memo(function WorktreeCard({
     e.stopPropagation();
     if (pr) {
       openUrl(pr.url);
-    } else {
+    } else if (primaryRepo) {
       try {
-        const remoteUrl = await invoke<string>("git_remote_url", { repoPath: repo.localPath });
-        openUrl(`${remoteUrl}/compare/${worktree.branchName}?expand=1`);
+        const remoteUrl = await invoke<string>("git_remote_url", {
+          repoPath: primaryRepo.localPath,
+        });
+        openUrl(`${remoteUrl}/compare/${task.branchName}?expand=1`);
       } catch {
         console.error("Could not determine remote URL");
       }
@@ -140,19 +160,20 @@ export const WorktreeCard = memo(function WorktreeCard({
     setMenuOpen(false);
     switch (action) {
       case "copy-branch":
-        navigator.clipboard.writeText(worktree.branchName);
+        navigator.clipboard.writeText(task.branchName);
         onToast?.("Branch name copied");
         break;
       case "copy-path":
-        navigator.clipboard.writeText(worktree.path);
-        onToast?.("Worktree path copied");
+        navigator.clipboard.writeText(folders.join("\n"));
+        onToast?.(folders.length > 1 ? "Folder paths copied" : "Worktree path copied");
         break;
       case "open-claude-code":
         try {
-          await invoke<string>("open_editor", {
+          await invoke<{ message: string; workspaceFile: string | null }>("open_editor", {
             editor: "claude-code",
-            path: worktree.path,
-            branchName: worktree.branchName,
+            folders,
+            branchName: task.branchName,
+            workspaceName: workspace.name,
           });
         } catch (e) {
           const msg = typeof e === "string" ? e : "Failed to open Claude Code";
@@ -164,8 +185,8 @@ export const WorktreeCard = memo(function WorktreeCard({
 
   const handleOpenLinear = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (worktree.linearIssueIdentifier) {
-      openUrl(`https://linear.app/issue/${worktree.linearIssueIdentifier}`);
+    if (task.linearIssueIdentifier) {
+      openUrl(`https://linear.app/issue/${task.linearIssueIdentifier}`);
     }
   };
 
@@ -176,18 +197,23 @@ export const WorktreeCard = memo(function WorktreeCard({
   };
 
   const handleCopyPath = (e: React.MouseEvent) =>
-    copyToClipboard(e, worktree.path, "Worktree path copied");
+    copyToClipboard(
+      e,
+      folders.join("\n"),
+      folders.length > 1 ? "Folder paths copied" : "Worktree path copied",
+    );
 
   const handleCopyBranch = (e: React.MouseEvent) =>
-    copyToClipboard(e, worktree.branchName, "Branch name copied");
+    copyToClipboard(e, task.branchName, "Branch name copied");
 
   const handleCopyLinear = (e: React.MouseEvent) => {
-    if (worktree.linearIssueIdentifier) {
-      copyToClipboard(e, worktree.linearIssueIdentifier, "Linear ID copied");
+    if (task.linearIssueIdentifier) {
+      copyToClipboard(e, task.linearIssueIdentifier, "Linear ID copied");
     }
   };
 
   const age = gitStatus ? timeAgo(gitStatus.last_commit_epoch) : null;
+  const showRepoChips = workspace.repos.length > 1 || task.members.length > 1;
 
   return (
     <div
@@ -207,14 +233,14 @@ export const WorktreeCard = memo(function WorktreeCard({
         <div className="min-w-0 flex-1">
           {/* Row 1: identifier + status + age */}
           <div className="flex items-center gap-2 mb-1">
-            {worktree.linearIssueIdentifier ? (
+            {task.linearIssueIdentifier ? (
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
                   onClick={handleOpenLinear}
                   className="text-xs font-mono text-accent hover:text-accent-hover transition-colors cursor-pointer inline-flex items-center gap-1"
                   title="Open on Linear"
                 >
-                  {worktree.linearIssueIdentifier}
+                  {task.linearIssueIdentifier}
                   <ExternalLinkIcon size={10} />
                 </button>
                 <button
@@ -226,9 +252,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                 </button>
               </div>
             ) : (
-              <span className="text-xs font-mono text-text-muted flex-shrink-0">
-                No issue
-              </span>
+              <span className="text-xs font-mono text-text-muted flex-shrink-0">No issue</span>
             )}
             {status && (
               <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
@@ -249,9 +273,9 @@ export const WorktreeCard = memo(function WorktreeCard({
           {/* Row 2: title */}
           <h3
             className="text-sm font-medium text-text-primary truncate"
-            title={worktree.linearIssueTitle || worktree.branchName}
+            title={task.linearIssueTitle || task.branchName}
           >
-            {worktree.linearIssueTitle || worktree.branchName}
+            {task.linearIssueTitle || task.branchName}
           </h3>
 
           {/* Row 3: branch + git status */}
@@ -261,9 +285,9 @@ export const WorktreeCard = memo(function WorktreeCard({
               <button
                 onClick={handleCopyPath}
                 className="text-xs font-mono text-text-muted hover:text-text-primary truncate transition-colors cursor-pointer text-left"
-                title="Copy worktree path"
+                title="Copy folder path(s)"
               >
-                {worktree.branchName}
+                {task.branchName}
               </button>
               <button
                 onClick={handleCopyBranch}
@@ -300,6 +324,21 @@ export const WorktreeCard = memo(function WorktreeCard({
               </div>
             )}
           </div>
+
+          {/* Row 3b: member repo chips (multi-repo tasks) */}
+          {showRepoChips && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              {task.members.map((m) => (
+                <span
+                  key={m.repoId}
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] bg-bg-hover text-text-muted"
+                  title={m.path}
+                >
+                  {m.repoName}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Row 4: PR link / create PR — pointer-events-none container so empty space clicks pass through to card */}
           {pr !== undefined && (
@@ -354,7 +393,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                   Copy branch name
                 </MenuButton>
                 <MenuButton label="⌘⇧C" onClick={() => handleMenuAction("copy-path")}>
-                  Copy worktree path
+                  {folders.length > 1 ? "Copy folder paths" : "Copy worktree path"}
                 </MenuButton>
                 <MenuButton onClick={() => handleMenuAction("open-claude-code")}>
                   Open in Claude Code
@@ -368,7 +407,7 @@ export const WorktreeCard = memo(function WorktreeCard({
             onClick={handleDeleteClick}
             disabled={deleting}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
-            title="Delete worktree (⌘D)"
+            title="Delete task (⌘D)"
           >
             {deleting ? <SpinnerIcon size={16} /> : <TrashIcon />}
           </button>
@@ -382,8 +421,13 @@ export const WorktreeCard = memo(function WorktreeCard({
           onClick={(e) => e.stopPropagation()}
         >
           <span className="text-xs text-text-secondary truncate">
-            Delete <strong className="text-text-primary">{worktree.linearIssueIdentifier || worktree.branchName}</strong>{" "}
-            and remove from disk?
+            Delete{" "}
+            <strong className="text-text-primary">
+              {task.linearIssueIdentifier || task.branchName}
+            </strong>
+            {task.members.length > 1
+              ? ` and its ${task.members.length} worktrees from disk?`
+              : " and remove from disk?"}
           </span>
           <div className="flex gap-2 flex-shrink-0">
             <button

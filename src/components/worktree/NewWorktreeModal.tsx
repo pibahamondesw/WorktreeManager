@@ -12,18 +12,23 @@ import {
   EDITOR_CONFIG_PATHS,
   EditorApp,
   LinearIssue,
-  Repo,
-  Worktree,
+  Task,
+  TaskMember,
+  Workspace,
 } from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
 
 interface NewWorktreeModalProps {
   open: boolean;
   onClose: () => void;
-  repo: Repo;
-  onCreated: (worktree: Worktree) => void;
+  workspace: Workspace;
+  onCreated: (task: Task) => void;
   editorApp: EditorApp;
   onOpenHint?: (msg: string) => void;
+}
+
+interface RepoSelection {
+  included: boolean;
 }
 
 const priorityLabels: Record<number, string> = {
@@ -44,7 +49,7 @@ const priorityVariants: Record<number, "danger" | "warning" | "accent" | "defaul
 export function NewWorktreeModal({
   open,
   onClose,
-  repo,
+  workspace,
   onCreated,
   editorApp,
   onOpenHint,
@@ -61,7 +66,7 @@ export function NewWorktreeModal({
   const [error, setError] = useState<string | null>(null);
   const [manualMode, setManualMode] = useState(false);
   const [manualBranch, setManualBranch] = useState("");
-  const [userSlug, setUserSlug] = useState("");
+  const [repoSel, setRepoSel] = useState<Record<string, RepoSelection>>({});
 
   const debouncedQuery = useDebounce(query, 300);
 
@@ -125,77 +130,110 @@ export function NewWorktreeModal({
       setRemoteResults([]);
       setManualMode(false);
       setManualBranch("");
+      return;
     }
-  }, [open]);
+    // Initialize the repo checklist: all repos included, each at its default mode.
+    const init: Record<string, RepoSelection> = {};
+    for (const r of workspace.repos) init[r.id] = { included: true };
+    setRepoSel(init);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, workspace.id]);
 
-  // The username used to namespace manual worktree paths, for the path preview.
-  useEffect(() => {
-    if (!open) return;
-    invoke<string>("git_user_slug", { repoPath: repo.localPath })
-      .then(setUserSlug)
-      .catch(() => setUserSlug(""));
-  }, [open, repo.localPath]);
+  const includedRepos = useMemo(
+    () => workspace.repos.filter((r) => repoSel[r.id]?.included),
+    [workspace.repos, repoSel],
+  );
+
+  const setIncluded = (repoId: string, included: boolean) =>
+    setRepoSel((prev) => ({ ...prev, [repoId]: { ...prev[repoId], included } }));
 
   const handleCreate = async () => {
-    let branchName = selected?.branchName ?? manualBranch.trim();
-    if (!branchName) return;
+    const branchInput = (selected?.branchName ?? manualBranch).trim();
+    if (!branchInput) return;
+    if (includedRepos.length === 0) {
+      setError("Select at least one repository");
+      return;
+    }
     setCreating(true);
     setError(null);
 
     try {
-      if (!repo.worktreeBasePath) {
-        setError("This project has no worktree directory configured. Please remove and re-add it.");
-        setCreating(false);
-        return;
-      }
-      let worktreePath = `${repo.worktreeBasePath}/${branchName}`;
+      const members: TaskMember[] = [];
+      for (const r of workspace.repos) {
+        const sel = repoSel[r.id];
+        if (!sel?.included) continue;
 
-      // Manual (non-Linear) worktrees aren't unique by construction the way Linear
-      // branch names are, so namespace them under the git username and append a unique
-      // suffix on collision — guaranteeing each gets its own distinct workspace.
-      if (!selected) {
-        const resolved = await invoke<{ branchName: string; path: string }>(
-          "resolve_manual_worktree",
-          {
-            repoPath: repo.localPath,
-            worktreeBasePath: repo.worktreeBasePath,
-            rawName: branchName,
-          },
-        );
-        branchName = resolved.branchName;
-        worktreePath = resolved.path;
-      }
+        // Every included repo gets its own isolated worktree on the task branch.
+        if (!r.worktreeBasePath) {
+          throw new Error(`${r.name} has no worktree directory configured — edit the workspace.`);
+        }
+        let branchName = branchInput;
+        let worktreePath = `${r.worktreeBasePath}/${branchName}`;
 
-      setCreatingStatus("Fetching latest from origin...");
-      await invoke<string>("git_worktree_add", {
-        repoPath: repo.localPath,
-        worktreePath,
-        branchName,
-      });
+        // Manual (non-Linear) branches aren't unique by construction the way Linear branch
+        // names are, so namespace them under the git username and append a unique suffix on
+        // collision — guaranteeing each repo gets its own distinct workspace.
+        if (!selected) {
+          const resolved = await invoke<{ branchName: string; path: string }>(
+            "resolve_manual_worktree",
+            {
+              repoPath: r.localPath,
+              worktreeBasePath: r.worktreeBasePath,
+              rawName: branchInput,
+            },
+          );
+          branchName = resolved.branchName;
+          worktreePath = resolved.path;
+        }
 
-      // Copy local (gitignored) config so the worktree doesn't start from
-      // scratch — editor config for the editor in use + env files.
-      // Best-effort: a copy failure must not abort worktree creation.
-      setCreatingStatus("Copying local config...");
-      try {
-        await invoke<string[]>("copy_local_configs", {
-          sourceRepo: repo.localPath,
+        setCreatingStatus(`Creating worktree in ${r.name}...`);
+        await invoke<string>("git_worktree_add", {
+          repoPath: r.localPath,
           worktreePath,
-          paths: [...EDITOR_CONFIG_PATHS[editorApp], ...ALWAYS_COPIED_CONFIG_PATHS],
+          branchName,
         });
-      } catch (cfgErr) {
-        console.warn("Could not copy local config:", cfgErr);
+
+        // Copy local (gitignored) config so the worktree doesn't start from scratch — editor
+        // config for the editor in use + env files. Best-effort: must not abort creation.
+        try {
+          await invoke<string[]>("copy_local_configs", {
+            sourceRepo: r.localPath,
+            worktreePath,
+            paths: [...EDITOR_CONFIG_PATHS[editorApp], ...ALWAYS_COPIED_CONFIG_PATHS],
+          });
+        } catch (cfgErr) {
+          console.warn(`Could not copy local config for ${r.name}:`, cfgErr);
+        }
+
+        members.push({
+          repoId: r.id,
+          repoName: r.name,
+          localPath: r.localPath,
+          path: worktreePath,
+          branchName,
+        });
       }
+
+      // Shared task branch: the first member's resolved branch, else the raw input.
+      const taskBranch = members[0]?.branchName ?? branchInput;
 
       if (selected && linear) {
         setCreatingStatus("Updating Linear issue...");
         await linear.startIssue(selected.id);
       }
 
-      const worktree: Worktree = {
+      // Open all included folders together (multi-root window / one Claude session).
+      setCreatingStatus("Opening editor...");
+      const folders = members.map((m) => m.path);
+      const result = await openEditorForWorktree(editorApp, folders, taskBranch, workspace.name, {
+        onMessage: onOpenHint,
+        onError: (msg) => console.warn("Could not open editor:", msg),
+      });
+
+      const task: Task = {
         id: uuid(),
-        repoId: repo.id,
-        branchName,
+        workspaceId: workspace.id,
+        branchName: taskBranch,
         ...(selected
           ? {
               linearIssueId: selected.id,
@@ -203,16 +241,11 @@ export function NewWorktreeModal({
               linearIssueIdentifier: selected.identifier,
             }
           : {}),
-        path: worktreePath,
+        members,
+        workspaceFilePath: result?.workspaceFile ?? null,
         createdAt: new Date().toISOString(),
       };
-      onCreated(worktree);
-
-      setCreatingStatus("Opening editor...");
-      await openEditorForWorktree(editorApp, worktreePath, branchName, {
-        onMessage: onOpenHint,
-        onError: (msg) => console.warn("Could not open editor:", msg),
-      });
+      onCreated(task);
 
       onClose();
     } catch (e) {
@@ -224,8 +257,39 @@ export function NewWorktreeModal({
 
   const showManualForm = !linear || manualMode;
 
+  const repoChecklist =
+    workspace.repos.length > 1 ? (
+      <div className="flex flex-col gap-2">
+        <p className="text-xs text-text-muted">Repositories in this task</p>
+        <div className="rounded-lg border border-border bg-bg-tertiary divide-y divide-border/50">
+          {workspace.repos.map((r) => {
+            const sel = repoSel[r.id];
+            const included = sel?.included ?? false;
+            return (
+              <label
+                key={r.id}
+                className="flex items-center gap-2 px-3 py-2 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={included}
+                  onChange={(e) => setIncluded(r.id, e.target.checked)}
+                  className="accent-accent"
+                />
+                <span
+                  className={`text-sm truncate ${included ? "text-text-primary" : "text-text-muted"}`}
+                >
+                  {r.name}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    ) : null;
+
   return (
-    <Modal open={open} onClose={onClose} title="New Worktree" wide={!showManualForm || !!selected}>
+    <Modal open={open} onClose={onClose} title="New Task" wide={!showManualForm || !!selected}>
       {showManualForm && !selected ? (
         /* Manual branch mode */
         <div className="p-6 space-y-4">
@@ -253,18 +317,7 @@ export function NewWorktreeModal({
             />
           </div>
 
-          {manualBranch.trim() && (
-            <div className="flex flex-col gap-1.5">
-              <p className="text-xs text-text-muted">Worktree path</p>
-              <code
-                className="block truncate text-sm text-text-secondary bg-bg-tertiary rounded px-3 py-2 font-mono text-xs select-text cursor-text"
-                title={`${repo.worktreeBasePath}/${userSlug ? `${userSlug}/` : ""}${manualBranch.trim()}`}
-              >
-                {repo.worktreeBasePath}/{userSlug ? `${userSlug}/` : ""}
-                {manualBranch.trim()}
-              </code>
-            </div>
-          )}
+          {repoChecklist}
 
           {error && (
             <div className="rounded-lg bg-danger/10 border border-danger/20 px-3 py-2">
@@ -283,7 +336,7 @@ export function NewWorktreeModal({
                 Cancel
               </Button>
               <Button onClick={handleCreate} loading={creating} disabled={!manualBranch.trim()}>
-                Create Worktree
+                Create Task
               </Button>
             </div>
           </div>
@@ -339,17 +392,9 @@ export function NewWorktreeModal({
                       {selected.branchName}
                     </code>
                   </div>
-
-                  <div className="pt-1">
-                    <p className="text-xs text-text-muted mb-1">Worktree path</p>
-                    <code
-                      className="block truncate text-sm text-text-secondary bg-bg-primary rounded px-3 py-2 font-mono text-xs select-text cursor-text"
-                      title={`${repo.worktreeBasePath}/${selected.branchName}`}
-                    >
-                      {repo.worktreeBasePath}/{selected.branchName}
-                    </code>
-                  </div>
                 </div>
+
+                {repoChecklist}
 
                 {error && (
                   <div className="rounded-lg bg-danger/10 border border-danger/20 px-3 py-2">
@@ -368,7 +413,7 @@ export function NewWorktreeModal({
                       Cancel
                     </Button>
                     <Button onClick={handleCreate} loading={creating}>
-                      Create Worktree
+                      Create Task
                     </Button>
                   </div>
                 </div>
