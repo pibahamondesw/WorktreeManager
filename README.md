@@ -1,5 +1,7 @@
 # WorktreeManager
 
+![WorktreeManager logo](assets/logo.png)
+
 A lightweight macOS desktop app for managing Git worktrees with Linear integration. Built with Tauri v2, React, and TypeScript.
 
 ## Features
