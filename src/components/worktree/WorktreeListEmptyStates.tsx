@@ -8,7 +8,7 @@ export function WorktreeNoRepoPlaceholder() {
         <div className="w-12 h-12 rounded-xl bg-bg-tertiary flex items-center justify-center mx-auto mb-3">
           <FolderIcon className="text-text-muted" />
         </div>
-        <p className="text-sm text-text-muted">Select a project or add one to get started</p>
+        <p className="text-sm text-text-muted">Select a workspace or add one to get started</p>
       </div>
     </div>
   );
@@ -25,9 +25,9 @@ export function WorktreeEmptyWorktrees({ onCreateFirst }: WorktreeEmptyWorktrees
         <div className="w-12 h-12 rounded-xl bg-bg-tertiary flex items-center justify-center mx-auto mb-3">
           <CodeBranchIcon className="text-text-muted" />
         </div>
-        <p className="text-sm text-text-muted mb-3">No active worktrees</p>
+        <p className="text-sm text-text-muted mb-3">No active tasks</p>
         <Button onClick={onCreateFirst} className="text-xs">
-          Create your first worktree
+          Create your first task
         </Button>
       </div>
     </div>

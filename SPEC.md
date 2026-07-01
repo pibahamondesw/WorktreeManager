@@ -70,22 +70,40 @@ tauri-plugin-shell = "2"
 
 ## Data Model
 
+A **Workspace** is a named space to work on one or more peer repos (`WorkspaceRepo`) — a single-repo workspace is the common case; multiple repos let a task span them. A **Task** is a unit of work on a shared branch; each member repo gets its own worktree (`TaskMember`), and opening a task opens every member folder together.
+
 ```typescript
-interface Repo {
-  id: string; // UUID
-  name: string; // Display name (e.g. "Fintoc Rails")
+interface WorkspaceRepo {
+  id: string;
+  name: string;
   localPath: string; // Absolute path to cloned repo (e.g. /Users/.../fintoc-rails)
   worktreeBasePath: string; // Where worktrees are created (e.g. ~/Documents/WorktreeManager/fintoc-rails)
 }
 
-interface Worktree {
-  id: string;
-  repoId: string;
+interface Workspace {
+  id: string; // UUID
+  name: string; // Display name (e.g. "Fintoc Rails")
+  repos: WorkspaceRepo[]; // Peer members, 1..N
+  linearApiKey?: string | null; // Optional per-workspace Linear key
+}
+
+interface TaskMember {
+  repoId: string; // WorkspaceRepo.id
+  repoName: string;
+  localPath: string; // The member repo's main clone
+  path: string; // The worktree directory opened for this member
   branchName: string;
-  linearIssueId: string;
-  linearIssueTitle: string;
-  linearIssueIdentifier: string; // e.g. "TSY-3140"
-  path: string; // Full path to worktree directory
+}
+
+interface Task {
+  id: string;
+  workspaceId: string;
+  branchName: string; // Shared across members
+  linearIssueId?: string;
+  linearIssueTitle?: string;
+  linearIssueIdentifier?: string; // e.g. "TSY-3140"
+  members: TaskMember[];
+  workspaceFilePath?: string | null; // Generated .code-workspace (Cursor/VS Code), when applicable
   createdAt: string; // ISO timestamp
 }
 
@@ -94,9 +112,9 @@ interface AppState {
     linearApiKey: string | null;
     isComplete: boolean;
   };
-  repos: Repo[];
-  worktrees: Worktree[];
-  selectedRepoId: string | null;
+  workspaces: Workspace[];
+  tasks: Task[];
+  selectedWorkspaceId: string | null;
 }
 
 interface LinearIssue {
@@ -134,7 +152,7 @@ interface PullRequestInfo {
 
 ### Layout Structure
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │  [traffic lights]    WorktreeManager                │  ← 38px titlebar drag area
 ├──────────┬──────────────────────────────────────────┤  ← 1px divider (full width, absolute positioned at top: 38px)
@@ -347,14 +365,15 @@ When the user clicks "Create Worktree" after selecting a Linear issue:
 
 ## Persistence
 
-Uses `@tauri-apps/plugin-store` with a `store.json` file. Four keys:
+Uses `@tauri-apps/plugin-store` with a `store.json` file. Keys:
 
 - `setup`: `{ linearApiKey, isComplete }`
-- `repos`: `Repo[]`
-- `worktrees`: `Worktree[]`
-- `selectedRepoId`: `string | null`
+- `workspaces`: `Workspace[]`
+- `tasks`: `Task[]`
+- `selectedWorkspaceId`: `string | null`
+- `schemaVersion`: `number` (currently `1`)
 
-Auto-save enabled. Load with migration support for schema changes.
+Auto-save enabled. On load, data from the pre-multi-repo schema (`repos`/`worktrees`/`selectedRepoId`) is migrated into single-repo workspaces and single-member tasks; a one-time `store.backup-preMultiRepo.json` is written and the legacy keys are left in place as a rollback point. The `tauri:dev:local` script runs the app under a separate identifier/store so development never touches the installed app's data.
 
 ---
 
@@ -436,7 +455,7 @@ Auto-save enabled. Load with migration support for schema changes.
 
 ## Project Structure
 
-```
+```text
 ├── src/
 │   ├── App.tsx                          # Root layout (sidebar + main panel)
 │   ├── index.css                        # Tailwind + theme variables + global styles

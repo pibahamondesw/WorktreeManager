@@ -30,6 +30,7 @@ pub fn run() {
             commands::cursor::open_cursor,
             commands::editor::open_editor,
             commands::editor::check_app_installed,
+            commands::workspace::delete_workspace_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

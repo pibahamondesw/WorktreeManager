@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { SetupWizard } from "./components/setup/SetupWizard";
-import { RepoList } from "./components/sidebar/RepoList";
+import { WorkspaceList } from "./components/sidebar/WorkspaceList";
 import { WorktreeList } from "./components/worktree/WorktreeList";
 import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
@@ -13,40 +13,40 @@ function App() {
     loading,
     editorApp,
     themeId,
-    selectedRepo,
-    selectedWorktrees,
+    selectedWorkspace,
+    selectedTasks,
     persistError,
     dismissPersistError,
     updateSetup,
-    addRepo,
-    updateRepo,
-    removeRepo,
-    selectRepo,
-    clearRepoSwitching,
-    repoSwitching,
-    addWorktree,
-    removeWorktree,
+    addWorkspace,
+    updateWorkspace,
+    removeWorkspace,
+    selectWorkspace,
+    clearWorkspaceSwitching,
+    workspaceSwitching,
+    addTask,
+    removeTask,
     updateEditorApp,
     updateThemeId,
   } = useStore();
 
-  const [showAddProject, setShowAddProject] = useState(false);
+  const [showAddWorkspace, setShowAddWorkspace] = useState(false);
 
-  const handleSelectRepo = useCallback(
-    (repoId: string) => {
-      if (repoId === state.selectedRepoId) return;
-      selectRepo(repoId);
+  const handleSelectWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (workspaceId === state.selectedWorkspaceId) return;
+      selectWorkspace(workspaceId);
     },
-    [state.selectedRepoId, selectRepo]
+    [state.selectedWorkspaceId, selectWorkspace]
   );
 
   const defaultLinearApiKey = useMemo(() => {
-    const lastRepoWithKey = [...state.repos].reverse().find((r) => r.linearApiKey);
-    return lastRepoWithKey?.linearApiKey ?? state.setup.linearApiKey ?? null;
-  }, [state.repos, state.setup.linearApiKey]);
+    const lastWithKey = [...state.workspaces].reverse().find((w) => w.linearApiKey);
+    return lastWithKey?.linearApiKey ?? state.setup.linearApiKey ?? null;
+  }, [state.workspaces, state.setup.linearApiKey]);
 
   useKeyboardShortcuts({
-    p: { handler: () => setShowAddProject(true), enabled: state.setup.isComplete },
+    p: { handler: () => setShowAddWorkspace(true), enabled: state.setup.isComplete },
   });
 
   if (loading) {
@@ -79,16 +79,16 @@ function App() {
         </div>
       )}
       <ErrorBoundary fallbackClassName="w-60 h-full bg-bg-secondary border-r border-border">
-        <RepoList
-          repos={state.repos}
-          worktrees={state.worktrees}
-          selectedRepoId={state.selectedRepoId}
-          onSelect={handleSelectRepo}
-          onAdd={addRepo}
-          onUpdate={updateRepo}
-          onRemove={removeRepo}
-          showAddExternal={showAddProject}
-          onCloseAddExternal={() => setShowAddProject(false)}
+        <WorkspaceList
+          workspaces={state.workspaces}
+          tasks={state.tasks}
+          selectedWorkspaceId={state.selectedWorkspaceId}
+          onSelect={handleSelectWorkspace}
+          onAdd={addWorkspace}
+          onUpdate={updateWorkspace}
+          onRemove={removeWorkspace}
+          showAddExternal={showAddWorkspace}
+          onCloseAddExternal={() => setShowAddWorkspace(false)}
           themeId={themeId}
           onThemeChange={updateThemeId}
           defaultLinearApiKey={defaultLinearApiKey}
@@ -96,14 +96,14 @@ function App() {
       </ErrorBoundary>
       <ErrorBoundary fallbackClassName="flex-1">
         <WorktreeList
-          worktrees={selectedWorktrees}
-          repo={selectedRepo}
-          onWorktreeCreated={addWorktree}
-          onWorktreeDeleted={removeWorktree}
+          tasks={selectedTasks}
+          workspace={selectedWorkspace}
+          onTaskCreated={addTask}
+          onTaskDeleted={removeTask}
           editorApp={editorApp}
           onEditorChange={updateEditorApp}
-          repoSwitching={repoSwitching}
-          onRepoReady={clearRepoSwitching}
+          workspaceSwitching={workspaceSwitching}
+          onWorkspaceReady={clearWorkspaceSwitching}
         />
       </ErrorBoundary>
     </div>

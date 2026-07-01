@@ -1,19 +1,22 @@
 import { useMemo, useState } from "react";
-import { Repo, Worktree } from "../../types";
-import { AddRepoModal } from "./AddRepoModal";
-import { EditRepoModal } from "./EditRepoModal";
-import { RemoveRepoModal } from "./RemoveRepoModal";
+import { Task, Workspace } from "../../types";
+import { AddWorkspaceModal } from "./AddWorkspaceModal";
+import { EditWorkspaceModal } from "./EditWorkspaceModal";
+import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
 import { ThemePicker } from "../ui/ThemePicker";
 import { PlusIcon, CloseIcon, GearIcon, SunIcon } from "../ui/Icons";
 
-interface RepoListProps {
-  repos: Repo[];
-  worktrees: Worktree[];
-  selectedRepoId: string | null;
-  onSelect: (repoId: string) => void;
-  onAdd: (repo: Repo) => void;
-  onUpdate: (repoId: string, updates: { name?: string; linearApiKey?: string | null }) => void;
-  onRemove: (repoId: string) => void;
+interface WorkspaceListProps {
+  workspaces: Workspace[];
+  tasks: Task[];
+  selectedWorkspaceId: string | null;
+  onSelect: (workspaceId: string) => void;
+  onAdd: (workspace: Workspace) => void;
+  onUpdate: (
+    workspaceId: string,
+    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>,
+  ) => void;
+  onRemove: (workspaceId: string) => void;
   showAddExternal?: boolean;
   onCloseAddExternal?: () => void;
   themeId: string;
@@ -21,10 +24,10 @@ interface RepoListProps {
   defaultLinearApiKey?: string | null;
 }
 
-export function RepoList({
-  repos,
-  worktrees,
-  selectedRepoId,
+export function WorkspaceList({
+  workspaces,
+  tasks,
+  selectedWorkspaceId,
   onSelect,
   onAdd,
   onUpdate,
@@ -34,20 +37,20 @@ export function RepoList({
   themeId,
   onThemeChange,
   defaultLinearApiKey,
-}: RepoListProps) {
+}: WorkspaceListProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [editRepo, setEditRepo] = useState<Repo | null>(null);
-  const [removeRepo, setRemoveRepo] = useState<Repo | null>(null);
+  const [editWorkspace, setEditWorkspace] = useState<Workspace | null>(null);
+  const [removeWorkspace, setRemoveWorkspace] = useState<Workspace | null>(null);
   const [showThemes, setShowThemes] = useState(false);
 
-  const worktreeCountByRepoId = useMemo(() => {
+  const taskCountByWorkspaceId = useMemo(() => {
     const m = new Map<string, number>();
-    for (const w of worktrees) {
-      m.set(w.repoId, (m.get(w.repoId) ?? 0) + 1);
+    for (const t of tasks) {
+      m.set(t.workspaceId, (m.get(t.workspaceId) ?? 0) + 1);
     }
     return m;
-  }, [worktrees]);
+  }, [tasks]);
 
   const addOpen = showAdd || !!showAddExternal;
   const closeAdd = () => {
@@ -68,41 +71,42 @@ export function RepoList({
           className="text-xs font-semibold uppercase tracking-wider text-text-muted"
           data-tauri-drag-region
         >
-          Projects
+          Workspaces
         </span>
         <button
           onClick={() => setShowAdd(true)}
           className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-          title="Add project (P)"
+          title="Add workspace (P)"
         >
           <PlusIcon size={14} />
         </button>
       </div>
 
-      {/* Repo list */}
+      {/* Workspace list */}
       <div className="flex-1 overflow-y-auto py-2 space-y-0.5">
-        {repos.length === 0 && (
+        {workspaces.length === 0 && (
           <div className="px-4 py-8 text-center">
-            <p className="text-sm text-text-muted">No projects yet</p>
+            <p className="text-sm text-text-muted">No workspaces yet</p>
             <button
               onClick={() => setShowAdd(true)}
               className="mt-2 text-sm text-accent hover:text-accent-hover transition-colors cursor-pointer"
             >
-              Add your first project
+              Add your first workspace
             </button>
           </div>
         )}
 
-        {repos.map((repo) => {
-          const activeWtCount = worktreeCountByRepoId.get(repo.id) ?? 0;
+        {workspaces.map((workspace) => {
+          const activeTaskCount = taskCountByWorkspaceId.get(workspace.id) ?? 0;
+          const repoCount = workspace.repos.length;
           return (
             <div
-              key={repo.id}
-              onClick={() => onSelect(repo.id)}
-              onMouseEnter={() => setHoveredId(repo.id)}
+              key={workspace.id}
+              onClick={() => onSelect(workspace.id)}
+              onMouseEnter={() => setHoveredId(workspace.id)}
               onMouseLeave={() => setHoveredId(null)}
               className={`group flex items-center justify-between gap-2 px-4 py-2.5 mx-2 rounded-lg cursor-pointer transition-colors ${
-                selectedRepoId === repo.id
+                selectedWorkspaceId === workspace.id
                   ? "bg-bg-active text-text-primary"
                   : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
               }`}
@@ -110,43 +114,48 @@ export function RepoList({
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <div
                   className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                    selectedRepoId === repo.id ? "bg-accent" : "bg-border-light"
+                    selectedWorkspaceId === workspace.id ? "bg-accent" : "bg-border-light"
                   }`}
                 />
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate min-w-0">{repo.name}</p>
-                  <span
-                    className={`inline-flex flex-shrink-0 items-center justify-center min-w-[1.125rem] rounded px-1 py-0.5 text-[10px] font-semibold tabular-nums ${
-                      selectedRepoId === repo.id
-                        ? "bg-bg-secondary text-text-muted"
-                        : "bg-bg-hover text-text-muted"
-                    }`}
-                    title={`${activeWtCount} active worktree${activeWtCount !== 1 ? "s" : ""}`}
-                  >
-                    {activeWtCount}
-                  </span>
+                <div className="flex flex-col min-w-0 flex-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <p className="text-sm font-medium truncate min-w-0">{workspace.name}</p>
+                    <span
+                      className={`inline-flex flex-shrink-0 items-center justify-center min-w-[1.125rem] rounded px-1 py-0.5 text-[10px] font-semibold tabular-nums ${
+                        selectedWorkspaceId === workspace.id
+                          ? "bg-bg-secondary text-text-muted"
+                          : "bg-bg-hover text-text-muted"
+                      }`}
+                      title={`${activeTaskCount} active task${activeTaskCount !== 1 ? "s" : ""}`}
+                    >
+                      {activeTaskCount}
+                    </span>
+                  </div>
+                  {repoCount > 1 && (
+                    <p className="text-[10px] text-text-muted truncate">{repoCount} repos</p>
+                  )}
                 </div>
               </div>
 
               <div
                 className={`flex items-center gap-0.5 flex-shrink-0 ${
-                  hoveredId === repo.id ? "opacity-100" : "opacity-0 pointer-events-none"
+                  hoveredId === workspace.id ? "opacity-100" : "opacity-0 pointer-events-none"
                 }`}
               >
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setEditRepo(repo);
+                    setEditWorkspace(workspace);
                   }}
                   className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary transition-colors cursor-pointer"
-                  title="Project settings"
+                  title="Workspace settings"
                 >
                   <GearIcon size={12} />
                 </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setRemoveRepo(repo);
+                    setRemoveWorkspace(workspace);
                   }}
                   className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-danger transition-colors cursor-pointer"
                 >
@@ -170,34 +179,34 @@ export function RepoList({
         </button>
       </div>
 
-      <AddRepoModal
+      <AddWorkspaceModal
         open={addOpen}
         onClose={closeAdd}
-        onAdd={(repo) => {
-          onAdd(repo);
+        onAdd={(workspace) => {
+          onAdd(workspace);
           closeAdd();
         }}
         defaultLinearApiKey={defaultLinearApiKey}
       />
 
-      {editRepo && (
-        <EditRepoModal
-          open={!!editRepo}
-          onClose={() => setEditRepo(null)}
-          repo={editRepo}
+      {editWorkspace && (
+        <EditWorkspaceModal
+          open={!!editWorkspace}
+          onClose={() => setEditWorkspace(null)}
+          workspace={editWorkspace}
           onSave={onUpdate}
         />
       )}
 
-      {removeRepo && (
-        <RemoveRepoModal
-          open={!!removeRepo}
-          onClose={() => setRemoveRepo(null)}
-          repo={removeRepo}
-          worktrees={worktrees.filter((w) => w.repoId === removeRepo.id)}
+      {removeWorkspace && (
+        <RemoveWorkspaceModal
+          open={!!removeWorkspace}
+          onClose={() => setRemoveWorkspace(null)}
+          workspace={removeWorkspace}
+          tasks={tasks.filter((t) => t.workspaceId === removeWorkspace.id)}
           onConfirm={() => {
-            onRemove(removeRepo.id);
-            setRemoveRepo(null);
+            onRemove(removeWorkspace.id);
+            setRemoveWorkspace(null);
           }}
         />
       )}

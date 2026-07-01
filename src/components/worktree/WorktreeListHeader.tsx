@@ -4,23 +4,25 @@ import { RefreshIcon, PlusIcon } from "../ui/Icons";
 import { EditorApp } from "../../types";
 
 interface WorktreeListHeaderProps {
-  repoName: string;
-  worktreeCount: number;
+  workspaceName: string;
+  taskCount: number;
+  repoCount: number;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
   onRefresh: () => void;
   refreshing: boolean;
-  onNewWorktree: () => void;
+  onNewTask: () => void;
 }
 
 export function WorktreeListHeader({
-  repoName,
-  worktreeCount,
+  workspaceName,
+  taskCount,
+  repoCount,
   editorApp,
   onEditorChange,
   onRefresh,
   refreshing,
-  onNewWorktree,
+  onNewTask,
 }: WorktreeListHeaderProps) {
   return (
     <>
@@ -31,10 +33,11 @@ export function WorktreeListHeader({
       >
         <div className="flex items-center gap-3" data-tauri-drag-region>
           <h2 className="text-sm font-semibold text-text-primary" data-tauri-drag-region>
-            {repoName}
+            {workspaceName}
           </h2>
           <span className="text-xs text-text-muted">
-            {worktreeCount} worktree{worktreeCount !== 1 ? "s" : ""}
+            {taskCount} task{taskCount !== 1 ? "s" : ""}
+            {repoCount > 1 ? ` · ${repoCount} repos` : ""}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -47,9 +50,9 @@ export function WorktreeListHeader({
           >
             <RefreshIcon className={refreshing ? "animate-spin" : ""} />
           </button>
-          <Button onClick={onNewWorktree} className="h-8 text-xs">
+          <Button onClick={onNewTask} className="h-8 text-xs">
             <PlusIcon />
-            New Worktree
+            New Task
             <kbd className="ml-1 text-[10px] opacity-50 font-mono">N</kbd>
           </Button>
         </div>

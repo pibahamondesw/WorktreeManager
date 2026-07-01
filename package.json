@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "tauri": "tauri",
+    "tauri:dev:local": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "lint": "npm run lint:ts && npm run lint:rust",
     "lint:ts": "eslint src --ext .ts,.tsx && eslint eslint.config.js",
     "lint:rust": "cd src-tauri && cargo clippy --all-targets && cargo fmt --all -- --check",

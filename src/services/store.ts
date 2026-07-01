@@ -1,8 +1,11 @@
 import { load, Store } from "@tauri-apps/plugin-store";
-import { AppState, DEFAULT_STATE, EDITOR_APPS, EditorApp, Worktree } from "../types";
-import { migrateRepos } from "../utils";
+import { AppState, DEFAULT_STATE, EDITOR_APPS, EditorApp } from "../types";
+import { migrateLegacyToWorkspaces, normalizeTasks, normalizeWorkspaces } from "../utils";
 
 let store: Store | null = null;
+
+/** Bump when the persisted shape changes. 1 = multi-repo workspaces/tasks. */
+const SCHEMA_VERSION = 1;
 
 async function getStore(): Promise<Store> {
   if (!store) {
@@ -23,27 +26,75 @@ export async function persist(entries: [string, unknown][]): Promise<void> {
   await s.save();
 }
 
+/**
+ * Write a one-shot copy of the legacy store data to a sidecar file so the pre-migration
+ * state can be recovered. Best-effort: never blocks migration. The legacy keys are also
+ * left untouched in the main store as an additional in-place rollback point.
+ */
+async function backupLegacyStore(data: Record<string, unknown>): Promise<void> {
+  try {
+    const backup = await load("store.backup-preMultiRepo.json", { defaults: {}, autoSave: false });
+    if ((await backup.get("repos")) != null) return; // don't clobber an existing backup
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) await backup.set(key, value);
+    }
+    await backup.set("backedUpAt", new Date().toISOString());
+    await backup.save();
+  } catch {
+    // Backup is best-effort; the user's manual backup + untouched legacy keys remain.
+  }
+}
+
+function resolveSelectedWorkspaceId(
+  candidate: string | null | undefined,
+  workspaces: AppState["workspaces"],
+): string | null {
+  if (candidate && workspaces.some((w) => w.id === candidate)) return candidate;
+  return workspaces[0]?.id ?? null;
+}
+
 export async function loadState(): Promise<AppState> {
   const s = await getStore();
   const setup = await s.get<AppState["setup"]>("setup");
-  const rawRepos = await s.get<any[]>("repos");
-  const worktrees = await s.get<Worktree[]>("worktrees");
-  const selectedRepoId = await s.get<string | null>("selectedRepoId");
+  const schemaVersion = (await s.get<number>("schemaVersion")) ?? 0;
+  const rawWorkspaces = await s.get<any[]>("workspaces");
 
-  const repos = migrateRepos(rawRepos ?? [], setup?.linearApiKey);
-
-  // Persist migrated repos if the global key was copied to repos
-  if (setup?.linearApiKey && rawRepos?.length && rawRepos.every((r: any) => !r.linearApiKey)) {
-    await s.set("repos", repos);
-    await s.save();
+  // Already on the multi-repo schema: load and normalize directly.
+  if (schemaVersion >= 1 || rawWorkspaces) {
+    const workspaces = normalizeWorkspaces(rawWorkspaces);
+    const tasks = normalizeTasks(await s.get<any[]>("tasks"));
+    const selectedWorkspaceId = resolveSelectedWorkspaceId(
+      await s.get<string | null>("selectedWorkspaceId"),
+      workspaces,
+    );
+    return { setup: setup ?? DEFAULT_STATE.setup, workspaces, tasks, selectedWorkspaceId };
   }
 
-  return {
-    setup: setup ?? DEFAULT_STATE.setup,
-    repos,
-    worktrees: worktrees ?? DEFAULT_STATE.worktrees,
-    selectedRepoId: selectedRepoId ?? DEFAULT_STATE.selectedRepoId,
-  };
+  // Legacy single-repo schema: migrate to workspaces/tasks.
+  const rawRepos = await s.get<any[]>("repos");
+  const rawWorktrees = await s.get<any[]>("worktrees");
+  const selectedRepoId = await s.get<string | null>("selectedRepoId");
+
+  const { workspaces, tasks } = migrateLegacyToWorkspaces(
+    rawRepos,
+    rawWorktrees,
+    setup?.linearApiKey,
+  );
+  const selectedWorkspaceId = resolveSelectedWorkspaceId(selectedRepoId, workspaces);
+
+  if (rawRepos?.length || rawWorktrees?.length) {
+    await backupLegacyStore({ repos: rawRepos, worktrees: rawWorktrees, selectedRepoId, setup });
+  }
+
+  // Persist the migrated shape + version. Legacy keys are intentionally left in place.
+  await persist([
+    ["workspaces", workspaces],
+    ["tasks", tasks],
+    ["selectedWorkspaceId", selectedWorkspaceId],
+    ["schemaVersion", SCHEMA_VERSION],
+  ]);
+
+  return { setup: setup ?? DEFAULT_STATE.setup, workspaces, tasks, selectedWorkspaceId };
 }
 
 export async function loadThemeId(): Promise<string> {
