@@ -96,7 +96,7 @@ export function WorktreeList({
 
   return (
     <LinearProvider apiKey={workspace.linearApiKey ?? null}>
-      <div className="flex-1 flex flex-col min-h-0 relative">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 relative">
         <WorktreeListHeader
           workspaceName={workspace.name}
           taskCount={tasks.length}
