@@ -10,7 +10,7 @@ cask "worktreemanager" do
   # The app updates itself via the Tauri updater, so Homebrew should not try to
   # manage upgrades or flag it as outdated.
   auto_updates true
-  depends_on macos: ">= :catalina"
+  depends_on macos: :catalina
 
   app "WorktreeManager.app"
 

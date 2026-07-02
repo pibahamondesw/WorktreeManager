@@ -7,6 +7,10 @@ prebuilt app with one command instead of building from source:
 brew install pibahamondesw/tap/worktreemanager
 ```
 
+On Homebrew 6+ the first install from this (non-official) tap requires trusting
+it — Homebrew prompts interactively, or run `brew trust pibahamondesw/tap` once
+beforehand.
+
 ## One-time setup (maintainer)
 
 1. **Create the tap repo.** On GitHub, create a public repo named

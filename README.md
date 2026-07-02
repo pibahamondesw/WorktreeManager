@@ -25,6 +25,11 @@ brew install pibahamondesw/tap/worktreemanager
 
 Then launch it from Spotlight or `/Applications`.
 
+> [!NOTE]
+> Homebrew 6+ asks you to confirm trust for third-party taps the first time. If
+> the install is refused non-interactively, trust the tap once up front:
+> `brew trust pibahamondesw/tap`.
+
 **The app keeps itself up to date.** On startup it checks for a newer release and
 offers to download and install it, so you don't need to reinstall to upgrade.
 (Prefer Homebrew's own flow? `brew upgrade` works too.)
