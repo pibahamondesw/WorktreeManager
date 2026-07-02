@@ -87,20 +87,17 @@ export function TokenInput({
         </div>
       )}
 
-      <a
-        href={linkUrl}
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        type="button"
         className="inline-flex items-center gap-1 text-sm text-accent hover:text-accent-hover transition-colors"
-        onClick={async (e) => {
-          e.preventDefault();
+        onClick={async () => {
           const { openUrl } = await import("@tauri-apps/plugin-opener");
           openUrl(linkUrl);
         }}
       >
         {linkText}
         <ExternalLinkIcon size={12} />
-      </a>
+      </button>
     </div>
   );
 }

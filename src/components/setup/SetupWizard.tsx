@@ -41,7 +41,7 @@ export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
           <TokenInput
             title="Connect Linear"
             description="Enter your Linear API key to search issues and manage worktrees."
-            linkUrl="https://linear.app/settings/api"
+            linkUrl="https://linear.app/settings/account/security"
             linkText="Generate API key"
             value={linearKey}
             onChange={setLinearKey}
