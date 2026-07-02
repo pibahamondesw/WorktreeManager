@@ -15,11 +15,36 @@ A lightweight macOS desktop app for managing Git worktrees with Linear integrati
 - **Keyboard-driven** — Navigate with arrows/numbers, shortcuts for all common actions
 - **Themes** — 8 built-in color themes (Indigo, Ocean, Forest, Sunset, Rose, Nord, Dracula, Monochrome)
 
-## Local Installation
+## Installation
+
+Install with [Homebrew](https://brew.sh):
+
+```bash
+brew install pibahamondesw/tap/worktreemanager
+```
+
+Then launch it from Spotlight or `/Applications`.
+
+> [!NOTE]
+> Homebrew 6+ asks you to confirm trust for third-party taps the first time. If
+> the install is refused non-interactively, trust the tap once up front:
+> `brew trust pibahamondesw/tap`.
+
+**The app keeps itself up to date.** On startup it checks for a newer release and
+offers to download and install it, so you don't need to reinstall to upgrade.
+(Prefer Homebrew's own flow? `brew upgrade` works too.)
+
+> [!NOTE]
+> The app isn't notarized by Apple yet. Homebrew strips the download quarantine
+> on install, so it launches normally. If you ever download the app tarball
+> directly instead of using Homebrew, right-click the app and choose **Open** the
+> first time.
+
+## Building from source
+
+Only needed for development, or if you'd rather not use Homebrew.
 
 ### Prerequisites
-
-Install the following before building:
 
 1. **Rust** (1.77.2+) — Install via [rustup](https://rustup.rs/):
 
@@ -42,40 +67,40 @@ Install the following before building:
    - [OpenCode](https://opencode.ai/) — AI-native desktop editor
    - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Anthropic's CLI coding agent (runs in Terminal)
 
-### Build & Install
+### Build
 
 ```bash
-# 1. Clone the repository
-git clone <repo-url> && cd WorktreeManager
-
-# 2. Install Node dependencies
+git clone https://github.com/pibahamondesw/WorktreeManager.git && cd WorktreeManager
 npm install
-
-# 3. Build the production app
 npm run tauri build
-```
-
-This compiles the Rust backend, bundles the React frontend, and produces a macOS `.app` bundle.
-
-### Install to Applications
-
-After building, copy the app to your Applications folder:
-
-```bash
 cp -R src-tauri/target/release/bundle/macos/WorktreeManager.app /Applications/
 ```
 
-You can then launch it from Spotlight or from `/Applications`.
+### Development mode
 
-### Development Mode
-
-To run the app in development with hot-reload:
+To run the app with hot-reload:
 
 ```bash
 npm run tauri dev
 ```
 
 This starts the Vite dev server on `localhost:5173` and opens the Tauri window pointed at it.
+
+## Releasing
+
+Releases are automated by [`.github/workflows/release.yml`](.github/workflows/release.yml).
+To cut a release:
+
+```bash
+npm run release 0.2.0       # bumps version in all 3 files, commits, tags v0.2.0
+git push && git push origin v0.2.0
+```
+
+Pushing the tag builds a universal macOS app on CI, publishes a GitHub Release
+(the `.app` tarball + updater signature + `latest.json`), and bumps the Homebrew
+cask. See
+[`homebrew/README.md`](homebrew/README.md) for the one-time tap setup and the
+signing secrets involved.
 
 ## First Launch
 

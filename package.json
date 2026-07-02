@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pibahamondesw/WorktreeManager.git"
+  },
+  "homepage": "https://github.com/pibahamondesw/WorktreeManager",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -16,15 +21,18 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{js,json,md,html}\"",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "release": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@linear/sdk": "^75.0.0",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-opener": "^2.5.3",
+    "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@tauri-apps/plugin-store": "^2.4.2",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "uuid": "^13.0.0"

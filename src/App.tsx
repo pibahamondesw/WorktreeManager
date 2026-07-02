@@ -6,6 +6,7 @@ import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useUpdater } from "./hooks/useUpdater";
 
 function App() {
   const {
@@ -48,6 +49,8 @@ function App() {
   useKeyboardShortcuts({
     p: { handler: () => setShowAddWorkspace(true), enabled: state.setup.isComplete },
   });
+
+  useUpdater();
 
   if (loading) {
     return (
