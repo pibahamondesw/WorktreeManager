@@ -35,10 +35,10 @@ offers to download and install it, so you don't need to reinstall to upgrade.
 (Prefer Homebrew's own flow? `brew upgrade` works too.)
 
 > [!NOTE]
-> The app isn't notarized by Apple yet. Homebrew strips the download quarantine
-> on install, so it launches normally. If you ever download the app tarball
-> directly instead of using Homebrew, right-click the app and choose **Open** the
-> first time.
+> The app isn't notarized by Apple yet. The Homebrew cask strips the download
+> quarantine on install (via a `postflight`), so it launches normally. If you
+> instead download the app tarball directly, right-click the app and choose
+> **Open** the first time to get past Gatekeeper.
 
 ## Building from source
 
