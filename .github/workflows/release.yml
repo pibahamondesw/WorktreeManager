@@ -1,0 +1,101 @@
+name: Release
+
+# Pushing a tag like `v0.2.0` (see `npm run release`) builds the macOS app,
+# publishes a GitHub Release with the DMG + updater artifacts + latest.json,
+# then bumps the Homebrew cask in pibahamondesw/homebrew-tap.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    name: Build & publish macOS release
+    runs-on: macos-latest
+    permissions:
+      contents: write # create the GitHub Release and upload assets
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build, sign updater artifacts, and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (free, from `tauri signer generate`). Required so the
+          # in-app updater will accept the downloaded build.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Apple Developer ID signing + notarization. Leave unset to ship
+          # unsigned; set all of these later to notarize with no other changes.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "WorktreeManager ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download and install. The app auto-updates after install."
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          args: --target universal-apple-darwin
+
+  update-tap:
+    name: Bump Homebrew cask
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      # Fine-grained PAT with contents:write on pibahamondesw/homebrew-tap.
+      # If unset, this job no-ops (bump the cask by hand for now).
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Compute version and DMG checksum
+        if: ${{ env.TAP_TOKEN != '' }}
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ASSET="WorktreeManager.app.tar.gz"
+          URL="https://github.com/pibahamondesw/WorktreeManager/releases/download/${GITHUB_REF_NAME}/${ASSET}"
+          curl -fsSL -o "$ASSET" "$URL"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "$ASSET" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tap
+        if: ${{ env.TAP_TOKEN != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: pibahamondesw/homebrew-tap
+          token: ${{ env.TAP_TOKEN }}
+          path: tap
+
+      - name: Rewrite cask and push
+        if: ${{ env.TAP_TOKEN != '' }}
+        run: |
+          CASK=tap/Casks/worktreemanager.rb
+          sed -i -E "s/  version \"[^\"]+\"/  version \"${{ steps.meta.outputs.version }}\"/" "$CASK"
+          sed -i -E "s/  sha256 \"[^\"]+\"/  sha256 \"${{ steps.meta.outputs.sha256 }}\"/" "$CASK"
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/worktreemanager.rb
+          git commit -m "worktreemanager ${{ steps.meta.outputs.version }}"
+          git push
