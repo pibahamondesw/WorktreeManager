@@ -14,6 +14,7 @@ function App() {
     loading,
     editorApp,
     themeId,
+    customColors,
     selectedWorkspace,
     selectedTasks,
     persistError,
@@ -29,6 +30,7 @@ function App() {
     removeTask,
     updateEditorApp,
     updateThemeId,
+    updateCustomColors,
   } = useStore();
 
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
@@ -94,6 +96,8 @@ function App() {
           onCloseAddExternal={() => setShowAddWorkspace(false)}
           themeId={themeId}
           onThemeChange={updateThemeId}
+          customColors={customColors}
+          onCustomColorsChange={updateCustomColors}
           defaultLinearApiKey={defaultLinearApiKey}
         />
       </ErrorBoundary>

@@ -21,6 +21,8 @@ interface WorkspaceListProps {
   onCloseAddExternal?: () => void;
   themeId: string;
   onThemeChange: (themeId: string) => void;
+  customColors: Record<string, string> | null;
+  onCustomColorsChange: (colors: Record<string, string>) => void;
   defaultLinearApiKey?: string | null;
 }
 
@@ -36,6 +38,8 @@ export function WorkspaceList({
   onCloseAddExternal,
   themeId,
   onThemeChange,
+  customColors,
+  onCustomColorsChange,
   defaultLinearApiKey,
 }: WorkspaceListProps) {
   const [showAdd, setShowAdd] = useState(false);
@@ -216,6 +220,8 @@ export function WorkspaceList({
         onClose={() => setShowThemes(false)}
         currentThemeId={themeId}
         onThemeChange={onThemeChange}
+        customColors={customColors}
+        onCustomColorsChange={onCustomColorsChange}
       />
     </aside>
   );
