@@ -4,6 +4,39 @@ export interface Theme {
   colors: Record<string, string>;
 }
 
+/** Id of the user-configurable theme (not part of the `themes` preset list). */
+export const CUSTOM_THEME_ID = "custom";
+
+/** A single editable color token, used to render the custom theme editor. */
+export interface ThemeColorToken {
+  key: string;
+  label: string;
+  group: string;
+}
+
+/**
+ * All 16 color tokens in display order, grouped by category. Keys must match
+ * the `colors` records of every theme (and the `@theme` block in index.css).
+ */
+export const THEME_COLOR_TOKENS: ThemeColorToken[] = [
+  { key: "bg-primary", label: "Primary background", group: "Background" },
+  { key: "bg-secondary", label: "Secondary background", group: "Background" },
+  { key: "bg-tertiary", label: "Tertiary background", group: "Background" },
+  { key: "bg-hover", label: "Hover background", group: "Background" },
+  { key: "bg-active", label: "Active background", group: "Background" },
+  { key: "border", label: "Border", group: "Border" },
+  { key: "border-light", label: "Light border", group: "Border" },
+  { key: "text-primary", label: "Primary text", group: "Text" },
+  { key: "text-secondary", label: "Secondary text", group: "Text" },
+  { key: "text-muted", label: "Muted text", group: "Text" },
+  { key: "accent", label: "Accent", group: "Accent" },
+  { key: "accent-hover", label: "Accent hover", group: "Accent" },
+  { key: "success", label: "Success", group: "Status" },
+  { key: "warning", label: "Warning", group: "Status" },
+  { key: "danger", label: "Danger", group: "Status" },
+  { key: "danger-hover", label: "Danger hover", group: "Status" },
+];
+
 export const themes: Theme[] = [
   {
     id: "default",
@@ -183,14 +216,20 @@ export const themes: Theme[] = [
   },
 ];
 
-export function applyTheme(themeId: string) {
-  const theme = themes.find((t) => t.id === themeId) ?? themes[0];
+export function applyTheme(themeId: string, customColors?: Record<string, string>) {
+  const colors =
+    themeId === CUSTOM_THEME_ID
+      ? (customColors ?? themes[0].colors)
+      : (themes.find((t) => t.id === themeId) ?? themes[0]).colors;
   const root = document.documentElement;
-  for (const [key, value] of Object.entries(theme.colors)) {
+  for (const [key, value] of Object.entries(colors)) {
     root.style.setProperty(`--color-${key}`, value);
   }
 }
 
-export function getTheme(themeId: string): Theme {
+export function getTheme(themeId: string, customColors?: Record<string, string>): Theme {
+  if (themeId === CUSTOM_THEME_ID) {
+    return { id: CUSTOM_THEME_ID, name: "Custom", colors: customColors ?? themes[0].colors };
+  }
   return themes.find((t) => t.id === themeId) ?? themes[0];
 }

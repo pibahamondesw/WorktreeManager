@@ -102,6 +102,16 @@ export async function loadThemeId(): Promise<string> {
   return (await s.get<string>("themeId")) ?? "default";
 }
 
+/**
+ * Load the user's saved custom-theme colors, or `null` when they have never
+ * customized. `null` is the signal to seed the custom theme from the active
+ * preset the first time it is selected.
+ */
+export async function loadCustomColors(): Promise<Record<string, string> | null> {
+  const s = await getStore();
+  return (await s.get<Record<string, string>>("customTheme")) ?? null;
+}
+
 export async function loadEditorApp(): Promise<EditorApp> {
   const s = await getStore();
   const stored = await s.get<EditorApp>("editorApp");

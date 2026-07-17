@@ -1,24 +1,28 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { loadState, loadEditorApp, loadThemeId, persist } from "../services/store";
+import { loadState, loadEditorApp, loadThemeId, loadCustomColors, persist } from "../services/store";
 import { AppState, DEFAULT_STATE, EditorApp, Task, Workspace } from "../types";
-import { applyTheme } from "../themes";
+import { applyTheme, themes, CUSTOM_THEME_ID } from "../themes";
 
 export function useStore() {
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [loading, setLoading] = useState(true);
   const [editorApp, setEditorAppState] = useState<EditorApp>("cursor");
   const [themeId, setThemeIdState] = useState("default");
+  const [customColors, setCustomColors] = useState<Record<string, string> | null>(null);
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([loadState(), loadEditorApp(), loadThemeId()]).then(([s, editor, theme]) => {
-      setState(s);
-      setEditorAppState(editor);
-      setThemeIdState(theme);
-      applyTheme(theme);
-      setLoading(false);
-    });
+    Promise.all([loadState(), loadEditorApp(), loadThemeId(), loadCustomColors()]).then(
+      ([s, editor, theme, custom]) => {
+        setState(s);
+        setEditorAppState(editor);
+        setThemeIdState(theme);
+        setCustomColors(custom);
+        applyTheme(theme, theme === CUSTOM_THEME_ID ? (custom ?? undefined) : undefined);
+        setLoading(false);
+      },
+    );
   }, []);
 
   const dismissPersistError = useCallback(() => setPersistError(null), []);
@@ -177,21 +181,54 @@ export function useStore() {
     }
   }, []);
 
-  const updateThemeId = useCallback(async (id: string) => {
-    let prevTheme: string;
-    setThemeIdState((current) => {
-      prevTheme = current;
-      return id;
-    });
-    applyTheme(id);
-    try {
-      await persist([["themeId", id]]);
-    } catch {
-      setThemeIdState(prevTheme!);
-      applyTheme(prevTheme!);
-      setPersistError("Failed to save theme preference");
-    }
-  }, []);
+  const updateThemeId = useCallback(
+    async (id: string) => {
+      const prevTheme = themeId;
+      const prevCustom = customColors;
+
+      // First time Custom is selected (no saved colors yet): seed it from the
+      // currently-active preset so the user starts from a familiar palette.
+      let seeded = customColors;
+      if (id === CUSTOM_THEME_ID && !seeded) {
+        const source = themes.find((t) => t.id === prevTheme) ?? themes[0];
+        seeded = { ...source.colors };
+        setCustomColors(seeded);
+      }
+
+      setThemeIdState(id);
+      applyTheme(id, id === CUSTOM_THEME_ID ? (seeded ?? undefined) : undefined);
+
+      try {
+        const entries: [string, unknown][] = [["themeId", id]];
+        if (id === CUSTOM_THEME_ID && !prevCustom && seeded) {
+          entries.push(["customTheme", seeded]);
+        }
+        await persist(entries);
+      } catch {
+        setThemeIdState(prevTheme);
+        setCustomColors(prevCustom);
+        applyTheme(prevTheme, prevTheme === CUSTOM_THEME_ID ? (prevCustom ?? undefined) : undefined);
+        setPersistError("Failed to save theme preference");
+      }
+    },
+    [themeId, customColors],
+  );
+
+  const updateCustomColors = useCallback(
+    async (colors: Record<string, string>) => {
+      const prevCustom = customColors;
+      setCustomColors(colors);
+      applyTheme(CUSTOM_THEME_ID, colors);
+      try {
+        await persist([["customTheme", colors]]);
+      } catch {
+        setCustomColors(prevCustom);
+        applyTheme(CUSTOM_THEME_ID, prevCustom ?? undefined);
+        setPersistError("Failed to save theme preference");
+      }
+    },
+    [customColors],
+  );
 
   const selectedWorkspace = useMemo(
     () => state.workspaces.find((w) => w.id === state.selectedWorkspaceId),
@@ -207,6 +244,7 @@ export function useStore() {
     loading,
     editorApp,
     themeId,
+    customColors,
     selectedWorkspace,
     selectedTasks,
     workspaceSwitching,
@@ -222,5 +260,6 @@ export function useStore() {
     removeTask,
     updateEditorApp,
     updateThemeId,
+    updateCustomColors,
   };
 }
