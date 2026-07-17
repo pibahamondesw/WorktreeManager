@@ -45,11 +45,10 @@ fn doppler_config_path(worktree_path: &str) -> Option<PathBuf> {
 /// pulling in a YAML parser; top-level keys sit at column 0.
 fn has_setup_block(config: &Path) -> bool {
     match fs::read_to_string(config) {
-        Ok(contents) => contents
-            .lines()
-            .any(|line| line.strip_prefix("setup:").is_some_and(|rest| {
-                rest.is_empty() || rest.starts_with(char::is_whitespace)
-            })),
+        Ok(contents) => contents.lines().any(|line| {
+            line.strip_prefix("setup:")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+        }),
         Err(_) => false,
     }
 }
