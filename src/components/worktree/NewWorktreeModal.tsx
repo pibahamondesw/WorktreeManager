@@ -205,6 +205,21 @@ export function NewWorktreeModal({
           console.warn(`Could not copy local config for ${r.name}:`, cfgErr);
         }
 
+        // If the repo commits a Doppler config with a setup: block, scope it for this worktree
+        // automatically so no manual `doppler setup` is needed.
+        try {
+          setCreatingStatus(`Configuring Doppler in ${r.name}...`);
+          const doppler = await invoke<{ status: string; message: string }>("doppler_setup", {
+            worktreePath,
+          });
+          if (doppler.status === "error") {
+            console.warn(`Doppler setup failed for ${r.name}: ${doppler.message}`);
+            onOpenHint?.(`Doppler setup failed for ${r.name} — check you're logged in`);
+          }
+        } catch (dopplerErr) {
+          console.warn(`Could not run Doppler setup for ${r.name}:`, dopplerErr);
+        }
+
         members.push({
           repoId: r.id,
           repoName: r.name,
