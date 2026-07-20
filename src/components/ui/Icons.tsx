@@ -189,6 +189,19 @@ export function MoreVerticalIcon({ size = 14, className = "" }: IconProps) {
   );
 }
 
+export function GripIcon({ size = 12, className = "" }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" className={className}>
+      <circle cx="6" cy="4" r="1.25" />
+      <circle cx="10" cy="4" r="1.25" />
+      <circle cx="6" cy="8" r="1.25" />
+      <circle cx="10" cy="8" r="1.25" />
+      <circle cx="6" cy="12" r="1.25" />
+      <circle cx="10" cy="12" r="1.25" />
+    </svg>
+  );
+}
+
 export function BranchIcon({ size = 12, className = "" }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" className={className}>

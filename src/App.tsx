@@ -23,6 +23,7 @@ function App() {
     addWorkspace,
     updateWorkspace,
     removeWorkspace,
+    reorderWorkspaces,
     selectWorkspace,
     clearWorkspaceSwitching,
     workspaceSwitching,
@@ -92,6 +93,7 @@ function App() {
           onAdd={addWorkspace}
           onUpdate={updateWorkspace}
           onRemove={removeWorkspace}
+          onReorder={reorderWorkspaces}
           showAddExternal={showAddWorkspace}
           onCloseAddExternal={() => setShowAddWorkspace(false)}
           themeId={themeId}

@@ -116,6 +116,37 @@ export function useStore() {
     }
   }, []);
 
+  const reorderWorkspaces = useCallback((fromIndex: number, toIndex: number) => {
+    let snapshot: AppState;
+    let newWorkspaces: Workspace[];
+    setState((prev) => {
+      snapshot = prev;
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= prev.workspaces.length ||
+        toIndex >= prev.workspaces.length
+      ) {
+        newWorkspaces = prev.workspaces;
+        return prev;
+      }
+      newWorkspaces = [...prev.workspaces];
+      const [moved] = newWorkspaces.splice(fromIndex, 1);
+      newWorkspaces.splice(toIndex, 0, moved);
+      return { ...prev, workspaces: newWorkspaces };
+    });
+    if (newWorkspaces! === snapshot!.workspaces) return;
+    void (async () => {
+      try {
+        await persist([["workspaces", newWorkspaces!]]);
+      } catch {
+        setState(snapshot!);
+        setPersistError("Failed to save workspace order");
+      }
+    })();
+  }, []);
+
   const selectWorkspace = useCallback((workspaceId: string) => {
     let snapshot: AppState;
     setState((prev) => {
@@ -254,6 +285,7 @@ export function useStore() {
     addWorkspace,
     updateWorkspace,
     removeWorkspace,
+    reorderWorkspaces,
     selectWorkspace,
     clearWorkspaceSwitching,
     addTask,
