@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Button } from "../ui/Button";
 import { TokenInput } from "./TokenInput";
-import { WrenchIcon } from "../ui/Icons";
 import { validateLinearToken } from "../../services/linear";
 import { AppState } from "../../types";
+import logo from "../../assets/logo.png";
 
 interface SetupWizardProps {
   initialSetup: AppState["setup"];
@@ -27,9 +27,11 @@ export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
       <div className="w-[420px] flex flex-col items-center gap-8">
         {/* Logo */}
         <div className="flex flex-col items-center gap-3">
-          <div className="w-16 h-16 rounded-2xl bg-accent/20 flex items-center justify-center">
-            <WrenchIcon className="text-accent" />
-          </div>
+          <img
+            src={logo}
+            alt="WorktreeManager"
+            className="w-40 h-40 rounded-2xl object-cover"
+          />
           <h1 className="text-xl font-semibold text-text-primary">WorktreeManager</h1>
           <p className="text-sm text-text-secondary text-center">
             Manage git worktrees with ease
