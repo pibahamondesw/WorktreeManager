@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Task, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { EditWorkspaceModal } from "./EditWorkspaceModal";
 import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
 import { ThemePicker } from "../ui/ThemePicker";
-import { PlusIcon, CloseIcon, GearIcon, SunIcon } from "../ui/Icons";
+import { PlusIcon, CloseIcon, GearIcon, SunIcon, GripIcon } from "../ui/Icons";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -17,6 +17,7 @@ interface WorkspaceListProps {
     updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>,
   ) => void;
   onRemove: (workspaceId: string) => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
   showAddExternal?: boolean;
   onCloseAddExternal?: () => void;
   themeId: string;
@@ -34,6 +35,7 @@ export function WorkspaceList({
   onAdd,
   onUpdate,
   onRemove,
+  onReorder,
   showAddExternal,
   onCloseAddExternal,
   themeId,
@@ -47,6 +49,44 @@ export function WorkspaceList({
   const [editWorkspace, setEditWorkspace] = useState<Workspace | null>(null);
   const [removeWorkspace, setRemoveWorkspace] = useState<Workspace | null>(null);
   const [showThemes, setShowThemes] = useState(false);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  // Source index lives in a ref so drop logic never depends on async state having flushed.
+  const dragIndexRef = useRef<number | null>(null);
+
+  const draggingIndex = draggingId ? workspaces.findIndex((w) => w.id === draggingId) : -1;
+
+  const handleDragStart = (e: React.DragEvent, index: number, id: string) => {
+    dragIndexRef.current = index;
+    setDraggingId(id);
+    e.dataTransfer.effectAllowed = "move";
+    // Some engines require data to be set for the drag to initiate.
+    e.dataTransfer.setData("text/plain", String(index));
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    // Must always preventDefault so this element is a valid drop target and `drop` fires.
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (index !== dragOverIndex) setDragOverIndex(index);
+  };
+
+  const handleDrop = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    const from = dragIndexRef.current;
+    if (from !== null && from !== index) {
+      onReorder(from, index);
+    }
+    dragIndexRef.current = null;
+    setDraggingId(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    dragIndexRef.current = null;
+    setDraggingId(null);
+    setDragOverIndex(null);
+  };
 
   const taskCountByWorkspaceId = useMemo(() => {
     const m = new Map<string, number>();
@@ -100,21 +140,43 @@ export function WorkspaceList({
           </div>
         )}
 
-        {workspaces.map((workspace) => {
+        {workspaces.map((workspace, index) => {
           const activeTaskCount = taskCountByWorkspaceId.get(workspace.id) ?? 0;
           const repoCount = workspace.repos.length;
+          const isDragging = draggingId === workspace.id;
+          const showDropIndicator =
+            draggingId !== null && dragOverIndex === index && !isDragging;
+          const dropAbove = showDropIndicator && draggingIndex > index;
+          const dropBelow = showDropIndicator && draggingIndex < index;
           return (
             <div
               key={workspace.id}
+              draggable
               onClick={() => onSelect(workspace.id)}
               onMouseEnter={() => setHoveredId(workspace.id)}
               onMouseLeave={() => setHoveredId(null)}
-              className={`group flex items-center justify-between gap-2 px-4 py-2.5 mx-2 rounded-lg cursor-pointer transition-colors ${
+              onDragStart={(e) => handleDragStart(e, index, workspace.id)}
+              onDragOver={(e) => handleDragOver(e, index)}
+              onDrop={(e) => handleDrop(e, index)}
+              onDragEnd={handleDragEnd}
+              className={`group relative flex items-center justify-between gap-2 pl-6 pr-4 py-2.5 mx-2 rounded-lg cursor-pointer transition-colors ${
+                isDragging ? "opacity-50" : ""
+              } ${
+                dropAbove ? "before:absolute before:left-2 before:right-2 before:-top-px before:h-0.5 before:rounded-full before:bg-accent before:content-['']" : ""
+              } ${
+                dropBelow ? "after:absolute after:left-2 after:right-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent after:content-['']" : ""
+              } ${
                 selectedWorkspaceId === workspace.id
                   ? "bg-bg-active text-text-primary"
                   : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
               }`}
             >
+              <span
+                className="absolute left-1 top-1/2 -translate-y-1/2 flex items-center justify-center text-text-muted opacity-0 group-hover:opacity-60 transition-opacity pointer-events-none"
+                aria-hidden="true"
+              >
+                <GripIcon size={12} />
+              </span>
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <div
                   className={`w-2 h-2 rounded-full flex-shrink-0 ${
