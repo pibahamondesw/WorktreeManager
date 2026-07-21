@@ -75,8 +75,9 @@ pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -
 
 /// Full one-line zsh script: prelude, session export, cd, then continue or start the session.
 ///
-/// First launch starts a new named session (`claude -n <name>`) so it shows up in the prompt
-/// bar and `/resume`, and writes the marker. Later launches use `claude -c`, which continues
+/// First launch starts a new named session (`claude -n <name> /color`) so it shows up in the
+/// prompt bar and `/resume`, runs `/color` to give the window a distinguishing session color,
+/// and writes the marker. Later launches use `claude -c`, which continues
 /// the most recent session in this worktree directory. We deliberately avoid `claude --resume
 /// <name>`: an ambiguous name opens the interactive session picker, which would block this
 /// non-interactive task. `-c` is directory-scoped and never prompts.
@@ -103,8 +104,12 @@ pub fn build_claude_worktree_shell_command(
     let marker_matches_session =
         format!("[ -f {marker} ] && [ \"$(cat {marker})\" = \"${WM_SESSION_ENV}\" ]");
     let continue_session = format!("exec claude -c{add_dirs}");
+    // New sessions run `/color` as the initial prompt so each worktree window gets a
+    // distinguishing session color. The prompt must come *before* `--add-dir`: that flag is
+    // variadic and would otherwise swallow `/color` as a directory. We only do this on a fresh
+    // `-n` session, never on `-c`, so continuing a session keeps the color it was given.
     let start_named_session = format!(
-        "mkdir -p {config_dir} && printf '%s' \"${WM_SESSION_ENV}\" > {marker} && exec claude -n \"${WM_SESSION_ENV}\"{add_dirs}"
+        "mkdir -p {config_dir} && printf '%s' \"${WM_SESSION_ENV}\" > {marker} && exec claude -n \"${WM_SESSION_ENV}\" /color{add_dirs}"
     );
 
     format!(
@@ -297,6 +302,21 @@ mod tests {
         assert!(cmd.contains("claude -c"));
         assert!(!cmd.contains("claude --resume"));
         assert!(!cmd.contains("|| exec claude"));
+    }
+
+    #[test]
+    fn new_session_runs_color_before_add_dir_but_continue_does_not() {
+        let extra = vec!["/tmp/a".to_string()];
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-x", ".vscode", &extra);
+        // `/color` runs only on the fresh `-n` session, as its initial prompt.
+        assert_eq!(cmd.matches("/color").count(), 1);
+        // `/color` is the initial prompt and must precede `--add-dir`, or the variadic flag
+        // swallows it as a directory.
+        assert!(cmd.contains(&format!(
+            "claude -n \"${WM_SESSION_ENV}\" /color --add-dir '/tmp/a'"
+        )));
+        // Continuing a session must not re-run `/color`.
+        assert!(!cmd.contains("claude -c /color"));
     }
 
     #[test]
