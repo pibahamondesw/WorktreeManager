@@ -58,6 +58,12 @@ writeFileSync(
 
 console.log(`Bumped version to ${version} in package.json, tauri.conf.json, Cargo.toml`);
 
+try {
+  execSync("npm install --package-lock-only", { cwd: root, stdio: "ignore" });
+} catch {
+  // Non-fatal: CI's lockfile check will catch a stale package-lock.json.
+}
+
 if (noTag) {
   console.log("Skipped git commit/tag (--no-tag). Remember to update Cargo.lock via a build.");
   process.exit(0);
@@ -74,7 +80,7 @@ try {
 }
 
 execSync(
-  `git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock`,
+  `git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock`,
   { cwd: root, stdio: "inherit" }
 );
 execSync(`git commit -m "Release v${version}"`, { cwd: root, stdio: "inherit" });
