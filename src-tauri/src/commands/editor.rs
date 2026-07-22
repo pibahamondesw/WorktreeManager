@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{vscode_task, workspace};
+use super::{cursor_state, vscode_task, workspace};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +81,9 @@ pub fn open_editor(
                     Some(task),
                 )?;
                 if is_cursor {
+                    if let Err(e) = cursor_state::seed_hidden_agent_panel_for_workspace_file(&ws) {
+                        eprintln!("WorktreeManager: seed cursor workspace state: {e}");
+                    }
                     open_cursor_classic(&ws)?;
                 } else {
                     open_gui_editor(app, &ws)?;
@@ -94,6 +97,9 @@ pub fn open_editor(
                     eprintln!("WorktreeManager: ensure_vscode_claude_task: {e}");
                 }
                 if is_cursor {
+                    if let Err(e) = cursor_state::seed_hidden_agent_panel_for_folder(primary) {
+                        eprintln!("WorktreeManager: seed cursor workspace state: {e}");
+                    }
                     Ok(OpenEditorResult::message(open_cursor_classic(primary)?))
                 } else {
                     Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))

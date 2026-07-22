@@ -1,4 +1,5 @@
 pub mod cursor;
+pub mod cursor_state;
 pub mod doppler;
 pub mod editor;
 pub mod git;
