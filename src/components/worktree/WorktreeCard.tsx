@@ -105,6 +105,14 @@ export const WorktreeCard = memo(function WorktreeCard({
     }
   };
 
+  const cleanupClaudeConfig = async () => {
+    try {
+      await invoke("cleanup_claude_json", { paths: task.members.map((m) => m.path) });
+    } catch {
+      /* claude.json cleanup is best-effort */
+    }
+  };
+
   const handleDeleteConfirm = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setConfirmDelete(false);
@@ -119,6 +127,7 @@ export const WorktreeCard = memo(function WorktreeCard({
         });
       }
       await cleanupWorkspaceFile();
+      await cleanupClaudeConfig();
       onDelete(task.id);
     } catch (e) {
       const msg = typeof e === "string" ? e : "Failed to remove one or more worktrees from disk";
@@ -131,6 +140,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     e.stopPropagation();
     setDeleteError(null);
     await cleanupWorkspaceFile();
+    await cleanupClaudeConfig();
     onDelete(task.id);
   };
 

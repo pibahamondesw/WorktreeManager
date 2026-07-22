@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { loadState, loadEditorApp, loadThemeId, loadCustomColors, persist } from "../services/store";
 import { AppState, DEFAULT_STATE, EditorApp, Task, Workspace } from "../types";
 import { applyTheme, themes, CUSTOM_THEME_ID } from "../themes";
@@ -21,6 +22,11 @@ export function useStore() {
         setCustomColors(custom);
         applyTheme(theme, theme === CUSTOM_THEME_ID ? (custom ?? undefined) : undefined);
         setLoading(false);
+
+        const basePaths = [
+          ...new Set(s.workspaces.flatMap((w) => w.repos.map((r) => r.worktreeBasePath))),
+        ];
+        void invoke("cleanup_claude_json_stale", { basePaths }).catch(() => {});
       },
     );
   }, []);

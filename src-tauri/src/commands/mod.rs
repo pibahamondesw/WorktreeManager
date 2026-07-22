@@ -1,3 +1,4 @@
+pub mod claude_config;
 pub mod cursor;
 pub mod doppler;
 pub mod editor;
