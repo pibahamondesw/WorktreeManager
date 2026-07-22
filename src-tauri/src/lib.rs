@@ -36,6 +36,8 @@ pub fn run() {
             commands::editor::open_editor,
             commands::editor::check_app_installed,
             commands::workspace::delete_workspace_file,
+            commands::claude_config::cleanup_claude_json,
+            commands::claude_config::cleanup_claude_json_stale,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
