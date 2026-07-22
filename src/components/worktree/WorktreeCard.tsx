@@ -12,7 +12,15 @@ import {
   MoreVerticalIcon,
   TrashIcon,
 } from "../ui/Icons";
-import { Task, Workspace, EditorApp, GitStatus, IssueLinearInfo } from "../../types";
+import {
+  Task,
+  TaskMember,
+  Workspace,
+  EditorApp,
+  GitStatus,
+  IssueLinearInfo,
+  PullRequestInfo,
+} from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
 import { timeAgo } from "../../utils";
 
@@ -40,6 +48,14 @@ const stateVariant: Record<string, "success" | "warning" | "accent" | "danger" |
   triage: "warning",
 };
 
+const prBadgeVariant = (state: string) =>
+  state === "open" ? "success" : state === "merged" ? "accent" : "default";
+
+const githubSlugFromRemote = (remoteUrl: string): string | null => {
+  const match = remoteUrl.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
+  return match ? match[1].toLowerCase() : null;
+};
+
 export const WorktreeCard = memo(function WorktreeCard({
   task,
   workspace,
@@ -55,16 +71,22 @@ export const WorktreeCard = memo(function WorktreeCard({
   onRequestDeleteHandled,
 }: WorktreeCardProps) {
   const status = linearInfo?.status ?? null;
-  const pr = linearInfo ? linearInfo.pr : undefined;
+  // No Linear issue → no PR attachments will ever load; treat as "loaded, zero PRs"
+  // so the Create PR links still render. undefined = still loading, hide PR slots.
+  const prs = task.linearIssueId ? linearInfo?.prs : [];
+  const pr = prs === undefined ? undefined : (prs[0] ?? null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // "owner/repo" of each member's origin remote, keyed by repoId; null until resolved.
+  const [memberRepoSlugs, setMemberRepoSlugs] = useState<Record<string, string> | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const folders = task.members.map((m) => m.path);
   // Repo used for git-remote / PR-compare links: the first member (order = workspace repo order).
   const primaryRepo = task.members[0];
+  const showRepoChips = workspace.repos.length > 1 || task.members.length > 1;
 
   useEffect(() => {
     if (requestDelete) {
@@ -83,6 +105,32 @@ export const WorktreeCard = memo(function WorktreeCard({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!showRepoChips) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        task.members.map(async (m) => {
+          try {
+            const remoteUrl = await invoke<string>("git_remote_url", { repoPath: m.localPath });
+            return [m.repoId, githubSlugFromRemote(remoteUrl)] as const;
+          } catch {
+            return [m.repoId, null] as const;
+          }
+        })
+      );
+      if (cancelled) return;
+      const slugs: Record<string, string> = {};
+      for (const [repoId, slug] of entries) {
+        if (slug) slugs[repoId] = slug;
+      }
+      setMemberRepoSlugs(slugs);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showRepoChips, task.members]);
 
   const handleOpen = async () => {
     await openEditorForWorktree(editorApp, folders, task.branchName, workspace.name, {
@@ -150,21 +198,39 @@ export const WorktreeCard = memo(function WorktreeCard({
     setDeleteError(null);
   };
 
+  const openCreatePr = async (member: TaskMember) => {
+    try {
+      const remoteUrl = await invoke<string>("git_remote_url", {
+        repoPath: member.localPath,
+      });
+      openUrl(`${remoteUrl}/compare/${task.branchName}?expand=1`);
+    } catch {
+      console.error("Could not determine remote URL");
+    }
+  };
+
   const handlePrClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (pr) {
       openUrl(pr.url);
     } else if (primaryRepo) {
-      try {
-        const remoteUrl = await invoke<string>("git_remote_url", {
-          repoPath: primaryRepo.localPath,
-        });
-        openUrl(`${remoteUrl}/compare/${task.branchName}?expand=1`);
-      } catch {
-        console.error("Could not determine remote URL");
-      }
+      await openCreatePr(primaryRepo);
     }
   };
+
+  const prForMember = (m: TaskMember): PullRequestInfo | undefined => {
+    const slug = memberRepoSlugs?.[m.repoId];
+    if (!slug || !prs) return undefined;
+    return prs.find((p) => p.repoSlug.toLowerCase() === slug);
+  };
+
+  // PRs attached to the Linear issue whose repo doesn't match any member's remote
+  // (e.g. a fork, or a repo not part of this workspace) — still shown, never dropped.
+  const memberSlugSet = new Set(Object.values(memberRepoSlugs ?? {}));
+  const unmatchedPrs =
+    prs && memberRepoSlugs !== null
+      ? prs.filter((p) => !memberSlugSet.has(p.repoSlug.toLowerCase()))
+      : [];
 
   const handleMenuAction = async (action: string) => {
     setMenuOpen(false);
@@ -210,7 +276,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     copyToClipboard(
       e,
       folders.join("\n"),
-      folders.length > 1 ? "Folder paths copied" : "Worktree path copied",
+      folders.length > 1 ? "Folder paths copied" : "Worktree path copied"
     );
 
   const handleCopyBranch = (e: React.MouseEvent) =>
@@ -223,7 +289,6 @@ export const WorktreeCard = memo(function WorktreeCard({
   };
 
   const age = gitStatus ? timeAgo(gitStatus.last_commit_epoch) : null;
-  const showRepoChips = workspace.repos.length > 1 || task.members.length > 1;
 
   return (
     <div
@@ -335,50 +400,96 @@ export const WorktreeCard = memo(function WorktreeCard({
             )}
           </div>
 
-          {/* Row 3b: member repo chips (multi-repo tasks) */}
-          {showRepoChips && (
-            <div className="flex flex-wrap items-center gap-1.5 mt-2">
-              {task.members.map((m) => (
-                <span
-                  key={m.repoId}
-                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] bg-bg-hover text-text-muted"
-                  title={m.path}
-                >
-                  {m.repoName}
-                </span>
+          {/* Row 4: PR info. Multi-repo tasks get one row per member repo (replacing the old
+              repo chips); single-repo tasks keep the full-title PR row. pointer-events-none
+              containers so empty space clicks pass through to card */}
+          {showRepoChips ? (
+            <div className="mt-2 flex flex-col gap-1 text-left pointer-events-none">
+              {task.members.map((m) => {
+                const memberPr = prForMember(m);
+                return (
+                  <div key={m.repoId} className="flex items-center gap-1.5 text-xs">
+                    <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
+                    <span
+                      className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-bg-hover text-text-muted"
+                      title={m.path}
+                    >
+                      {m.repoName}
+                    </span>
+                    {prs !== undefined &&
+                      memberRepoSlugs !== null &&
+                      (memberPr ? (
+                        <span
+                          role="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openUrl(memberPr.url);
+                          }}
+                          title={memberPr.title}
+                          className="pointer-events-auto inline-flex items-center gap-1.5 text-accent hover:text-accent-hover transition-colors cursor-pointer"
+                        >
+                          #{memberPr.number}
+                          <Badge variant={prBadgeVariant(memberPr.state)}>{memberPr.state}</Badge>
+                        </span>
+                      ) : (
+                        <span
+                          role="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openCreatePr(m);
+                          }}
+                          className="pointer-events-auto text-text-muted hover:text-accent transition-colors cursor-pointer"
+                        >
+                          Create PR
+                        </span>
+                      ))}
+                  </div>
+                );
+              })}
+              {unmatchedPrs.map((p) => (
+                <div key={p.url} className="flex items-center gap-1.5 text-xs">
+                  <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
+                  <span
+                    className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-bg-hover text-text-muted"
+                    title={p.repoSlug}
+                  >
+                    {p.repoSlug.split("/")[1] ?? p.repoSlug}
+                  </span>
+                  <span
+                    role="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openUrl(p.url);
+                    }}
+                    title={p.title}
+                    className="pointer-events-auto inline-flex items-center gap-1.5 text-accent hover:text-accent-hover transition-colors cursor-pointer"
+                  >
+                    #{p.number}
+                    <Badge variant={prBadgeVariant(p.state)}>{p.state}</Badge>
+                  </span>
+                </div>
               ))}
             </div>
-          )}
-
-          {/* Row 4: PR link / create PR — pointer-events-none container so empty space clicks pass through to card */}
-          {pr !== undefined && (
-            <div className="mt-2 text-left pointer-events-none">
-              <span
-                role="button"
-                onClick={handlePrClick}
-                className="pointer-events-auto inline items-baseline text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer"
-              >
-                <PullRequestIcon size={12} className="inline -mt-0.5 mr-1.5" />
-                {pr ? (
-                  <>
-                    PR #{pr.number}: {pr.title}{" "}
-                    <Badge
-                      variant={
-                        pr.state === "open"
-                          ? "success"
-                          : pr.state === "merged"
-                            ? "accent"
-                            : "default"
-                      }
-                    >
-                      {pr.state}
-                    </Badge>
-                  </>
-                ) : (
-                  <span className="text-text-muted hover:text-accent">Create PR</span>
-                )}
-              </span>
-            </div>
+          ) : (
+            pr !== undefined && (
+              <div className="mt-2 text-left pointer-events-none">
+                <span
+                  role="button"
+                  onClick={handlePrClick}
+                  className="pointer-events-auto inline items-baseline text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer"
+                >
+                  <PullRequestIcon size={12} className="inline -mt-0.5 mr-1.5" />
+                  {pr ? (
+                    <>
+                      PR #{pr.number}: {pr.title}{" "}
+                      <Badge variant={prBadgeVariant(pr.state)}>{pr.state}</Badge>
+                    </>
+                  ) : (
+                    <span className="text-text-muted hover:text-accent">Create PR</span>
+                  )}
+                </span>
+              </div>
+            )
           )}
         </div>
 
