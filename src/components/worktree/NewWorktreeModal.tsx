@@ -220,6 +220,20 @@ export function NewWorktreeModal({
           console.warn(`Could not run Doppler setup for ${r.name}:`, dopplerErr);
         }
 
+        // Install JS deps (detected from the lockfile) in the background so the editor opens
+        // immediately — the worktree just isn't test-ready for the first minute or two.
+        // Deliberately not awaited; installs can take minutes.
+        invoke<{ status: string; message: string }>("install_node_deps", { worktreePath })
+          .then((deps) => {
+            if (deps.status === "error") {
+              console.warn(`Dependency install failed for ${r.name}: ${deps.message}`);
+              onOpenHint?.(`Dependency install failed in ${r.name} — run it manually`);
+            }
+          })
+          .catch((depsErr) => {
+            console.warn(`Could not install dependencies for ${r.name}:`, depsErr);
+          });
+
         members.push({
           repoId: r.id,
           repoName: r.name,

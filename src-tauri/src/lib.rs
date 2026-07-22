@@ -32,6 +32,7 @@ pub fn run() {
             commands::git::git_worktree_status_batch,
             commands::git::git_remote_url,
             commands::doppler::doppler_setup,
+            commands::node_deps::install_node_deps,
             commands::cursor::open_cursor,
             commands::editor::open_editor,
             commands::editor::check_app_installed,
