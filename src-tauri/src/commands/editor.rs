@@ -62,6 +62,7 @@ pub fn open_editor(
         }
         "cursor-claude" | "vscode-claude" => {
             let app = gui_app_name(&editor);
+            let is_cursor = editor == "cursor-claude";
             if multi {
                 let canon = canonical_worktree_path(primary);
                 let canon_str = canon.to_string_lossy().to_string();
@@ -79,7 +80,11 @@ pub fn open_editor(
                     &folders,
                     Some(task),
                 )?;
-                open_gui_editor(app, &ws)?;
+                if is_cursor {
+                    open_cursor_classic(&ws)?;
+                } else {
+                    open_gui_editor(app, &ws)?;
+                }
                 Ok(OpenEditorResult {
                     message: format!("{app} + Claude opened workspace: {ws}"),
                     workspace_file: Some(ws),
@@ -88,7 +93,11 @@ pub fn open_editor(
                 if let Err(e) = vscode_task::ensure_vscode_claude_task(primary, branch) {
                     eprintln!("WorktreeManager: ensure_vscode_claude_task: {e}");
                 }
-                Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
+                if is_cursor {
+                    Ok(OpenEditorResult::message(open_cursor_classic(primary)?))
+                } else {
+                    Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
+                }
             }
         }
         "claude-code" => Ok(OpenEditorResult::message(open_claude_in_terminal(
@@ -221,6 +230,25 @@ fn gui_app_exists(app_name: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Launch Cursor with glass mode off (no Agent surface) via `cursor --classic`. Best effort:
+/// the flag only takes effect on a cold start, and without the CLI we fall back to `open -a`.
+fn open_cursor_classic(path: &str) -> Result<String, String> {
+    if vscode_task::cli_available("cursor") {
+        let cmd = format!(
+            "{}; cursor --classic {}",
+            vscode_task::claude_env_prelude(),
+            vscode_task::shell_single_quoted(path)
+        );
+        Command::new("/bin/zsh")
+            .args(["-lc", &cmd])
+            .spawn()
+            .map_err(|e| format!("Failed to launch Cursor: {e}"))?;
+        Ok(format!("Cursor opened (classic) for path: {path}"))
+    } else {
+        open_gui_editor("Cursor", path)
+    }
 }
 
 fn open_gui_editor(app_name: &str, path: &str) -> Result<String, String> {
