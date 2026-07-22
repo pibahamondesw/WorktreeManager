@@ -85,11 +85,13 @@ export interface PullRequestInfo {
   title: string;
   state: string;
   number: number;
+  // "owner/repo" parsed from the PR URL, used to match the PR to a task member's remote.
+  repoSlug: string;
 }
 
 export interface IssueLinearInfo {
   status: { name: string; type: string } | null;
-  pr: PullRequestInfo | null;
+  prs: PullRequestInfo[];
 }
 
 export type EditorApp =

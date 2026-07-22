@@ -151,37 +151,44 @@ function mapIssueNode(node: GqlIssueNode): LinearIssue {
   };
 }
 
-export function extractPrFromAttachments(attachments: GqlAttachmentNode[]): PullRequestInfo | null {
+export function extractPrsFromAttachments(attachments: GqlAttachmentNode[]): PullRequestInfo[] {
+  const prs: PullRequestInfo[] = [];
+  const seen = new Set<string>();
   for (const att of attachments) {
     if (!att.url) continue;
-    const prMatch = att.url.match(/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/);
-    if (prMatch) {
-      let state = "open";
-      const meta = att.metadata;
-      if (meta) {
-        const parsed = typeof meta === "string" ? JSON.parse(meta) : meta;
-        const metaState = parsed?.status ?? parsed?.state;
-        if (typeof metaState === "string") {
-          const s = metaState.toLowerCase();
-          if (s.includes("merge")) state = "merged";
-          else if (s.includes("close")) state = "closed";
-        }
-      }
-      if (state === "open") {
-        const sub = (att.subtitle ?? "").toLowerCase();
-        if (sub.includes("merged")) state = "merged";
-        else if (sub.includes("closed")) state = "closed";
-      }
+    const prMatch = att.url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+    if (!prMatch) continue;
 
-      return {
-        url: att.url,
-        title: att.title ?? `PR #${prMatch[1]}`,
-        state,
-        number: parseInt(prMatch[1], 10),
-      };
+    const key = `${prMatch[1].toLowerCase()}#${prMatch[2]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    let state = "open";
+    const meta = att.metadata;
+    if (meta) {
+      const parsed = typeof meta === "string" ? JSON.parse(meta) : meta;
+      const metaState = parsed?.status ?? parsed?.state;
+      if (typeof metaState === "string") {
+        const s = metaState.toLowerCase();
+        if (s.includes("merge")) state = "merged";
+        else if (s.includes("close")) state = "closed";
+      }
     }
+    if (state === "open") {
+      const sub = (att.subtitle ?? "").toLowerCase();
+      if (sub.includes("merged")) state = "merged";
+      else if (sub.includes("closed")) state = "closed";
+    }
+
+    prs.push({
+      url: att.url,
+      title: att.title ?? `PR #${prMatch[2]}`,
+      state,
+      number: parseInt(prMatch[2], 10),
+      repoSlug: prMatch[1],
+    });
   }
-  return null;
+  return prs;
 }
 
 // ---- Service class: encapsulates the LinearClient ----
@@ -217,12 +224,15 @@ export class LinearService {
       return [...mine, ...others];
     }
 
-    const res = await this.gql.rawRequest<AssignedIssuesResponse, Record<string, unknown>>(ASSIGNED_ISSUES_QUERY, {
-      filter: {
-        state: { type: { nin: ["completed", "canceled"] } },
-      },
-      first: 50,
-    });
+    const res = await this.gql.rawRequest<AssignedIssuesResponse, Record<string, unknown>>(
+      ASSIGNED_ISSUES_QUERY,
+      {
+        filter: {
+          state: { type: { nin: ["completed", "canceled"] } },
+        },
+        first: 50,
+      }
+    );
     const nodes = res.data!.viewer.assignedIssues.nodes;
     return nodes.map(mapIssueNode);
   }
@@ -249,9 +259,7 @@ export class LinearService {
     }
   }
 
-  async getIssueStatus(
-    issueId: string
-  ): Promise<{ name: string; type: string } | null> {
+  async getIssueStatus(issueId: string): Promise<{ name: string; type: string } | null> {
     try {
       const res = await this.gql.rawRequest<IssueStateResponse, Record<string, unknown>>(
         `query($id: String!) { issue(id: $id) { state { name type } } }`,
@@ -264,7 +272,7 @@ export class LinearService {
     }
   }
 
-  async getIssuePullRequest(issueId: string): Promise<PullRequestInfo | null> {
+  async getIssuePullRequests(issueId: string): Promise<PullRequestInfo[]> {
     try {
       const res = await this.gql.rawRequest<IssueAttachmentsResponse, Record<string, unknown>>(
         `query($id: String!) {
@@ -275,21 +283,22 @@ export class LinearService {
         { id: issueId }
       );
       const attachments = res.data?.issue?.attachments?.nodes ?? [];
-      return extractPrFromAttachments(attachments);
+      return extractPrsFromAttachments(attachments);
     } catch {
-      return null;
+      return [];
     }
   }
 
-  async fetchIssueLinearInfoBatch(
-    issueIds: string[]
-  ): Promise<Record<string, IssueLinearInfo>> {
+  async fetchIssueLinearInfoBatch(issueIds: string[]): Promise<Record<string, IssueLinearInfo>> {
     if (issueIds.length === 0) return {};
 
     try {
-      const res = await this.gql.rawRequest<IssuesBatchResponse, Record<string, unknown>>(ISSUES_BATCH_QUERY, {
-        filter: { id: { in: issueIds } },
-      });
+      const res = await this.gql.rawRequest<IssuesBatchResponse, Record<string, unknown>>(
+        ISSUES_BATCH_QUERY,
+        {
+          filter: { id: { in: issueIds } },
+        }
+      );
 
       const nodes = res.data!.issues.nodes;
 
@@ -297,7 +306,7 @@ export class LinearService {
       for (const node of nodes) {
         result[node.id] = {
           status: node.state ? { name: node.state.name, type: node.state.type } : null,
-          pr: extractPrFromAttachments(node.attachments?.nodes ?? []),
+          prs: extractPrsFromAttachments(node.attachments?.nodes ?? []),
         };
       }
       return result;
