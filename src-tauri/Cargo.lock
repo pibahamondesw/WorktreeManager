@@ -5792,7 +5792,7 @@ dependencies = [
 
 [[package]]
 name = "worktree-manager"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "log",
  "md5",
