@@ -1,6 +1,6 @@
 [package]
 name = "worktree-manager"
-version = "0.2.1"
+version = "0.3.0"
 description = "Desktop worktree manager with Linear and GitHub integration"
 authors = ["Pedro Bahamondez"]
 license = "MIT"
