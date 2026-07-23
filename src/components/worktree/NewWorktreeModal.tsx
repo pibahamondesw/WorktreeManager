@@ -247,8 +247,10 @@ export function NewWorktreeModal({
       const taskBranch = members[0]?.branchName ?? branchInput;
 
       if (selected && linear) {
-        setCreatingStatus("Updating Linear issue...");
-        await linear.startIssue(selected.id);
+        linear.startIssue(selected.id).catch((linearErr) => {
+          console.warn("Could not update Linear issue status:", linearErr);
+          onOpenHint?.("Could not update Linear issue status — update it manually");
+        });
       }
 
       // Open all included folders together (multi-root window / one Claude session).
