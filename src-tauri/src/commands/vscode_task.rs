@@ -81,6 +81,12 @@ pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -
 /// the most recent session in this worktree directory. We deliberately avoid `claude --resume
 /// <name>`: an ambiguous name opens the interactive session picker, which would block this
 /// non-interactive task. `-c` is directory-scoped and never prompts.
+///
+/// The marker is written before Claude persists anything, so if the editor is closed without
+/// interacting with Claude, the next launch runs `claude -c` with no conversation to continue
+/// and it exits non-zero right away. That case falls back to starting the named session — but
+/// only when the failure happens within seconds of startup, so a real session that later exits
+/// non-zero doesn't trigger a relaunch.
 pub fn build_claude_worktree_shell_command(
     canonical_dir: &str,
     session_slug: &str,
@@ -103,13 +109,17 @@ pub fn build_claude_worktree_shell_command(
     let marker = format!("{config_dir}/{WM_CLAUDE_SESSION_MARKER_FILE}");
     let marker_matches_session =
         format!("[ -f {marker} ] && [ \"$(cat {marker})\" = \"${WM_SESSION_ENV}\" ]");
-    let continue_session = format!("exec claude -c{add_dirs}");
     // New sessions run `/color` as the initial prompt so each worktree window gets a
     // distinguishing session color. The prompt must come *before* `--add-dir`: that flag is
     // variadic and would otherwise swallow `/color` as a directory. We only do this on a fresh
     // `-n` session, never on `-c`, so continuing a session keeps the color it was given.
     let start_named_session = format!(
         "mkdir -p {config_dir} && printf '%s' \"${WM_SESSION_ENV}\" > {marker} && exec claude -n \"${WM_SESSION_ENV}\" /color{add_dirs}"
+    );
+    let continue_session = format!(
+        "wm_start=$SECONDS; claude -c{add_dirs}; wm_rc=$?; \
+         if [ $wm_rc -ne 0 ] && [ $((SECONDS - wm_start)) -lt 10 ]; then {start_named_session}; fi; \
+         exit $wm_rc"
     );
 
     format!(
@@ -295,21 +305,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn launch_command_uses_marker_not_resume_or_fallback() {
+    fn launch_command_uses_marker_not_resume() {
         let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch", ".vscode", &[]);
         assert!(cmd.contains(WM_CLAUDE_SESSION_MARKER_FILE));
         assert!(cmd.contains("claude -n"));
         assert!(cmd.contains("claude -c"));
         assert!(!cmd.contains("claude --resume"));
-        assert!(!cmd.contains("|| exec claude"));
+    }
+
+    #[test]
+    fn continue_falls_back_to_named_session_only_on_fast_failure() {
+        let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-my-branch", ".vscode", &[]);
+        // `claude -c` must not `exec`, or the shell can't observe its exit code.
+        assert!(!cmd.contains("exec claude -c"));
+        // Fallback is guarded by both a non-zero exit and elapsed startup time.
+        assert!(cmd.contains("[ $wm_rc -ne 0 ] && [ $((SECONDS - wm_start)) -lt 10 ]"));
+        // A slow non-zero exit propagates instead of relaunching.
+        assert!(cmd.contains("exit $wm_rc"));
+        // Both the else branch and the fallback start the named session.
+        assert_eq!(cmd.matches("exec claude -n").count(), 2);
     }
 
     #[test]
     fn new_session_runs_color_before_add_dir_but_continue_does_not() {
         let extra = vec!["/tmp/a".to_string()];
         let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-x", ".vscode", &extra);
-        // `/color` runs only on the fresh `-n` session, as its initial prompt.
-        assert_eq!(cmd.matches("/color").count(), 1);
+        // `/color` runs on each `-n` start (first launch + fast-failure fallback), never on `-c`.
+        assert_eq!(cmd.matches("/color").count(), 2);
         // `/color` is the initial prompt and must precede `--add-dir`, or the variadic flag
         // swallows it as a directory.
         assert!(cmd.contains(&format!(
@@ -337,8 +359,9 @@ mod tests {
     fn launch_command_includes_add_dir_per_extra_in_both_branches() {
         let extra = vec!["/tmp/a".to_string(), "/tmp/b".to_string()];
         let cmd = build_claude_worktree_shell_command("/tmp/wt", "wm-x", ".vscode", &extra);
-        // Two extra dirs, appended in both the `-c` and `-n` branches => 4 occurrences.
-        assert_eq!(cmd.matches("--add-dir").count(), 4);
+        // Two extra dirs, appended in the `-c` branch and both `-n` starts (else branch +
+        // fast-failure fallback) => 3 occurrences of the pair = 6.
+        assert_eq!(cmd.matches("--add-dir").count(), 6);
         assert!(cmd.contains("--add-dir '/tmp/a'"));
         assert!(cmd.contains("--add-dir '/tmp/b'"));
     }
