@@ -21,7 +21,7 @@ interface WorktreeListProps {
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
   workspaceSwitching: boolean;
-  onWorkspaceReady: () => void;
+  onWorkspaceReady: (workspaceId?: string) => void;
 }
 
 /** Collapse the per-member git statuses of a task into one summary for its card. */

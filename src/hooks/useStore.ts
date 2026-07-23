@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { loadState, loadEditorApp, loadThemeId, loadCustomColors, persist } from "../services/store";
 import { AppState, DEFAULT_STATE, EditorApp, Task, Workspace } from "../types";
@@ -12,6 +12,9 @@ export function useStore() {
   const [customColors, setCustomColors] = useState<Record<string, string> | null>(null);
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
+  // Workspaces whose data finished loading at least once this session: switching
+  // back to them shows the in-memory data immediately instead of the skeleton.
+  const loadedWorkspaceIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     Promise.all([loadState(), loadEditorApp(), loadThemeId(), loadCustomColors()]).then(
@@ -91,6 +94,7 @@ export function useStore() {
   );
 
   const removeWorkspace = useCallback(async (workspaceId: string) => {
+    loadedWorkspaceIdsRef.current.delete(workspaceId);
     let snapshot: AppState;
     let newWorkspaces: Workspace[];
     let newTasks: Task[];
@@ -159,7 +163,9 @@ export function useStore() {
       snapshot = prev;
       return { ...prev, selectedWorkspaceId: workspaceId };
     });
-    setWorkspaceSwitching(true);
+    if (!loadedWorkspaceIdsRef.current.has(workspaceId)) {
+      setWorkspaceSwitching(true);
+    }
     setTimeout(async () => {
       try {
         await persist([["selectedWorkspaceId", workspaceId]]);
@@ -170,7 +176,10 @@ export function useStore() {
     }, 0);
   }, []);
 
-  const clearWorkspaceSwitching = useCallback(() => setWorkspaceSwitching(false), []);
+  const clearWorkspaceSwitching = useCallback((workspaceId?: string) => {
+    if (workspaceId) loadedWorkspaceIdsRef.current.add(workspaceId);
+    setWorkspaceSwitching(false);
+  }, []);
 
   const addTask = useCallback(async (task: Task) => {
     let snapshot: AppState;
