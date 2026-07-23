@@ -206,19 +206,19 @@ export function NewWorktreeModal({
         }
 
         // If the repo commits a Doppler config with a setup: block, scope it for this worktree
-        // automatically so no manual `doppler setup` is needed.
-        try {
-          setCreatingStatus(`Configuring Doppler in ${r.name}...`);
-          const doppler = await invoke<{ status: string; message: string }>("doppler_setup", {
-            worktreePath,
+        // automatically so no manual `doppler setup` is needed. Runs in the background so it
+        // doesn't block opening the editor — the setup shells out through the login profile and
+        // hits the network, which the window doesn't need to wait on. Deliberately not awaited.
+        invoke<{ status: string; message: string }>("doppler_setup", { worktreePath })
+          .then((doppler) => {
+            if (doppler.status === "error") {
+              console.warn(`Doppler setup failed for ${r.name}: ${doppler.message}`);
+              onOpenHint?.(`Doppler setup failed for ${r.name} — check you're logged in`);
+            }
+          })
+          .catch((dopplerErr) => {
+            console.warn(`Could not run Doppler setup for ${r.name}:`, dopplerErr);
           });
-          if (doppler.status === "error") {
-            console.warn(`Doppler setup failed for ${r.name}: ${doppler.message}`);
-            onOpenHint?.(`Doppler setup failed for ${r.name} — check you're logged in`);
-          }
-        } catch (dopplerErr) {
-          console.warn(`Could not run Doppler setup for ${r.name}:`, dopplerErr);
-        }
 
         // Install JS deps (detected from the lockfile) in the background so the editor opens
         // immediately — the worktree just isn't test-ready for the first minute or two.
