@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a tag like `v0.2.0` (see `npm run release`) builds the macOS app,
+# Pushing a tag like `v0.2.0` (see `pnpm run release`) builds the macOS app,
 # publishes a GitHub Release with the DMG + updater artifacts + latest.json,
 # then bumps the Homebrew cask in pibahamondesw/homebrew-tap.
 on:
@@ -17,10 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -33,7 +35,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build, sign updater artifacts, and publish release
         uses: tauri-apps/tauri-action@v0

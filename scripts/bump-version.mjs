@@ -5,8 +5,8 @@
  * what triggers the release workflow (.github/workflows/release.yml).
  *
  * Usage:
- *   npm run release 0.2.0            # bump + commit + tag
- *   npm run release 0.2.0 --no-tag   # just rewrite the version files
+ *   pnpm run release 0.2.0            # bump + commit + tag
+ *   pnpm run release 0.2.0 --no-tag   # just rewrite the version files
  *
  * The three sources:
  *   - package.json                 ("version")
@@ -26,7 +26,7 @@ const version = args.find((a) => !a.startsWith("--"));
 
 if (!version || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
   console.error(
-    "Usage: npm run release <version> [--no-tag]\n" +
+    "Usage: pnpm run release <version> [--no-tag]\n" +
       "  <version> must be semver, e.g. 0.2.0 or 0.2.0-rc.1"
   );
   process.exit(1);
@@ -59,9 +59,9 @@ writeFileSync(
 console.log(`Bumped version to ${version} in package.json, tauri.conf.json, Cargo.toml`);
 
 try {
-  execSync("npm install --package-lock-only", { cwd: root, stdio: "ignore" });
+  execSync("pnpm install --lockfile-only", { cwd: root, stdio: "ignore" });
 } catch {
-  // Non-fatal: CI's lockfile check will catch a stale package-lock.json.
+  // Non-fatal: CI's lockfile check will catch a stale pnpm-lock.yaml.
 }
 
 if (noTag) {
@@ -80,7 +80,7 @@ try {
 }
 
 execSync(
-  `git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock`,
+  `git add package.json pnpm-lock.yaml src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock`,
   { cwd: root, stdio: "inherit" }
 );
 execSync(`git commit -m "Release v${version}"`, { cwd: root, stdio: "inherit" });

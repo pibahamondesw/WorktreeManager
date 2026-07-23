@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.2.1",
   "type": "module",
+  "packageManager": "pnpm@11.16.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/pibahamondesw/WorktreeManager.git"
@@ -13,7 +14,7 @@
     "build": "tsc -b && vite build",
     "tauri": "tauri",
     "tauri:dev:local": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "lint": "npm run lint:ts && npm run lint:rust",
+    "lint": "pnpm run lint:ts && pnpm run lint:rust",
     "lint:ts": "eslint src --ext .ts,.tsx && eslint eslint.config.js",
     "lint:rust": "cd src-tauri && cargo clippy --all-targets && cargo fmt --all -- --check",
     "typecheck": "tsc -b",

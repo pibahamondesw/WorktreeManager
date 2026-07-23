@@ -55,6 +55,12 @@ Only needed for development, or if you'd rather not use Homebrew.
 
 2. **Node.js** (18+) — Install from [nodejs.org](https://nodejs.org/) or via a version manager like [nvm](https://github.com/nvm-sh/nvm)
 
+   This project uses [pnpm](https://pnpm.io/) as its package manager. The easiest way to get the pinned version is Corepack (bundled with Node):
+
+   ```bash
+   corepack enable
+   ```
+
 3. **Xcode Command Line Tools** — Required for the Rust/C toolchain and includes Git:
 
    ```bash
@@ -71,8 +77,8 @@ Only needed for development, or if you'd rather not use Homebrew.
 
 ```bash
 git clone https://github.com/pibahamondesw/WorktreeManager.git && cd WorktreeManager
-npm install
-npm run tauri build
+pnpm install
+pnpm run tauri build
 cp -R src-tauri/target/release/bundle/macos/WorktreeManager.app /Applications/
 ```
 
@@ -81,7 +87,7 @@ cp -R src-tauri/target/release/bundle/macos/WorktreeManager.app /Applications/
 To run the app with hot-reload:
 
 ```bash
-npm run tauri dev
+pnpm run tauri dev
 ```
 
 This starts the Vite dev server on `localhost:5173` and opens the Tauri window pointed at it.
@@ -92,7 +98,7 @@ Releases are automated by [`.github/workflows/release.yml`](.github/workflows/re
 To cut a release:
 
 ```bash
-npm run release 0.2.0       # bumps version in all 3 files, commits, tags v0.2.0
+pnpm run release 0.2.0       # bumps version in all 3 files, commits, tags v0.2.0
 git push && git push origin v0.2.0
 ```
 
@@ -135,13 +141,13 @@ By default, new projects store worktrees in:
 Run the unit test suite with:
 
 ```bash
-npm test
+pnpm test
 ```
 
 For watch mode during development:
 
 ```bash
-npm run test:watch
+pnpm run test:watch
 ```
 
 Tests cover pure utility functions (time formatting, PR extraction from Linear attachments, keyboard shortcut parsing, and store data migrations). They use [Vitest](https://vitest.dev/) and require no external services or API keys.
