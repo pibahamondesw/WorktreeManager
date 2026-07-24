@@ -209,15 +209,10 @@ mod tests {
     }
 
     #[test]
-    fn workspace_json_embeds_single_wm_claude_task_with_add_dir() {
+    fn workspace_json_embeds_single_wm_claude_task() {
         let folders = vec!["/nonexistent/a".to_string(), "/nonexistent/b".to_string()];
-        let cmd = vscode_task::build_claude_worktree_shell_command(
-            "/nonexistent/a",
-            "wm-x",
-            ".vscode",
-            &folders[1..],
-        );
-        let task = vscode_task::task_json_object(&cmd);
+        // The task points at the generated launch script; `build_workspace_json` only embeds it.
+        let task = vscode_task::task_json_object("/nonexistent/a/.vscode/wm-start-claude.sh");
         let v = build_workspace_json(&folders, Some(task), None);
 
         let tasks = v["tasks"]["tasks"].as_array().unwrap();
@@ -226,7 +221,7 @@ mod tests {
         assert!(tasks[0]["command"]
             .as_str()
             .unwrap()
-            .contains("--add-dir '/nonexistent/b'"));
+            .ends_with(vscode_task::WM_CLAUDE_SCRIPT_FILE));
     }
 
     #[test]
@@ -241,13 +236,7 @@ mod tests {
             }
         });
         let folders = vec!["/nonexistent/a".to_string()];
-        let cmd = vscode_task::build_claude_worktree_shell_command(
-            "/nonexistent/a",
-            "wm-x",
-            ".vscode",
-            &[],
-        );
-        let task = vscode_task::task_json_object(&cmd);
+        let task = vscode_task::task_json_object("/nonexistent/a/.vscode/wm-start-claude.sh");
         let v = build_workspace_json(&folders, Some(task), Some(existing));
 
         // Unrelated top-level key + user settings preserved.
