@@ -1,0 +1,46 @@
+# WorktreeManager Claude launch logic.
+#
+# This is the checked-in, reviewable/shellcheckable source of the launch script. It is embedded
+# in the app at build time (`include_str!`) and materialized per worktree as `wm-start-claude.sh`.
+# The app prepends a generated header that sets the WM_* values this body relies on:
+#
+#   export WORKTREE_MANAGER_CLAUDE_SESSION_NAME=<wm-slug>   # per-worktree session name
+#   WM_CONFIG_DIR=<.vscode|.zed>                           # editor config dir (holds the marker)
+#   WM_CANONICAL_DIR=<abs worktree path>                   # working directory
+#   WM_MARKER_FILE=<marker filename>                       # e.g. the session-init marker
+#   WM_ADD_DIRS=( ... )                                    # --add-dir flags per extra repo, may be empty
+#   <PATH + profile prelude>
+#
+# Do not edit the materialized copy in a worktree — it is regenerated on every launch.
+
+cd "$WM_CANONICAL_DIR" || exit 1
+
+wm_marker="$WM_CONFIG_DIR/$WM_MARKER_FILE"
+
+# Start a new named session so it shows up in the prompt bar and `/resume`; run `/color` (before
+# the variadic `--add-dir` flags, which would otherwise swallow it) to give the window a
+# distinguishing color; then record the marker. `exec` replaces this shell so quitting Claude
+# closes the tab.
+wm_start_named_session() {
+  mkdir -p "$WM_CONFIG_DIR"
+  printf '%s' "$WORKTREE_MANAGER_CLAUDE_SESSION_NAME" > "$wm_marker"
+  exec claude -n "$WORKTREE_MANAGER_CLAUDE_SESSION_NAME" /color "${WM_ADD_DIRS[@]}"
+}
+
+# When the marker matches this worktree's session, continue the most recent conversation. `-c` is
+# directory-scoped and never prompts (unlike `--resume <name>`, which opens the interactive picker
+# and would block this non-interactive task). Deliberately not `exec`'d, so we can observe its exit
+# code. A fast non-zero exit means there was nothing to continue (e.g. the editor was closed before
+# Claude persisted anything) — fall back to a fresh named session. A slow non-zero exit is a real
+# session that later failed, so propagate it instead of relaunching.
+if [ -f "$wm_marker" ] && [ "$(cat "$wm_marker")" = "$WORKTREE_MANAGER_CLAUDE_SESSION_NAME" ]; then
+  wm_start=$SECONDS
+  claude -c "${WM_ADD_DIRS[@]}"
+  wm_rc=$?
+  if [ $wm_rc -ne 0 ] && [ $((SECONDS - wm_start)) -lt 10 ]; then
+    wm_start_named_session
+  fi
+  exit $wm_rc
+else
+  wm_start_named_session
+fi

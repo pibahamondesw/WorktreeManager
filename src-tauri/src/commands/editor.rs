@@ -66,14 +66,8 @@ pub fn open_editor(
             if multi {
                 let canon = canonical_worktree_path(primary);
                 let canon_str = canon.to_string_lossy().to_string();
-                let slug = vscode_task::branch_to_session_slug(branch, &canon_str);
-                let claude_cmd = vscode_task::build_claude_worktree_shell_command(
-                    &canon_str,
-                    &slug,
-                    ".vscode",
-                    &extra_canon,
-                );
-                let task = vscode_task::task_json_object(&claude_cmd);
+                // Writes `.vscode/wm-start-claude.sh` and embeds a task pointing at it.
+                let task = vscode_task::build_vscode_claude_task(&canon_str, branch, &extra_canon);
                 let ws = workspace::ensure_code_workspace_file(
                     workspace_name.as_deref(),
                     branch,
@@ -283,11 +277,15 @@ fn open_claude_in_terminal(
     branch_name: Option<&str>,
 ) -> Result<String, String> {
     let canon = canonical_worktree_path(worktree_path);
-    let canon_str = canon.to_string_lossy();
-    let slug = vscode_task::branch_to_session_slug(branch_name, &canon_str);
-    let shell_cmd =
-        vscode_task::build_claude_worktree_shell_command(&canon_str, &slug, ".vscode", extra_dirs);
-    open_terminal_applescript("claude", &canon_str, &shell_cmd)
+    let canon_str = canon.to_string_lossy().to_string();
+    let script_path =
+        vscode_task::ensure_worktree_launch_script(&canon_str, ".vscode", branch_name, extra_dirs)?;
+    // `exec` the script so quitting Claude closes the Terminal tab, matching the in-editor tasks.
+    let run = format!(
+        "exec {}",
+        vscode_task::shell_single_quoted(&script_path.to_string_lossy())
+    );
+    open_terminal_applescript("claude", &canon_str, &run)
 }
 
 fn open_neovim_in_terminal(worktree_path: &str) -> Result<String, String> {
