@@ -6,7 +6,7 @@
 //! storage layout the worst case is the panel opening again.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::UNIX_EPOCH;
 
@@ -57,7 +57,7 @@ CREATE INDEX idx_composerHeaders_0 ON composerHeaders (workspaceId, isSubagent, 
 CREATE INDEX idx_composerHeaders_1 ON composerHeaders (recency, composerId);\n\
 INSERT INTO ItemTable VALUES ('cursor/needsComposerInitialOpening','false'),('workbench.auxiliaryBar.hidden','true');";
 
-fn seed(storage_root: &PathBuf, id: &str, workspace_json: &str) -> Result<(), String> {
+fn seed(storage_root: &Path, id: &str, workspace_json: &str) -> Result<(), String> {
     let dir = storage_root.join(id);
     if dir.exists() {
         return Ok(()); // Cursor already knows this workspace; leave its state alone

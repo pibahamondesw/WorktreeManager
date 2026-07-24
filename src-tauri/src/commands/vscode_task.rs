@@ -385,10 +385,7 @@ mod tests {
         // Panel stays dedicated + labeled, so it's still descriptive without the echo.
         assert_eq!(pres["panel"], json!("dedicated"));
         assert_eq!(task["label"], json!(WM_CLAUDE_TASK_LABEL));
-        assert_eq!(
-            task["command"],
-            json!("/tmp/x/.vscode/wm-start-claude.sh")
-        );
+        assert_eq!(task["command"], json!("/tmp/x/.vscode/wm-start-claude.sh"));
     }
 
     #[test]
