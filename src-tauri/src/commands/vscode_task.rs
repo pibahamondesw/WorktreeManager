@@ -25,8 +25,13 @@ pub const WM_CLAUDE_SESSION_MARKER_FILE: &str = ".wm-claude-session-init";
 const WM_SESSION_ENV: &str = "WORKTREE_MANAGER_CLAUDE_SESSION_NAME";
 
 /// PATH + profile sources (same for tasks, Terminal, and `claude` install probe).
+///
+/// Profile sourcing is wrapped so its stderr is discarded: bash-oriented profiles
+/// (`.profile`/`.bash_profile`) sourced under zsh routinely emit noise — e.g. a stale
+/// `. <cargo/env>` line pointing at a path that no longer exists — which would otherwise leak
+/// into the launch terminal. Claude's own stderr runs later and is unaffected.
 pub(crate) fn claude_env_prelude() -> &'static str {
-    r#"export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; [ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile"; [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"; [ -f "$HOME/.profile" ] && source "$HOME/.profile"; [ -f "$HOME/.bash_profile" ] && source "$HOME/.bash_profile""#
+    r#"export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; { [ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile"; [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"; [ -f "$HOME/.profile" ] && source "$HOME/.profile"; [ -f "$HOME/.bash_profile" ] && source "$HOME/.bash_profile"; } 2>/dev/null"#
 }
 
 /// Shell-safe single-quoted string (POSIX).
