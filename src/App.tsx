@@ -51,6 +51,7 @@ function App() {
 
   useKeyboardShortcuts({
     p: { handler: () => setShowAddWorkspace(true), enabled: state.setup.isComplete },
+    "meta+shift+r": { handler: () => window.location.reload() },
   });
 
   useUpdater();

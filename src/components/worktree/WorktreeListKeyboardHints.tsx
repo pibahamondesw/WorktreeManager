@@ -23,6 +23,12 @@ export function WorktreeListKeyboardHints() {
         <span>
           <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">⌘D</kbd> delete
         </span>
+        <span>
+          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">⌘R</kbd> refresh
+        </span>
+        <span>
+          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">⌘⇧R</kbd> reload
+        </span>
       </div>
     </div>
   );

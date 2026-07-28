@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseKey } from "./useKeyboardShortcuts";
+import { keyMatches, parseKey } from "./useKeyboardShortcuts";
 
 describe("parseKey", () => {
   it("parses a plain key", () => {
@@ -32,5 +32,21 @@ describe("parseKey", () => {
 
   it("handles shift without meta", () => {
     expect(parseKey("shift+a")).toEqual({ key: "a", meta: false, shift: true });
+  });
+});
+
+describe("keyMatches", () => {
+  it("matches single characters case-insensitively", () => {
+    expect(keyMatches("R", "r")).toBe(true);
+    expect(keyMatches("r", "r")).toBe(true);
+  });
+
+  it("does not match different characters", () => {
+    expect(keyMatches("C", "r")).toBe(false);
+  });
+
+  it("matches named keys exactly", () => {
+    expect(keyMatches("ArrowDown", "ArrowDown")).toBe(true);
+    expect(keyMatches("arrowdown", "ArrowDown")).toBe(false);
   });
 });
