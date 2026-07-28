@@ -32,7 +32,7 @@ export function useWorktreeListKeyboardShortcuts({
   useKeyboardShortcuts(
     {
       n: { handler: () => setShowNew(true), enabled: !!workspace },
-      r: { handler: () => handleRefresh(), enabled: !!workspace },
+      "meta+r": { handler: () => handleRefresh(), enabled: !!workspace },
       ArrowDown: {
         handler: () => setSelectedIndex((i) => Math.min(i + 1, tasks.length - 1)),
         enabled: tasks.length > 0,
