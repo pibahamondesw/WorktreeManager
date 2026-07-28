@@ -20,6 +20,13 @@ export function parseKey(combo: string): { key: string; meta: boolean; shift: bo
   return { key, meta, shift };
 }
 
+// Shift turns single-character keys uppercase, so match those case-insensitively.
+export function keyMatches(eventKey: string, shortcutKey: string): boolean {
+  return shortcutKey.length === 1
+    ? eventKey.toLowerCase() === shortcutKey.toLowerCase()
+    : eventKey === shortcutKey;
+}
+
 export function useKeyboardShortcuts(
   shortcuts: Record<string, ShortcutDef>,
   options?: { enabled?: boolean }
@@ -50,7 +57,7 @@ export function useKeyboardShortcuts(
 
       for (const s of parsedRef.current) {
         if (s.def.enabled === false) continue;
-        if (e.key !== s.key) continue;
+        if (!keyMatches(e.key, s.key)) continue;
         if (s.meta !== isMeta) continue;
         if (s.shift !== e.shiftKey) continue;
 
