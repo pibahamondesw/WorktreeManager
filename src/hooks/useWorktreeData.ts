@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { LinearService } from "../services/linear";
 import { Task, Workspace, GitStatus, IssueLinearInfo } from "../types";
 
+const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+
 export function useWorktreeData(
   tasks: Task[],
   workspace: Workspace | undefined,
@@ -14,6 +16,7 @@ export function useWorktreeData(
   const [refreshing, setRefreshing] = useState(false);
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
+  const lastRefreshRef = useRef(0);
 
   const fetchLinearInfo = useCallback(async () => {
     const issueIds = tasks
@@ -59,9 +62,13 @@ export function useWorktreeData(
     try {
       await Promise.all([fetchLinearInfo(), fetchGitStatuses()]);
     } finally {
+      lastRefreshRef.current = Date.now();
       setRefreshing(false);
     }
   }, [fetchLinearInfo, fetchGitStatuses]);
+
+  const handleRefreshRef = useRef(handleRefresh);
+  handleRefreshRef.current = handleRefresh;
 
   useEffect(() => {
     let stale = false;
@@ -69,11 +76,27 @@ export function useWorktreeData(
     setRefreshing(true);
     Promise.all([fetchLinearInfo(), fetchGitStatuses()]).finally(() => {
       if (stale) return;
+      lastRefreshRef.current = Date.now();
       setRefreshing(false);
       onReadyRef.current?.(workspaceId);
     });
     return () => { stale = true; };
   }, [fetchLinearInfo, fetchGitStatuses, workspace?.id]);
+
+  useEffect(() => {
+    if (!workspace?.id) return;
+    const refreshIfDue = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastRefreshRef.current < AUTO_REFRESH_INTERVAL_MS) return;
+      void handleRefreshRef.current();
+    };
+    const timer = setInterval(refreshIfDue, 60 * 1000);
+    document.addEventListener("visibilitychange", refreshIfDue);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshIfDue);
+    };
+  }, [workspace?.id]);
 
   return { linearInfo, gitStatuses, refreshing, handleRefresh };
 }
