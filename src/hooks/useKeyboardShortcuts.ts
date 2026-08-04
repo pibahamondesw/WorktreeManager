@@ -3,6 +3,12 @@ import { useEffect, useRef } from "react";
 interface ShortcutDef {
   handler: () => void;
   enabled?: boolean;
+  /**
+   * Fire even when the keystroke originates in a text field. Only for meta combos that
+   * must work while typing (opening the search palette); bare keys stay blocked so
+   * typing never triggers them.
+   */
+  inTextFields?: boolean;
 }
 
 interface ParsedShortcut {
@@ -27,6 +33,10 @@ export function keyMatches(eventKey: string, shortcutKey: string): boolean {
     : eventKey === shortcutKey;
 }
 
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+}
+
 export function useKeyboardShortcuts(
   shortcuts: Record<string, ShortcutDef>,
   options?: { enabled?: boolean }
@@ -44,19 +54,14 @@ export function useKeyboardShortcuts(
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
       if (optionsRef.current?.enabled === false) return;
 
       const isMeta = e.metaKey || e.ctrlKey;
+      const inTextField = isTextEntryTarget(e.target);
 
       for (const s of parsedRef.current) {
         if (s.def.enabled === false) continue;
+        if (inTextField && !(s.meta && s.def.inTextFields)) continue;
         if (!keyMatches(e.key, s.key)) continue;
         if (s.meta !== isMeta) continue;
         if (s.shift !== e.shiftKey) continue;

@@ -2,11 +2,14 @@ import { useState, useMemo, useCallback } from "react";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { WorkspaceList } from "./components/sidebar/WorkspaceList";
 import { WorktreeList } from "./components/worktree/WorktreeList";
+import { QuickSearchModal } from "./components/search/QuickSearchModal";
 import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdater } from "./hooks/useUpdater";
+import { withScope } from "./search/query";
+import { Task } from "./types";
 
 function App() {
   const {
@@ -35,6 +38,27 @@ function App() {
   } = useStore();
 
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
+  const [search, setSearch] = useState<{ open: boolean; query: string }>({
+    open: false,
+    query: "",
+  });
+  const [revealTaskId, setRevealTaskId] = useState<string | null>(null);
+
+  const openSearch = useCallback(
+    (scoped: boolean) => {
+      const name = selectedWorkspace?.name;
+      setSearch({ open: true, query: scoped && name ? withScope("", name) : "" });
+    },
+    [selectedWorkspace?.name]
+  );
+
+  const handleReveal = useCallback(
+    (task: Task) => {
+      if (task.workspaceId !== state.selectedWorkspaceId) selectWorkspace(task.workspaceId);
+      setRevealTaskId(task.id);
+    },
+    [state.selectedWorkspaceId, selectWorkspace]
+  );
 
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
@@ -50,8 +74,21 @@ function App() {
   }, [state.workspaces, state.setup.linearApiKey]);
 
   useKeyboardShortcuts({
-    p: { handler: () => setShowAddWorkspace(true), enabled: state.setup.isComplete },
+    p: {
+      handler: () => setShowAddWorkspace(true),
+      enabled: state.setup.isComplete && !search.open,
+    },
     "meta+shift+r": { handler: () => window.location.reload() },
+    "meta+k": {
+      handler: () => openSearch(false),
+      enabled: state.setup.isComplete,
+      inTextFields: true,
+    },
+    "meta+f": {
+      handler: () => openSearch(true),
+      enabled: state.setup.isComplete,
+      inTextFields: true,
+    },
   });
 
   useUpdater();
@@ -114,8 +151,22 @@ function App() {
           onEditorChange={updateEditorApp}
           workspaceSwitching={workspaceSwitching}
           onWorkspaceReady={clearWorkspaceSwitching}
+          onOpenSearch={() => openSearch(false)}
+          searchOpen={search.open}
+          revealTaskId={revealTaskId}
+          onRevealHandled={() => setRevealTaskId(null)}
         />
       </ErrorBoundary>
+      <QuickSearchModal
+        open={search.open}
+        onClose={() => setSearch((s) => ({ ...s, open: false }))}
+        initialQuery={search.query}
+        tasks={state.tasks}
+        workspaces={state.workspaces}
+        selectedWorkspaceId={state.selectedWorkspaceId}
+        editorApp={editorApp}
+        onReveal={handleReveal}
+      />
     </div>
   );
 }

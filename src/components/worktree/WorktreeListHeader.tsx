@@ -1,6 +1,6 @@
 import { Button } from "../ui/Button";
 import { EditorPicker } from "../ui/EditorPicker";
-import { RefreshIcon, PlusIcon } from "../ui/Icons";
+import { RefreshIcon, PlusIcon, SearchIcon } from "../ui/Icons";
 import { EditorApp } from "../../types";
 
 interface WorktreeListHeaderProps {
@@ -12,6 +12,7 @@ interface WorktreeListHeaderProps {
   onRefresh: () => void;
   refreshing: boolean;
   onNewTask: () => void;
+  onOpenSearch: () => void;
 }
 
 export function WorktreeListHeader({
@@ -23,6 +24,7 @@ export function WorktreeListHeader({
   onRefresh,
   refreshing,
   onNewTask,
+  onOpenSearch,
 }: WorktreeListHeaderProps) {
   return (
     <>
@@ -39,6 +41,14 @@ export function WorktreeListHeader({
             {taskCount} task{taskCount !== 1 ? "s" : ""}
             {repoCount > 1 ? ` · ${repoCount} repos` : ""}
           </span>
+          <button
+            type="button"
+            onClick={onOpenSearch}
+            className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
+            title="Search tasks (⌘K — ⌘F for this workspace)"
+          >
+            <SearchIcon />
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <EditorPicker value={editorApp} onChange={onEditorChange} />

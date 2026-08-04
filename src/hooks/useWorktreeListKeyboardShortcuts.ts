@@ -10,6 +10,7 @@ interface Params {
   selectedTask: Task | null;
   editorApp: EditorApp;
   showNew: boolean;
+  searchOpen: boolean;
   setShowNew: (v: boolean) => void;
   setSelectedIndex: Dispatch<SetStateAction<number>>;
   setDeleteRequested: (v: boolean) => void;
@@ -23,6 +24,7 @@ export function useWorktreeListKeyboardShortcuts({
   selectedTask,
   editorApp,
   showNew,
+  searchOpen,
   setShowNew,
   setSelectedIndex,
   setDeleteRequested,
@@ -101,6 +103,6 @@ export function useWorktreeListKeyboardShortcuts({
         ])
       ),
     },
-    { enabled: !showNew }
+    { enabled: !showNew && !searchOpen }
   );
 }
