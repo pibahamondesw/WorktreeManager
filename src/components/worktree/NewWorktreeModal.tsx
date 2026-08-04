@@ -155,6 +155,7 @@ export function NewWorktreeModal({
       return;
     }
     setCreating(true);
+    setCreatingStatus("Preparing worktrees...");
     setError(null);
 
     try {

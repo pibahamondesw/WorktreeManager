@@ -24,7 +24,20 @@ impl OpenEditorResult {
 /// launches, but carries no semantic priority — there is no "main" repo. Single-folder calls
 /// reproduce the original single-repo behavior exactly.
 #[tauri::command]
-pub fn open_editor(
+pub async fn open_editor(
+    editor: String,
+    folders: Vec<String>,
+    branch_name: Option<String>,
+    workspace_name: Option<String>,
+) -> Result<OpenEditorResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        open_editor_blocking(editor, folders, branch_name, workspace_name)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
+}
+
+fn open_editor_blocking(
     editor: String,
     folders: Vec<String>,
     branch_name: Option<String>,

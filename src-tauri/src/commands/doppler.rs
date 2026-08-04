@@ -58,7 +58,13 @@ fn has_setup_block(config: &Path) -> bool {
 /// missing `setup:` block, or a missing CLI are reported via `status` as `skipped_*`, and a
 /// non-zero exit as `error`, so the caller can treat it as best-effort.
 #[tauri::command]
-pub fn doppler_setup(worktree_path: String) -> Result<DopplerSetupResult, String> {
+pub async fn doppler_setup(worktree_path: String) -> Result<DopplerSetupResult, String> {
+    tauri::async_runtime::spawn_blocking(move || doppler_setup_blocking(worktree_path))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
+}
+
+fn doppler_setup_blocking(worktree_path: String) -> Result<DopplerSetupResult, String> {
     let Some(config) = doppler_config_path(&worktree_path) else {
         return Ok(DopplerSetupResult::new(
             "skipped_no_config",
