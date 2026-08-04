@@ -47,9 +47,12 @@ export function AddWorkspaceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  const suggestedName = repos.length === 1 ? repos[0].name.trim() : "";
+
   const handleSubmit = () => {
     setError(null);
-    if (!name.trim()) {
+    const finalName = name.trim() || suggestedName;
+    if (!finalName) {
       setError("Workspace name is required");
       return;
     }
@@ -69,7 +72,7 @@ export function AddWorkspaceModal({
     }
     onAdd({
       id: uuid(),
-      name: name.trim(),
+      name: finalName,
       repos: repos.map((r) => ({
         ...r,
         name: r.name.trim(),
@@ -84,7 +87,7 @@ export function AddWorkspaceModal({
       <div className="p-6 space-y-4">
         <Input
           label="Workspace name"
-          placeholder="e.g. Payments"
+          placeholder={suggestedName || "e.g. Payments"}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
