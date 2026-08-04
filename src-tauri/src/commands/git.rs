@@ -50,7 +50,19 @@ fn detect_default_branch(repo_path: &str) -> String {
 }
 
 #[tauri::command]
-pub fn git_worktree_add(
+pub async fn git_worktree_add(
+    repo_path: String,
+    worktree_path: String,
+    branch_name: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        worktree_add_blocking(repo_path, worktree_path, branch_name)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+fn worktree_add_blocking(
     repo_path: String,
     worktree_path: String,
     branch_name: String,
@@ -149,7 +161,19 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 /// new worktree, skipping any path that's missing in the source or already present
 /// in the worktree. Returns the paths actually copied.
 #[tauri::command]
-pub fn copy_local_configs(
+pub async fn copy_local_configs(
+    source_repo: String,
+    worktree_path: String,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        copy_local_configs_blocking(source_repo, worktree_path, paths)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+fn copy_local_configs_blocking(
     source_repo: String,
     worktree_path: String,
     paths: Vec<String>,
@@ -489,7 +513,19 @@ fn branch_exists(repo_path: &str, branch: &str) -> bool {
 /// Namespaces under the git username and appends `-2`, `-3`, … until neither the target
 /// directory nor a local branch of that name exists, guaranteeing a distinct workspace.
 #[tauri::command]
-pub fn resolve_manual_worktree(
+pub async fn resolve_manual_worktree(
+    repo_path: String,
+    worktree_base_path: String,
+    raw_name: String,
+) -> Result<ResolvedWorktree, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        resolve_manual_worktree_blocking(repo_path, worktree_base_path, raw_name)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+fn resolve_manual_worktree_blocking(
     repo_path: String,
     worktree_base_path: String,
     raw_name: String,
