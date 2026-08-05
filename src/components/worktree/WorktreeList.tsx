@@ -22,6 +22,11 @@ interface WorktreeListProps {
   onEditorChange: (editor: EditorApp) => void;
   workspaceSwitching: boolean;
   onWorkspaceReady: (workspaceId?: string) => void;
+  onOpenSearch: () => void;
+  searchOpen: boolean;
+  /** Task picked in the quick search: select it once this workspace's tasks are in. */
+  revealTaskId: string | null;
+  onRevealHandled: () => void;
 }
 
 /** Collapse the per-member git statuses of a task into one summary for its card. */
@@ -53,6 +58,10 @@ export function WorktreeList({
   onEditorChange,
   workspaceSwitching,
   onWorkspaceReady,
+  onOpenSearch,
+  searchOpen,
+  revealTaskId,
+  onRevealHandled,
 }: WorktreeListProps) {
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
@@ -76,6 +85,16 @@ export function WorktreeList({
     setSelectedIndex(-1);
   }, [workspace?.id]);
 
+  // Declared after the reset above so a reveal wins when a workspace switch lands in the
+  // same commit: the task may only appear in `tasks` after that switch.
+  useEffect(() => {
+    if (!revealTaskId) return;
+    const index = tasks.findIndex((t) => t.id === revealTaskId);
+    if (index === -1) return;
+    setSelectedIndex(index);
+    onRevealHandled();
+  }, [revealTaskId, tasks, onRevealHandled]);
+
   const selectedTask =
     selectedIndex >= 0 && selectedIndex < tasks.length ? tasks[selectedIndex] : null;
 
@@ -85,6 +104,7 @@ export function WorktreeList({
     selectedTask,
     editorApp,
     showNew,
+    searchOpen,
     setShowNew,
     setSelectedIndex,
     setDeleteRequested,
@@ -106,6 +126,7 @@ export function WorktreeList({
           onRefresh={handleRefresh}
           refreshing={refreshing}
           onNewTask={() => setShowNew(true)}
+          onOpenSearch={onOpenSearch}
         />
 
         <div className="flex-1 overflow-y-auto p-6">
