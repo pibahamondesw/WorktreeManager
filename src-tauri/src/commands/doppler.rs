@@ -6,6 +6,9 @@
 //! worktree. We run `doppler setup --no-interactive` automatically when the config is clearly
 //! present. Cases we can't predict from the filesystem alone — most notably a machine
 //! that isn't logged into Doppler — surface as `error` so the UI can surface a hint.
+//!
+//! Deleting a worktree leaves its scope entry behind in `~/.doppler/.doppler.yaml`, so
+//! `doppler_cleanup` unsets it — the mirror image of setup.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -115,4 +118,64 @@ fn doppler_setup_blocking(worktree_path: String) -> Result<DopplerSetupResult, S
             },
         ))
     }
+}
+
+/// Every option Doppler can store per scope (`doppler configure options`). Unsetting all of
+/// them drops the scope entry from the file entirely, which is what we want on delete.
+const SCOPED_OPTIONS: [&str; 6] = [
+    "api-host",
+    "config",
+    "dashboard-host",
+    "project",
+    "token",
+    "verify-tls",
+];
+
+fn doppler_yaml_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    Path::new(&home).join(".doppler").join(".doppler.yaml")
+}
+
+/// Drop the scope entries of deleted worktrees from `~/.doppler/.doppler.yaml`.
+///
+/// Best-effort and idempotent: paths without a scope entry, a missing CLI, or a missing config
+/// file are all no-ops. We go through the CLI rather than editing the YAML ourselves because
+/// Doppler writes long scope keys in explicit-key (`? key`) form. Returns the paths cleaned up.
+#[tauri::command]
+pub async fn doppler_cleanup(paths: Vec<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || doppler_cleanup_blocking(paths))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
+}
+
+fn doppler_cleanup_blocking(paths: Vec<String>) -> Result<Vec<String>, String> {
+    let Ok(contents) = fs::read_to_string(doppler_yaml_path()) else {
+        return Ok(Vec::new());
+    };
+
+    let scoped: Vec<String> = paths
+        .into_iter()
+        .filter(|p| Path::new(p).is_absolute() && contents.contains(p.as_str()))
+        .collect();
+    if scoped.is_empty() || !cli_available("doppler") {
+        return Ok(Vec::new());
+    }
+
+    let mut cleaned = Vec::new();
+    for path in scoped {
+        let shell_cmd = format!(
+            "{}; doppler configure unset {} --scope {} --silent",
+            claude_env_prelude(),
+            SCOPED_OPTIONS.join(" "),
+            shell_single_quoted(&path)
+        );
+        let ok = Command::new("/bin/zsh")
+            .args(["-lc", &shell_cmd])
+            .output()
+            .is_ok_and(|out| out.status.success());
+        if ok {
+            cleaned.push(path);
+        }
+    }
+    Ok(cleaned)
 }
