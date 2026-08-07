@@ -161,6 +161,14 @@ export const WorktreeCard = memo(function WorktreeCard({
     }
   };
 
+  const cleanupDopplerConfig = async () => {
+    try {
+      await invoke("doppler_cleanup", { paths: task.members.map((m) => m.path) });
+    } catch {
+      /* doppler.yaml cleanup is best-effort */
+    }
+  };
+
   const handleDeleteConfirm = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setConfirmDelete(false);
@@ -176,6 +184,7 @@ export const WorktreeCard = memo(function WorktreeCard({
       }
       await cleanupWorkspaceFile();
       await cleanupClaudeConfig();
+      await cleanupDopplerConfig();
       onDelete(task.id);
     } catch (e) {
       const msg = typeof e === "string" ? e : "Failed to remove one or more worktrees from disk";
@@ -189,6 +198,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     setDeleteError(null);
     await cleanupWorkspaceFile();
     await cleanupClaudeConfig();
+    await cleanupDopplerConfig();
     onDelete(task.id);
   };
 

@@ -54,6 +54,13 @@ export function RemoveWorkspaceModal({
       } catch {
         /* claude.json cleanup is best-effort */
       }
+      try {
+        await invoke("doppler_cleanup", {
+          paths: tasks.flatMap((t) => t.members.map((m) => m.path)),
+        });
+      } catch {
+        /* doppler.yaml cleanup is best-effort */
+      }
       if (errors.length > 0) {
         setError(
           `Some worktrees could not be removed from disk:\n${errors.join("\n")}\n\nThe workspace will still be removed from the app.`,
