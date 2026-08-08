@@ -141,7 +141,7 @@ export function NewWorktreeModal({
 
   const includedRepos = useMemo(
     () => workspace.repos.filter((r) => repoSel[r.id]?.included),
-    [workspace.repos, repoSel],
+    [workspace.repos, repoSel]
   );
 
   const setIncluded = (repoId: string, included: boolean) =>
@@ -159,90 +159,95 @@ export function NewWorktreeModal({
     setError(null);
 
     try {
-      const members: TaskMember[] = [];
-      for (const r of workspace.repos) {
-        const sel = repoSel[r.id];
-        if (!sel?.included) continue;
+      // Each repo's chain (resolve branch → worktree add → copy configs) only touches its own
+      // repo, so all repos run in parallel.
+      const total = includedRepos.length;
+      let done = 0;
+      setCreatingStatus(`Creating ${total === 1 ? "worktree" : `${total} worktrees`}...`);
+      const members: TaskMember[] = await Promise.all(
+        includedRepos.map(async (r) => {
+          // Every included repo gets its own isolated worktree on the task branch.
+          if (!r.worktreeBasePath) {
+            throw new Error(`${r.name} has no worktree directory configured — edit the workspace.`);
+          }
+          let branchName = branchInput;
+          let worktreePath = `${r.worktreeBasePath}/${branchName}`;
 
-        // Every included repo gets its own isolated worktree on the task branch.
-        if (!r.worktreeBasePath) {
-          throw new Error(`${r.name} has no worktree directory configured — edit the workspace.`);
-        }
-        let branchName = branchInput;
-        let worktreePath = `${r.worktreeBasePath}/${branchName}`;
+          // Manual (non-Linear) branches aren't unique by construction the way Linear branch
+          // names are, so namespace them under the git username and append a unique suffix on
+          // collision — guaranteeing each repo gets its own distinct workspace.
+          if (!selected) {
+            const resolved = await invoke<{ branchName: string; path: string }>(
+              "resolve_manual_worktree",
+              {
+                repoPath: r.localPath,
+                worktreeBasePath: r.worktreeBasePath,
+                rawName: branchInput,
+              }
+            );
+            branchName = resolved.branchName;
+            worktreePath = resolved.path;
+          }
 
-        // Manual (non-Linear) branches aren't unique by construction the way Linear branch
-        // names are, so namespace them under the git username and append a unique suffix on
-        // collision — guaranteeing each repo gets its own distinct workspace.
-        if (!selected) {
-          const resolved = await invoke<{ branchName: string; path: string }>(
-            "resolve_manual_worktree",
-            {
-              repoPath: r.localPath,
-              worktreeBasePath: r.worktreeBasePath,
-              rawName: branchInput,
-            },
-          );
-          branchName = resolved.branchName;
-          worktreePath = resolved.path;
-        }
-
-        setCreatingStatus(`Creating worktree in ${r.name}...`);
-        await invoke<string>("git_worktree_add", {
-          repoPath: r.localPath,
-          worktreePath,
-          branchName,
-        });
-
-        // Copy local (gitignored) config so the worktree doesn't start from scratch — editor
-        // config for the editor in use + env files. Best-effort: must not abort creation.
-        try {
-          await invoke<string[]>("copy_local_configs", {
-            sourceRepo: r.localPath,
+          await invoke<string>("git_worktree_add", {
+            repoPath: r.localPath,
             worktreePath,
-            paths: [...EDITOR_CONFIG_PATHS[editorApp], ...ALWAYS_COPIED_CONFIG_PATHS],
-          });
-        } catch (cfgErr) {
-          console.warn(`Could not copy local config for ${r.name}:`, cfgErr);
-        }
-
-        // If the repo commits a Doppler config with a setup: block, scope it for this worktree
-        // automatically so no manual `doppler setup` is needed. Runs in the background so it
-        // doesn't block opening the editor — the setup shells out through the login profile and
-        // hits the network, which the window doesn't need to wait on. Deliberately not awaited.
-        invoke<{ status: string; message: string }>("doppler_setup", { worktreePath })
-          .then((doppler) => {
-            if (doppler.status === "error") {
-              console.warn(`Doppler setup failed for ${r.name}: ${doppler.message}`);
-              onOpenHint?.(`Doppler setup failed for ${r.name} — check you're logged in`);
-            }
-          })
-          .catch((dopplerErr) => {
-            console.warn(`Could not run Doppler setup for ${r.name}:`, dopplerErr);
+            branchName,
           });
 
-        // Install JS deps (detected from the lockfile) in the background so the editor opens
-        // immediately — the worktree just isn't test-ready for the first minute or two.
-        // Deliberately not awaited; installs can take minutes.
-        invoke<{ status: string; message: string }>("install_node_deps", { worktreePath })
-          .then((deps) => {
-            if (deps.status === "error") {
-              console.warn(`Dependency install failed for ${r.name}: ${deps.message}`);
-              onOpenHint?.(`Dependency install failed in ${r.name} — run it manually`);
-            }
-          })
-          .catch((depsErr) => {
-            console.warn(`Could not install dependencies for ${r.name}:`, depsErr);
-          });
+          // Copy local (gitignored) config so the worktree doesn't start from scratch — editor
+          // config for the editor in use + env files. Best-effort: must not abort creation.
+          try {
+            await invoke<string[]>("copy_local_configs", {
+              sourceRepo: r.localPath,
+              worktreePath,
+              paths: [...EDITOR_CONFIG_PATHS[editorApp], ...ALWAYS_COPIED_CONFIG_PATHS],
+            });
+          } catch (cfgErr) {
+            console.warn(`Could not copy local config for ${r.name}:`, cfgErr);
+          }
 
-        members.push({
-          repoId: r.id,
-          repoName: r.name,
-          localPath: r.localPath,
-          path: worktreePath,
-          branchName,
-        });
-      }
+          // If the repo commits a Doppler config with a setup: block, scope it for this worktree
+          // automatically so no manual `doppler setup` is needed. Runs in the background so it
+          // doesn't block opening the editor — the setup shells out through the login profile and
+          // hits the network, which the window doesn't need to wait on. Deliberately not awaited.
+          invoke<{ status: string; message: string }>("doppler_setup", { worktreePath })
+            .then((doppler) => {
+              if (doppler.status === "error") {
+                console.warn(`Doppler setup failed for ${r.name}: ${doppler.message}`);
+                onOpenHint?.(`Doppler setup failed for ${r.name} — check you're logged in`);
+              }
+            })
+            .catch((dopplerErr) => {
+              console.warn(`Could not run Doppler setup for ${r.name}:`, dopplerErr);
+            });
+
+          // Install JS deps (detected from the lockfile) in the background so the editor opens
+          // immediately — the worktree just isn't test-ready for the first minute or two.
+          // Deliberately not awaited; installs can take minutes.
+          invoke<{ status: string; message: string }>("install_node_deps", { worktreePath })
+            .then((deps) => {
+              if (deps.status === "error") {
+                console.warn(`Dependency install failed for ${r.name}: ${deps.message}`);
+                onOpenHint?.(`Dependency install failed in ${r.name} — run it manually`);
+              }
+            })
+            .catch((depsErr) => {
+              console.warn(`Could not install dependencies for ${r.name}:`, depsErr);
+            });
+
+          done += 1;
+          setCreatingStatus(`Created ${done}/${total} worktree${total === 1 ? "" : "s"}...`);
+
+          return {
+            repoId: r.id,
+            repoName: r.name,
+            localPath: r.localPath,
+            path: worktreePath,
+            branchName,
+          };
+        })
+      );
 
       // Shared task branch: the first member's resolved branch, else the raw input.
       const taskBranch = members[0]?.branchName ?? branchInput;
@@ -298,10 +303,7 @@ export function NewWorktreeModal({
             const sel = repoSel[r.id];
             const included = sel?.included ?? false;
             return (
-              <label
-                key={r.id}
-                className="flex items-center gap-2 px-3 py-2 cursor-pointer"
-              >
+              <label key={r.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={included}
@@ -406,7 +408,9 @@ export function NewWorktreeModal({
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="text-xs text-text-muted font-mono">{selected.identifier}</p>
-                      <h3 className="text-sm font-medium text-text-primary mt-1">{selected.title}</h3>
+                      <h3 className="text-sm font-medium text-text-primary mt-1">
+                        {selected.title}
+                      </h3>
                     </div>
                     {selected.stateName && <Badge>{selected.stateName}</Badge>}
                   </div>
