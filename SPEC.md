@@ -85,6 +85,7 @@ interface Workspace {
   name: string; // Display name (e.g. "Fintoc Rails")
   repos: WorkspaceRepo[]; // Peer members, 1..N
   linearApiKey?: string | null; // Optional per-workspace Linear key
+  notesPath?: string | null; // Obsidian `task-logs/` folder; unset disables task notes
 }
 
 interface TaskMember {
@@ -340,6 +341,19 @@ This gives instant partial-ID matching (e.g. "3140" matches "TSY-3140") with zer
 - `git -C <repo_path> worktree list --porcelain`
 - Parse output into `Vec<WorktreeInfo>` (path, branch, head, bare)
 
+### `ensure_task_note(notes_path, file_name, contents)`
+
+- Creates `<notes_path>/` and `<notes_path>/_archive/` if missing, then writes `contents` to `<notes_path>/<file_name>` **only when no note exists yet**. Returns the note's absolute path either way.
+- Idempotent: an existing note — active or already archived — is returned untouched. The app owns the frontmatter at creation time only; everything written afterwards belongs to the user or their agent.
+- Rejects a `file_name` containing a path separator or a `..` segment, or not ending in `.md`.
+- Writes go through a temp sibling + rename, so a reader never sees a half-written note.
+
+### `archive_task_note(notes_path, file_name, today)`
+
+- Sets `status: archived` and `updated: <today>` in the **first** frontmatter block only, then moves the note into `<notes_path>/_archive/`. Returns the new path, or `None` when there is nothing to archive.
+- The date is passed in rather than read from a clock, keeping the command pure and testable.
+- Same `file_name` validation as above. Deleting a task must never fail because of a note.
+
 ### `open_cursor(path)`
 
 - **Critical**: Use `open -a Cursor <path>` (macOS LaunchServices), NOT `Command::new("cursor")`. The latter inherits the Tauri app's restricted environment/PATH, causing permission issues and "command not found" errors.
@@ -359,7 +373,25 @@ When the user clicks "Create Worktree" after selecting a Linear issue:
 7. **Save worktree record** to store **before** opening Cursor (so a Cursor failure doesn't lose the record)
 8. **Show status**: "Opening Cursor..."
 9. **Call** `open_cursor(path)` — best-effort, failure is non-fatal
-10. **Close modal**
+10. **Write the Obsidian task note** via `ensure_task_note`, when the workspace has a `notesPath` — fire-and-forget, never blocks or fails creation
+11. **Close modal**
+
+---
+
+## Obsidian Task Logs
+
+Opt-in per workspace via `notesPath` (an Obsidian `task-logs/` folder). Unset — the default — and every path below is a no-op.
+
+One note per task, named `<ISSUE-ID>-<branch-slug>.md`, or `<branch-slug>.md` with no Linear issue. `src/services/notes.ts` owns the naming and the note body; `taskNoteFileName` deliberately matches `vault-kit/scripts/new-task-note.sh` so the app, the scripts, and the `/task-log` skill all resolve the same file.
+
+| Moment | Behavior |
+| --- | --- |
+| Task created | `ensure_task_note` writes the note with frontmatter (issue, branch, workspace, repos, per-member worktree paths) and the four body sections |
+| `O` / More actions → Open notes | `ensure_task_note` (creating it if the notes folder was configured later), then `openUrl("obsidian://open?path=…")` |
+| Task deleted | `archive_task_note` moves it to `_archive/` with `status: archived` |
+| Workspace removed | Same, once per task |
+
+Every call is best-effort and swallows its errors: a note must never break task creation or deletion. The setup instructions, note template, and Claude Code skill live in `vault-kit/`.
 
 ---
 
@@ -372,6 +404,8 @@ Uses `@tauri-apps/plugin-store` with a `store.json` file. Keys:
 - `tasks`: `Task[]`
 - `selectedWorkspaceId`: `string | null`
 - `schemaVersion`: `number` (currently `1`)
+
+`notesPath` is additive and optional, so it needs no schema bump — but `normalizeWorkspaces` whitelists fields, so any new `Workspace` key must be added there or it is silently dropped on load.
 
 Auto-save enabled. On load, data from the pre-multi-repo schema (`repos`/`worktrees`/`selectedRepoId`) is migrated into single-repo workspaces and single-member tasks; a one-time `store.backup-preMultiRepo.json` is written and the legacy keys are left in place as a rollback point. The `tauri:dev:local` script runs the app under a separate identifier/store so development never touches the installed app's data.
 

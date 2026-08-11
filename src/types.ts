@@ -12,6 +12,8 @@ export interface Workspace {
   name: string;
   repos: WorkspaceRepo[];
   linearApiKey?: string | null;
+  /** Obsidian `task-logs/` folder. Unset disables task notes for this workspace. */
+  notesPath?: string | null;
 }
 
 /** One repo's worktree within a task. */

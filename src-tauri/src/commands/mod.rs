@@ -5,5 +5,6 @@ pub mod doppler;
 pub mod editor;
 pub mod git;
 pub mod node_deps;
+pub mod notes;
 pub mod vscode_task;
 pub mod workspace;

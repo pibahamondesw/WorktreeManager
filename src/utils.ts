@@ -27,6 +27,7 @@ export function normalizeWorkspaces(raw: any[] | undefined | null): Workspace[] 
     id: w.id,
     name: w.name ?? "",
     linearApiKey: w.linearApiKey ?? null,
+    notesPath: w.notesPath ?? null,
     repos: (w.repos ?? []).map((r: any) => ({
       id: r.id,
       name: r.name ?? "",

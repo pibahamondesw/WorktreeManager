@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Task, Workspace } from "../../types";
+import { archiveTaskNote } from "../../services/notes";
 
 interface RemoveWorkspaceModalProps {
   open: boolean;
@@ -46,6 +47,7 @@ export function RemoveWorkspaceModal({
             /* workspace-file cleanup is best-effort */
           }
         }
+        await archiveTaskNote(workspace, task);
       }
       try {
         await invoke("cleanup_claude_json", {
