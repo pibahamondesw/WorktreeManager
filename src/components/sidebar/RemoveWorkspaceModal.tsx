@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Task, Workspace } from "../../types";
+import { archiveTaskNote } from "../../services/notes";
 
 interface RemoveWorkspaceModalProps {
   open: boolean;
@@ -68,6 +69,13 @@ export function RemoveWorkspaceModal({
       }
     }
 
+    // The app is forgetting these tasks either way, so their notes are archived
+    // whether or not the worktrees stay on disk — otherwise they'd sit in
+    // task-logs/ with nothing left to ever archive them.
+    for (const task of tasks) {
+      await archiveTaskNote(workspace, task);
+    }
+
     onConfirm(deleteFromDisk);
     setRemoving(false);
   };
@@ -98,6 +106,12 @@ export function RemoveWorkspaceModal({
             <p className="text-sm text-text-secondary">
               What would you like to do with the worktrees created for these tasks?
             </p>
+            {workspace.notesPath && (
+              <p className="text-xs text-text-muted">
+                Task notes are kept either way, moved to{" "}
+                <span className="font-mono">_archive/</span>.
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm text-text-secondary">

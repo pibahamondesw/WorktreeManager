@@ -22,6 +22,7 @@ import {
   PullRequestInfo,
 } from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
+import { archiveTaskNote, ensureTaskNote, taskNoteUri } from "../../services/notes";
 import { timeAgo } from "../../utils";
 
 interface WorktreeCardProps {
@@ -185,6 +186,7 @@ export const WorktreeCard = memo(function WorktreeCard({
       await cleanupWorkspaceFile();
       await cleanupClaudeConfig();
       await cleanupDopplerConfig();
+      await archiveTaskNote(workspace, task);
       onDelete(task.id);
     } catch (e) {
       const msg = typeof e === "string" ? e : "Failed to remove one or more worktrees from disk";
@@ -199,6 +201,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     await cleanupWorkspaceFile();
     await cleanupClaudeConfig();
     await cleanupDopplerConfig();
+    await archiveTaskNote(workspace, task);
     onDelete(task.id);
   };
 
@@ -253,6 +256,14 @@ export const WorktreeCard = memo(function WorktreeCard({
         navigator.clipboard.writeText(folders.join("\n"));
         onToast?.(folders.length > 1 ? "Folder paths copied" : "Worktree path copied");
         break;
+      case "open-notes": {
+        // Creates the note first if it's missing — e.g. the notes folder was configured
+        // after this task existed.
+        const notePath = await ensureTaskNote(workspace, task);
+        if (notePath) openUrl(taskNoteUri(notePath));
+        else onOpenError?.("Could not open the task note");
+        break;
+      }
       case "open-claude-code":
         try {
           await invoke<{ message: string; workspaceFile: string | null }>("open_editor", {
@@ -529,6 +540,11 @@ export const WorktreeCard = memo(function WorktreeCard({
                 <MenuButton onClick={() => handleMenuAction("open-claude-code")}>
                   Open in Claude Code
                 </MenuButton>
+                {workspace.notesPath && (
+                  <MenuButton label="O" onClick={() => handleMenuAction("open-notes")}>
+                    Open notes
+                  </MenuButton>
+                )}
               </div>
             )}
           </div>
@@ -551,15 +567,22 @@ export const WorktreeCard = memo(function WorktreeCard({
           className="mt-3 flex items-center justify-between gap-3 pt-3 border-t border-border"
           onClick={(e) => e.stopPropagation()}
         >
-          <span className="text-xs text-text-secondary truncate">
-            Delete{" "}
-            <strong className="text-text-primary">
-              {task.linearIssueIdentifier || task.branchName}
-            </strong>
-            {task.members.length > 1
-              ? ` and its ${task.members.length} worktrees from disk?`
-              : " and remove from disk?"}
-          </span>
+          <div className="min-w-0">
+            <span className="text-xs text-text-secondary truncate">
+              Delete{" "}
+              <strong className="text-text-primary">
+                {task.linearIssueIdentifier || task.branchName}
+              </strong>
+              {task.members.length > 1
+                ? ` and its ${task.members.length} worktrees from disk?`
+                : " and remove from disk?"}
+            </span>
+            {workspace.notesPath && (
+              <p className="text-[10px] text-text-muted mt-0.5">
+                Notes are kept, moved to <span className="font-mono">_archive/</span>.
+              </p>
+            )}
+          </div>
           <div className="flex gap-2 flex-shrink-0">
             <button
               onClick={handleDeleteCancel}

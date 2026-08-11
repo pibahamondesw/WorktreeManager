@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { Task, Workspace, EditorApp } from "../types";
 import { openEditorForWorktree } from "../services/openEditor";
+import { ensureTaskNote, taskNoteUri } from "../services/notes";
 
 interface Params {
   workspace: Workspace | undefined;
@@ -73,6 +74,16 @@ export function useWorktreeListKeyboardShortcuts({
           }
         },
         enabled: !!selectedTask?.linearIssueIdentifier,
+      },
+      o: {
+        handler: () => {
+          if (!selectedTask || !workspace) return;
+          void ensureTaskNote(workspace, selectedTask).then((notePath) => {
+            if (notePath) openUrl(taskNoteUri(notePath));
+            else showToast("Could not open the task note");
+          });
+        },
+        enabled: !!selectedTask && !!workspace?.notesPath,
       },
       "meta+d": {
         handler: () => setDeleteRequested(true),

@@ -7,6 +7,7 @@ import { Button } from "../ui/Button";
 import { Workspace, WorkspaceRepo } from "../../types";
 import { WorkspaceRepoEditor } from "./WorkspaceRepoEditor";
 import { LinearKeyField } from "./LinearKeyField";
+import { NotesPathField } from "./NotesPathField";
 import { useLinearKeyValidation } from "../../hooks/useLinearKeyValidation";
 
 interface AddWorkspaceModalProps {
@@ -24,6 +25,7 @@ export function AddWorkspaceModal({
 }: AddWorkspaceModalProps) {
   const [name, setName] = useState("");
   const [repos, setRepos] = useState<WorkspaceRepo[]>([]);
+  const [notesPath, setNotesPath] = useState("");
   const [home, setHome] = useState("");
   const [error, setError] = useState<string | null>(null);
   const linear = useLinearKeyValidation();
@@ -36,6 +38,7 @@ export function AddWorkspaceModal({
     if (!open) {
       setName("");
       setRepos([]);
+      setNotesPath("");
       setError(null);
       linear.reset();
       return;
@@ -79,6 +82,7 @@ export function AddWorkspaceModal({
         worktreeBasePath: r.worktreeBasePath.trim(),
       })),
       linearApiKey: linear.linearValid ? linear.linearKey.trim() : null,
+      notesPath: notesPath.trim() || null,
     });
   };
 
@@ -103,6 +107,8 @@ export function AddWorkspaceModal({
           onChange={linear.setLinearKey}
           onValidate={() => linear.runValidation(linear.linearKey)}
         />
+
+        <NotesPathField value={notesPath} onChange={setNotesPath} />
 
         {error && <p className="text-sm text-danger select-text">{error}</p>}
 

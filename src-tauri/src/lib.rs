@@ -38,6 +38,8 @@ pub fn run() {
             commands::editor::open_editor,
             commands::editor::check_app_installed,
             commands::workspace::delete_workspace_file,
+            commands::notes::ensure_task_note,
+            commands::notes::archive_task_note,
             commands::claude_config::cleanup_claude_json,
             commands::claude_config::cleanup_claude_json_stale,
         ])

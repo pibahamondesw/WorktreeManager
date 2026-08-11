@@ -12,6 +12,7 @@ A lightweight macOS desktop app for managing Git worktrees with Linear integrati
 - **Multi-editor support** — Open worktrees in Cursor, VS Code, OpenCode, or Claude Code
 - **PR tracking** — See linked GitHub PRs on worktree cards, or create new PRs in one click
 - **Git status** — See ahead/behind counts, dirty state, and worktree age at a glance
+- **Obsidian task logs** — Optional per-task note in your vault, created and archived with the task
 - **Keyboard-driven** — Navigate with arrows/numbers, shortcuts for all common actions
 - **Themes** — 8 built-in color themes (Indigo, Ocean, Forest, Sunset, Rose, Nord, Dracula, Monochrome)
 
@@ -131,10 +132,27 @@ By default, new projects store worktrees in:
 | `P`               | Add new project                  |
 | `R`               | Refresh Linear info              |
 | `L`               | Open selected issue on Linear    |
+| `O`               | Open task notes in Obsidian      |
 | `⌘B`              | Copy branch name                 |
 | `⌘⇧C`             | Copy worktree path               |
 | `⌘D`              | Delete selected worktree         |
 | `Esc`             | Clear selection                  |
+
+## Obsidian task logs
+
+The app knows more about a unit of work than anything else on your machine: a task is a branch, a Linear issue, and one worktree per member repo. Delete the worktree and all of that context goes with it — including why you took an approach, what you tried and rejected, and what you learned.
+
+Point a workspace at an Obsidian folder and the app keeps a durable note per task:
+
+- **Created** with the task, with the issue, branch, repos, and worktree paths already in frontmatter.
+- **Opened** with `O` or **More actions → Open notes**.
+- **Archived** when you delete the task or remove the workspace — moved to `_archive/` with `status: archived`, body untouched.
+
+The app never overwrites or deletes a note you wrote in. The frontmatter is its business; the prose is yours (or your agent's). The one note it will discard is one nobody touched, so `_archive/` keeps meaning "tasks that left something behind".
+
+**Setup:** follow [`vault-kit/README.md`](vault-kit/README.md), then set **Notes folder** in your workspace settings. It grafts onto a vault you already have, or walks you through starting one. The kit also ships a `/task-log` Claude Code skill that writes the log for you — which is the part that decides whether this survives past week three.
+
+Leave **Notes folder** empty and the whole feature stays off.
 
 ## Tests
 

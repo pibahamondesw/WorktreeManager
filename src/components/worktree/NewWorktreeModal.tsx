@@ -17,6 +17,7 @@ import {
   Workspace,
 } from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
+import { ensureTaskNote } from "../../services/notes";
 
 interface NewWorktreeModalProps {
   open: boolean;
@@ -283,6 +284,9 @@ export function NewWorktreeModal({
         createdAt: new Date().toISOString(),
       };
       onCreated(task);
+
+      // Obsidian task log, when the workspace has one. Best-effort: the task exists.
+      void ensureTaskNote(workspace, task);
 
       onClose();
     } catch (e) {

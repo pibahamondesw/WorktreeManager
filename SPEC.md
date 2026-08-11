@@ -85,6 +85,7 @@ interface Workspace {
   name: string; // Display name (e.g. "Fintoc Rails")
   repos: WorkspaceRepo[]; // Peer members, 1..N
   linearApiKey?: string | null; // Optional per-workspace Linear key
+  notesPath?: string | null; // Obsidian `task-logs/` folder; unset disables task notes
 }
 
 interface TaskMember {
@@ -340,6 +341,21 @@ This gives instant partial-ID matching (e.g. "3140" matches "TSY-3140") with zer
 - `git -C <repo_path> worktree list --porcelain`
 - Parse output into `Vec<WorktreeInfo>` (path, branch, head, bare)
 
+### `ensure_task_note(notes_path, file_name, contents)`
+
+- Creates `<notes_path>/` and `<notes_path>/_archive/` if missing, then writes `contents` to `<notes_path>/<file_name>` **only when no note exists yet**. Returns the note's absolute path either way.
+- Idempotent: an existing note — active or already archived — is returned untouched. The app owns the frontmatter at creation time only; everything written afterwards belongs to the user or their agent.
+- Rejects a `file_name` containing a path separator or a `..` segment, or not ending in `.md`.
+- Writes go through a temp sibling + rename, so a reader never sees a half-written note.
+
+### `archive_task_note(notes_path, file_name, today)`
+
+- Sets `status: archived` and `updated: <today>` in the **first** frontmatter block only, then moves the note into `<notes_path>/_archive/`.
+- A note whose body still holds nothing but headings, HTML comments, and blank lines is **deleted** instead of archived. Nothing of the user's is lost by definition, and `_archive/` stays meaningful — it should hold tasks that left something behind, not one stub per quick fix.
+- Returns the archive path, or `None` when nothing was archived: no note, one already archived, or an empty one discarded.
+- The date is passed in rather than read from a clock, keeping the command pure and testable.
+- Same `file_name` validation as above. Deleting a task must never fail because of a note.
+
 ### `open_cursor(path)`
 
 - **Critical**: Use `open -a Cursor <path>` (macOS LaunchServices), NOT `Command::new("cursor")`. The latter inherits the Tauri app's restricted environment/PATH, causing permission issues and "command not found" errors.
@@ -359,7 +375,27 @@ When the user clicks "Create Worktree" after selecting a Linear issue:
 7. **Save worktree record** to store **before** opening Cursor (so a Cursor failure doesn't lose the record)
 8. **Show status**: "Opening Cursor..."
 9. **Call** `open_cursor(path)` — best-effort, failure is non-fatal
-10. **Close modal**
+10. **Write the Obsidian task note** via `ensure_task_note`, when the workspace has a `notesPath` — fire-and-forget, never blocks or fails creation
+11. **Close modal**
+
+---
+
+## Obsidian Task Logs
+
+Opt-in per workspace via `notesPath` (an Obsidian `task-logs/` folder). Unset — the default — and every path below is a no-op.
+
+One note per task, named `<ISSUE-ID>-<branch-slug>.md`, or `<branch-slug>.md` with no Linear issue. `src/services/notes.ts` owns the naming and the note body; `taskNoteFileName` deliberately matches `vault-kit/scripts/new-task-note.sh` so the app, the scripts, and the `/task-log` skill all resolve the same file.
+
+| Moment | Behavior |
+| --- | --- |
+| Task created | `ensure_task_note` writes the note with frontmatter (issue, branch, workspace, repos, per-member worktree paths) and the four body sections |
+| `O` / More actions → Open notes | `ensure_task_note` (creating it if the notes folder was configured later), then `openUrl("obsidian://open?path=…")` |
+| Task deleted | `archive_task_note` moves it to `_archive/` with `status: archived`, or discards it when untouched |
+| Workspace removed | Same, once per task — regardless of whether the worktrees are deleted from disk, since the app forgets the tasks either way and nothing else would ever archive their notes |
+
+Every call is best-effort and swallows its errors: a note must never break task creation or deletion. The setup instructions, note template, and Claude Code skill live in `vault-kit/`.
+
+**Notes are never destroyed once written to.** Both delete flows say so inline when `notesPath` is set, so archiving isn't a silent surprise to a user who thinks they cleaned up. There is deliberately no "delete the note too" affordance: a task is usually deleted right after merging — exactly when its note is worth the most — and the vault is plain Markdown that Obsidian already deletes better than a button here would.
 
 ---
 
@@ -372,6 +408,8 @@ Uses `@tauri-apps/plugin-store` with a `store.json` file. Keys:
 - `tasks`: `Task[]`
 - `selectedWorkspaceId`: `string | null`
 - `schemaVersion`: `number` (currently `1`)
+
+`notesPath` is additive and optional, so it needs no schema bump — but `normalizeWorkspaces` whitelists fields, so any new `Workspace` key must be added there or it is silently dropped on load.
 
 Auto-save enabled. On load, data from the pre-multi-repo schema (`repos`/`worktrees`/`selectedRepoId`) is migrated into single-repo workspaces and single-member tasks; a one-time `store.backup-preMultiRepo.json` is written and the legacy keys are left in place as a rollback point. The `tauri:dev:local` script runs the app under a separate identifier/store so development never touches the installed app's data.
 

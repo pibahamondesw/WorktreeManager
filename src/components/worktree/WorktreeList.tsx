@@ -161,7 +161,7 @@ export function WorktreeList({
           )}
         </div>
 
-        {tasks.length > 0 && <WorktreeListKeyboardHints />}
+        {tasks.length > 0 && <WorktreeListKeyboardHints showNotes={!!workspace.notesPath} />}
 
         {toast && <WorktreeListToast message={toast} />}
 

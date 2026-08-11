@@ -165,6 +165,7 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
       id: "w1",
       name: "",
       linearApiKey: null,
+      notesPath: null,
       repos: [{ id: "r1", name: "", localPath: "", worktreeBasePath: "" }],
     });
   });
