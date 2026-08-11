@@ -98,10 +98,74 @@ fn archive_frontmatter(contents: &str, today: &str) -> String {
     out
 }
 
+/// Strip HTML comments from a line, carrying an unterminated comment over to the next
+/// line via `in_comment`. Template scaffolding lives in comments, so it doesn't count
+/// as content.
+fn strip_comments(line: &str, in_comment: &mut bool) -> String {
+    let mut rest = line;
+    let mut out = String::new();
+    loop {
+        if *in_comment {
+            match rest.find("-->") {
+                Some(end) => {
+                    rest = &rest[end + 3..];
+                    *in_comment = false;
+                }
+                None => return out,
+            }
+        }
+        match rest.find("<!--") {
+            Some(start) => {
+                out.push_str(&rest[..start]);
+                rest = &rest[start + 4..];
+                *in_comment = true;
+            }
+            None => {
+                out.push_str(rest);
+                return out;
+            }
+        }
+    }
+}
+
+/// True when a note holds nothing beyond the scaffold the app or the template wrote:
+/// frontmatter, headings, comments, and blank lines.
+///
+/// Archiving such a note would only dilute `_archive/` — a folder that should mean
+/// "tasks that left something behind". Deleting it loses nothing by definition.
+fn note_body_is_empty(contents: &str) -> bool {
+    let mut in_frontmatter = false;
+    let mut in_comment = false;
+
+    for (i, line) in contents.lines().enumerate() {
+        let trimmed = line.trim();
+        if i == 0 && trimmed == "---" {
+            in_frontmatter = true;
+            continue;
+        }
+        if in_frontmatter {
+            if trimmed == "---" {
+                in_frontmatter = false;
+            }
+            continue;
+        }
+        let text = strip_comments(line, &mut in_comment);
+        let text = text.trim();
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
 /// Move the task note into `_archive/`, flipping `status`/`updated` on the way.
 ///
-/// Returns the new path, or `None` when there is nothing to archive (no note, or one
-/// that was archived already). Deleting a task must never fail because of a note.
+/// A note whose body is still empty is deleted instead — see [`note_body_is_empty`].
+///
+/// Returns the archive path, or `None` when nothing was archived: no note, one already
+/// archived, or an empty one that was discarded. Deleting a task must never fail
+/// because of a note.
 #[tauri::command]
 pub fn archive_task_note(
     notes_path: String,
@@ -120,10 +184,15 @@ pub fn archive_task_note(
         return Ok(None);
     }
 
+    let contents = fs::read_to_string(&src).map_err(|e| format!("Failed to read note: {e}"))?;
+    if note_body_is_empty(&contents) {
+        fs::remove_file(&src).map_err(|e| format!("Failed to discard empty note: {e}"))?;
+        return Ok(None);
+    }
+
     fs::create_dir_all(archive_dir(&notes_path))
         .map_err(|e| format!("Failed to create archive folder: {e}"))?;
 
-    let contents = fs::read_to_string(&src).map_err(|e| format!("Failed to read note: {e}"))?;
     write_atomic(&src, &archive_frontmatter(&contents, &today))?;
     fs::rename(&src, &dest).map_err(|e| format!("Failed to archive note: {e}"))?;
 
@@ -166,6 +235,51 @@ mod tests {
     fn archive_leaves_a_body_only_note_alone() {
         let body = "# No frontmatter\n\nstatus: active\n";
         assert_eq!(archive_frontmatter(body, "2026-08-04"), body);
+    }
+
+    /// Byte-for-byte what `buildTaskNote` in src/services/notes.ts writes.
+    const APP_SCAFFOLD: &str = "---\ntitle: \"WOR-39 — Evaluar\"\ntype: task-log\nstatus: active\ncreated: 2026-08-04\nupdated: 2026-08-04\ntags: []\ntickets: [WOR-39]\nbranch: \"pedro/wor-39\"\nworkspace: \"WM\"\nrepos: [wm]\nworktrees:\n  - repo: wm\n    path: \"/wt/wm\"\nprs: []\nrelated: []\n---\n\n## Context\n\n## Decisions\n\n## Learnings\n\n## Log\n";
+
+    #[test]
+    fn an_untouched_note_counts_as_empty() {
+        assert!(note_body_is_empty(APP_SCAFFOLD));
+        // The vault template's guidance lives in HTML comments.
+        assert!(note_body_is_empty(
+            "---\nstatus: active\n---\n\n## Context\n\n<!-- What this task is about. -->\n\n## Log\n"
+        ));
+        // Including a comment spanning several lines.
+        assert!(note_body_is_empty(
+            "---\nstatus: active\n---\n\n## Log\n\n<!-- a\nb\nc -->\n"
+        ));
+    }
+
+    #[test]
+    fn a_note_with_prose_is_not_empty() {
+        assert!(!note_body_is_empty(&format!("{APP_SCAFFOLD}\n- Dropped polling.\n")));
+        // Text sharing a line with a comment still counts.
+        assert!(!note_body_is_empty(
+            "---\nstatus: active\n---\n\n## Log\n\n<!-- hint --> real content\n"
+        ));
+        // Frontmatter alone is not content, but a note without frontmatter can be.
+        assert!(!note_body_is_empty("just a body\n"));
+    }
+
+    #[test]
+    fn archive_discards_an_untouched_note_instead_of_keeping_it() {
+        let dir = std::env::temp_dir().join("wm-notes-test-empty");
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.to_string_lossy().to_string();
+
+        ensure_task_note(path.clone(), "WOR-3-z.md".into(), APP_SCAFFOLD.into()).unwrap();
+        assert_eq!(
+            archive_task_note(path.clone(), "WOR-3-z.md".into(), "2026-08-04".into()).unwrap(),
+            None
+        );
+        // Gone from both folders — nothing of the user's was lost.
+        assert!(!dir.join("WOR-3-z.md").exists());
+        assert!(!dir.join("_archive/WOR-3-z.md").exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

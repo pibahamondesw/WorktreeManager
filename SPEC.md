@@ -350,7 +350,9 @@ This gives instant partial-ID matching (e.g. "3140" matches "TSY-3140") with zer
 
 ### `archive_task_note(notes_path, file_name, today)`
 
-- Sets `status: archived` and `updated: <today>` in the **first** frontmatter block only, then moves the note into `<notes_path>/_archive/`. Returns the new path, or `None` when there is nothing to archive.
+- Sets `status: archived` and `updated: <today>` in the **first** frontmatter block only, then moves the note into `<notes_path>/_archive/`.
+- A note whose body still holds nothing but headings, HTML comments, and blank lines is **deleted** instead of archived. Nothing of the user's is lost by definition, and `_archive/` stays meaningful — it should hold tasks that left something behind, not one stub per quick fix.
+- Returns the archive path, or `None` when nothing was archived: no note, one already archived, or an empty one discarded.
 - The date is passed in rather than read from a clock, keeping the command pure and testable.
 - Same `file_name` validation as above. Deleting a task must never fail because of a note.
 
@@ -388,10 +390,12 @@ One note per task, named `<ISSUE-ID>-<branch-slug>.md`, or `<branch-slug>.md` wi
 | --- | --- |
 | Task created | `ensure_task_note` writes the note with frontmatter (issue, branch, workspace, repos, per-member worktree paths) and the four body sections |
 | `O` / More actions → Open notes | `ensure_task_note` (creating it if the notes folder was configured later), then `openUrl("obsidian://open?path=…")` |
-| Task deleted | `archive_task_note` moves it to `_archive/` with `status: archived` |
-| Workspace removed | Same, once per task |
+| Task deleted | `archive_task_note` moves it to `_archive/` with `status: archived`, or discards it when untouched |
+| Workspace removed | Same, once per task — regardless of whether the worktrees are deleted from disk, since the app forgets the tasks either way and nothing else would ever archive their notes |
 
 Every call is best-effort and swallows its errors: a note must never break task creation or deletion. The setup instructions, note template, and Claude Code skill live in `vault-kit/`.
+
+**Notes are never destroyed once written to.** Both delete flows say so inline when `notesPath` is set, so archiving isn't a silent surprise to a user who thinks they cleaned up. There is deliberately no "delete the note too" affordance: a task is usually deleted right after merging — exactly when its note is worth the most — and the vault is plain Markdown that Obsidian already deletes better than a button here would.
 
 ---
 

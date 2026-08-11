@@ -1,6 +1,6 @@
 # Obsidian task logs — setup kit
 
-WorktreeManager knows more about a unit of work than anything else on your machine: a **task** is a branch, a Linear issue, and one worktree per member repo. When you delete the worktree, all of that context disappears — including *why* you took an approach, what you tried and rejected, and what you learned.
+WorktreeManager knows more about a unit of work than anything else on your machine: a **task** is a branch, a Linear issue, and one worktree per member repo. When you delete the worktree, all of that context disappears — including _why_ you took an approach, what you tried and rejected, and what you learned.
 
 This kit adds a durable, per-task note in an Obsidian vault, and the app keeps it in sync: created when you create the task, opened with one keystroke, archived when you delete the task.
 
@@ -14,7 +14,7 @@ It is an **add-on**, not a vault. It grafts onto whatever vault you already have
 <vault>/
   task-logs/
     WOR-39-evaluar-obsidian.md    # one note per task
-    _archive/                     # tasks whose worktrees are gone
+    _archive/                     # tasks that left something behind
 ```
 
 Each note carries the task's identity in frontmatter (issue, branch, repos, worktree paths, PRs) and four sections you actually write in: **Context**, **Decisions**, **Learnings**, **Log**.
@@ -33,7 +33,7 @@ The point is not to have notes. The point is that in three months `grep` over `t
    mkdir -p "<vault>/task-logs/_archive"
    ```
 
-2. **Register the note type.** Paste the contents of [`AGENTS.snippet.md`](AGENTS.snippet.md) into your vault's `AGENTS.md` (or `CLAUDE.md`). This is what tells agents the folder exists, how notes are named, and — most importantly — that a log is *distilled*, not a transcript.
+2. **Register the note type.** Paste the contents of [`AGENTS.snippet.md`](AGENTS.snippet.md) into your vault's `AGENTS.md` (or `CLAUDE.md`). This is what tells agents the folder exists, how notes are named, and — most importantly — that a log is _distilled_, not a transcript.
 
 3. **Copy the template.**
 
@@ -65,11 +65,12 @@ For a fuller, project-centric vault (multi-ticket projects with `investigations/
 
 ## Daily use
 
-| When | What happens |
-| --- | --- |
-| You create a task | The app writes the note with frontmatter filled in. It never overwrites an existing note, so your prose is safe. |
-| You are working | Press `O` (or **More actions → Open notes**) to open the note in Obsidian. Run `/task-log` in Claude Code to have the log written for you. |
-| You delete the task | The note moves to `_archive/` with `status: archived`. The body is untouched. |
+| When                     | What happens                                                                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You create a task        | The app writes the note with frontmatter filled in. It never overwrites an existing note, so your prose is safe.                                                                            |
+| You are working          | Press `O` (or **More actions → Open notes**) to open the note in Obsidian. Run `/task-log` in Claude Code to have the log written for you.                                                  |
+| You delete the task      | The note moves to `_archive/` with `status: archived`. The body is untouched. A note nobody wrote in is discarded instead, so `_archive/` keeps meaning "tasks that left something behind". |
+| You remove the workspace | Same, once per task — whether or not you keep the worktrees on disk.                                                                                                                        |
 
 ### Let Claude write it
 
@@ -109,6 +110,16 @@ export TASK_LOGS=~/Documents/work-vault/task-logs
 
 ./scripts/archive-task-note.sh WOR-39-evaluar-obsidian.md
 ```
+
+---
+
+## Deleting notes
+
+**The app never deletes a note you wrote in.** Deleting a task or removing a workspace archives it; that asymmetry is deliberate. A note that outlived its usefulness costs a few KB and one `grep` hit. A note deleted the moment you merged costs the only artifact that was supposed to survive the worktree — which is the whole point.
+
+The one exception is a note nobody touched: on archive, a body that still holds only headings and template comments is discarded rather than filed, since there is nothing there to lose.
+
+If you genuinely want one gone, they are plain Markdown files — delete it in Obsidian, or `rm` it. That is a vault operation, and Obsidian is better at it than a button in WorktreeManager would be.
 
 ---
 

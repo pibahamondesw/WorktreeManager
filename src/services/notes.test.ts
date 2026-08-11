@@ -3,7 +3,13 @@ import { buildTaskNote, taskNoteFileName, taskNotePath, taskNoteUri } from "./no
 import { Task, TaskMember, Workspace } from "../types";
 
 function member(repoName: string, path: string): TaskMember {
-  return { repoId: `${repoName}-id`, repoName, localPath: `/repos/${repoName}`, path, branchName: "b" };
+  return {
+    repoId: `${repoName}-id`,
+    repoName,
+    localPath: `/repos/${repoName}`,
+    path,
+    branchName: "b",
+  };
 }
 
 function task(overrides: Partial<Task> = {}): Task {

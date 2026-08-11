@@ -146,9 +146,9 @@ Point a workspace at an Obsidian folder and the app keeps a durable note per tas
 
 - **Created** with the task, with the issue, branch, repos, and worktree paths already in frontmatter.
 - **Opened** with `O` or **More actions → Open notes**.
-- **Archived** when you delete the task — moved to `_archive/` with `status: archived`, body untouched.
+- **Archived** when you delete the task or remove the workspace — moved to `_archive/` with `status: archived`, body untouched.
 
-The app never overwrites an existing note. The frontmatter is its business; the prose is yours (or your agent's).
+The app never overwrites or deletes a note you wrote in. The frontmatter is its business; the prose is yours (or your agent's). The one note it will discard is one nobody touched, so `_archive/` keeps meaning "tasks that left something behind".
 
 **Setup:** follow [`vault-kit/README.md`](vault-kit/README.md), then set **Notes folder** in your workspace settings. It grafts onto a vault you already have, or walks you through starting one. The kit also ships a `/task-log` Claude Code skill that writes the log for you — which is the part that decides whether this survives past week three.
 

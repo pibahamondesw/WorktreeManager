@@ -567,15 +567,22 @@ export const WorktreeCard = memo(function WorktreeCard({
           className="mt-3 flex items-center justify-between gap-3 pt-3 border-t border-border"
           onClick={(e) => e.stopPropagation()}
         >
-          <span className="text-xs text-text-secondary truncate">
-            Delete{" "}
-            <strong className="text-text-primary">
-              {task.linearIssueIdentifier || task.branchName}
-            </strong>
-            {task.members.length > 1
-              ? ` and its ${task.members.length} worktrees from disk?`
-              : " and remove from disk?"}
-          </span>
+          <div className="min-w-0">
+            <span className="text-xs text-text-secondary truncate">
+              Delete{" "}
+              <strong className="text-text-primary">
+                {task.linearIssueIdentifier || task.branchName}
+              </strong>
+              {task.members.length > 1
+                ? ` and its ${task.members.length} worktrees from disk?`
+                : " and remove from disk?"}
+            </span>
+            {workspace.notesPath && (
+              <p className="text-[10px] text-text-muted mt-0.5">
+                Notes are kept, moved to <span className="font-mono">_archive/</span>.
+              </p>
+            )}
+          </div>
           <div className="flex gap-2 flex-shrink-0">
             <button
               onClick={handleDeleteCancel}

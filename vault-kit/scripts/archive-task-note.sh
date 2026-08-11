@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Archive a task-log note: set status/updated in its first frontmatter block and
-# move it into _archive/. Idempotent; a missing note is not an error.
+# move it into _archive/. A note nobody wrote in is discarded instead, so _archive/
+# only holds tasks that left something behind. Idempotent; a missing note is fine.
 #
 #   TASK_LOGS=~/Documents/work-vault/task-logs ./archive-task-note.sh WOR-39-evaluar-obsidian.md
 #   ./archive-task-note.sh --notes-path <dir> <file-name> [<file-name> ...]
@@ -29,6 +30,34 @@ fi
 mkdir -p "$notes_path/_archive"
 today=$(date +%Y-%m-%d)
 
+# Exit 0 when a note holds nothing but frontmatter, headings, comments, and blank
+# lines. Mirrors note_body_is_empty in src-tauri/src/commands/notes.rs.
+body_is_empty() {
+  awk '
+    NR == 1 && $0 == "---" { fm = 1; next }
+    fm { if ($0 == "---") fm = 0; next }
+    {
+      line = $0
+      text = ""
+      while (1) {
+        if (incomment) {
+          i = index(line, "-->")
+          if (i == 0) { line = ""; break }
+          line = substr(line, i + 3); incomment = 0
+        }
+        j = index(line, "<!--")
+        if (j == 0) break
+        text = text substr(line, 1, j - 1)
+        line = substr(line, j + 4); incomment = 1
+      }
+      text = text line
+      gsub(/^[ \t]+|[ \t]+$/, "", text)
+      if (text != "" && substr(text, 1, 1) != "#") { found = 1; exit }
+    }
+    END { exit (found ? 1 : 0) }
+  ' "$1"
+}
+
 for file_name in "${files[@]}"; do
   file_name=$(basename "$file_name")
   src="$notes_path/$file_name"
@@ -39,6 +68,12 @@ for file_name in "${files[@]}"; do
   fi
   if [ -f "$notes_path/_archive/$file_name" ]; then
     echo "skip (already archived): $file_name" >&2
+    continue
+  fi
+
+  if body_is_empty "$src"; then
+    rm -f "$src"
+    echo "discarded (nothing written): $file_name" >&2
     continue
   fi
 

@@ -47,7 +47,6 @@ export function RemoveWorkspaceModal({
             /* workspace-file cleanup is best-effort */
           }
         }
-        await archiveTaskNote(workspace, task);
       }
       try {
         await invoke("cleanup_claude_json", {
@@ -68,6 +67,13 @@ export function RemoveWorkspaceModal({
           `Some worktrees could not be removed from disk:\n${errors.join("\n")}\n\nThe workspace will still be removed from the app.`,
         );
       }
+    }
+
+    // The app is forgetting these tasks either way, so their notes are archived
+    // whether or not the worktrees stay on disk — otherwise they'd sit in
+    // task-logs/ with nothing left to ever archive them.
+    for (const task of tasks) {
+      await archiveTaskNote(workspace, task);
     }
 
     onConfirm(deleteFromDisk);
@@ -100,6 +106,12 @@ export function RemoveWorkspaceModal({
             <p className="text-sm text-text-secondary">
               What would you like to do with the worktrees created for these tasks?
             </p>
+            {workspace.notesPath && (
+              <p className="text-xs text-text-muted">
+                Task notes are kept either way, moved to{" "}
+                <span className="font-mono">_archive/</span>.
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm text-text-secondary">

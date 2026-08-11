@@ -7,10 +7,10 @@
 ```text
 task-logs/
   WOR-39-evaluar-obsidian.md
-  _archive/                    # tasks whose worktrees have been deleted
+  _archive/                    # tasks that left something behind
 ```
 
-**The app owns the frontmatter; you and your agents own the body.** WorktreeManager creates the note when the task is created and archives it when the task is deleted. It never overwrites an existing note.
+**The app owns the frontmatter; you and your agents own the body.** WorktreeManager creates the note when the task is created and archives it when the task is deleted. It never overwrites or deletes a note with anything written in it — but a note still holding only the empty scaffold is discarded rather than archived, so `_archive/` does not fill up with stubs. Writing something real is what makes a log survive.
 
 ### Naming
 
@@ -22,11 +22,11 @@ task-logs/
 ---
 title: "WOR-39 — Evaluar uso de Obsidian"
 type: task-log
-status: active          # active | archived
+status: active # active | archived
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 tags: []
-tickets: [WOR-39]       # Linear ticket IDs
+tickets: [WOR-39] # Linear ticket IDs
 branch: pedrobahamondes/wor-39-evaluar-uso-de-obsidian
 workspace: WorktreeManager
 repos: [worktreemanager]
@@ -34,7 +34,7 @@ worktrees:
   - repo: worktreemanager
     path: ~/Documents/.worktreemanager/worktrees/worktreemanager/pedrobahamondes/wor-39-...
 prs: []
-related: []             # wikilinks — e.g. "[[obsidian-integration_project]]"
+related: [] # wikilinks — e.g. "[[obsidian-integration_project]]"
 ---
 ```
 
@@ -45,7 +45,7 @@ Body sections: `## Context`, `## Decisions`, `## Learnings`, `## Log`.
 A task log records the **conclusion**, not the conversation. Write:
 
 - **Context** — what the task is actually about, in two or three sentences.
-- **Decisions** — what was decided and *why*. Include what was rejected and the reason; that is the part nobody can reconstruct later.
+- **Decisions** — what was decided and _why_. Include what was rejected and the reason; that is the part nobody can reconstruct later.
 - **Learnings** — what surprised you. A non-obvious constraint, a misleading error, a pattern that already existed and should have been reused.
 - **Log** — dated one-liners, only for things a future reader needs: a blocker hit, an approach abandoned, a spec that changed.
 
