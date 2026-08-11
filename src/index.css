@@ -56,17 +56,9 @@ body,
   cursor: text;
 }
 
-/* Titlebar drag region */
-[data-tauri-drag-region] {
-  -webkit-app-region: drag;
-}
-button,
-input,
-a,
-[data-tauri-drag-region] button,
-[data-tauri-drag-region] input,
-[data-tauri-drag-region] a {
-  -webkit-app-region: no-drag;
+/* Titlebar drag regions are handled in JS (useWindowDrag); -webkit-app-region is a no-op in WKWebView */
+[data-drag-region] {
+  cursor: default;
 }
 
 @keyframes fade-in {

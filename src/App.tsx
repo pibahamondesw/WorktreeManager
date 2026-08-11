@@ -8,6 +8,7 @@ import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdater } from "./hooks/useUpdater";
+import { useWindowDrag } from "./hooks/useWindowDrag";
 import { withScope } from "./search/query";
 import { Task } from "./types";
 
@@ -92,10 +93,11 @@ function App() {
   });
 
   useUpdater();
+  useWindowDrag();
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full" data-tauri-drag-region>
+      <div className="flex items-center justify-center h-full" data-drag-region>
         <SpinnerIcon size={24} className="text-text-muted" />
       </div>
     );
@@ -108,7 +110,7 @@ function App() {
   return (
     <div className="flex h-full relative">
       {/* Full-width drag region at the very top for window dragging */}
-      <div className="absolute top-0 left-0 right-0 h-[32px] z-[5]" data-tauri-drag-region />
+      <div className="absolute top-0 left-0 right-0 h-[32px] z-[5]" data-drag-region />
       {/* Titlebar divider — spans full width at bottom of macOS traffic lights area */}
       <div className="absolute top-[32px] left-0 right-0 h-px bg-border z-10 pointer-events-none" />
       {persistError && (
