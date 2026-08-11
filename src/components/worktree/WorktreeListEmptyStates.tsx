@@ -3,7 +3,7 @@ import { FolderIcon, CodeBranchIcon } from "../ui/Icons";
 
 export function WorktreeNoRepoPlaceholder() {
   return (
-    <div className="flex-1 flex items-center justify-center" data-tauri-drag-region>
+    <div className="flex-1 flex items-center justify-center" data-drag-region>
       <div className="text-center">
         <div className="w-12 h-12 rounded-xl bg-bg-tertiary flex items-center justify-center mx-auto mb-3">
           <FolderIcon className="text-text-muted" />

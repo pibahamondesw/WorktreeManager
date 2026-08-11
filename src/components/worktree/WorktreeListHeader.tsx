@@ -28,13 +28,13 @@ export function WorktreeListHeader({
 }: WorktreeListHeaderProps) {
   return (
     <>
-      <div className="h-[32px] flex-shrink-0" data-tauri-drag-region />
+      <div className="h-[32px] flex-shrink-0" data-drag-region />
       <div
         className="flex items-center justify-between px-6 h-12 border-b border-border flex-shrink-0"
-        data-tauri-drag-region
+        data-drag-region
       >
-        <div className="flex items-center gap-3" data-tauri-drag-region>
-          <h2 className="text-sm font-semibold text-text-primary" data-tauri-drag-region>
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-text-primary">
             {workspaceName}
           </h2>
           <span className="text-xs text-text-muted">
