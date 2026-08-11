@@ -255,7 +255,9 @@ mod tests {
 
     #[test]
     fn a_note_with_prose_is_not_empty() {
-        assert!(!note_body_is_empty(&format!("{APP_SCAFFOLD}\n- Dropped polling.\n")));
+        assert!(!note_body_is_empty(&format!(
+            "{APP_SCAFFOLD}\n- Dropped polling.\n"
+        )));
         // Text sharing a line with a comment still counts.
         assert!(!note_body_is_empty(
             "---\nstatus: active\n---\n\n## Log\n\n<!-- hint --> real content\n"
@@ -288,8 +290,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let path = dir.to_string_lossy().to_string();
 
-        let first =
-            ensure_task_note(path.clone(), "WOR-1-x.md".into(), "original".into()).unwrap();
+        let first = ensure_task_note(path.clone(), "WOR-1-x.md".into(), "original".into()).unwrap();
         let second =
             ensure_task_note(path.clone(), "WOR-1-x.md".into(), "replacement".into()).unwrap();
 
@@ -314,7 +315,9 @@ mod tests {
             .unwrap()
             .expect("archived");
         assert!(archived.contains("_archive"));
-        assert!(fs::read_to_string(&archived).unwrap().contains("status: archived"));
+        assert!(fs::read_to_string(&archived)
+            .unwrap()
+            .contains("status: archived"));
 
         // Second call is a no-op, not an error.
         assert_eq!(
@@ -322,8 +325,7 @@ mod tests {
             None
         );
         // And an already-archived note is not recreated as active.
-        let resolved =
-            ensure_task_note(path.clone(), "WOR-2-y.md".into(), "fresh".into()).unwrap();
+        let resolved = ensure_task_note(path.clone(), "WOR-2-y.md".into(), "fresh".into()).unwrap();
         assert!(resolved.contains("_archive"));
 
         let _ = fs::remove_dir_all(&dir);
