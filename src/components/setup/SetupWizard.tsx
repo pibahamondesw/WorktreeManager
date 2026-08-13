@@ -7,19 +7,23 @@ import logo from "../../assets/logo.png";
 
 interface SetupWizardProps {
   initialSetup: AppState["setup"];
-  onComplete: (setup: AppState["setup"]) => void;
+  onComplete: (setup: AppState["setup"], options: { enableVault: boolean }) => void;
 }
 
 export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
   const [linearKey, setLinearKey] = useState(initialSetup.linearApiKey ?? "");
   const [linearValid, setLinearValid] = useState(false);
   const [linearUser, setLinearUser] = useState<string | null>(null);
+  const [enableVault, setEnableVault] = useState(false);
 
   const handleFinish = () => {
-    onComplete({
-      linearApiKey: linearValid ? linearKey : null,
-      isComplete: true,
-    });
+    onComplete(
+      {
+        linearApiKey: linearValid ? linearKey : null,
+        isComplete: true,
+      },
+      { enableVault }
+    );
   };
 
   return (
@@ -27,15 +31,9 @@ export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
       <div className="w-[420px] flex flex-col items-center gap-8">
         {/* Logo */}
         <div className="flex flex-col items-center gap-3">
-          <img
-            src={logo}
-            alt="WorktreeManager"
-            className="w-40 h-40 rounded-2xl object-cover"
-          />
+          <img src={logo} alt="WorktreeManager" className="w-40 h-40 rounded-2xl object-cover" />
           <h1 className="text-xl font-semibold text-text-primary">WorktreeManager</h1>
-          <p className="text-sm text-text-secondary text-center">
-            Manage git worktrees with ease
-          </p>
+          <p className="text-sm text-text-secondary text-center">Manage git worktrees with ease</p>
         </div>
 
         {/* Token input */}
@@ -57,6 +55,22 @@ export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
             validatedName={linearUser}
             placeholder="lin_api_..."
           />
+
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={enableVault}
+              onChange={(e) => setEnableVault(e.target.checked)}
+              className="mt-0.5 accent-accent cursor-pointer"
+            />
+            <span className="text-sm text-text-secondary">
+              Set up an Obsidian vault for task notes
+              <span className="block text-xs text-text-muted mt-0.5">
+                One note per task, kept in sync by the app. You can enable this later from the
+                sidebar.
+              </span>
+            </span>
+          </label>
         </div>
 
         {/* Finish */}

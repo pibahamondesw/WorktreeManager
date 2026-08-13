@@ -15,6 +15,7 @@ import {
 import {
   Task,
   TaskMember,
+  VaultConfig,
   Workspace,
   EditorApp,
   GitStatus,
@@ -28,6 +29,7 @@ import { timeAgo } from "../../utils";
 interface WorktreeCardProps {
   task: Task;
   workspace: Workspace;
+  vault: VaultConfig;
   onDelete: (taskId: string) => void;
   linearInfo?: IssueLinearInfo;
   gitStatus?: GitStatus;
@@ -60,6 +62,7 @@ const githubSlugFromRemote = (remoteUrl: string): string | null => {
 export const WorktreeCard = memo(function WorktreeCard({
   task,
   workspace,
+  vault,
   onDelete,
   linearInfo,
   gitStatus,
@@ -186,7 +189,7 @@ export const WorktreeCard = memo(function WorktreeCard({
       await cleanupWorkspaceFile();
       await cleanupClaudeConfig();
       await cleanupDopplerConfig();
-      await archiveTaskNote(workspace, task);
+      await archiveTaskNote(vault, task);
       onDelete(task.id);
     } catch (e) {
       const msg = typeof e === "string" ? e : "Failed to remove one or more worktrees from disk";
@@ -201,7 +204,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     await cleanupWorkspaceFile();
     await cleanupClaudeConfig();
     await cleanupDopplerConfig();
-    await archiveTaskNote(workspace, task);
+    await archiveTaskNote(vault, task);
     onDelete(task.id);
   };
 
@@ -259,9 +262,12 @@ export const WorktreeCard = memo(function WorktreeCard({
       case "open-notes": {
         // Creates the note first if it's missing — e.g. the notes folder was configured
         // after this task existed.
-        const notePath = await ensureTaskNote(workspace, task);
-        if (notePath) openUrl(taskNoteUri(notePath));
-        else onOpenError?.("Could not open the task note");
+        const notePath = await ensureTaskNote(vault, workspace, task);
+        if (notePath) {
+          openUrl(taskNoteUri(notePath)).catch(() =>
+            onOpenError?.("Could not open the note in Obsidian")
+          );
+        } else onOpenError?.("Could not open the task note");
         break;
       }
       case "open-claude-code":
@@ -540,7 +546,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                 <MenuButton onClick={() => handleMenuAction("open-claude-code")}>
                   Open in Claude Code
                 </MenuButton>
-                {workspace.notesPath && (
+                {vault.enabled && (
                   <MenuButton label="O" onClick={() => handleMenuAction("open-notes")}>
                     Open notes
                   </MenuButton>
@@ -577,7 +583,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                 ? ` and its ${task.members.length} worktrees from disk?`
                 : " and remove from disk?"}
             </span>
-            {workspace.notesPath && (
+            {vault.enabled && (
               <p className="text-[10px] text-text-muted mt-0.5">
                 Notes are kept, moved to <span className="font-mono">_archive/</span>.
               </p>

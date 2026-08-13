@@ -11,11 +11,12 @@ import { WorktreeListHeader } from "./WorktreeListHeader";
 import { WorktreeListKeyboardHints } from "./WorktreeListKeyboardHints";
 import { WorktreeListToast } from "./WorktreeListToast";
 import { NewWorktreeModal } from "./NewWorktreeModal";
-import { Task, Workspace, EditorApp, GitStatus } from "../../types";
+import { Task, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
 
 interface WorktreeListProps {
   tasks: Task[];
   workspace: Workspace | undefined;
+  vault: VaultConfig;
   onTaskCreated: (task: Task) => void;
   onTaskDeleted: (taskId: string) => void;
   editorApp: EditorApp;
@@ -32,26 +33,23 @@ interface WorktreeListProps {
 /** Collapse the per-member git statuses of a task into one summary for its card. */
 function aggregateTaskStatus(
   task: Task,
-  gitStatuses: Record<string, GitStatus>,
+  gitStatuses: Record<string, GitStatus>
 ): GitStatus | undefined {
-  const statuses = task.members
-    .map((m) => gitStatuses[m.path])
-    .filter((s): s is GitStatus => !!s);
+  const statuses = task.members.map((m) => gitStatuses[m.path]).filter((s): s is GitStatus => !!s);
   if (statuses.length === 0) return undefined;
   return {
     ahead: Math.max(...statuses.map((s) => s.ahead)),
     behind: Math.max(...statuses.map((s) => s.behind)),
     dirty: statuses.some((s) => s.dirty),
     // Oldest commit across the task's worktrees drives the staleness indicator.
-    last_commit_epoch: Math.min(
-      ...statuses.map((s) => s.last_commit_epoch).filter((e) => e > 0),
-    ),
+    last_commit_epoch: Math.min(...statuses.map((s) => s.last_commit_epoch).filter((e) => e > 0)),
   };
 }
 
 export function WorktreeList({
   tasks,
   workspace,
+  vault,
   onTaskCreated,
   onTaskDeleted,
   editorApp,
@@ -100,6 +98,7 @@ export function WorktreeList({
 
   useWorktreeListKeyboardShortcuts({
     workspace,
+    vault,
     tasks,
     selectedTask,
     editorApp,
@@ -145,6 +144,7 @@ export function WorktreeList({
                   key={task.id}
                   task={task}
                   workspace={workspace}
+                  vault={vault}
                   onDelete={onTaskDeleted}
                   linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
                   gitStatus={aggregateTaskStatus(task, gitStatuses)}
@@ -161,7 +161,7 @@ export function WorktreeList({
           )}
         </div>
 
-        {tasks.length > 0 && <WorktreeListKeyboardHints showNotes={!!workspace.notesPath} />}
+        {tasks.length > 0 && <WorktreeListKeyboardHints showNotes={vault.enabled} />}
 
         {toast && <WorktreeListToast message={toast} />}
 
@@ -169,6 +169,7 @@ export function WorktreeList({
           open={showNew}
           onClose={() => setShowNew(false)}
           workspace={workspace}
+          vault={vault}
           onCreated={onTaskCreated}
           editorApp={editorApp}
           onOpenHint={showToast}

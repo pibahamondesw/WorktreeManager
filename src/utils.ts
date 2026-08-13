@@ -27,7 +27,6 @@ export function normalizeWorkspaces(raw: any[] | undefined | null): Workspace[] 
     id: w.id,
     name: w.name ?? "",
     linearApiKey: w.linearApiKey ?? null,
-    notesPath: w.notesPath ?? null,
     repos: (w.repos ?? []).map((r: any) => ({
       id: r.id,
       name: r.name ?? "",
@@ -67,7 +66,7 @@ export function normalizeTasks(raw: any[] | undefined | null): Task[] {
 export function migrateLegacyToWorkspaces(
   rawRepos: any[] | undefined | null,
   rawWorktrees: any[] | undefined | null,
-  globalLinearApiKey?: string | null,
+  globalLinearApiKey?: string | null
 ): { workspaces: Workspace[]; tasks: Task[] } {
   const repos = rawRepos ?? [];
   const applyGlobal =

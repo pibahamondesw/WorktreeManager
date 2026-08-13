@@ -6,5 +6,6 @@ pub mod editor;
 pub mod git;
 pub mod node_deps;
 pub mod notes;
+pub mod vault;
 pub mod vscode_task;
 pub mod workspace;

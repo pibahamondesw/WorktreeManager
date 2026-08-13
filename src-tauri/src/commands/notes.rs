@@ -23,7 +23,7 @@ fn archive_dir(notes_path: &str) -> PathBuf {
 
 /// Write `contents` to `path` via a temp sibling + rename, so a reader never sees
 /// a half-written note.
-fn write_atomic(path: &PathBuf, contents: &str) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &PathBuf, contents: &str) -> Result<(), String> {
     let tmp = {
         let mut p = path.clone().into_os_string();
         p.push(".wm.tmp");

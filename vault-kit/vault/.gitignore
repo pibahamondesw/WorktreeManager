@@ -1,0 +1,11 @@
+# Obsidian local state (managed by the app, not for version control)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/graph.json
+.obsidian/app.json.bak
+
+# Obsidian trash
+.trash/
+
+# macOS
+.DS_Store

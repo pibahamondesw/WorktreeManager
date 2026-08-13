@@ -24,6 +24,9 @@ describe("SetupWizard", () => {
 
     fireEvent.click(screen.getByText("Skip for now"));
 
-    expect(onComplete).toHaveBeenCalledWith({ linearApiKey: null, isComplete: true });
+    expect(onComplete).toHaveBeenCalledWith(
+      { linearApiKey: null, isComplete: true },
+      { enableVault: false }
+    );
   });
 });

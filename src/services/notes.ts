@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Task, Workspace } from "../types";
+import { Task, VaultConfig, Workspace } from "../types";
+import { taskLogsPath } from "./vault";
 
 /**
- * Obsidian task logs: one note per task, living in the workspace's `notesPath`
- * (an Obsidian `task-logs/` folder). See `vault-kit/README.md` for the setup.
+ * Obsidian task logs: one note per task, living in the global vault's
+ * `task-logs/` folder. See `vault-kit/README.md` for the setup.
  *
- * Every entry point here is a no-op when `notesPath` is unset, and never throws —
+ * Every entry point here is a no-op when the vault is disabled, and never throws —
  * a note must not be able to break task creation or deletion.
  */
 
@@ -91,19 +92,23 @@ export function taskNoteUri(notePath: string): string {
   return `obsidian://open?path=${encodeURIComponent(notePath)}`;
 }
 
-/** Absolute path a task's note would have, or null when notes are off. */
-export function taskNotePath(workspace: Workspace, task: Task): string | null {
-  const dir = workspace.notesPath?.trim();
+/** Absolute path a task's note would have, or null when the vault is off. */
+export function taskNotePath(vault: VaultConfig, task: Task): string | null {
+  const dir = taskLogsPath(vault);
   if (!dir) return null;
-  return `${dir.replace(/\/+$/, "")}/${taskNoteFileName(task)}`;
+  return `${dir}/${taskNoteFileName(task)}`;
 }
 
 /**
  * Create the note for a task if it doesn't exist yet. Best-effort: a failure here
  * never surfaces to the user, since the task itself was created fine.
  */
-export async function ensureTaskNote(workspace: Workspace, task: Task): Promise<string | null> {
-  const notesPath = workspace.notesPath?.trim();
+export async function ensureTaskNote(
+  vault: VaultConfig,
+  workspace: Workspace,
+  task: Task
+): Promise<string | null> {
+  const notesPath = taskLogsPath(vault);
   if (!notesPath) return null;
   const { fileName, contents } = buildTaskNote(task, workspace);
   try {
@@ -114,8 +119,8 @@ export async function ensureTaskNote(workspace: Workspace, task: Task): Promise<
 }
 
 /** Move a task's note into `_archive/`. Best-effort, for the same reason. */
-export async function archiveTaskNote(workspace: Workspace, task: Task): Promise<void> {
-  const notesPath = workspace.notesPath?.trim();
+export async function archiveTaskNote(vault: VaultConfig, task: Task): Promise<void> {
+  const notesPath = taskLogsPath(vault);
   if (!notesPath) return;
   try {
     await invoke("archive_task_note", {

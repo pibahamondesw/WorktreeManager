@@ -14,6 +14,7 @@ import {
   LinearIssue,
   Task,
   TaskMember,
+  VaultConfig,
   Workspace,
 } from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
@@ -23,6 +24,7 @@ interface NewWorktreeModalProps {
   open: boolean;
   onClose: () => void;
   workspace: Workspace;
+  vault: VaultConfig;
   onCreated: (task: Task) => void;
   editorApp: EditorApp;
   onOpenHint?: (msg: string) => void;
@@ -51,6 +53,7 @@ export function NewWorktreeModal({
   open,
   onClose,
   workspace,
+  vault,
   onCreated,
   editorApp,
   onOpenHint,
@@ -286,7 +289,7 @@ export function NewWorktreeModal({
       onCreated(task);
 
       // Obsidian task log, when the workspace has one. Best-effort: the task exists.
-      void ensureTaskNote(workspace, task);
+      void ensureTaskNote(vault, workspace, task);
 
       onClose();
     } catch (e) {

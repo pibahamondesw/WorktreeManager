@@ -1,11 +1,14 @@
 import { load, Store } from "@tauri-apps/plugin-store";
-import { AppState, DEFAULT_STATE, EDITOR_APPS, EditorApp } from "../types";
+import { AppState, DEFAULT_STATE, EDITOR_APPS, EditorApp, VaultConfig } from "../types";
 import { migrateLegacyToWorkspaces, normalizeTasks, normalizeWorkspaces } from "../utils";
 
 let store: Store | null = null;
 
-/** Bump when the persisted shape changes. 1 = multi-repo workspaces/tasks. */
-const SCHEMA_VERSION = 1;
+/**
+ * Bump when the persisted shape changes. 1 = multi-repo workspaces/tasks.
+ * 2 = global vault config; per-workspace notesPath dropped.
+ */
+const SCHEMA_VERSION = 2;
 
 async function getStore(): Promise<Store> {
   if (!store) {
@@ -47,7 +50,7 @@ async function backupLegacyStore(data: Record<string, unknown>): Promise<void> {
 
 function resolveSelectedWorkspaceId(
   candidate: string | null | undefined,
-  workspaces: AppState["workspaces"],
+  workspaces: AppState["workspaces"]
 ): string | null {
   if (candidate && workspaces.some((w) => w.id === candidate)) return candidate;
   return workspaces[0]?.id ?? null;
@@ -65,9 +68,23 @@ export async function loadState(): Promise<AppState> {
     const tasks = normalizeTasks(await s.get<any[]>("tasks"));
     const selectedWorkspaceId = resolveSelectedWorkspaceId(
       await s.get<string | null>("selectedWorkspaceId"),
-      workspaces,
+      workspaces
     );
-    return { setup: setup ?? DEFAULT_STATE.setup, workspaces, tasks, selectedWorkspaceId };
+
+    // v1 → v2: the per-workspace notesPath is dropped; the global vault starts
+    // disabled — enabling is always an explicit user action against the managed
+    // path. Keyed on the vault key being absent so a partial write retries.
+    let vault = await s.get<VaultConfig>("vault");
+    if (vault == null) {
+      vault = DEFAULT_STATE.vault;
+      await persist([
+        ["vault", vault],
+        ["workspaces", workspaces],
+        ["schemaVersion", SCHEMA_VERSION],
+      ]);
+    }
+
+    return { setup: setup ?? DEFAULT_STATE.setup, vault, workspaces, tasks, selectedWorkspaceId };
   }
 
   // Legacy single-repo schema: migrate to workspaces/tasks.
@@ -78,7 +95,7 @@ export async function loadState(): Promise<AppState> {
   const { workspaces, tasks } = migrateLegacyToWorkspaces(
     rawRepos,
     rawWorktrees,
-    setup?.linearApiKey,
+    setup?.linearApiKey
   );
   const selectedWorkspaceId = resolveSelectedWorkspaceId(selectedRepoId, workspaces);
 
@@ -91,10 +108,17 @@ export async function loadState(): Promise<AppState> {
     ["workspaces", workspaces],
     ["tasks", tasks],
     ["selectedWorkspaceId", selectedWorkspaceId],
+    ["vault", DEFAULT_STATE.vault],
     ["schemaVersion", SCHEMA_VERSION],
   ]);
 
-  return { setup: setup ?? DEFAULT_STATE.setup, workspaces, tasks, selectedWorkspaceId };
+  return {
+    setup: setup ?? DEFAULT_STATE.setup,
+    vault: DEFAULT_STATE.vault,
+    workspaces,
+    tasks,
+    selectedWorkspaceId,
+  };
 }
 
 export async function loadThemeId(): Promise<string> {

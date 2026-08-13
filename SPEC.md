@@ -85,7 +85,11 @@ interface Workspace {
   name: string; // Display name (e.g. "Fintoc Rails")
   repos: WorkspaceRepo[]; // Peer members, 1..N
   linearApiKey?: string | null; // Optional per-workspace Linear key
-  notesPath?: string | null; // Obsidian `task-logs/` folder; unset disables task notes
+}
+
+interface VaultConfig {
+  enabled: boolean; // Global toggle for the Obsidian vault system
+  path: string | null; // Vault root; kept when disabled so re-enabling reuses it
 }
 
 interface TaskMember {
@@ -356,6 +360,18 @@ This gives instant partial-ID matching (e.g. "3140" matches "TSY-3140") with zer
 - The date is passed in rather than read from a clock, keeping the command pure and testable.
 - Same `file_name` validation as above. Deleting a task must never fail because of a note.
 
+### `scaffold_vault(vault_path)`
+
+- Creates the vault structure at `vault_path`: `projects/`, `task-logs/`, `task-logs/_archive/`, `templates/`, `scripts/`, plus the files embedded from `vault-kit/vault/**` at build time (`AGENTS.md`, `CLAUDE.md`, `agent-setup.md`, `.gitignore`, 5 templates, 2 scripts). Scripts get `0o755`.
+- Idempotent and **never overwrites**: an existing file is skipped entirely — contents and permissions untouched.
+- Root `_archive/` is not created; `archive.sh` creates it lazily.
+- Also registers the vault in Obsidian's registry (`~/Library/Application Support/obsidian/obsidian.json`) so `obsidian://open?path=…` resolves without a manual "Open folder as vault". Obsidian keeps this registry in memory and rewrites it on quit, so entries only stick when written while Obsidian is closed: the enable flow quits a running Obsidian gracefully first (one-time Apple Events prompt), writes the entry, and lets "Open in Obsidian" relaunch it. Best-effort: skipped when Obsidian has never run; existing entries are matched by path and never duplicated.
+- Writes go through the same temp sibling + rename as notes.
+
+### `ensure_vault(vault_path)`
+
+- Startup self-heal, fired on every launch while the vault is enabled: runs the full scaffold **only when the root folder is missing entirely** (so individually deleted files are never resurrected), then keeps the Obsidian registration current — but never disturbs a running Obsidian (it skips and converges on a later launch). Best-effort, never blocks startup.
+
 ### `open_cursor(path)`
 
 - **Critical**: Use `open -a Cursor <path>` (macOS LaunchServices), NOT `Command::new("cursor")`. The latter inherits the Tauri app's restricted environment/PATH, causing permission issues and "command not found" errors.
@@ -375,27 +391,27 @@ When the user clicks "Create Worktree" after selecting a Linear issue:
 7. **Save worktree record** to store **before** opening Cursor (so a Cursor failure doesn't lose the record)
 8. **Show status**: "Opening Cursor..."
 9. **Call** `open_cursor(path)` — best-effort, failure is non-fatal
-10. **Write the Obsidian task note** via `ensure_task_note`, when the workspace has a `notesPath` — fire-and-forget, never blocks or fails creation
+10. **Write the Obsidian task note** via `ensure_task_note`, when the global vault is enabled — fire-and-forget, never blocks or fails creation
 11. **Close modal**
 
 ---
 
-## Obsidian Task Logs
+## Obsidian Vault
 
-Opt-in per workspace via `notesPath` (an Obsidian `task-logs/` folder). Unset — the default — and every path below is a no-op.
+Global opt-in (`vault: { enabled, path }`), toggled in the setup wizard or the sidebar footer's vault settings modal. Off — the default — and every path below is a no-op. On enable, `scaffold_vault` creates the full vault (default `~/Documents/worktreemanager-vault`, from `defaultVaultPath` in `src/services/vault.ts`) and task notes go to `<vault>/task-logs/`. The settings modal also offers "Open in Obsidian" and "Disable" (config only; disk untouched), and a copy button for the `@<vault>/agent-setup.md` line users add to their AI tools' global instructions. While enabled, every launch runs `ensure_vault` so a missing folder or Obsidian registration heals itself.
 
 One note per task, named `<ISSUE-ID>-<branch-slug>.md`, or `<branch-slug>.md` with no Linear issue. `src/services/notes.ts` owns the naming and the note body; `taskNoteFileName` deliberately matches `vault-kit/scripts/new-task-note.sh` so the app, the scripts, and the `/task-log` skill all resolve the same file.
 
 | Moment | Behavior |
 | --- | --- |
 | Task created | `ensure_task_note` writes the note with frontmatter (issue, branch, workspace, repos, per-member worktree paths) and the four body sections |
-| `O` / More actions → Open notes | `ensure_task_note` (creating it if the notes folder was configured later), then `openUrl("obsidian://open?path=…")` |
+| `O` / More actions → Open notes | `ensure_task_note` (creating it if the vault was enabled after the task existed), then `openUrl("obsidian://open?path=…")` |
 | Task deleted | `archive_task_note` moves it to `_archive/` with `status: archived`, or discards it when untouched |
 | Workspace removed | Same, once per task — regardless of whether the worktrees are deleted from disk, since the app forgets the tasks either way and nothing else would ever archive their notes |
 
-Every call is best-effort and swallows its errors: a note must never break task creation or deletion. The setup instructions, note template, and Claude Code skill live in `vault-kit/`.
+Every call is best-effort and swallows its errors — except enabling the vault itself, which surfaces scaffold failures in the settings modal. The scaffolded vault content is `vault-kit/vault/**` verbatim; agent wiring (`agent-setup.md`) and the optional Claude Code skill live in `vault-kit/`.
 
-**Notes are never destroyed once written to.** Both delete flows say so inline when `notesPath` is set, so archiving isn't a silent surprise to a user who thinks they cleaned up. There is deliberately no "delete the note too" affordance: a task is usually deleted right after merging — exactly when its note is worth the most — and the vault is plain Markdown that Obsidian already deletes better than a button here would.
+**Notes are never destroyed once written to.** Both delete flows say so inline when the vault is enabled, so archiving isn't a silent surprise to a user who thinks they cleaned up. There is deliberately no "delete the note too" affordance: a task is usually deleted right after merging — exactly when its note is worth the most — and the vault is plain Markdown that Obsidian already deletes better than a button here would.
 
 ---
 
@@ -404,12 +420,13 @@ Every call is best-effort and swallows its errors: a note must never break task 
 Uses `@tauri-apps/plugin-store` with a `store.json` file. Keys:
 
 - `setup`: `{ linearApiKey, isComplete }`
+- `vault`: `VaultConfig`
 - `workspaces`: `Workspace[]`
 - `tasks`: `Task[]`
 - `selectedWorkspaceId`: `string | null`
-- `schemaVersion`: `number` (currently `1`)
+- `schemaVersion`: `number` (currently `2`)
 
-`notesPath` is additive and optional, so it needs no schema bump — but `normalizeWorkspaces` whitelists fields, so any new `Workspace` key must be added there or it is silently dropped on load.
+Schema v2 dropped the per-workspace `notesPath` in favor of the global `vault` key, which starts **disabled** — enabling is always an explicit user action, and always targets the managed default path (`~/Documents/worktreemanager-vault`). A pre-v2 `notesPath` is deliberately not migrated: the old field pointed at arbitrary user folders, and deriving config from them proved confusing; the handful of early users re-enable with one click. The migration runs when the `vault` key is absent (retry-safe on partial writes). A custom `vault.path` hand-edited in `store.json` is honored by note writing, opening, and the startup self-heal — but the Enable button always resets to the managed default. Reminder: `normalizeWorkspaces` whitelists fields, so any new `Workspace` key must be added there or it is silently dropped on load.
 
 Auto-save enabled. On load, data from the pre-multi-repo schema (`repos`/`worktrees`/`selectedRepoId`) is migrated into single-repo workspaces and single-member tasks; a one-time `store.backup-preMultiRepo.json` is written and the legacy keys are left in place as a rollback point. The `tauri:dev:local` script runs the app under a separate identifier/store so development never touches the installed app's data.
 
