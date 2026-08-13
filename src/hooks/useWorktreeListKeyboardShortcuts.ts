@@ -1,12 +1,13 @@
 import type { Dispatch, SetStateAction } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
-import { Task, Workspace, EditorApp } from "../types";
+import { Task, VaultConfig, Workspace, EditorApp } from "../types";
 import { openEditorForWorktree } from "../services/openEditor";
 import { ensureTaskNote, taskNoteUri } from "../services/notes";
 
 interface Params {
   workspace: Workspace | undefined;
+  vault: VaultConfig;
   tasks: Task[];
   selectedTask: Task | null;
   editorApp: EditorApp;
@@ -21,6 +22,7 @@ interface Params {
 
 export function useWorktreeListKeyboardShortcuts({
   workspace,
+  vault,
   tasks,
   selectedTask,
   editorApp,
@@ -78,12 +80,15 @@ export function useWorktreeListKeyboardShortcuts({
       o: {
         handler: () => {
           if (!selectedTask || !workspace) return;
-          void ensureTaskNote(workspace, selectedTask).then((notePath) => {
-            if (notePath) openUrl(taskNoteUri(notePath));
-            else showToast("Could not open the task note");
+          void ensureTaskNote(vault, workspace, selectedTask).then((notePath) => {
+            if (notePath) {
+              openUrl(taskNoteUri(notePath)).catch(() =>
+                showToast("Could not open the note in Obsidian")
+              );
+            } else showToast("Could not open the task note");
           });
         },
-        enabled: !!selectedTask && !!workspace?.notesPath,
+        enabled: !!selectedTask && !!workspace && vault.enabled,
       },
       "meta+d": {
         handler: () => setDeleteRequested(true),

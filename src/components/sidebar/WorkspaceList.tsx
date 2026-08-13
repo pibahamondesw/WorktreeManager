@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from "react";
-import { Task, Workspace } from "../../types";
+import { Task, VaultConfig, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { EditWorkspaceModal } from "./EditWorkspaceModal";
 import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
 import { ThemePicker } from "../ui/ThemePicker";
-import { PlusIcon, CloseIcon, GearIcon, SunIcon, GripIcon } from "../ui/Icons";
+import { VaultSettingsModal } from "./VaultSettingsModal";
+import { PlusIcon, CloseIcon, GearIcon, SunIcon, GripIcon, NotebookIcon } from "../ui/Icons";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -14,7 +15,7 @@ interface WorkspaceListProps {
   onAdd: (workspace: Workspace) => void;
   onUpdate: (
     workspaceId: string,
-    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>,
+    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>
   ) => void;
   onRemove: (workspaceId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
@@ -25,6 +26,8 @@ interface WorkspaceListProps {
   customColors: Record<string, string> | null;
   onCustomColorsChange: (colors: Record<string, string>) => void;
   defaultLinearApiKey?: string | null;
+  vault: VaultConfig;
+  onVaultChange: (vault: VaultConfig) => void;
 }
 
 export function WorkspaceList({
@@ -43,12 +46,15 @@ export function WorkspaceList({
   customColors,
   onCustomColorsChange,
   defaultLinearApiKey,
+  vault,
+  onVaultChange,
 }: WorkspaceListProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [editWorkspace, setEditWorkspace] = useState<Workspace | null>(null);
   const [removeWorkspace, setRemoveWorkspace] = useState<Workspace | null>(null);
   const [showThemes, setShowThemes] = useState(false);
+  const [showVault, setShowVault] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // Source index lives in a ref so drop logic never depends on async state having flushed.
@@ -111,9 +117,7 @@ export function WorkspaceList({
         className="flex items-center justify-between px-4 h-12 border-b border-border flex-shrink-0"
         data-drag-region
       >
-        <span
-          className="text-xs font-semibold uppercase tracking-wider text-text-muted"
-        >
+        <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
           Workspaces
         </span>
         <button
@@ -143,8 +147,7 @@ export function WorkspaceList({
           const activeTaskCount = taskCountByWorkspaceId.get(workspace.id) ?? 0;
           const repoCount = workspace.repos.length;
           const isDragging = draggingId === workspace.id;
-          const showDropIndicator =
-            draggingId !== null && dragOverIndex === index && !isDragging;
+          const showDropIndicator = draggingId !== null && dragOverIndex === index && !isDragging;
           const dropAbove = showDropIndicator && draggingIndex > index;
           const dropBelow = showDropIndicator && draggingIndex < index;
           return (
@@ -161,9 +164,13 @@ export function WorkspaceList({
               className={`group relative flex items-center justify-between gap-2 pl-6 pr-4 py-2.5 mx-2 rounded-lg cursor-pointer transition-colors ${
                 isDragging ? "opacity-50" : ""
               } ${
-                dropAbove ? "before:absolute before:left-2 before:right-2 before:-top-px before:h-0.5 before:rounded-full before:bg-accent before:content-['']" : ""
+                dropAbove
+                  ? "before:absolute before:left-2 before:right-2 before:-top-px before:h-0.5 before:rounded-full before:bg-accent before:content-['']"
+                  : ""
               } ${
-                dropBelow ? "after:absolute after:left-2 after:right-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent after:content-['']" : ""
+                dropBelow
+                  ? "after:absolute after:left-2 after:right-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent after:content-['']"
+                  : ""
               } ${
                 selectedWorkspaceId === workspace.id
                   ? "bg-bg-active text-text-primary"
@@ -232,8 +239,16 @@ export function WorkspaceList({
         })}
       </div>
 
-      {/* Footer: theme settings */}
-      <div className="flex-shrink-0 border-t border-border px-4 py-2">
+      {/* Footer: global settings */}
+      <div className="flex-shrink-0 border-t border-border px-4 py-2 space-y-0.5">
+        <button
+          onClick={() => setShowVault(true)}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
+          title="Obsidian vault settings"
+        >
+          <NotebookIcon />
+          Obsidian vault
+        </button>
         <button
           onClick={() => setShowThemes(true)}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
@@ -243,6 +258,13 @@ export function WorkspaceList({
           Theme
         </button>
       </div>
+
+      <VaultSettingsModal
+        open={showVault}
+        onClose={() => setShowVault(false)}
+        vault={vault}
+        onVaultChange={onVaultChange}
+      />
 
       <AddWorkspaceModal
         open={addOpen}
@@ -268,6 +290,7 @@ export function WorkspaceList({
           open={!!removeWorkspace}
           onClose={() => setRemoveWorkspace(null)}
           workspace={removeWorkspace}
+          vault={vault}
           tasks={tasks.filter((t) => t.workspaceId === removeWorkspace.id)}
           onConfirm={() => {
             onRemove(removeWorkspace.id);

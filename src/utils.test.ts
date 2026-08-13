@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import {
-  timeAgo,
-  migrateLegacyToWorkspaces,
-  normalizeWorkspaces,
-  normalizeTasks,
-} from "./utils";
+import { timeAgo, migrateLegacyToWorkspaces, normalizeWorkspaces, normalizeTasks } from "./utils";
 
 describe("timeAgo", () => {
   afterEach(() => {
@@ -79,7 +74,7 @@ describe("migrateLegacyToWorkspaces", () => {
   it("turns each legacy repo into a single-member workspace, preserving ids", () => {
     const { workspaces } = migrateLegacyToWorkspaces(
       [{ id: "r1", name: "app", localPath: "/code/app", worktreeBasePath: "/wt/app" }],
-      [],
+      []
     );
     expect(workspaces).toHaveLength(1);
     expect(workspaces[0].id).toBe("r1");
@@ -108,7 +103,7 @@ describe("migrateLegacyToWorkspaces", () => {
           linearIssueTitle: "Do X",
           linearIssueIdentifier: "ABC-1",
         },
-      ],
+      ]
     );
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({
@@ -137,7 +132,7 @@ describe("migrateLegacyToWorkspaces", () => {
         { id: "r2", name: "b", localPath: "/b", worktreeBasePath: "/wt/b" },
       ],
       [],
-      "lin_api_global",
+      "lin_api_global"
     );
     expect(workspaces[0].linearApiKey).toBe("lin_api_global");
     expect(workspaces[1].linearApiKey).toBe("lin_api_global");
@@ -150,7 +145,7 @@ describe("migrateLegacyToWorkspaces", () => {
         { id: "r2", name: "b", localPath: "/b", worktreeBasePath: "/wt/b" },
       ],
       [],
-      "lin_api_global",
+      "lin_api_global"
     );
     expect(workspaces[0].linearApiKey).toBe("keep");
     // global only applied when *every* repo lacks a key, so r2 stays null
@@ -165,7 +160,6 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
       id: "w1",
       name: "",
       linearApiKey: null,
-      notesPath: null,
       repos: [{ id: "r1", name: "", localPath: "", worktreeBasePath: "" }],
     });
   });

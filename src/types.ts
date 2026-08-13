@@ -12,8 +12,6 @@ export interface Workspace {
   name: string;
   repos: WorkspaceRepo[];
   linearApiKey?: string | null;
-  /** Obsidian `task-logs/` folder. Unset disables task notes for this workspace. */
-  notesPath?: string | null;
 }
 
 /** One repo's worktree within a task. */
@@ -45,11 +43,19 @@ export interface Task {
   createdAt: string;
 }
 
+/** Global Obsidian vault config. One vault serves every workspace and task. */
+export interface VaultConfig {
+  enabled: boolean;
+  /** Vault root. Kept when disabled so re-enabling reuses the same folder. */
+  path: string | null;
+}
+
 export interface AppState {
   setup: {
     linearApiKey: string | null;
     isComplete: boolean;
   };
+  vault: VaultConfig;
   workspaces: Workspace[];
   tasks: Task[];
   selectedWorkspaceId: string | null;
@@ -152,6 +158,7 @@ export const DEFAULT_STATE: AppState = {
     linearApiKey: null,
     isComplete: false,
   },
+  vault: { enabled: false, path: null },
   workspaces: [],
   tasks: [],
   selectedWorkspaceId: null,

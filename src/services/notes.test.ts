@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildTaskNote, taskNoteFileName, taskNotePath, taskNoteUri } from "./notes";
-import { Task, TaskMember, Workspace } from "../types";
+import { Task, TaskMember, VaultConfig, Workspace } from "../types";
 
 function member(repoName: string, path: string): TaskMember {
   return {
@@ -29,8 +29,9 @@ const workspace: Workspace = {
   id: "w1",
   name: "WorktreeManager",
   repos: [],
-  notesPath: "/vault/task-logs",
 };
+
+const vault: VaultConfig = { enabled: true, path: "/vault" };
 
 describe("taskNoteFileName", () => {
   it("prefixes with the issue ID and drops it from the slug", () => {
@@ -106,19 +107,19 @@ describe("buildTaskNote", () => {
 });
 
 describe("taskNotePath", () => {
-  it("joins the notes folder and file name", () => {
-    expect(taskNotePath(workspace, task())).toBe("/vault/task-logs/WOR-39-evaluar-obsidian.md");
+  it("joins the vault's task-logs folder and file name", () => {
+    expect(taskNotePath(vault, task())).toBe("/vault/task-logs/WOR-39-evaluar-obsidian.md");
   });
 
-  it("tolerates a trailing slash on the notes folder", () => {
-    expect(taskNotePath({ ...workspace, notesPath: "/vault/task-logs/" }, task())).toBe(
+  it("tolerates a trailing slash on the vault path", () => {
+    expect(taskNotePath({ ...vault, path: "/vault/" }, task())).toBe(
       "/vault/task-logs/WOR-39-evaluar-obsidian.md"
     );
   });
 
-  it("returns null when notes are not configured", () => {
-    expect(taskNotePath({ ...workspace, notesPath: null }, task())).toBeNull();
-    expect(taskNotePath({ ...workspace, notesPath: "  " }, task())).toBeNull();
+  it("returns null when the vault is off or unset", () => {
+    expect(taskNotePath({ enabled: false, path: "/vault" }, task())).toBeNull();
+    expect(taskNotePath({ enabled: true, path: "  " }, task())).toBeNull();
   });
 });
 

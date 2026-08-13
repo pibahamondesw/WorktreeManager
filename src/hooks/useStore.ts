@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { loadState, loadEditorApp, loadThemeId, loadCustomColors, persist } from "../services/store";
-import { AppState, DEFAULT_STATE, EditorApp, Task, Workspace } from "../types";
+import {
+  loadState,
+  loadEditorApp,
+  loadThemeId,
+  loadCustomColors,
+  persist,
+} from "../services/store";
+import { AppState, DEFAULT_STATE, EditorApp, Task, VaultConfig, Workspace } from "../types";
 import { applyTheme, themes, CUSTOM_THEME_ID } from "../themes";
 
 export function useStore() {
@@ -30,7 +36,13 @@ export function useStore() {
           ...new Set(s.workspaces.flatMap((w) => w.repos.map((r) => r.worktreeBasePath))),
         ];
         void invoke("cleanup_claude_json_stale", { basePaths }).catch(() => {});
-      },
+
+        // Self-heal an enabled vault: recreate it if the folder went missing and
+        // keep it registered in Obsidian. Best-effort, never blocks startup.
+        if (s.vault.enabled && s.vault.path) {
+          void invoke("ensure_vault", { vaultPath: s.vault.path }).catch(() => {});
+        }
+      }
     );
   }, []);
 
@@ -47,6 +59,20 @@ export function useStore() {
     } catch {
       setState(snapshot!);
       setPersistError("Failed to save setup changes");
+    }
+  }, []);
+
+  const updateVault = useCallback(async (vault: VaultConfig) => {
+    let snapshot: AppState;
+    setState((prev) => {
+      snapshot = prev;
+      return { ...prev, vault };
+    });
+    try {
+      await persist([["vault", vault]]);
+    } catch {
+      setState(snapshot!);
+      setPersistError("Failed to save vault settings");
     }
   }, []);
 
@@ -72,14 +98,14 @@ export function useStore() {
   const updateWorkspace = useCallback(
     async (
       workspaceId: string,
-      updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos" | "notesPath">>,
+      updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>
     ) => {
       let snapshot: AppState;
       let newWorkspaces: Workspace[];
       setState((prev) => {
         snapshot = prev;
         newWorkspaces = prev.workspaces.map((w) =>
-          w.id === workspaceId ? { ...w, ...updates } : w,
+          w.id === workspaceId ? { ...w, ...updates } : w
         );
         return { ...prev, workspaces: newWorkspaces };
       });
@@ -90,7 +116,7 @@ export function useStore() {
         setPersistError("Failed to save workspace changes");
       }
     },
-    [],
+    []
   );
 
   const removeWorkspace = useCallback(async (workspaceId: string) => {
@@ -253,11 +279,14 @@ export function useStore() {
       } catch {
         setThemeIdState(prevTheme);
         setCustomColors(prevCustom);
-        applyTheme(prevTheme, prevTheme === CUSTOM_THEME_ID ? (prevCustom ?? undefined) : undefined);
+        applyTheme(
+          prevTheme,
+          prevTheme === CUSTOM_THEME_ID ? (prevCustom ?? undefined) : undefined
+        );
         setPersistError("Failed to save theme preference");
       }
     },
-    [themeId, customColors],
+    [themeId, customColors]
   );
 
   const updateCustomColors = useCallback(
@@ -273,16 +302,16 @@ export function useStore() {
         setPersistError("Failed to save theme preference");
       }
     },
-    [customColors],
+    [customColors]
   );
 
   const selectedWorkspace = useMemo(
     () => state.workspaces.find((w) => w.id === state.selectedWorkspaceId),
-    [state.workspaces, state.selectedWorkspaceId],
+    [state.workspaces, state.selectedWorkspaceId]
   );
   const selectedTasks = useMemo(
     () => state.tasks.filter((t) => t.workspaceId === state.selectedWorkspaceId),
-    [state.tasks, state.selectedWorkspaceId],
+    [state.tasks, state.selectedWorkspaceId]
   );
 
   return {
@@ -297,6 +326,7 @@ export function useStore() {
     persistError,
     dismissPersistError,
     updateSetup,
+    updateVault,
     addWorkspace,
     updateWorkspace,
     removeWorkspace,

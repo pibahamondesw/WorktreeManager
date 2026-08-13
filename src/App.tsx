@@ -6,6 +6,7 @@ import { QuickSearchModal } from "./components/search/QuickSearchModal";
 import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
+import { enableVault } from "./services/vault";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdater } from "./hooks/useUpdater";
 import { useWindowDrag } from "./hooks/useWindowDrag";
@@ -24,6 +25,7 @@ function App() {
     persistError,
     dismissPersistError,
     updateSetup,
+    updateVault,
     addWorkspace,
     updateWorkspace,
     removeWorkspace,
@@ -104,7 +106,20 @@ function App() {
   }
 
   if (!state.setup.isComplete) {
-    return <SetupWizard initialSetup={state.setup} onComplete={updateSetup} />;
+    return (
+      <SetupWizard
+        initialSetup={state.setup}
+        onComplete={(setup, { enableVault: wantsVault }) => {
+          void updateSetup(setup);
+          // Best-effort here — the sidebar's vault settings are the recovery path.
+          if (wantsVault) {
+            enableVault()
+              .then(updateVault)
+              .catch(() => undefined);
+          }
+        }}
+      />
+    );
   }
 
   return (
@@ -141,12 +156,15 @@ function App() {
           customColors={customColors}
           onCustomColorsChange={updateCustomColors}
           defaultLinearApiKey={defaultLinearApiKey}
+          vault={state.vault}
+          onVaultChange={updateVault}
         />
       </ErrorBoundary>
       <ErrorBoundary fallbackClassName="flex-1">
         <WorktreeList
           tasks={selectedTasks}
           workspace={selectedWorkspace}
+          vault={state.vault}
           onTaskCreated={addTask}
           onTaskDeleted={removeTask}
           editorApp={editorApp}

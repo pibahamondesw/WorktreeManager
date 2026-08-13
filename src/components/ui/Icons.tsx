@@ -5,7 +5,13 @@ interface IconProps {
 
 export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
   return (
-    <svg className={`animate-spin ${className}`} width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <svg
+      className={`animate-spin ${className}`}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+    >
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path
         className="opacity-75"
@@ -263,6 +269,23 @@ export function SunIcon({ size = 14, className = "" }: IconProps) {
     >
       <circle cx="8" cy="8" r="3" />
       <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" />
+    </svg>
+  );
+}
+
+export function NotebookIcon({ size = 14, className = "" }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      className={className}
+    >
+      <rect x="3" y="2" width="10" height="12" rx="1.5" />
+      <path d="M6 2v12M8.5 5.5h2M8.5 8h2" />
     </svg>
   );
 }

@@ -6,7 +6,6 @@ import { Button } from "../ui/Button";
 import { Workspace, WorkspaceRepo } from "../../types";
 import { WorkspaceRepoEditor } from "./WorkspaceRepoEditor";
 import { LinearKeyField } from "./LinearKeyField";
-import { NotesPathField } from "./NotesPathField";
 import { useLinearKeyValidation } from "../../hooks/useLinearKeyValidation";
 
 interface EditWorkspaceModalProps {
@@ -15,14 +14,13 @@ interface EditWorkspaceModalProps {
   workspace: Workspace;
   onSave: (
     workspaceId: string,
-    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos" | "notesPath">>,
+    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>
   ) => void;
 }
 
 export function EditWorkspaceModal({ open, onClose, workspace, onSave }: EditWorkspaceModalProps) {
   const [name, setName] = useState("");
   const [repos, setRepos] = useState<WorkspaceRepo[]>([]);
-  const [notesPath, setNotesPath] = useState("");
   const [home, setHome] = useState("");
   const [error, setError] = useState<string | null>(null);
   const linear = useLinearKeyValidation();
@@ -35,14 +33,12 @@ export function EditWorkspaceModal({ open, onClose, workspace, onSave }: EditWor
     if (!open) {
       setName("");
       setRepos([]);
-      setNotesPath("");
       setError(null);
       linear.reset();
       return;
     }
     setName(workspace.name);
     setRepos(workspace.repos);
-    setNotesPath(workspace.notesPath ?? "");
     if (workspace.linearApiKey) {
       linear.setLinearKey(workspace.linearApiKey);
       linear.runValidation(workspace.linearApiKey);
@@ -79,7 +75,6 @@ export function EditWorkspaceModal({ open, onClose, workspace, onSave }: EditWor
         worktreeBasePath: r.worktreeBasePath.trim(),
       })),
       linearApiKey: newLinearKey,
-      notesPath: notesPath.trim() || null,
     });
     onClose();
   };
@@ -101,8 +96,6 @@ export function EditWorkspaceModal({ open, onClose, workspace, onSave }: EditWor
           onChange={linear.setLinearKey}
           onValidate={() => linear.runValidation(linear.linearKey)}
         />
-
-        <NotesPathField value={notesPath} onChange={setNotesPath} />
 
         {error && <p className="text-sm text-danger select-text">{error}</p>}
 

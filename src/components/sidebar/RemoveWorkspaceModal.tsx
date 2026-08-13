@@ -2,13 +2,14 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
-import { Task, Workspace } from "../../types";
+import { Task, VaultConfig, Workspace } from "../../types";
 import { archiveTaskNote } from "../../services/notes";
 
 interface RemoveWorkspaceModalProps {
   open: boolean;
   onClose: () => void;
   workspace: Workspace;
+  vault: VaultConfig;
   tasks: Task[];
   onConfirm: (deleteFromDisk: boolean) => void;
 }
@@ -17,6 +18,7 @@ export function RemoveWorkspaceModal({
   open,
   onClose,
   workspace,
+  vault,
   tasks,
   onConfirm,
 }: RemoveWorkspaceModalProps) {
@@ -64,7 +66,7 @@ export function RemoveWorkspaceModal({
       }
       if (errors.length > 0) {
         setError(
-          `Some worktrees could not be removed from disk:\n${errors.join("\n")}\n\nThe workspace will still be removed from the app.`,
+          `Some worktrees could not be removed from disk:\n${errors.join("\n")}\n\nThe workspace will still be removed from the app.`
         );
       }
     }
@@ -73,7 +75,7 @@ export function RemoveWorkspaceModal({
     // whether or not the worktrees stay on disk — otherwise they'd sit in
     // task-logs/ with nothing left to ever archive them.
     for (const task of tasks) {
-      await archiveTaskNote(workspace, task);
+      await archiveTaskNote(vault, task);
     }
 
     onConfirm(deleteFromDisk);
@@ -106,7 +108,7 @@ export function RemoveWorkspaceModal({
             <p className="text-sm text-text-secondary">
               What would you like to do with the worktrees created for these tasks?
             </p>
-            {workspace.notesPath && (
+            {vault.enabled && (
               <p className="text-xs text-text-muted">
                 Task notes are kept either way, moved to{" "}
                 <span className="font-mono">_archive/</span>.
