@@ -40,6 +40,8 @@ pub fn run() {
             commands::workspace::delete_workspace_file,
             commands::notes::ensure_task_note,
             commands::notes::archive_task_note,
+            commands::vault::scaffold_vault,
+            commands::vault::ensure_vault,
             commands::claude_config::cleanup_claude_json,
             commands::claude_config::cleanup_claude_json_stale,
         ])
