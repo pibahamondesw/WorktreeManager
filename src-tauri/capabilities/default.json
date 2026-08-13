@@ -9,6 +9,10 @@
     "core:window:allow-toggle-maximize",
     "store:default",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "obsidian:*" }]
+    },
     "dialog:default",
     "shell:allow-open",
     "shell:allow-execute",
