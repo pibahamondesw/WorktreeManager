@@ -27,7 +27,7 @@ export function ThemePicker({
   // Preview swatch for the Custom card: the user's saved colors, or the colors
   // it would seed from (the active preset) when not yet customized.
   const customPreview =
-    customColors ?? (themes.find((t) => t.id === currentThemeId)?.colors ?? themes[0].colors);
+    customColors ?? themes.find((t) => t.id === currentThemeId)?.colors ?? themes[0].colors;
   const isCustom = currentThemeId === CUSTOM_THEME_ID;
 
   return (
@@ -122,9 +122,7 @@ export function ThemePicker({
               </div>
             </div>
 
-            {isCustom && (
-              <CheckIcon size={14} className="text-accent ml-auto flex-shrink-0" />
-            )}
+            {isCustom && <CheckIcon size={14} className="text-accent ml-auto flex-shrink-0" />}
           </button>
         </div>
 

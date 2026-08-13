@@ -8,12 +8,7 @@ interface LinearProviderProps {
 }
 
 export function LinearProvider({ apiKey, children }: LinearProviderProps) {
-  const service = useMemo(
-    () => (apiKey ? new LinearService(apiKey) : null),
-    [apiKey]
-  );
+  const service = useMemo(() => (apiKey ? new LinearService(apiKey) : null), [apiKey]);
 
-  return (
-    <LinearContext.Provider value={service}>{children}</LinearContext.Provider>
-  );
+  return <LinearContext.Provider value={service}>{children}</LinearContext.Provider>;
 }

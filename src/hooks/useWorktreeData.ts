@@ -19,9 +19,7 @@ export function useWorktreeData(
   const lastRefreshRef = useRef(0);
 
   const fetchLinearInfo = useCallback(async () => {
-    const issueIds = tasks
-      .map((t) => t.linearIssueId)
-      .filter((id): id is string => !!id);
+    const issueIds = tasks.map((t) => t.linearIssueId).filter((id): id is string => !!id);
     if (issueIds.length === 0 || !linear) return;
     const info = await linear.fetchIssueLinearInfoBatch(issueIds);
     // Merge instead of replace: entries are keyed by issue id, so results from
@@ -80,7 +78,9 @@ export function useWorktreeData(
       setRefreshing(false);
       onReadyRef.current?.(workspaceId);
     });
-    return () => { stale = true; };
+    return () => {
+      stale = true;
+    };
   }, [fetchLinearInfo, fetchGitStatuses, workspace?.id]);
 
   useEffect(() => {

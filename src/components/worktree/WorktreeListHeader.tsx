@@ -34,9 +34,7 @@ export function WorktreeListHeader({
         data-drag-region
       >
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-text-primary">
-            {workspaceName}
-          </h2>
+          <h2 className="text-sm font-semibold text-text-primary">{workspaceName}</h2>
           <span className="text-xs text-text-muted">
             {taskCount} task{taskCount !== 1 ? "s" : ""}
             {repoCount > 1 ? ` · ${repoCount} repos` : ""}

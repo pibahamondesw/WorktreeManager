@@ -11,10 +11,7 @@ export function useEphemeralToast() {
   const showToast = useCallback((msg: string) => {
     window.clearTimeout(toastTimer.current);
     setToast(msg);
-    toastTimer.current = window.setTimeout(
-      () => setToast(null),
-      msg.length > 40 ? 4000 : 1500
-    );
+    toastTimer.current = window.setTimeout(() => setToast(null), msg.length > 40 ? 4000 : 1500);
   }, []);
 
   return { toast, showToast };

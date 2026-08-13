@@ -179,13 +179,7 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
       );
     case "zed":
       return (
-        <svg
-          width={s}
-          height={s}
-          viewBox="0 0 16 16"
-          fill="currentColor"
-          className="flex-shrink-0"
-        >
+        <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0">
           <path d="M3.5 3h9v2L7 11h5.5v2h-9v-2L9 5H3.5z" />
         </svg>
       );
