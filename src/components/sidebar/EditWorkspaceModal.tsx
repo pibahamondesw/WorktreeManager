@@ -16,9 +16,16 @@ interface EditWorkspaceModalProps {
     workspaceId: string,
     updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>
   ) => void;
+  onRequestDelete: () => void;
 }
 
-export function EditWorkspaceModal({ open, onClose, workspace, onSave }: EditWorkspaceModalProps) {
+export function EditWorkspaceModal({
+  open,
+  onClose,
+  workspace,
+  onSave,
+  onRequestDelete,
+}: EditWorkspaceModalProps) {
   const [name, setName] = useState("");
   const [repos, setRepos] = useState<WorkspaceRepo[]>([]);
   const [home, setHome] = useState("");
@@ -104,6 +111,18 @@ export function EditWorkspaceModal({ open, onClose, workspace, onSave }: EditWor
             Cancel
           </Button>
           <Button onClick={handleSave}>Save</Button>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 pt-4 border-t border-border">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-text-primary">Delete workspace</p>
+            <p className="text-xs text-text-muted">
+              Removes it from the app. You choose what happens to its worktrees.
+            </p>
+          </div>
+          <Button variant="danger" onClick={onRequestDelete} className="flex-shrink-0">
+            Delete
+          </Button>
         </div>
       </div>
     </Modal>
