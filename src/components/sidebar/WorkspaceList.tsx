@@ -5,7 +5,7 @@ import { EditWorkspaceModal } from "./EditWorkspaceModal";
 import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
 import { ThemePicker } from "../ui/ThemePicker";
 import { VaultSettingsModal } from "./VaultSettingsModal";
-import { PlusIcon, CloseIcon, GearIcon, SunIcon, GripIcon, NotebookIcon } from "../ui/Icons";
+import { PlusIcon, GearIcon, SunIcon, GripIcon, NotebookIcon } from "../ui/Icons";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -145,7 +145,7 @@ export function WorkspaceList({
 
         {workspaces.map((workspace, index) => {
           const activeTaskCount = taskCountByWorkspaceId.get(workspace.id) ?? 0;
-          const repoCount = workspace.repos.length;
+          const isSelected = selectedWorkspaceId === workspace.id;
           const isDragging = draggingId === workspace.id;
           const showDropIndicator = draggingId !== null && dragOverIndex === index && !isDragging;
           const dropAbove = showDropIndicator && draggingIndex > index;
@@ -172,7 +172,7 @@ export function WorkspaceList({
                   ? "after:absolute after:left-2 after:right-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent after:content-['']"
                   : ""
               } ${
-                selectedWorkspaceId === workspace.id
+                isSelected
                   ? "bg-bg-active text-text-primary"
                   : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
               }`}
@@ -183,34 +183,21 @@ export function WorkspaceList({
               >
                 <GripIcon size={12} />
               </span>
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div
-                  className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                    selectedWorkspaceId === workspace.id ? "bg-accent" : "bg-border-light"
-                  }`}
+              {isSelected && (
+                <span
+                  className="absolute -left-2 top-1/2 -translate-y-1/2 h-6 w-[3px] rounded-r-full bg-accent"
+                  aria-hidden="true"
                 />
-                <div className="flex flex-col min-w-0 flex-1">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <p className="text-sm font-medium truncate min-w-0">{workspace.name}</p>
-                    <span
-                      className={`inline-flex flex-shrink-0 items-center justify-center min-w-[1.125rem] rounded px-1 py-0.5 text-[10px] font-semibold tabular-nums ${
-                        selectedWorkspaceId === workspace.id
-                          ? "bg-bg-secondary text-text-muted"
-                          : "bg-bg-hover text-text-muted"
-                      }`}
-                      title={`${activeTaskCount} active task${activeTaskCount !== 1 ? "s" : ""}`}
-                    >
-                      {activeTaskCount}
-                    </span>
-                  </div>
-                  {repoCount > 1 && (
-                    <p className="text-[10px] text-text-muted truncate">{repoCount} repos</p>
-                  )}
-                </div>
+              )}
+              <div className="flex flex-col min-w-0 flex-1">
+                <p className="text-sm font-medium truncate">{workspace.name}</p>
+                <p className="text-[10px] text-text-muted truncate">
+                  {activeTaskCount} task{activeTaskCount !== 1 ? "s" : ""}
+                </p>
               </div>
 
               <div
-                className={`flex items-center gap-0.5 flex-shrink-0 ${
+                className={`flex items-center flex-shrink-0 ${
                   hoveredId === workspace.id ? "opacity-100" : "opacity-0 pointer-events-none"
                 }`}
               >
@@ -223,15 +210,6 @@ export function WorkspaceList({
                   title="Workspace settings"
                 >
                   <GearIcon size={12} />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setRemoveWorkspace(workspace);
-                  }}
-                  className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-danger transition-colors cursor-pointer"
-                >
-                  <CloseIcon size={12} />
                 </button>
               </div>
             </div>
@@ -282,6 +260,10 @@ export function WorkspaceList({
           onClose={() => setEditWorkspace(null)}
           workspace={editWorkspace}
           onSave={onUpdate}
+          onRequestDelete={() => {
+            setRemoveWorkspace(editWorkspace);
+            setEditWorkspace(null);
+          }}
         />
       )}
 
