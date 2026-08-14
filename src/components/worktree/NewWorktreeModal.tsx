@@ -193,11 +193,19 @@ export function NewWorktreeModal({
             worktreePath = resolved.path;
           }
 
-          await invoke<string>("git_worktree_add", {
-            repoPath: r.localPath,
-            worktreePath,
-            branchName,
-          });
+          const added = await invoke<{ output: string; warning: string | null }>(
+            "git_worktree_add",
+            {
+              repoPath: r.localPath,
+              worktreePath,
+              branchName,
+            }
+          );
+
+          // The worktree exists, but it was based on local refs because origin was unreachable.
+          if (added.warning) {
+            onOpenHint?.(`${r.name}: ${added.warning}`);
+          }
 
           // Copy local (gitignored) config so the worktree doesn't start from scratch — editor
           // config for the editor in use + env files. Best-effort: must not abort creation.

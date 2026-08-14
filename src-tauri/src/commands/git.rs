@@ -10,7 +10,24 @@ pub struct WorktreeInfo {
     pub bare: bool,
 }
 
-/// Detect the default branch on the remote (main, master, etc.)
+/// True when `refname` resolves to a commit in `repo_path`.
+fn ref_resolves(repo_path: &str, refname: &str) -> bool {
+    Command::new("git")
+        .args([
+            "-C",
+            repo_path,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{refname}^{{commit}}"),
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Detect the default branch (main, master, etc.), preferring what the remote reports but
+/// falling back to local branches so an unreachable origin still yields a usable answer.
 fn detect_default_branch(repo_path: &str) -> String {
     // Try reading the remote HEAD symbolic ref
     if let Ok(output) = Command::new("git")
@@ -26,27 +43,50 @@ fn detect_default_branch(repo_path: &str) -> String {
         }
     }
 
-    // Fallback: check if origin/main exists
-    if let Ok(output) = Command::new("git")
-        .args(["-C", repo_path, "rev-parse", "--verify", "origin/main"])
-        .output()
-    {
-        if output.status.success() {
-            return "main".to_string();
-        }
-    }
-
-    // Fallback: check origin/master
-    if let Ok(output) = Command::new("git")
-        .args(["-C", repo_path, "rev-parse", "--verify", "origin/master"])
-        .output()
-    {
-        if output.status.success() {
-            return "master".to_string();
+    // Fallback: whichever conventional branch exists, remote-tracking first
+    for candidate in [
+        "origin/main",
+        "origin/master",
+        "refs/heads/main",
+        "refs/heads/master",
+    ] {
+        if ref_resolves(repo_path, candidate) {
+            return candidate.rsplit('/').next().unwrap_or("main").to_string();
         }
     }
 
     "main".to_string()
+}
+
+/// Pick the ref a new branch should start from: the remote-tracking branch when available
+/// (fresh after a successful fetch), else the local branch of the same name, else the repo's
+/// HEAD — so a worktree can still be created while origin is unreachable.
+fn pick_start_point(default_branch: &str, resolves: impl Fn(&str) -> bool) -> Option<String> {
+    [
+        format!("origin/{default_branch}"),
+        default_branch.to_string(),
+        "HEAD".to_string(),
+    ]
+    .into_iter()
+    .find(|candidate| resolves(candidate))
+}
+
+/// First non-empty line of git's stderr, for messages that have to fit in a toast.
+fn first_line(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("unknown error")
+        .to_string()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeAddResult {
+    pub output: String,
+    /// Set when the worktree could not be based on a freshly fetched remote branch, so the
+    /// caller can tell the user their new branch may be behind origin.
+    pub warning: Option<String>,
 }
 
 #[tauri::command]
@@ -54,7 +94,7 @@ pub async fn git_worktree_add(
     repo_path: String,
     worktree_path: String,
     branch_name: String,
-) -> Result<String, String> {
+) -> Result<WorktreeAddResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         worktree_add_blocking(repo_path, worktree_path, branch_name)
     })
@@ -66,7 +106,7 @@ fn worktree_add_blocking(
     repo_path: String,
     worktree_path: String,
     branch_name: String,
-) -> Result<String, String> {
+) -> Result<WorktreeAddResult, String> {
     // Ensure the worktree parent directory exists
     let worktree = std::path::Path::new(&worktree_path);
     if let Some(parent) = worktree.parent() {
@@ -77,25 +117,56 @@ fn worktree_add_blocking(
     // If the worktree already exists from a previous attempt, reuse it
     let wt_path = std::path::Path::new(&worktree_path);
     if wt_path.exists() && wt_path.join(".git").exists() {
-        return Ok(format!("Worktree already exists at {}", worktree_path));
+        return Ok(WorktreeAddResult {
+            output: format!("Worktree already exists at {}", worktree_path),
+            warning: None,
+        });
     }
 
-    // 1. Fetch latest from origin so the new branch starts from up-to-date main
-    let fetch = Command::new("git")
+    // 1. Fetch latest from origin so the new branch starts from up-to-date main. Best-effort:
+    //    when origin is unreachable (offline, GitHub down, expired credentials) we branch from
+    //    the local repo instead of refusing to create the worktree.
+    let fetch_error = match Command::new("git")
         .args(["-C", &repo_path, "fetch", "origin"])
         .output()
-        .map_err(|e| format!("Failed to fetch from origin: {}", e))?;
-
-    if !fetch.status.success() {
-        let stderr = String::from_utf8_lossy(&fetch.stderr).to_string();
-        return Err(format!("Failed to fetch from origin: {}", stderr));
-    }
+    {
+        Ok(fetch) if fetch.status.success() => None,
+        Ok(fetch) => Some(first_line(&String::from_utf8_lossy(&fetch.stderr))),
+        Err(e) => Some(e.to_string()),
+    };
 
     // 2. Detect default branch (main/master/etc.)
     let default_branch = detect_default_branch(&repo_path);
-    let start_point = format!("origin/{}", default_branch);
+    let remote_start = format!("origin/{}", default_branch);
 
-    // 3. Create worktree with new branch based on origin/<default>
+    // 3. Resolve the start point, degrading to local refs when the remote one is unavailable
+    let start_point = pick_start_point(&default_branch, |candidate| {
+        ref_resolves(&repo_path, candidate)
+    })
+    .ok_or_else(|| match &fetch_error {
+        Some(err) => format!(
+            "Failed to fetch from origin and found no local {} to branch from: {}",
+            default_branch, err
+        ),
+        None => format!(
+            "Found no commit to branch from (tried {}, {}, HEAD)",
+            remote_start, default_branch
+        ),
+    })?;
+
+    let warning = match (&fetch_error, start_point == remote_start) {
+        (None, true) => None,
+        (Some(err), _) => Some(format!(
+            "could not reach origin — branched from {}, which may be stale ({})",
+            start_point, err
+        )),
+        (None, false) => Some(format!(
+            "{} not found — branched from {}",
+            remote_start, start_point
+        )),
+    };
+
+    // 4. Create worktree with new branch based on the resolved start point
     let output = Command::new("git")
         .args([
             "-C",
@@ -111,32 +182,44 @@ fn worktree_add_blocking(
         .map_err(|e| format!("Failed to execute git: {}", e))?;
 
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        return Ok(WorktreeAddResult {
+            output: String::from_utf8_lossy(&output.stdout).to_string(),
+            warning,
+        });
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !stderr.contains("already exists") {
+        return Err(stderr);
+    }
+
+    // The branch already exists, so check it out into the worktree instead
+    let output2 = Command::new("git")
+        .args([
+            "-C",
+            &repo_path,
+            "worktree",
+            "add",
+            &worktree_path,
+            &branch_name,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output2.status.success() {
+        Ok(WorktreeAddResult {
+            output: String::from_utf8_lossy(&output2.stdout).to_string(),
+            // The start point never applied to an existing branch, so only a failed fetch is
+            // worth reporting here.
+            warning: fetch_error.map(|err| {
+                format!(
+                    "could not reach origin — {} may be behind ({})",
+                    branch_name, err
+                )
+            }),
+        })
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        // If branch already exists, try checking it out into the worktree
-        if stderr.contains("already exists") {
-            let output2 = Command::new("git")
-                .args([
-                    "-C",
-                    &repo_path,
-                    "worktree",
-                    "add",
-                    &worktree_path,
-                    &branch_name,
-                ])
-                .output()
-                .map_err(|e| format!("Failed to execute git: {}", e))?;
-
-            if output2.status.success() {
-                Ok(String::from_utf8_lossy(&output2.stdout).to_string())
-            } else {
-                Err(String::from_utf8_lossy(&output2.stderr).to_string())
-            }
-        } else {
-            Err(stderr)
-        }
+        Err(String::from_utf8_lossy(&output2.stderr).to_string())
     }
 }
 
@@ -567,6 +650,32 @@ mod tests {
         assert_eq!(slugify("Pedro.Bahamondes"), "pedro-bahamondes");
         assert_eq!(slugify("  --John__Doe-- "), "john-doe");
         assert_eq!(slugify("a@@@b"), "a-b");
+    }
+
+    #[test]
+    fn pick_start_point_falls_back_to_local_refs() {
+        assert_eq!(
+            pick_start_point("main", |_| true).as_deref(),
+            Some("origin/main")
+        );
+        assert_eq!(
+            pick_start_point("main", |r| r != "origin/main").as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            pick_start_point("main", |r| r == "HEAD").as_deref(),
+            Some("HEAD")
+        );
+        assert_eq!(pick_start_point("main", |_| false), None);
+    }
+
+    #[test]
+    fn first_line_takes_first_non_empty_line() {
+        assert_eq!(
+            first_line("\n  fatal: could not read from remote \nmore"),
+            "fatal: could not read from remote"
+        );
+        assert_eq!(first_line("   "), "unknown error");
     }
 
     #[test]
