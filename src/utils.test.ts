@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { timeAgo, migrateLegacyToWorkspaces, normalizeWorkspaces, normalizeTasks } from "./utils";
+import {
+  timeAgo,
+  migrateLegacyToWorkspaces,
+  normalizeSetup,
+  normalizeWorkspaces,
+  normalizeTasks,
+  redactLegacyBackup,
+} from "./utils";
 
 describe("timeAgo", () => {
   afterEach(() => {
@@ -185,5 +192,62 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
   it("returns empty arrays for nullish input", () => {
     expect(normalizeWorkspaces(undefined)).toEqual([]);
     expect(normalizeTasks(null)).toEqual([]);
+  });
+});
+
+describe("normalizeSetup", () => {
+  it("drops keys the app no longer uses", () => {
+    const setup = normalizeSetup({
+      linearApiKey: "lin_abc",
+      isComplete: true,
+      githubToken: "github_pat_dead",
+    });
+
+    expect(setup).toEqual({ linearApiKey: "lin_abc", isComplete: true });
+    expect(setup).not.toHaveProperty("githubToken");
+  });
+
+  it("falls back to an empty setup for nullish input", () => {
+    expect(normalizeSetup(undefined)).toEqual({ linearApiKey: null, isComplete: false });
+    expect(normalizeSetup(null)).toEqual({ linearApiKey: null, isComplete: false });
+  });
+});
+
+describe("redactLegacyBackup", () => {
+  const legacy = {
+    repos: [
+      { id: "r1", name: "api", localPath: "/a", linearApiKey: "lin_abc" },
+      { id: "r2", name: "web", localPath: "/b", linearApiKey: "lin_def" },
+    ],
+    worktrees: [{ id: "w1", repoId: "r1", path: "/a/wt" }],
+    selectedRepoId: "r1",
+    setup: { linearApiKey: "lin_abc", isComplete: true, githubToken: "github_pat_dead" },
+  };
+
+  it("keeps the structure needed to recover from the backup", () => {
+    const out = redactLegacyBackup(legacy);
+
+    expect(out.repos).toEqual([
+      { id: "r1", name: "api", localPath: "/a" },
+      { id: "r2", name: "web", localPath: "/b" },
+    ]);
+    expect(out.worktrees).toEqual(legacy.worktrees);
+    expect(out.selectedRepoId).toBe("r1");
+    expect(out.setup).toEqual({ isComplete: true });
+  });
+
+  it("leaves no credential anywhere in the output", () => {
+    const serialized = JSON.stringify(redactLegacyBackup(legacy));
+
+    expect(serialized).not.toContain("lin_abc");
+    expect(serialized).not.toContain("lin_def");
+    expect(serialized).not.toContain("github_pat_dead");
+  });
+
+  it("omits absent sections rather than writing empty ones", () => {
+    expect(redactLegacyBackup({})).toEqual({
+      worktrees: undefined,
+      selectedRepoId: undefined,
+    });
   });
 });
