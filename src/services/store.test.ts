@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const STORE = "store.json";
 const SIDECAR = "store.backup-preMultiRepo.json";
 
-// In-memory stand-in for the store plugin. `files` holds the open handles; `savedPaths`
-// records which ones were actually flushed, so a test can tell an untouched sidecar from
-// one that was created empty.
-const { files, savedPaths } = vi.hoisted(() => ({
+// In-memory stands-in for the two things loadState talks to. `files` holds the open store
+// handles and `savedPaths` records which were actually flushed, so a test can tell an
+// untouched sidecar from one created empty. `keychain` doubles as a fault injector: the
+// readable/writable flags simulate a denied authorization prompt.
+const { files, savedPaths, keychain } = vi.hoisted(() => ({
   files: new Map<string, Map<string, unknown>>(),
   savedPaths: new Set<string>(),
+  keychain: { value: null as string | null, readable: true, writable: true },
 }));
 
 vi.mock("@tauri-apps/plugin-store", () => ({
@@ -26,6 +28,21 @@ vi.mock("@tauri-apps/plugin-store", () => ({
   },
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: async (cmd: string, args?: Record<string, unknown>) => {
+    if (cmd === "keychain_get") {
+      if (!keychain.readable) throw new Error("authorization denied");
+      return keychain.value;
+    }
+    if (cmd === "keychain_set") {
+      if (!keychain.writable) throw new Error("authorization denied");
+      keychain.value = args!.value as string;
+      return undefined;
+    }
+    throw new Error(`unexpected command: ${cmd}`);
+  },
+}));
+
 function seed(path: string, contents: Record<string, unknown>): void {
   files.set(path, new Map(Object.entries(contents)));
 }
@@ -34,7 +51,11 @@ function read(path: string): Record<string, unknown> {
   return Object.fromEntries(files.get(path) ?? new Map());
 }
 
-/** Re-imports the module so its cached store handle is rebuilt against the current fixture. */
+function storedSecrets(): { setup: string | null; workspaces: Record<string, string> } {
+  return JSON.parse(keychain.value!);
+}
+
+/** Re-imports the module so its cached store handle and secrets are rebuilt per test. */
 async function loadState() {
   vi.resetModules();
   return (await import("./store")).loadState();
@@ -50,9 +71,12 @@ const workspace = {
 beforeEach(() => {
   files.clear();
   savedPaths.clear();
+  keychain.value = null;
+  keychain.readable = true;
+  keychain.writable = true;
 });
 
-describe("loadState v2 → v3 migration", () => {
+describe("loadState v2 → v4 migration", () => {
   function seedV2(): void {
     seed(STORE, {
       schemaVersion: 2,
@@ -77,7 +101,6 @@ describe("loadState v2 → v3 migration", () => {
 
     await loadState();
 
-    expect(read(STORE).setup).toEqual({ linearApiKey: "lin_live", isComplete: true });
     expect(JSON.stringify(read(STORE))).not.toContain("github_pat_dead");
   });
 
@@ -109,16 +132,6 @@ describe("loadState v2 → v3 migration", () => {
     expect(read(SIDECAR)).toEqual({});
   });
 
-  it("preserves the live workspace state", async () => {
-    seedV2();
-
-    const state = await loadState();
-
-    expect(state.workspaces).toEqual([workspace]);
-    expect(state.selectedWorkspaceId).toBe("w1");
-    expect(read(STORE).schemaVersion).toBe(3);
-  });
-
   it("leaves an absent sidecar absent rather than writing an empty one", async () => {
     seedV2();
     files.delete(SIDECAR);
@@ -127,10 +140,30 @@ describe("loadState v2 → v3 migration", () => {
 
     expect(savedPaths.has(SIDECAR)).toBe(false);
   });
+
+  it("moves every Linear key into the keychain and none is left in the file", async () => {
+    seedV2();
+
+    await loadState();
+
+    expect(storedSecrets()).toEqual({ setup: "lin_live", workspaces: { w1: "lin_live" } });
+    expect(JSON.stringify(read(STORE))).not.toContain("lin_live");
+    expect(read(STORE).schemaVersion).toBe(4);
+  });
+
+  it("still hands the keys back to the app in memory", async () => {
+    seedV2();
+
+    const state = await loadState();
+
+    expect(state.setup.linearApiKey).toBe("lin_live");
+    expect(state.workspaces).toEqual([workspace]);
+    expect(state.selectedWorkspaceId).toBe("w1");
+  });
 });
 
-describe("loadState on an already-migrated store", () => {
-  it("does not rewrite a v3 store", async () => {
+describe("loadState when the keychain refuses", () => {
+  function seedV3(): void {
     seed(STORE, {
       schemaVersion: 3,
       setup: { linearApiKey: "lin_live", isComplete: true },
@@ -139,14 +172,84 @@ describe("loadState on an already-migrated store", () => {
       tasks: [],
       selectedWorkspaceId: "w1",
     });
+  }
+
+  it("leaves the keys in the file rather than stranding them", async () => {
+    seedV3();
+    keychain.writable = false;
+
+    await loadState();
+
+    const stored = read(STORE);
+    expect(JSON.stringify(stored)).toContain("lin_live");
+    expect(stored.schemaVersion).toBe(3);
+  });
+
+  it("keeps the app usable while the move is deferred", async () => {
+    seedV3();
+    keychain.writable = false;
+
+    const state = await loadState();
+
+    expect(state.setup.linearApiKey).toBe("lin_live");
+    expect(state.workspaces[0].linearApiKey).toBe("lin_live");
+  });
+
+  it("does not strip the file when the write cannot be verified", async () => {
+    seedV3();
+    keychain.readable = false; // write lands, read-back fails
+
+    await loadState();
+
+    expect(JSON.stringify(read(STORE))).toContain("lin_live");
+    expect(read(STORE).schemaVersion).toBe(3);
+  });
+});
+
+describe("loadState on an already-migrated store", () => {
+  function seedV4(): void {
+    seed(STORE, {
+      schemaVersion: 4,
+      setup: { linearApiKey: null, isComplete: true },
+      vault: { enabled: false, path: null },
+      workspaces: [{ ...workspace, linearApiKey: null }],
+      tasks: [],
+      selectedWorkspaceId: "w1",
+    });
+    keychain.value = JSON.stringify({ setup: "lin_live", workspaces: { w1: "lin_ws" } });
+  }
+
+  it("does not rewrite the store", async () => {
+    seedV4();
 
     await loadState();
 
     expect(savedPaths.has(STORE)).toBe(false);
   });
+
+  it("restores the keys from the keychain", async () => {
+    seedV4();
+
+    const state = await loadState();
+
+    expect(state.setup.linearApiKey).toBe("lin_live");
+    expect(state.workspaces[0].linearApiKey).toBe("lin_ws");
+  });
+
+  it("comes up without keys, not broken, when the keychain cannot be read", async () => {
+    seedV4();
+    keychain.readable = false;
+
+    const state = await loadState();
+
+    expect(state.setup.linearApiKey).toBeNull();
+    expect(state.workspaces[0].linearApiKey).toBeNull();
+    expect(state.workspaces[0].name).toBe("api");
+    expect(savedPaths.has(STORE)).toBe(false);
+  });
 });
 
-describe("loadState v0 → v3 migration", () => {
+describe("loadState v0 → v4 migration", () => {
   function seedV0(): void {
     seed(STORE, {
       setup: { linearApiKey: "lin_live", isComplete: true, githubToken: "github_pat_dead" },
@@ -156,19 +259,19 @@ describe("loadState v0 → v3 migration", () => {
     });
   }
 
-  it("lands on v3 with the legacy keys already gone", async () => {
+  it("lands on v4 with the legacy keys already gone", async () => {
     seedV0();
 
     await loadState();
 
     const stored = read(STORE);
-    expect(stored.schemaVersion).toBe(3);
+    expect(stored.schemaVersion).toBe(4);
     expect(stored).not.toHaveProperty("repos");
     expect(stored).not.toHaveProperty("worktrees");
     expect(stored).not.toHaveProperty("selectedRepoId");
   });
 
-  it("carries the Linear key onto the migrated workspace", async () => {
+  it("carries the Linear key onto the migrated workspace and into the keychain", async () => {
     seedV0();
 
     const state = await loadState();
@@ -176,6 +279,8 @@ describe("loadState v0 → v3 migration", () => {
     expect(state.workspaces).toHaveLength(1);
     expect(state.workspaces[0].linearApiKey).toBe("lin_live");
     expect(state.setup).toEqual({ linearApiKey: "lin_live", isComplete: true });
+    expect(storedSecrets().workspaces).toEqual({ r1: "lin_live" });
+    expect(JSON.stringify(read(STORE))).not.toContain("lin_live");
   });
 
   it("writes a credential-free backup sidecar", async () => {

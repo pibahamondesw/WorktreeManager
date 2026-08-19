@@ -87,6 +87,70 @@ export function redactLegacyBackup(data: {
   return redacted;
 }
 
+/**
+ * The Linear keys, lifted out of `store.json` and kept in the keychain. They travel as
+ * one blob rather than one keychain item each because the keychain ACL is per item, so
+ * N items would mean N authorization prompts the first time a new build reads them.
+ */
+export interface SecretBundle {
+  /** The global key from the setup wizard, used as a fallback when a workspace has none. */
+  setup: string | null;
+  /** Per-workspace keys, by workspace id. A workspace without a key is simply absent. */
+  workspaces: Record<string, string>;
+}
+
+export const EMPTY_SECRETS: SecretBundle = { setup: null, workspaces: {} };
+
+/** Gather the Linear keys held by a setup blob and a workspace list. */
+export function collectSecrets(
+  setup?: AppState["setup"] | null,
+  workspaces?: Workspace[] | null
+): SecretBundle {
+  const collected: SecretBundle = { setup: setup?.linearApiKey ?? null, workspaces: {} };
+  for (const workspace of workspaces ?? []) {
+    if (workspace.linearApiKey) collected.workspaces[workspace.id] = workspace.linearApiKey;
+  }
+  return collected;
+}
+
+/** Whether anything is worth storing, so a fresh install can skip the keychain entirely. */
+export function hasSecrets(secrets: SecretBundle): boolean {
+  return secrets.setup != null || Object.keys(secrets.workspaces).length > 0;
+}
+
+/**
+ * Combine two bundles, `preferred` winning per key. Used to reconcile the keychain with
+ * whatever is still in the file, so a store caught mid-migration keeps every key it has.
+ */
+export function mergeSecrets(base: SecretBundle, preferred: SecretBundle): SecretBundle {
+  return {
+    setup: preferred.setup ?? base.setup,
+    workspaces: { ...base.workspaces, ...preferred.workspaces },
+  };
+}
+
+export function setupWithoutSecret(setup: AppState["setup"]): AppState["setup"] {
+  return { ...setup, linearApiKey: null };
+}
+
+export function workspacesWithoutSecrets(workspaces: Workspace[]): Workspace[] {
+  return workspaces.map((workspace) => ({ ...workspace, linearApiKey: null }));
+}
+
+export function setupWithSecret(
+  setup: AppState["setup"],
+  secrets: SecretBundle
+): AppState["setup"] {
+  return { ...setup, linearApiKey: secrets.setup };
+}
+
+export function workspacesWithSecrets(workspaces: Workspace[], secrets: SecretBundle): Workspace[] {
+  return workspaces.map((workspace) => ({
+    ...workspace,
+    linearApiKey: secrets.workspaces[workspace.id] ?? null,
+  }));
+}
+
 /** Normalize task objects loaded from the store, filling defaults. */
 export function normalizeTasks(raw: any[] | undefined | null): Task[] {
   return (raw ?? []).map((t: any) => ({

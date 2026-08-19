@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   timeAgo,
+  collectSecrets,
+  hasSecrets,
+  mergeSecrets,
   migrateLegacyToWorkspaces,
   normalizeSetup,
   normalizeWorkspaces,
   normalizeTasks,
   redactLegacyBackup,
+  setupWithSecret,
+  setupWithoutSecret,
+  workspacesWithSecrets,
+  workspacesWithoutSecrets,
 } from "./utils";
 
 describe("timeAgo", () => {
@@ -249,5 +256,72 @@ describe("redactLegacyBackup", () => {
       worktrees: undefined,
       selectedRepoId: undefined,
     });
+  });
+});
+
+describe("secret split and merge", () => {
+  const setup = { linearApiKey: "lin_setup", isComplete: true };
+  const workspaces = [
+    { id: "w1", name: "api", linearApiKey: "lin_one", repos: [] },
+    { id: "w2", name: "web", linearApiKey: null, repos: [] },
+  ];
+
+  it("collects only the keys that are set", () => {
+    expect(collectSecrets(setup, workspaces)).toEqual({
+      setup: "lin_setup",
+      workspaces: { w1: "lin_one" },
+    });
+  });
+
+  it("reports an empty bundle so a fresh install can skip the keychain", () => {
+    expect(hasSecrets(collectSecrets(null, []))).toBe(false);
+    expect(hasSecrets(collectSecrets(null, workspaces))).toBe(true);
+    expect(hasSecrets(collectSecrets(setup, []))).toBe(true);
+  });
+
+  it("leaves no key behind when stripping", () => {
+    const stripped = {
+      setup: setupWithoutSecret(setup),
+      workspaces: workspacesWithoutSecrets(workspaces),
+    };
+
+    expect(stripped.setup).toEqual({ linearApiKey: null, isComplete: true });
+    expect(JSON.stringify(stripped)).not.toContain("lin_setup");
+    expect(JSON.stringify(stripped)).not.toContain("lin_one");
+  });
+
+  it("round-trips through strip and restore", () => {
+    const secrets = collectSecrets(setup, workspaces);
+
+    expect(setupWithSecret(setupWithoutSecret(setup), secrets)).toEqual(setup);
+    expect(workspacesWithSecrets(workspacesWithoutSecrets(workspaces), secrets)).toEqual(
+      workspaces
+    );
+  });
+
+  it("keeps non-secret workspace fields intact through the round trip", () => {
+    const rich = [{ id: "w1", name: "api", linearApiKey: "lin_one", repos: [{ id: "r1" }] }];
+    const secrets = collectSecrets(null, rich as never);
+
+    expect(workspacesWithSecrets(workspacesWithoutSecrets(rich as never), secrets)).toEqual(rich);
+  });
+
+  it("prefers the second bundle but keeps keys only the first has", () => {
+    const fromKeychain = { setup: "lin_old", workspaces: { w1: "lin_old", w2: "lin_keep" } };
+    const fromDisk = { setup: "lin_new", workspaces: { w1: "lin_new" } };
+
+    expect(mergeSecrets(fromKeychain, fromDisk)).toEqual({
+      setup: "lin_new",
+      workspaces: { w1: "lin_new", w2: "lin_keep" },
+    });
+  });
+
+  it("falls back to the first bundle when the second has no setup key", () => {
+    const merged = mergeSecrets(
+      { setup: "lin_old", workspaces: {} },
+      { setup: null, workspaces: {} }
+    );
+
+    expect(merged.setup).toBe("lin_old");
   });
 });

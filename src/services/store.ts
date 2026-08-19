@@ -1,12 +1,22 @@
 import { load, Store } from "@tauri-apps/plugin-store";
-import { AppState, DEFAULT_STATE, EDITOR_APPS, EditorApp, VaultConfig } from "../types";
+import { AppState, DEFAULT_STATE, EDITOR_APPS, EditorApp, VaultConfig, Workspace } from "../types";
 import {
+  EMPTY_SECRETS,
+  SecretBundle,
+  collectSecrets,
+  hasSecrets,
+  mergeSecrets,
   migrateLegacyToWorkspaces,
   normalizeSetup,
   normalizeTasks,
   normalizeWorkspaces,
   redactLegacyBackup,
+  setupWithSecret,
+  setupWithoutSecret,
+  workspacesWithSecrets,
+  workspacesWithoutSecrets,
 } from "../utils";
+import { loadSecrets, saveAndVerifySecrets, saveSecrets } from "./keychain";
 
 let store: Store | null = null;
 
@@ -14,8 +24,15 @@ let store: Store | null = null;
  * Bump when the persisted shape changes. 1 = multi-repo workspaces/tasks.
  * 2 = global vault config; per-workspace notesPath dropped.
  * 3 = pre-multi-repo keys and the orphaned `setup.githubToken` pruned.
+ * 4 = Linear keys moved out of the file and into the keychain.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
+
+/**
+ * The Linear keys as last written to the keychain. `persist` keeps this current so a
+ * write that touches only `workspaces` does not drop the setup key from the blob.
+ */
+let secrets: SecretBundle = EMPTY_SECRETS;
 
 /** Pre-multi-repo root keys, superseded by `workspaces`/`tasks`/`selectedWorkspaceId`. */
 const LEGACY_KEYS = ["repos", "worktrees", "selectedRepoId"];
@@ -32,10 +49,41 @@ async function getStore(): Promise<Store> {
 /**
  * Set one or more keys in the store and flush to disk in a single write.
  * All keys are updated in memory first, then persisted atomically.
+ *
+ * The Linear keys are diverted to the keychain on the way through, so callers can keep
+ * passing whole `setup`/`workspaces` values without knowing where the secrets end up.
  */
 export async function persist(entries: [string, unknown][]): Promise<void> {
   const s = await getStore();
+  let next = secrets;
+  let carriesSecrets = false;
+  const toWrite: [string, unknown][] = [];
+
   for (const [key, value] of entries) {
+    if (key === "setup") {
+      const setup = value as AppState["setup"];
+      next = { ...next, setup: setup.linearApiKey ?? null };
+      carriesSecrets = true;
+      toWrite.push([key, setupWithoutSecret(setup)]);
+    } else if (key === "workspaces") {
+      const workspaces = value as Workspace[];
+      next = { ...next, workspaces: collectSecrets(null, workspaces).workspaces };
+      carriesSecrets = true;
+      toWrite.push([key, workspacesWithoutSecrets(workspaces)]);
+    } else {
+      toWrite.push([key, value]);
+    }
+  }
+
+  // The keychain is written first and its failure aborts the whole write: taking a key
+  // out of the file is only safe once the keychain holds it. The caller rolls its state
+  // back and the file still agrees with what the keychain has.
+  if (carriesSecrets) {
+    await saveSecrets(next);
+    secrets = next;
+  }
+
+  for (const [key, value] of toWrite) {
     await s.set(key, value);
   }
   await s.save();
@@ -111,6 +159,15 @@ export async function loadState(): Promise<AppState> {
       workspaces
     );
 
+    // Linear keys live in the keychain from v4 on. Both sources are read and merged with
+    // the file winning, so a store caught between the two — keys already in the keychain
+    // but the version not yet bumped, or the reverse — still comes up holding all of them.
+    // Loaded before the migrations below because each one persists through `persist`.
+    secrets = mergeSecrets(
+      (await loadSecrets()) ?? EMPTY_SECRETS,
+      collectSecrets(setup, workspaces)
+    );
+
     // v1 → v2: the per-workspace notesPath is dropped; the global vault starts
     // disabled — enabling is always an explicit user action against the managed
     // path. Keyed on the vault key being absent so a partial write retries.
@@ -132,11 +189,37 @@ export async function loadState(): Promise<AppState> {
       await clearLegacyBackup();
       await persist([
         ["setup", setup],
-        ["schemaVersion", SCHEMA_VERSION],
+        // Records v3 rather than SCHEMA_VERSION: the v4 step owns its own bump, so a
+        // keychain that cannot be reached can never leave the version overstated.
+        ["schemaVersion", 3],
       ]);
     }
 
-    return { setup, vault, workspaces, tasks, selectedWorkspaceId };
+    // v3 → v4: lift the Linear keys off disk. They are written and read back before the
+    // file is rewritten, so it is only stripped once the keychain demonstrably holds
+    // them; an unreachable keychain leaves the file as it is and retries next launch.
+    if (schemaVersion < 4) {
+      try {
+        if (!hasSecrets(secrets) || (await saveAndVerifySecrets(secrets))) {
+          await persist([
+            ["setup", setup],
+            ["workspaces", workspaces],
+            ["schemaVersion", SCHEMA_VERSION],
+          ]);
+        }
+      } catch {
+        // Keychain unavailable. The keys stay in the file and the version stays put,
+        // so the app keeps working and the move is retried on the next launch.
+      }
+    }
+
+    return {
+      setup: setupWithSecret(setup, secrets),
+      vault,
+      workspaces: workspacesWithSecrets(workspaces, secrets),
+      tasks,
+      selectedWorkspaceId,
+    };
   }
 
   // Legacy single-repo schema: migrate to workspaces/tasks.
@@ -155,10 +238,12 @@ export async function loadState(): Promise<AppState> {
     await backupLegacyStore({ repos: rawRepos, worktrees: rawWorktrees, selectedRepoId, setup });
   }
 
-  // Persist the migrated shape + version. This lands straight on v3, so the legacy keys
-  // go now rather than lingering as a rollback point holding a plaintext Linear key —
-  // the redacted sidecar above is what structure is recovered from.
+  // Persist the migrated shape + version. This lands straight on the current version, so
+  // the legacy keys go now rather than lingering as a rollback point holding a plaintext
+  // Linear key — the redacted sidecar above is what structure is recovered from. The keys
+  // reach the keychain through `persist`, whose failure aborts before the file is written.
   await pruneLegacyKeys(s);
+  secrets = collectSecrets(setup, workspaces);
   await persist([
     ["setup", setup],
     ["workspaces", workspaces],
