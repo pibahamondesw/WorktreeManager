@@ -92,6 +92,15 @@ function App() {
       enabled: state.setup.isComplete,
       inTextFields: true,
     },
+    ...Object.fromEntries(
+      Array.from({ length: 10 }, (_, i) => [
+        `meta+${i}`,
+        {
+          handler: () => handleSelectWorkspace(state.workspaces[i].id),
+          enabled: state.setup.isComplete && !search.open && i < state.workspaces.length,
+        },
+      ])
+    ),
   });
 
   useUpdater();

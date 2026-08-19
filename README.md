@@ -127,6 +127,7 @@ By default, new projects store worktrees in:
 | ----------------- | -------------------------------- |
 | `↑` `↓` / `j` `k` | Navigate worktree cards          |
 | `0`–`9`           | Jump to worktree by index        |
+| `⌘0`–`⌘9`         | Jump to project by index         |
 | `Enter`           | Open selected worktree in editor |
 | `N`               | New worktree                     |
 | `P`               | Add new project                  |
