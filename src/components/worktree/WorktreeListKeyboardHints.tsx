@@ -11,7 +11,7 @@ export function WorktreeListKeyboardHints({ showNotes }: WorktreeListKeyboardHin
           <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">↑↓</kbd> navigate
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">1-9</kbd> jump
+          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">0-9</kbd> jump
         </span>
         <span>
           <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">↵</kbd> open

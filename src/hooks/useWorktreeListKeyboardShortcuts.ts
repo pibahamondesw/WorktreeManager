@@ -113,8 +113,8 @@ export function useWorktreeListKeyboardShortcuts({
         enabled: !!selectedTask,
       },
       ...Object.fromEntries(
-        Array.from({ length: 9 }, (_, i) => [
-          String(i + 1),
+        Array.from({ length: 10 }, (_, i) => [
+          String(i),
           { handler: () => setSelectedIndex(i), enabled: i < tasks.length },
         ])
       ),
