@@ -44,6 +44,8 @@ pub fn run() {
             commands::vault::ensure_vault,
             commands::claude_config::cleanup_claude_json,
             commands::claude_config::cleanup_claude_json_stale,
+            commands::keychain::keychain_get,
+            commands::keychain::keychain_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
