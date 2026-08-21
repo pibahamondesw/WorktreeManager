@@ -132,7 +132,7 @@ export function WorktreeList({
           {workspaceSwitching ? (
             <div className="grid gap-3">
               {Array.from({ length: Math.max(tasks.length, 3) }).map((_, i) => (
-                <WorktreeCardSkeleton key={i} index={i + 1} />
+                <WorktreeCardSkeleton key={i} index={i} />
               ))}
             </div>
           ) : tasks.length === 0 ? (
@@ -149,7 +149,7 @@ export function WorktreeList({
                   linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
                   gitStatus={aggregateTaskStatus(task, gitStatuses)}
                   selected={i === selectedIndex}
-                  index={i + 1}
+                  index={i}
                   editorApp={editorApp}
                   onOpenError={showToast}
                   onToast={showToast}

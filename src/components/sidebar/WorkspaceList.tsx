@@ -196,6 +196,15 @@ export function WorkspaceList({
                 </p>
               </div>
 
+              {index <= 9 && (
+                <span
+                  className="text-[10px] font-mono text-text-muted/50 flex-shrink-0"
+                  title={`Switch with ⌘${index}`}
+                >
+                  ⌘{index}
+                </span>
+              )}
+
               <div
                 className={`flex items-center flex-shrink-0 ${
                   hoveredId === workspace.id ? "opacity-100" : "opacity-0 pointer-events-none"
