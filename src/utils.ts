@@ -1,4 +1,4 @@
-import { Task, Workspace } from "./types";
+import { AppState, Task, Workspace } from "./types";
 
 export function timeAgo(epoch: number): { label: string; stale: boolean; veryStale: boolean } {
   if (!epoch) return { label: "", stale: false, veryStale: false };
@@ -33,6 +33,121 @@ export function normalizeWorkspaces(raw: any[] | undefined | null): Workspace[] 
       localPath: r.localPath ?? "",
       worktreeBasePath: r.worktreeBasePath ?? "",
     })),
+  }));
+}
+
+/**
+ * Reduce the persisted `setup` blob to the fields the app still uses. The store
+ * hands back whatever it finds on disk, so stale keys survive unless dropped
+ * explicitly — notably `githubToken`, written by builds from before PR info moved
+ * to Linear attachments and never read since.
+ */
+export function normalizeSetup(raw: any): AppState["setup"] {
+  return {
+    linearApiKey: raw?.linearApiKey ?? null,
+    isComplete: raw?.isComplete ?? false,
+  };
+}
+
+/**
+ * Legacy `repos[]` fields worth keeping in the backup. An allowlist rather than a
+ * denylist so a field added by some older build can never leak through.
+ */
+const LEGACY_REPO_FIELDS = ["id", "name", "localPath", "worktreeBasePath"] as const;
+
+/**
+ * Strip credentials out of pre-multi-repo store data before it is written to the
+ * rollback backup. The backup exists to recover repo/worktree structure; anyone
+ * restoring from it re-enters their Linear key, so a second plaintext copy of the
+ * token is liability with no upside.
+ */
+export function redactLegacyBackup(data: {
+  repos?: any[] | null;
+  worktrees?: any[] | null;
+  selectedRepoId?: string | null;
+  setup?: any;
+}): Record<string, unknown> {
+  const redacted: Record<string, unknown> = {
+    worktrees: data.worktrees ?? undefined,
+    selectedRepoId: data.selectedRepoId ?? undefined,
+  };
+  if (data.repos) {
+    redacted.repos = data.repos.map((repo: any) =>
+      Object.fromEntries(
+        LEGACY_REPO_FIELDS.filter((field) => repo?.[field] !== undefined).map((field) => [
+          field,
+          repo[field],
+        ])
+      )
+    );
+  }
+  if (data.setup) {
+    redacted.setup = { isComplete: data.setup.isComplete ?? false };
+  }
+  return redacted;
+}
+
+/**
+ * The Linear keys, lifted out of `store.json` and kept in the keychain. They travel as
+ * one blob rather than one keychain item each because the keychain ACL is per item, so
+ * N items would mean N authorization prompts the first time a new build reads them.
+ */
+export interface SecretBundle {
+  /** The global key from the setup wizard, used as a fallback when a workspace has none. */
+  setup: string | null;
+  /** Per-workspace keys, by workspace id. A workspace without a key is simply absent. */
+  workspaces: Record<string, string>;
+}
+
+export const EMPTY_SECRETS: SecretBundle = { setup: null, workspaces: {} };
+
+/** Gather the Linear keys held by a setup blob and a workspace list. */
+export function collectSecrets(
+  setup?: AppState["setup"] | null,
+  workspaces?: Workspace[] | null
+): SecretBundle {
+  const collected: SecretBundle = { setup: setup?.linearApiKey ?? null, workspaces: {} };
+  for (const workspace of workspaces ?? []) {
+    if (workspace.linearApiKey) collected.workspaces[workspace.id] = workspace.linearApiKey;
+  }
+  return collected;
+}
+
+/** Whether anything is worth storing, so a fresh install can skip the keychain entirely. */
+export function hasSecrets(secrets: SecretBundle): boolean {
+  return secrets.setup != null || Object.keys(secrets.workspaces).length > 0;
+}
+
+/**
+ * Combine two bundles, `preferred` winning per key. Used to reconcile the keychain with
+ * whatever is still in the file, so a store caught mid-migration keeps every key it has.
+ */
+export function mergeSecrets(base: SecretBundle, preferred: SecretBundle): SecretBundle {
+  return {
+    setup: preferred.setup ?? base.setup,
+    workspaces: { ...base.workspaces, ...preferred.workspaces },
+  };
+}
+
+export function setupWithoutSecret(setup: AppState["setup"]): AppState["setup"] {
+  return { ...setup, linearApiKey: null };
+}
+
+export function workspacesWithoutSecrets(workspaces: Workspace[]): Workspace[] {
+  return workspaces.map((workspace) => ({ ...workspace, linearApiKey: null }));
+}
+
+export function setupWithSecret(
+  setup: AppState["setup"],
+  secrets: SecretBundle
+): AppState["setup"] {
+  return { ...setup, linearApiKey: secrets.setup };
+}
+
+export function workspacesWithSecrets(workspaces: Workspace[], secrets: SecretBundle): Workspace[] {
+  return workspaces.map((workspace) => ({
+    ...workspace,
+    linearApiKey: secrets.workspaces[workspace.id] ?? null,
   }));
 }
 
