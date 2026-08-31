@@ -97,24 +97,6 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
           <path d="M11.5 1L6 6.5 3.5 4.5 1 6.5v3L3.5 11.5 6 9.5 11.5 15 15 13.5v-11L11.5 1zM3.5 9.5l-1-1.5 1-1.5L6 9.5l-2.5 0zm8-5v7L7 8l4.5-3.5z" />
         </svg>
       );
-    case "cursor-claude":
-      return (
-        <span className="flex items-center gap-0.5 flex-shrink-0" aria-hidden>
-          <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor">
-            <path d="M2 2l12 6-12 6V9l7-1-7-1V2z" />
-          </svg>
-          <ClaudeMiniIcon s={Math.max(10, s - 4)} />
-        </span>
-      );
-    case "vscode-claude":
-      return (
-        <span className="flex items-center gap-0.5 flex-shrink-0" aria-hidden>
-          <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor">
-            <path d="M11.5 1L6 6.5 3.5 4.5 1 6.5v3L3.5 11.5 6 9.5 11.5 15 15 13.5v-11L11.5 1zM3.5 9.5l-1-1.5 1-1.5L6 9.5l-2.5 0zm8-5v7L7 8l4.5-3.5z" />
-          </svg>
-          <ClaudeMiniIcon s={Math.max(10, s - 4)} />
-        </span>
-      );
     case "claude-code":
       return (
         <svg
@@ -182,15 +164,6 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
         <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0">
           <path d="M3.5 3h9v2L7 11h5.5v2h-9v-2L9 5H3.5z" />
         </svg>
-      );
-    case "zed-claude":
-      return (
-        <span className="flex items-center gap-0.5 flex-shrink-0" aria-hidden>
-          <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor">
-            <path d="M3.5 3h9v2L7 11h5.5v2h-9v-2L9 5H3.5z" />
-          </svg>
-          <ClaudeMiniIcon s={Math.max(10, s - 4)} />
-        </span>
       );
   }
 }

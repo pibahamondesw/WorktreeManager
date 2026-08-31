@@ -9,7 +9,7 @@ A lightweight macOS desktop app for managing Git worktrees with Linear integrati
 - **Project management** — Add and organize your local repositories
 - **Linear integration** — Search issues, auto-create branches, set issues as "In Progress"
 - **Worktree management** — Create, open, and delete Git worktrees from a clean UI
-- **Multi-editor support** — Open worktrees in Cursor, VS Code, OpenCode, or Claude Code
+- **Multi-editor support** — Open worktrees in Cursor, VS Code, Zed, Neovim, OpenCode, or Claude Code. Cursor, VS Code, and Zed run Claude through their own integration; Neovim has a `+ Claude` variant that launches the CLI in a second Terminal tab
 - **PR tracking** — See linked GitHub PRs on worktree cards, or create new PRs in one click
 - **Git status** — See ahead/behind counts, dirty state, and worktree age at a glance
 - **Obsidian task logs** — Optional per-task note in your vault, created and archived with the task
@@ -71,6 +71,8 @@ Only needed for development, or if you'd rather not use Homebrew.
 4. **An editor** (at least one):
    - [Cursor](https://cursor.sh/) — AI-powered code editor
    - [VS Code](https://code.visualstudio.com/) — Microsoft's code editor
+   - [Zed](https://zed.dev/) — high-performance code editor
+   - [Neovim](https://neovim.io/) — terminal editor (runs in Terminal)
    - [OpenCode](https://opencode.ai/) — AI-native desktop editor
    - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Anthropic's CLI coding agent (runs in Terminal)
 

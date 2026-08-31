@@ -136,9 +136,21 @@ export async function loadCustomColors(): Promise<Record<string, string> | null>
   return (await s.get<Record<string, string>>("customTheme")) ?? null;
 }
 
+/**
+ * Retired editor ids mapped to their replacement. The `+ Claude` variants launched the Claude
+ * CLI alongside the editor; these editors now run Claude through their own integration (the
+ * Claude Code extension in Cursor/VS Code, the agent panel in Zed).
+ */
+const RETIRED_EDITOR_IDS: Record<string, EditorApp> = {
+  "cursor-claude": "cursor",
+  "vscode-claude": "vscode",
+  "zed-claude": "zed",
+};
+
 export async function loadEditorApp(): Promise<EditorApp> {
   const s = await getStore();
-  const stored = await s.get<EditorApp>("editorApp");
+  const stored = await s.get<string>("editorApp");
+  const editor = (stored && RETIRED_EDITOR_IDS[stored]) ?? stored;
   // Guard against stale values persisted by older builds whose editor ids no longer exist.
-  return EDITOR_APPS.some((e) => e.id === stored) ? stored! : "cursor";
+  return EDITOR_APPS.some((e) => e.id === editor) ? (editor as EditorApp) : "cursor";
 }

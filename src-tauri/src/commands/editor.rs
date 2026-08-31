@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{cursor_state, vscode_task, workspace};
+use super::{vscode_task, workspace};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,7 +62,6 @@ fn open_editor_blocking(
                     workspace_name.as_deref(),
                     branch,
                     &folders,
-                    None,
                 )?;
                 open_gui_editor(app, &ws)?;
                 Ok(OpenEditorResult {
@@ -70,42 +69,6 @@ fn open_editor_blocking(
                     workspace_file: Some(ws),
                 })
             } else {
-                Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
-            }
-        }
-        "cursor-claude" | "vscode-claude" => {
-            let app = gui_app_name(&editor);
-            let is_cursor = editor == "cursor-claude";
-            if multi {
-                let canon = canonical_worktree_path(primary);
-                let canon_str = canon.to_string_lossy().to_string();
-                // Writes `.vscode/wm-start-claude.sh` and embeds a task pointing at it.
-                let task = vscode_task::build_vscode_claude_task(&canon_str, branch, &extra_canon);
-                let ws = workspace::ensure_code_workspace_file(
-                    workspace_name.as_deref(),
-                    branch,
-                    &folders,
-                    Some(task),
-                )?;
-                if is_cursor {
-                    if let Err(e) = cursor_state::seed_hidden_agent_panel_for_workspace_file(&ws) {
-                        eprintln!("WorktreeManager: seed cursor workspace state: {e}");
-                    }
-                }
-                open_gui_editor(app, &ws)?;
-                Ok(OpenEditorResult {
-                    message: format!("{app} + Claude opened workspace: {ws}"),
-                    workspace_file: Some(ws),
-                })
-            } else {
-                if let Err(e) = vscode_task::ensure_vscode_claude_task(primary, branch) {
-                    eprintln!("WorktreeManager: ensure_vscode_claude_task: {e}");
-                }
-                if is_cursor {
-                    if let Err(e) = cursor_state::seed_hidden_agent_panel_for_folder(primary) {
-                        eprintln!("WorktreeManager: seed cursor workspace state: {e}");
-                    }
-                }
                 Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
             }
         }
@@ -140,19 +103,6 @@ fn open_editor_blocking(
             Ok(OpenEditorResult::message(msg))
         }
         "zed" => Ok(OpenEditorResult::message(open_zed(&folders)?)),
-        "zed-claude" => {
-            let canon = canonical_worktree_path(primary);
-            let canon_str = canon.to_string_lossy().to_string();
-            if let Err(e) = vscode_task::ensure_zed_claude_task(&canon_str, branch, &extra_canon) {
-                eprintln!("WorktreeManager: ensure_zed_claude_task: {e}");
-            }
-            open_zed(&folders)?;
-            // Zed can't auto-run the task on open, so tell the user how to start it.
-            Ok(OpenEditorResult::message(format!(
-                "Zed opened — run the “{}” task (⇧⌘P → “task: spawn”) to start Claude Code.",
-                vscode_task::WM_CLAUDE_TASK_LABEL
-            )))
-        }
         _ => Err(format!("Unknown editor: {}", editor)),
     }
 }
@@ -160,7 +110,7 @@ fn open_editor_blocking(
 /// macOS application name for a GUI editor id (Claude variants share the base app).
 fn gui_app_name(editor: &str) -> &'static str {
     match editor {
-        "vscode" | "vscode-claude" => "Visual Studio Code",
+        "vscode" => "Visual Studio Code",
         _ => "Cursor",
     }
 }
@@ -223,12 +173,7 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
         "neovim-claude" => {
             Ok(vscode_task::cli_available("nvim") && vscode_task::claude_cli_available())
         }
-        "cursor-claude" => Ok(gui_app_exists("Cursor") && vscode_task::claude_cli_available()),
-        "vscode-claude" => {
-            Ok(gui_app_exists("Visual Studio Code") && vscode_task::claude_cli_available())
-        }
         "zed" => Ok(gui_app_exists("Zed")),
-        "zed-claude" => Ok(gui_app_exists("Zed") && vscode_task::claude_cli_available()),
         _ => Err(format!("Unknown editor: {}", editor)),
     }
 }
