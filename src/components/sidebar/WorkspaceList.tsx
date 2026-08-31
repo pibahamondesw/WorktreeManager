@@ -15,7 +15,7 @@ interface WorkspaceListProps {
   onAdd: (workspace: Workspace) => void;
   onUpdate: (
     workspaceId: string,
-    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>
+    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
   ) => void;
   onRemove: (workspaceId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;

@@ -5,16 +5,25 @@ import { IssueLinearInfo, LinearIssue, PullRequestInfo } from "../types";
 
 export async function validateLinearToken(
   apiKey: string
-): Promise<{ valid: boolean; name?: string; error?: string }> {
+): Promise<{ valid: boolean; name?: string; orgUrlKey?: string; error?: string }> {
   try {
     const tempClient = new LinearClient({ apiKey });
-    const viewer = await tempClient.viewer;
-    return { valid: true, name: viewer.name };
+    const [viewer, orgUrlKey] = await Promise.all([tempClient.viewer, fetchOrgUrlKey(tempClient)]);
+    return { valid: true, name: viewer.name, orgUrlKey: orgUrlKey ?? undefined };
   } catch (e) {
     return {
       valid: false,
       error: e instanceof Error ? e.message : "Invalid API key",
     };
+  }
+}
+
+/** Org slug used to build issue links. Best-effort: never invalidates a good key. */
+async function fetchOrgUrlKey(client: LinearClient): Promise<string | null> {
+  try {
+    return (await client.organization).urlKey;
+  } catch {
+    return null;
   }
 }
 
@@ -202,6 +211,10 @@ export class LinearService {
 
   private get gql() {
     return this.client.client;
+  }
+
+  fetchOrgUrlKey(): Promise<string | null> {
+    return fetchOrgUrlKey(this.client);
   }
 
   async fetchAssignedIssues(query?: string): Promise<LinearIssue[]> {

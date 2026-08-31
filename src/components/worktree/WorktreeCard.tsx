@@ -24,7 +24,7 @@ import {
 } from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
 import { archiveTaskNote, ensureTaskNote, taskNoteUri } from "../../services/notes";
-import { timeAgo } from "../../utils";
+import { linearIssueUrl, timeAgo } from "../../utils";
 
 interface WorktreeCardProps {
   task: Task;
@@ -289,7 +289,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   const handleOpenLinear = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (task.linearIssueIdentifier) {
-      openUrl(`https://linear.app/issue/${task.linearIssueIdentifier}`);
+      openUrl(linearIssueUrl(task.linearIssueIdentifier, workspace.linearOrgUrlKey));
     }
   };
 

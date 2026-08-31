@@ -8,6 +8,7 @@ import { openEditorForWorktree } from "../../services/openEditor";
 import { parseQuery, scopeValues, withScope, withoutScope } from "../../search/query";
 import { searchTasks, TaskSearchResult } from "../../search/searchTasks";
 import { EditorApp, Task, Workspace } from "../../types";
+import { linearIssueUrl } from "../../utils";
 
 interface QuickSearchModalProps {
   open: boolean;
@@ -124,7 +125,7 @@ export function QuickSearchModal({
     }
     if (e.key === "l" && e.metaKey && active?.task.linearIssueIdentifier) {
       e.preventDefault();
-      openUrl(`https://linear.app/issue/${active.task.linearIssueIdentifier}`);
+      openUrl(linearIssueUrl(active.task.linearIssueIdentifier, active.workspace?.linearOrgUrlKey));
       onClose();
     }
   };

@@ -12,6 +12,7 @@ export interface Workspace {
   name: string;
   repos: WorkspaceRepo[];
   linearApiKey?: string | null;
+  linearOrgUrlKey?: string | null;
 }
 
 /** One repo's worktree within a task. */

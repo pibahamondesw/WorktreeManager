@@ -18,6 +18,12 @@ export function timeAgo(epoch: number): { label: string; stale: boolean; verySta
   return { label, stale: days >= 3 && days < 7, veryStale: days >= 7 };
 }
 
+export function linearIssueUrl(identifier: string, orgUrlKey?: string | null): string {
+  return orgUrlKey
+    ? `https://linear.app/${orgUrlKey}/issue/${identifier}`
+    : `https://linear.app/issue/${identifier}`;
+}
+
 /**
  * Normalize workspace objects loaded from the store, filling defaults for fields
  * that may be missing in data written by older builds.
@@ -27,6 +33,7 @@ export function normalizeWorkspaces(raw: any[] | undefined | null): Workspace[] 
     id: w.id,
     name: w.name ?? "",
     linearApiKey: w.linearApiKey ?? null,
+    linearOrgUrlKey: w.linearOrgUrlKey ?? null,
     repos: (w.repos ?? []).map((r: any) => ({
       id: r.id,
       name: r.name ?? "",
@@ -76,6 +83,7 @@ export function migrateLegacyToWorkspaces(
     id: r.id,
     name: r.name ?? "",
     linearApiKey: r.linearApiKey ?? (applyGlobal ? globalLinearApiKey : null),
+    linearOrgUrlKey: null,
     repos: [
       {
         id: r.id,
