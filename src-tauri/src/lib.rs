@@ -34,7 +34,6 @@ pub fn run() {
             commands::doppler::doppler_setup,
             commands::doppler::doppler_cleanup,
             commands::node_deps::install_node_deps,
-            commands::cursor::open_cursor,
             commands::editor::open_editor,
             commands::editor::check_app_installed,
             commands::workspace::delete_workspace_file,

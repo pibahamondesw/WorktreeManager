@@ -106,14 +106,9 @@ export interface IssueLinearInfo {
 export type EditorApp =
   | "cursor"
   | "vscode"
-  | "cursor-claude"
-  | "vscode-claude"
   | "claude-code"
   | "opencode"
-  | "neovim"
-  | "neovim-claude"
-  | "zed"
-  | "zed-claude";
+  | "zed";
 
 /**
  * Editor-specific local config directories carried into a new worktree.
@@ -121,16 +116,11 @@ export type EditorApp =
  * would be lost. Only the dir for the editor in use is copied.
  */
 export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
-  cursor: [".cursor"],
-  vscode: [".vscode"],
-  "cursor-claude": [".cursor", ".claude"],
-  "vscode-claude": [".vscode", ".claude"],
+  cursor: [".cursor", ".claude"],
+  vscode: [".vscode", ".claude"],
   "claude-code": [".claude"],
   opencode: [".opencode"],
-  neovim: [],
-  "neovim-claude": [".claude"],
-  zed: [".zed"],
-  "zed-claude": [".zed", ".claude"],
+  zed: [".zed", ".claude"],
 };
 
 /** Editor-agnostic local config copied into every new worktree. */
@@ -144,14 +134,9 @@ export const ALWAYS_COPIED_CONFIG_PATHS: string[] = [
 export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "cursor", label: "Cursor", isCli: false },
   { id: "vscode", label: "VS Code", isCli: false },
-  { id: "cursor-claude", label: "Cursor + Claude", isCli: false },
-  { id: "vscode-claude", label: "VS Code + Claude", isCli: false },
   { id: "opencode", label: "OpenCode", isCli: false },
   { id: "claude-code", label: "Claude Code", isCli: true },
-  { id: "neovim", label: "Neovim", isCli: true },
-  { id: "neovim-claude", label: "Neovim + Claude", isCli: true },
   { id: "zed", label: "Zed", isCli: false },
-  { id: "zed-claude", label: "Zed + Claude", isCli: false },
 ];
 
 export const DEFAULT_STATE: AppState = {

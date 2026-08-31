@@ -67,13 +67,8 @@ fn workspace_file_path(
 
 /// Build the `.code-workspace` JSON. WorktreeManager owns the `folders` set (it is replaced
 /// wholesale on every open), but any extra top-level keys and any non-WM tasks the user added
-/// are preserved. The `WM: Start Claude` task is replaced (or removed when `claude_task` is
-/// `None`).
-pub(crate) fn build_workspace_json(
-    folders: &[String],
-    claude_task: Option<Value>,
-    existing: Option<Value>,
-) -> Value {
+/// are preserved. The retired `WM: Start Claude` task is dropped if an older build left one.
+pub(crate) fn build_workspace_json(folders: &[String], existing: Option<Value>) -> Value {
     let folder_values: Vec<Value> = folders
         .iter()
         .map(|f| {
@@ -91,7 +86,7 @@ pub(crate) fn build_workspace_json(
         root["settings"] = json!({});
     }
 
-    // Preserve non-WM tasks; replace/remove only the WM-managed one.
+    // Preserve non-WM tasks; drop a `WM: Start Claude` entry left by an older build.
     let mut tasks_arr: Vec<Value> = root
         .get("tasks")
         .and_then(|t| t.get("tasks"))
@@ -101,9 +96,6 @@ pub(crate) fn build_workspace_json(
     tasks_arr.retain(|t| {
         t.get("label").and_then(Value::as_str) != Some(vscode_task::WM_CLAUDE_TASK_LABEL)
     });
-    if let Some(task) = claude_task {
-        tasks_arr.push(task);
-    }
     if tasks_arr.is_empty() {
         // Only keep an (empty) tasks block if one already existed, to avoid churn.
         if root.get("tasks").is_some() {
@@ -117,13 +109,11 @@ pub(crate) fn build_workspace_json(
 }
 
 /// Create/merge the `.code-workspace` file for a multi-root workspace and return its absolute
-/// path. `claude_task` is the pre-built `WM: Start Claude` task object (only for `*-claude`
-/// editor variants); pass `None` for a plain multi-root workspace.
+/// path.
 pub fn ensure_code_workspace_file(
     workspace_name: Option<&str>,
     branch_name: Option<&str>,
     folders: &[String],
-    claude_task: Option<Value>,
 ) -> Result<String, String> {
     let primary = folders.first().map(String::as_str).unwrap_or("");
     let path = workspace_file_path(workspace_name, branch_name, primary);
@@ -141,7 +131,7 @@ pub fn ensure_code_workspace_file(
         None
     };
 
-    let root = build_workspace_json(folders, claude_task, existing);
+    let root = build_workspace_json(folders, existing);
     let out = serde_json::to_string_pretty(&root)
         .map_err(|e| format!("Failed to serialize workspace: {e}"))?;
 
@@ -197,47 +187,33 @@ mod tests {
             "/nonexistent/b".to_string(),
             "/nonexistent/c".to_string(),
         ];
-        let v = build_workspace_json(&folders, None, None);
+        let v = build_workspace_json(&folders, None);
         let arr = v["folders"].as_array().unwrap();
         assert_eq!(arr.len(), 3);
         assert_eq!(arr[0]["path"], json!("/nonexistent/a"));
         assert_eq!(arr[1]["path"], json!("/nonexistent/b"));
         assert_eq!(arr[2]["path"], json!("/nonexistent/c"));
-        // No claude task requested and none existed => no tasks block.
+        // No tasks existed => no tasks block.
         assert!(v.get("tasks").is_none());
         assert!(v.get("settings").is_some());
     }
 
     #[test]
-    fn workspace_json_embeds_single_wm_claude_task() {
-        let folders = vec!["/nonexistent/a".to_string(), "/nonexistent/b".to_string()];
-        // The task points at the generated launch script; `build_workspace_json` only embeds it.
-        let task = vscode_task::task_json_object("/nonexistent/a/.vscode/wm-start-claude.sh");
-        let v = build_workspace_json(&folders, Some(task), None);
-
-        let tasks = v["tasks"]["tasks"].as_array().unwrap();
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0]["label"], json!(vscode_task::WM_CLAUDE_TASK_LABEL));
-        assert!(tasks[0]["command"]
-            .as_str()
-            .unwrap()
-            .ends_with(vscode_task::WM_CLAUDE_SCRIPT_FILE));
-    }
-
-    #[test]
-    fn workspace_json_merge_preserves_unrelated_task_and_top_level_key() {
+    fn workspace_json_merge_preserves_user_task_and_drops_retired_wm_task() {
         let existing = json!({
             "folders": [{ "path": "/old/folder" }],
             "customKey": 42,
             "settings": { "editor.tabSize": 2 },
             "tasks": {
                 "version": "2.0.0",
-                "tasks": [ { "label": "User Task", "type": "shell", "command": "echo hi" } ]
+                "tasks": [
+                    { "label": "User Task", "type": "shell", "command": "echo hi" },
+                    { "label": vscode_task::WM_CLAUDE_TASK_LABEL, "type": "shell", "command": "x" }
+                ]
             }
         });
         let folders = vec!["/nonexistent/a".to_string()];
-        let task = vscode_task::task_json_object("/nonexistent/a/.vscode/wm-start-claude.sh");
-        let v = build_workspace_json(&folders, Some(task), Some(existing));
+        let v = build_workspace_json(&folders, Some(existing));
 
         // Unrelated top-level key + user settings preserved.
         assert_eq!(v["customKey"], json!(42));
@@ -248,12 +224,9 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["path"], json!("/nonexistent/a"));
 
-        // User task preserved AND the WM task added.
+        // User task preserved; the task an older build wrote is gone.
         let tasks = v["tasks"]["tasks"].as_array().unwrap();
-        assert_eq!(tasks.len(), 2);
-        assert!(tasks.iter().any(|t| t["label"] == json!("User Task")));
-        assert!(tasks
-            .iter()
-            .any(|t| t["label"] == json!(vscode_task::WM_CLAUDE_TASK_LABEL)));
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["label"], json!("User Task"));
     }
 }
