@@ -108,8 +108,6 @@ export type EditorApp =
   | "vscode"
   | "claude-code"
   | "opencode"
-  | "neovim"
-  | "neovim-claude"
   | "zed";
 
 /**
@@ -122,8 +120,6 @@ export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
   vscode: [".vscode", ".claude"],
   "claude-code": [".claude"],
   opencode: [".opencode"],
-  neovim: [],
-  "neovim-claude": [".claude"],
   zed: [".zed", ".claude"],
 };
 
@@ -140,8 +136,6 @@ export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "vscode", label: "VS Code", isCli: false },
   { id: "opencode", label: "OpenCode", isCli: false },
   { id: "claude-code", label: "Claude Code", isCli: true },
-  { id: "neovim", label: "Neovim", isCli: true },
-  { id: "neovim-claude", label: "Neovim + Claude", isCli: true },
   { id: "zed", label: "Zed", isCli: false },
 ];
 

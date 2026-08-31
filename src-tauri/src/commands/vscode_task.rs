@@ -1,6 +1,5 @@
-//! Shared Claude launch script for the Terminal.app launch paths (Claude Code and Neovim +
-//! Claude). Editors with first-class Claude support (VS Code, Cursor, Zed) use their own
-//! integration instead.
+//! Claude launch script for the Claude Code (Terminal.app) launch path. Editors with
+//! first-class Claude support (VS Code, Cursor, Zed) use their own integration instead.
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -12,21 +11,19 @@ use std::path::{Path, PathBuf};
 /// recognized and dropped.
 pub const WM_CLAUDE_TASK_LABEL: &str = "WM: Start Claude";
 
-/// Filename of the generated launch script written into the editor's config dir
-/// (e.g. `.vscode/` or `.zed/`). The task's `command` points at this instead of the full
-/// multi-statement launch command.
+/// Filename of the generated launch script written into the worktree's config dir. The Terminal
+/// tab `exec`s this instead of a long multi-statement command.
 pub const WM_CLAUDE_SCRIPT_FILE: &str = "wm-start-claude.sh";
 
-/// Marker filename placed inside the editor's config dir (e.g. `.vscode/` or `.zed/`) —
-/// when present and matching the session slug, continue (`-c`) instead of starting a new
-/// named session.
+/// Marker filename placed alongside the launch script — when present and matching the session
+/// slug, continue (`-c`) instead of starting a new named session.
 pub const WM_CLAUDE_SESSION_MARKER_FILE: &str = ".wm-claude-session-init";
 
 /// Env var holding the per-worktree session name. Long, prefixed name avoids clashing with
 /// anything a user might already export in their shell.
 const WM_SESSION_ENV: &str = "WORKTREE_MANAGER_CLAUDE_SESSION_NAME";
 
-/// PATH + profile sources (same for tasks, Terminal, and `claude` install probe).
+/// PATH + profile sources (same for the launch script, Terminal, and CLI install probes).
 ///
 /// Profile sourcing is wrapped so its stderr is discarded: bash-oriented profiles
 /// (`.profile`/`.bash_profile`) sourced under zsh routinely emit noise — e.g. a stale
@@ -117,14 +114,6 @@ pub fn render_claude_launch_script(
     );
 
     format!("#!/bin/zsh\n{header}\n{CLAUDE_LAUNCH_TEMPLATE}")
-}
-
-/// Build the shell command that opens nvim in the worktree: PATH/profile prelude,
-/// cd into the worktree, then exec nvim (replaces the shell so quitting closes the tab).
-pub fn build_nvim_worktree_shell_command(canonical_dir: &str) -> String {
-    let prelude = claude_env_prelude();
-    let goto_dir = format!("cd {}", shell_single_quoted(canonical_dir));
-    format!("{prelude}; {goto_dir} && exec nvim")
 }
 
 /// Render the launch script for this worktree and write it as an executable

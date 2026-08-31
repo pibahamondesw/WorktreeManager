@@ -127,38 +127,6 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
           <path d="M5 7l-1.5 1.5L5 10M11 7l1.5 1.5L11 10M8 6.5v4" />
         </svg>
       );
-    case "neovim":
-      return (
-        <svg
-          width={s}
-          height={s}
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinejoin="round"
-          className="flex-shrink-0"
-        >
-          <path d="M3 13V3l10 10V3" />
-        </svg>
-      );
-    case "neovim-claude":
-      return (
-        <span className="flex items-center gap-0.5 flex-shrink-0" aria-hidden>
-          <svg
-            width={s}
-            height={s}
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinejoin="round"
-          >
-            <path d="M3 13V3l10 10V3" />
-          </svg>
-          <ClaudeMiniIcon s={Math.max(10, s - 4)} />
-        </span>
-      );
     case "zed":
       return (
         <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0">
@@ -168,19 +136,3 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
   }
 }
 
-function ClaudeMiniIcon({ s }: { s: number }) {
-  return (
-    <svg
-      width={s}
-      height={s}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.2"
-      className="flex-shrink-0 opacity-80"
-    >
-      <rect x="1.5" y="3" width="13" height="10" rx="1.5" />
-      <path d="M4 8.5l2 2 3.5-4" />
-    </svg>
-  );
-}
