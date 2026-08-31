@@ -22,11 +22,16 @@ async function getStore(): Promise<Store> {
  * All keys are updated in memory first, then persisted atomically.
  */
 export async function persist(entries: [string, unknown][]): Promise<void> {
-  const s = await getStore();
-  for (const [key, value] of entries) {
-    await s.set(key, value);
+  try {
+    const s = await getStore();
+    for (const [key, value] of entries) {
+      await s.set(key, value);
+    }
+    await s.save();
+  } catch (e) {
+    console.error("[persist] failed for keys", entries.map(([k]) => k), e);
+    throw e;
   }
-  await s.save();
 }
 
 /**
