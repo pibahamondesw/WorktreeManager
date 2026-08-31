@@ -79,6 +79,7 @@ export function AddWorkspaceModal({
         worktreeBasePath: r.worktreeBasePath.trim(),
       })),
       linearApiKey: linear.linearValid ? linear.linearKey.trim() : null,
+      linearOrgUrlKey: linear.linearValid ? linear.linearOrgUrlKey : null,
     });
   };
 

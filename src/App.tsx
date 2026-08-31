@@ -9,6 +9,7 @@ import { useStore } from "./hooks/useStore";
 import { enableVault } from "./services/vault";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdater } from "./hooks/useUpdater";
+import { useLinearOrgKeyBackfill } from "./hooks/useLinearOrgKeyBackfill";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { withScope } from "./search/query";
 import { Task } from "./types";
@@ -105,6 +106,7 @@ function App() {
 
   useUpdater();
   useWindowDrag();
+  useLinearOrgKeyBackfill(state.workspaces, updateWorkspace);
 
   if (loading) {
     return (

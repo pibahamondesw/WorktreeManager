@@ -14,7 +14,7 @@ interface EditWorkspaceModalProps {
   workspace: Workspace;
   onSave: (
     workspaceId: string,
-    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>
+    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
   ) => void;
   onRequestDelete: () => void;
 }
@@ -82,6 +82,7 @@ export function EditWorkspaceModal({
         worktreeBasePath: r.worktreeBasePath.trim(),
       })),
       linearApiKey: newLinearKey,
+      linearOrgUrlKey: newLinearKey ? linear.linearOrgUrlKey : null,
     });
     onClose();
   };

@@ -98,7 +98,7 @@ export function useStore() {
   const updateWorkspace = useCallback(
     async (
       workspaceId: string,
-      updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "repos">>
+      updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
     ) => {
       let snapshot: AppState;
       let newWorkspaces: Workspace[];

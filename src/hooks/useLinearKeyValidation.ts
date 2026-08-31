@@ -6,6 +6,7 @@ export function useLinearKeyValidation() {
   const [linearKey, setLinearKeyState] = useState("");
   const [linearValid, setLinearValid] = useState(false);
   const [linearUser, setLinearUser] = useState<string | null>(null);
+  const [linearOrgUrlKey, setLinearOrgUrlKey] = useState<string | null>(null);
   const [linearValidating, setLinearValidating] = useState(false);
   const [linearError, setLinearError] = useState<string | null>(null);
   const validatingKeyRef = useRef("");
@@ -16,6 +17,7 @@ export function useLinearKeyValidation() {
     validatingKeyRef.current = trimmed;
     setLinearValid(false);
     setLinearUser(null);
+    setLinearOrgUrlKey(null);
     setLinearError(null);
     setLinearValidating(true);
     try {
@@ -23,6 +25,7 @@ export function useLinearKeyValidation() {
       if (validatingKeyRef.current !== trimmed) return;
       setLinearValid(result.valid);
       setLinearUser(result.name ?? null);
+      setLinearOrgUrlKey(result.orgUrlKey ?? null);
       if (!result.valid) setLinearError(result.error ?? "Validation failed");
     } catch {
       if (validatingKeyRef.current !== trimmed) return;
@@ -36,6 +39,7 @@ export function useLinearKeyValidation() {
     setLinearKeyState(key);
     setLinearValid(false);
     setLinearUser(null);
+    setLinearOrgUrlKey(null);
     setLinearError(null);
     validatingKeyRef.current = "";
   }, []);
@@ -44,6 +48,7 @@ export function useLinearKeyValidation() {
     setLinearKeyState("");
     setLinearValid(false);
     setLinearUser(null);
+    setLinearOrgUrlKey(null);
     setLinearValidating(false);
     setLinearError(null);
     validatingKeyRef.current = "";
@@ -54,6 +59,7 @@ export function useLinearKeyValidation() {
     setLinearKey,
     linearValid,
     linearUser,
+    linearOrgUrlKey,
     linearValidating,
     linearError,
     runValidation,

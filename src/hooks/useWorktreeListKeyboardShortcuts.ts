@@ -4,6 +4,7 @@ import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { Task, VaultConfig, Workspace, EditorApp } from "../types";
 import { openEditorForWorktree } from "../services/openEditor";
 import { ensureTaskNote, taskNoteUri } from "../services/notes";
+import { linearIssueUrl } from "../utils";
 
 interface Params {
   workspace: Workspace | undefined;
@@ -72,7 +73,7 @@ export function useWorktreeListKeyboardShortcuts({
       l: {
         handler: () => {
           if (selectedTask?.linearIssueIdentifier) {
-            openUrl(`https://linear.app/issue/${selectedTask.linearIssueIdentifier}`);
+            openUrl(linearIssueUrl(selectedTask.linearIssueIdentifier, workspace?.linearOrgUrlKey));
           }
         },
         enabled: !!selectedTask?.linearIssueIdentifier,
