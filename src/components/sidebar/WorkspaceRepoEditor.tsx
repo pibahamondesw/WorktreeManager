@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { v4 as uuid } from "uuid";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "../ui/Button";
@@ -22,16 +23,28 @@ function computeDefaultWorktreeBase(home: string, name: string): string {
   return `${base}Documents/.worktreemanager/worktrees/${slug}`;
 }
 
+function normalizePath(path: string): string {
+  return path.replace(/\/+$/, "");
+}
+
 /** Editor for a workspace's peer member repos (add via Browse, name, worktree base, default mode). */
 export function WorkspaceRepoEditor({ repos, onChange, home }: WorkspaceRepoEditorProps) {
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+
   const addRepo = async () => {
+    setDuplicateWarning(null);
     const selected = await openDialog({
       directory: true,
       multiple: false,
       title: "Select repo directory",
     });
     if (!selected) return;
-    const path = selected as string;
+    const path = normalizePath(selected as string);
+    const existing = repos.find((r) => normalizePath(r.localPath) === path);
+    if (existing) {
+      setDuplicateWarning(`"${existing.name}" is already in this workspace.`);
+      return;
+    }
     const parts = path.split("/");
     const folderName = parts[parts.length - 1] || parts[parts.length - 2] || "repo";
     onChange([
@@ -88,6 +101,11 @@ export function WorkspaceRepoEditor({ repos, onChange, home }: WorkspaceRepoEdit
           </div>
         ))}
       </div>
+      {duplicateWarning && (
+        <p role="alert" className="text-xs text-warning">
+          {duplicateWarning}
+        </p>
+      )}
       <Button variant="secondary" onClick={addRepo} className="self-start">
         + Add repo
       </Button>
