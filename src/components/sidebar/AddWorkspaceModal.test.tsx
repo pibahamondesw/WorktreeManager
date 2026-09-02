@@ -83,3 +83,34 @@ describe("AddWorkspaceModal name suggestion", () => {
     expect(screen.getByText("Workspace name is required")).toBeInTheDocument();
   });
 });
+
+describe("AddWorkspaceModal duplicate repos", () => {
+  it("warns and does not add a repo that is already in the workspace", async () => {
+    const onAdd = await renderModal();
+
+    await addRepo("/Users/me/code/payments-api");
+    await addRepo("/Users/me/code/payments-api/");
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      '"payments-api" is already in this workspace.'
+    );
+    expect(screen.getAllByDisplayValue("payments-api")).toHaveLength(1);
+
+    submit();
+
+    expect(onAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ repos: [expect.objectContaining({ name: "payments-api" })] })
+    );
+  });
+
+  it("clears the warning when a different repo is added", async () => {
+    await renderModal();
+
+    await addRepo("/Users/me/code/payments-api");
+    await addRepo("/Users/me/code/payments-api");
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    await addRepo("/Users/me/code/payments-web");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
