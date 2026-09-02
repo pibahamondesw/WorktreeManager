@@ -5,6 +5,7 @@ import {
   loadEditorApp,
   loadThemeId,
   loadCustomColors,
+  loadSidebarCollapsed,
   persist,
 } from "../services/store";
 import { AppState, DEFAULT_STATE, EditorApp, Task, VaultConfig, Workspace } from "../types";
@@ -16,6 +17,7 @@ export function useStore() {
   const [editorApp, setEditorAppState] = useState<EditorApp>("cursor");
   const [themeId, setThemeIdState] = useState("default");
   const [customColors, setCustomColors] = useState<Record<string, string> | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsedState] = useState(false);
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
   // Workspaces whose data finished loading at least once this session: switching
@@ -23,27 +25,32 @@ export function useStore() {
   const loadedWorkspaceIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
-    Promise.all([loadState(), loadEditorApp(), loadThemeId(), loadCustomColors()]).then(
-      ([s, editor, theme, custom]) => {
-        setState(s);
-        setEditorAppState(editor);
-        setThemeIdState(theme);
-        setCustomColors(custom);
-        applyTheme(theme, theme === CUSTOM_THEME_ID ? (custom ?? undefined) : undefined);
-        setLoading(false);
+    Promise.all([
+      loadState(),
+      loadEditorApp(),
+      loadThemeId(),
+      loadCustomColors(),
+      loadSidebarCollapsed(),
+    ]).then(([s, editor, theme, custom, collapsed]) => {
+      setState(s);
+      setEditorAppState(editor);
+      setThemeIdState(theme);
+      setCustomColors(custom);
+      setSidebarCollapsedState(collapsed);
+      applyTheme(theme, theme === CUSTOM_THEME_ID ? (custom ?? undefined) : undefined);
+      setLoading(false);
 
-        const basePaths = [
-          ...new Set(s.workspaces.flatMap((w) => w.repos.map((r) => r.worktreeBasePath))),
-        ];
-        void invoke("cleanup_claude_json_stale", { basePaths }).catch(() => {});
+      const basePaths = [
+        ...new Set(s.workspaces.flatMap((w) => w.repos.map((r) => r.worktreeBasePath))),
+      ];
+      void invoke("cleanup_claude_json_stale", { basePaths }).catch(() => {});
 
-        // Self-heal an enabled vault: recreate it if the folder went missing and
-        // keep it registered in Obsidian. Best-effort, never blocks startup.
-        if (s.vault.enabled && s.vault.path) {
-          void invoke("ensure_vault", { vaultPath: s.vault.path }).catch(() => {});
-        }
+      // Self-heal an enabled vault: recreate it if the folder went missing and
+      // keep it registered in Obsidian. Best-effort, never blocks startup.
+      if (s.vault.enabled && s.vault.path) {
+        void invoke("ensure_vault", { vaultPath: s.vault.path }).catch(() => {});
       }
-    );
+    });
   }, []);
 
   const dismissPersistError = useCallback(() => setPersistError(null), []);
@@ -253,6 +260,14 @@ export function useStore() {
     }
   }, []);
 
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsedState((prev) => {
+      const next = !prev;
+      void persist([["sidebarCollapsed", next]]).catch(() => {});
+      return next;
+    });
+  }, []);
+
   const updateThemeId = useCallback(
     async (id: string) => {
       const prevTheme = themeId;
@@ -336,6 +351,8 @@ export function useStore() {
     addTask,
     removeTask,
     updateEditorApp,
+    sidebarCollapsed,
+    toggleSidebarCollapsed,
     updateThemeId,
     updateCustomColors,
   };

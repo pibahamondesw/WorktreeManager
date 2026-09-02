@@ -24,6 +24,8 @@ interface WorktreeListProps {
   workspaceSwitching: boolean;
   onWorkspaceReady: (workspaceId?: string) => void;
   onOpenSearch: () => void;
+  sidebarCollapsed: boolean;
+  onExpandSidebar: () => void;
   searchOpen: boolean;
   /** Task picked in the quick search: select it once this workspace's tasks are in. */
   revealTaskId: string | null;
@@ -57,6 +59,8 @@ export function WorktreeList({
   workspaceSwitching,
   onWorkspaceReady,
   onOpenSearch,
+  sidebarCollapsed,
+  onExpandSidebar,
   searchOpen,
   revealTaskId,
   onRevealHandled,
@@ -126,6 +130,8 @@ export function WorktreeList({
           refreshing={refreshing}
           onNewTask={() => setShowNew(true)}
           onOpenSearch={onOpenSearch}
+          sidebarCollapsed={sidebarCollapsed}
+          onExpandSidebar={onExpandSidebar}
         />
 
         <div className="flex-1 overflow-y-auto p-6">
