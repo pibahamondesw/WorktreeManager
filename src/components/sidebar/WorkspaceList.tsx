@@ -5,7 +5,7 @@ import { EditWorkspaceModal } from "./EditWorkspaceModal";
 import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
 import { ThemePicker } from "../ui/ThemePicker";
 import { VaultSettingsModal } from "./VaultSettingsModal";
-import { PlusIcon, GearIcon, SunIcon, GripIcon, NotebookIcon } from "../ui/Icons";
+import { PlusIcon, GearIcon, SunIcon, GripIcon, NotebookIcon, SidebarIcon } from "../ui/Icons";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -28,6 +28,7 @@ interface WorkspaceListProps {
   defaultLinearApiKey?: string | null;
   vault: VaultConfig;
   onVaultChange: (vault: VaultConfig) => void;
+  onCollapse: () => void;
 }
 
 export function WorkspaceList({
@@ -48,6 +49,7 @@ export function WorkspaceList({
   defaultLinearApiKey,
   vault,
   onVaultChange,
+  onCollapse,
 }: WorkspaceListProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -117,9 +119,18 @@ export function WorkspaceList({
         className="flex items-center justify-between px-4 h-12 border-b border-border flex-shrink-0"
         data-drag-region
       >
-        <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-          Workspaces
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+            Workspaces
+          </span>
+          <button
+            onClick={onCollapse}
+            className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
+            title="Collapse sidebar ["
+          >
+            <SidebarIcon size={14} />
+          </button>
+        </div>
         <button
           onClick={() => setShowAdd(true)}
           className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"

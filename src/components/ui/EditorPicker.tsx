@@ -135,4 +135,3 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
       );
   }
 }
-

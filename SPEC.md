@@ -402,12 +402,12 @@ Global opt-in (`vault: { enabled, path }`), toggled in the setup wizard or the s
 
 One note per task, named `<ISSUE-ID>-<branch-slug>.md`, or `<branch-slug>.md` with no Linear issue. `src/services/notes.ts` owns the naming and the note body; `taskNoteFileName` deliberately matches `vault-kit/scripts/new-task-note.sh` so the app, the scripts, and the `/task-log` skill all resolve the same file.
 
-| Moment | Behavior |
-| --- | --- |
-| Task created | `ensure_task_note` writes the note with frontmatter (issue, branch, workspace, repos, per-member worktree paths) and the four body sections |
-| `O` / More actions → Open notes | `ensure_task_note` (creating it if the vault was enabled after the task existed), then `openUrl("obsidian://open?path=…")` |
-| Task deleted | `archive_task_note` moves it to `_archive/` with `status: archived`, or discards it when untouched |
-| Workspace removed | Same, once per task — regardless of whether the worktrees are deleted from disk, since the app forgets the tasks either way and nothing else would ever archive their notes |
+| Moment                          | Behavior                                                                                                                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Task created                    | `ensure_task_note` writes the note with frontmatter (issue, branch, workspace, repos, per-member worktree paths) and the four body sections                                 |
+| `O` / More actions → Open notes | `ensure_task_note` (creating it if the vault was enabled after the task existed), then `openUrl("obsidian://open?path=…")`                                                  |
+| Task deleted                    | `archive_task_note` moves it to `_archive/` with `status: archived`, or discards it when untouched                                                                          |
+| Workspace removed               | Same, once per task — regardless of whether the worktrees are deleted from disk, since the app forgets the tasks either way and nothing else would ever archive their notes |
 
 Every call is best-effort and swallows its errors — except enabling the vault itself, which surfaces scaffold failures in the settings modal. The scaffolded vault content is `vault-kit/vault/**` verbatim; agent wiring (`agent-setup.md`) and the optional Claude Code skill live in `vault-kit/`.
 

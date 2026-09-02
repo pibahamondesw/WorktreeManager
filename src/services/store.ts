@@ -29,7 +29,11 @@ export async function persist(entries: [string, unknown][]): Promise<void> {
     }
     await s.save();
   } catch (e) {
-    console.error("[persist] failed for keys", entries.map(([k]) => k), e);
+    console.error(
+      "[persist] failed for keys",
+      entries.map(([k]) => k),
+      e
+    );
     throw e;
   }
 }
@@ -158,4 +162,9 @@ export async function loadEditorApp(): Promise<EditorApp> {
   const editor = (stored && RETIRED_EDITOR_IDS[stored]) ?? stored;
   // Guard against stale values persisted by older builds whose editor ids no longer exist.
   return EDITOR_APPS.some((e) => e.id === editor) ? (editor as EditorApp) : "cursor";
+}
+
+export async function loadSidebarCollapsed(): Promise<boolean> {
+  const s = await getStore();
+  return (await s.get<boolean>("sidebarCollapsed")) ?? false;
 }

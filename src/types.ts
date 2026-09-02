@@ -103,12 +103,7 @@ export interface IssueLinearInfo {
   prs: PullRequestInfo[];
 }
 
-export type EditorApp =
-  | "cursor"
-  | "vscode"
-  | "claude-code"
-  | "opencode"
-  | "zed";
+export type EditorApp = "cursor" | "vscode" | "claude-code" | "opencode" | "zed";
 
 /**
  * Editor-specific local config directories carried into a new worktree.

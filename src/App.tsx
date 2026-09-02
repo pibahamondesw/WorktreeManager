@@ -37,6 +37,8 @@ function App() {
     addTask,
     removeTask,
     updateEditorApp,
+    sidebarCollapsed,
+    toggleSidebarCollapsed,
     updateThemeId,
     updateCustomColors,
   } = useStore();
@@ -83,6 +85,10 @@ function App() {
       enabled: state.setup.isComplete && !search.open,
     },
     "meta+shift+r": { handler: () => window.location.reload() },
+    "[": {
+      handler: toggleSidebarCollapsed,
+      enabled: state.setup.isComplete && !search.open,
+    },
     "meta+k": {
       handler: () => openSearch(false),
       enabled: state.setup.isComplete,
@@ -150,27 +156,30 @@ function App() {
           </button>
         </div>
       )}
-      <ErrorBoundary fallbackClassName="w-60 h-full bg-bg-secondary border-r border-border">
-        <WorkspaceList
-          workspaces={state.workspaces}
-          tasks={state.tasks}
-          selectedWorkspaceId={state.selectedWorkspaceId}
-          onSelect={handleSelectWorkspace}
-          onAdd={addWorkspace}
-          onUpdate={updateWorkspace}
-          onRemove={removeWorkspace}
-          onReorder={reorderWorkspaces}
-          showAddExternal={showAddWorkspace}
-          onCloseAddExternal={() => setShowAddWorkspace(false)}
-          themeId={themeId}
-          onThemeChange={updateThemeId}
-          customColors={customColors}
-          onCustomColorsChange={updateCustomColors}
-          defaultLinearApiKey={defaultLinearApiKey}
-          vault={state.vault}
-          onVaultChange={updateVault}
-        />
-      </ErrorBoundary>
+      {!sidebarCollapsed && (
+        <ErrorBoundary fallbackClassName="w-60 h-full bg-bg-secondary border-r border-border">
+          <WorkspaceList
+            workspaces={state.workspaces}
+            tasks={state.tasks}
+            selectedWorkspaceId={state.selectedWorkspaceId}
+            onSelect={handleSelectWorkspace}
+            onAdd={addWorkspace}
+            onUpdate={updateWorkspace}
+            onRemove={removeWorkspace}
+            onReorder={reorderWorkspaces}
+            showAddExternal={showAddWorkspace}
+            onCloseAddExternal={() => setShowAddWorkspace(false)}
+            themeId={themeId}
+            onThemeChange={updateThemeId}
+            customColors={customColors}
+            onCustomColorsChange={updateCustomColors}
+            defaultLinearApiKey={defaultLinearApiKey}
+            vault={state.vault}
+            onVaultChange={updateVault}
+            onCollapse={toggleSidebarCollapsed}
+          />
+        </ErrorBoundary>
+      )}
       <ErrorBoundary fallbackClassName="flex-1">
         <WorktreeList
           tasks={selectedTasks}
@@ -186,6 +195,8 @@ function App() {
           searchOpen={search.open}
           revealTaskId={revealTaskId}
           onRevealHandled={() => setRevealTaskId(null)}
+          sidebarCollapsed={sidebarCollapsed}
+          onExpandSidebar={toggleSidebarCollapsed}
         />
       </ErrorBoundary>
       <QuickSearchModal

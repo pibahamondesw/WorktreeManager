@@ -1,6 +1,6 @@
 import { Button } from "../ui/Button";
 import { EditorPicker } from "../ui/EditorPicker";
-import { RefreshIcon, PlusIcon, SearchIcon } from "../ui/Icons";
+import { RefreshIcon, PlusIcon, SearchIcon, SidebarIcon } from "../ui/Icons";
 import { EditorApp } from "../../types";
 
 interface WorktreeListHeaderProps {
@@ -13,6 +13,8 @@ interface WorktreeListHeaderProps {
   refreshing: boolean;
   onNewTask: () => void;
   onOpenSearch: () => void;
+  sidebarCollapsed: boolean;
+  onExpandSidebar: () => void;
 }
 
 export function WorktreeListHeader({
@@ -25,6 +27,8 @@ export function WorktreeListHeader({
   refreshing,
   onNewTask,
   onOpenSearch,
+  sidebarCollapsed,
+  onExpandSidebar,
 }: WorktreeListHeaderProps) {
   return (
     <>
@@ -34,6 +38,16 @@ export function WorktreeListHeader({
         data-drag-region
       >
         <div className="flex items-center gap-3">
+          {sidebarCollapsed && (
+            <button
+              type="button"
+              onClick={onExpandSidebar}
+              className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
+              title="Expand sidebar ["
+            >
+              <SidebarIcon size={14} />
+            </button>
+          )}
           <h2 className="text-sm font-semibold text-text-primary">{workspaceName}</h2>
           <span className="text-xs text-text-muted">
             {taskCount} task{taskCount !== 1 ? "s" : ""}
