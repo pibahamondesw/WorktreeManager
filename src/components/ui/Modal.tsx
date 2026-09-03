@@ -31,8 +31,8 @@ export function Modal({ open, onClose, title, children, wide }: ModalProps) {
       }}
     >
       <div
-        className={`bg-bg-secondary border border-border rounded-xl shadow-2xl flex flex-col max-h-[80vh] ${
-          wide ? "w-[640px]" : "w-[480px]"
+        className={`bg-bg-secondary border border-border rounded-xl shadow-2xl flex flex-col max-h-[80vh] max-w-[92vw] ${
+          wide ? "w-[40rem]" : "w-[30rem]"
         }`}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">

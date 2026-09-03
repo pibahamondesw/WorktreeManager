@@ -124,21 +124,22 @@ By default, new projects store worktrees in:
 
 ## Keyboard Shortcuts
 
-| Key               | Action                           |
-| ----------------- | -------------------------------- |
-| `↑` `↓` / `j` `k` | Navigate worktree cards          |
-| `0`–`9`           | Jump to worktree by index        |
-| `⌘0`–`⌘9`         | Jump to project by index         |
-| `Enter`           | Open selected worktree in editor |
-| `N`               | New worktree                     |
-| `P`               | Add new project                  |
-| `R`               | Refresh Linear info              |
-| `L`               | Open selected issue on Linear    |
-| `O`               | Open task notes in Obsidian      |
-| `⌘B`              | Copy branch name                 |
-| `⌘⇧C`             | Copy worktree path               |
-| `⌘D`              | Delete selected worktree         |
-| `Esc`             | Clear selection                  |
+| Key               | Action                             |
+| ----------------- | ---------------------------------- |
+| `↑` `↓` / `j` `k` | Navigate worktree cards            |
+| `0`–`9`           | Jump to worktree by index          |
+| `⌘0`–`⌘9`         | Jump to project by displayed index |
+| `⌘+` / `⌘−`       | Zoom in / out (80%–150%)           |
+| `Enter`           | Open selected worktree in editor   |
+| `N`               | New worktree                       |
+| `P`               | Add new project                    |
+| `R`               | Refresh Linear info                |
+| `L`               | Open selected issue on Linear      |
+| `O`               | Open task notes in Obsidian        |
+| `⌘B`              | Copy branch name                   |
+| `⌘⇧C`             | Copy worktree path                 |
+| `⌘D`              | Delete selected worktree           |
+| `Esc`             | Clear selection                    |
 
 ## Obsidian vault
 
@@ -178,3 +179,5 @@ Tests cover pure utility functions (time formatting, PR extraction from Linear a
 - **React 19 + TypeScript** — Frontend UI
 - **Tailwind CSS v4** — Dark-mode styling with theme support
 - **@linear/sdk** — Linear API integration (raw GraphQL for performance)
+
+Interface zoom scales text, icons, and spacing, and is remembered across app launches. The titlebar also provides zoom controls; click the percentage to reset. `⌘=` also zooms in, and zoom shortcuts accept `Ctrl` in place of `⌘`. `⌘0`–`⌘9` keep their existing project navigation behavior.

@@ -7,8 +7,8 @@ export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
   return (
     <svg
       className={`animate-spin ${className}`}
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 24 24"
       fill="none"
     >
@@ -25,8 +25,8 @@ export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
 export function CheckIcon({ size = 12, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -41,8 +41,8 @@ export function CheckIcon({ size = 12, className = "" }: IconProps) {
 export function PlusIcon({ size = 12, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -57,8 +57,8 @@ export function PlusIcon({ size = 12, className = "" }: IconProps) {
 export function CloseIcon({ size = 16, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -73,8 +73,8 @@ export function CloseIcon({ size = 16, className = "" }: IconProps) {
 export function SearchIcon({ size = 16, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -90,8 +90,8 @@ export function SearchIcon({ size = 16, className = "" }: IconProps) {
 export function ChevronDownIcon({ size = 8, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 8 8"
       fill="none"
       stroke="currentColor"
@@ -106,8 +106,8 @@ export function ChevronDownIcon({ size = 8, className = "" }: IconProps) {
 export function ChevronLeftIcon({ size = 14, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 14 14"
       fill="none"
       stroke="currentColor"
@@ -122,8 +122,8 @@ export function ChevronLeftIcon({ size = 14, className = "" }: IconProps) {
 export function ExternalLinkIcon({ size = 10, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -138,8 +138,8 @@ export function ExternalLinkIcon({ size = 10, className = "" }: IconProps) {
 export function CopyIcon({ size = 12, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -155,8 +155,8 @@ export function CopyIcon({ size = 12, className = "" }: IconProps) {
 export function TrashIcon({ size = 16, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -171,8 +171,8 @@ export function TrashIcon({ size = 16, className = "" }: IconProps) {
 export function RefreshIcon({ size = 14, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -187,7 +187,13 @@ export function RefreshIcon({ size = 14, className = "" }: IconProps) {
 
 export function MoreVerticalIcon({ size = 14, className = "" }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" className={className}>
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={className}
+    >
       <circle cx="8" cy="3" r="1.5" />
       <circle cx="8" cy="8" r="1.5" />
       <circle cx="8" cy="13" r="1.5" />
@@ -197,7 +203,13 @@ export function MoreVerticalIcon({ size = 14, className = "" }: IconProps) {
 
 export function GripIcon({ size = 12, className = "" }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" className={className}>
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={className}
+    >
       <circle cx="6" cy="4" r="1.25" />
       <circle cx="10" cy="4" r="1.25" />
       <circle cx="6" cy="8" r="1.25" />
@@ -210,7 +222,13 @@ export function GripIcon({ size = 12, className = "" }: IconProps) {
 
 export function BranchIcon({ size = 12, className = "" }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" className={className}>
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={className}
+    >
       <path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25z" />
     </svg>
   );
@@ -218,7 +236,13 @@ export function BranchIcon({ size = 12, className = "" }: IconProps) {
 
 export function PullRequestIcon({ size = 12, className = "" }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" className={className}>
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={className}
+    >
       <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354z" />
     </svg>
   );
@@ -227,8 +251,8 @@ export function PullRequestIcon({ size = 12, className = "" }: IconProps) {
 export function FolderIcon({ size = 24, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -242,7 +266,13 @@ export function FolderIcon({ size = 24, className = "" }: IconProps) {
 
 export function WarningCircleIcon({ size = 10, className = "" }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" className={className}>
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={className}
+    >
       <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.5 3a.5.5 0 0 1 1 0v4a.5.5 0 0 1-1 0V4zm.5 7.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5z" />
     </svg>
   );
@@ -250,7 +280,13 @@ export function WarningCircleIcon({ size = 10, className = "" }: IconProps) {
 
 export function SuccessCircleIcon({ size = 16, className = "" }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" className={className}>
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className={className}
+    >
       <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zm3.78 5.22a.75.75 0 0 0-1.06 0L7 8.94 5.28 7.22a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.06 0l4.25-4.25a.75.75 0 0 0 0-1.06z" />
     </svg>
   );
@@ -259,8 +295,8 @@ export function SuccessCircleIcon({ size = 16, className = "" }: IconProps) {
 export function SunIcon({ size = 14, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -276,8 +312,8 @@ export function SunIcon({ size = 14, className = "" }: IconProps) {
 export function NotebookIcon({ size = 14, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -293,8 +329,8 @@ export function NotebookIcon({ size = 14, className = "" }: IconProps) {
 export function CodeBranchIcon({ size = 24, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -310,8 +346,8 @@ export function CodeBranchIcon({ size = 24, className = "" }: IconProps) {
 export function GearIcon({ size = 14, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -329,8 +365,8 @@ export function GearIcon({ size = 14, className = "" }: IconProps) {
 export function WrenchIcon({ size = 32, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -345,8 +381,8 @@ export function WrenchIcon({ size = 32, className = "" }: IconProps) {
 export function SidebarIcon({ size = 14, className = "" }: IconProps) {
   return (
     <svg
-      width={size}
-      height={size}
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"

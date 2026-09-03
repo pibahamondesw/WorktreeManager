@@ -140,7 +140,7 @@ export function QuickSearchModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-[640px] max-w-[92vw] bg-bg-secondary border border-border rounded-xl shadow-2xl flex flex-col max-h-[68vh] overflow-hidden">
+      <div className="w-[40rem] max-w-[92vw] bg-bg-secondary border border-border rounded-xl shadow-2xl flex flex-col max-h-[68vh] overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
           <div className="relative">
             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -160,7 +160,7 @@ export function QuickSearchModal({
             <ScopeTab active={scoped} onClick={() => setScoped(true)} disabled={!currentWorkspace}>
               This workspace
             </ScopeTab>
-            <span className="ml-auto text-[10px] text-text-muted font-mono">
+            <span className="ml-auto text-[0.625rem] text-text-muted font-mono">
               in:web|api · repo: · branch: · -exclude
             </span>
           </div>
@@ -177,7 +177,7 @@ export function QuickSearchModal({
                 result.inCurrentWorkspace !== lastGroup ? (
                   <p
                     key={`h-${i}`}
-                    className="px-4 pt-3 pb-1 text-[10px] uppercase tracking-wide text-text-muted"
+                    className="px-4 pt-3 pb-1 text-[0.625rem] uppercase tracking-wide text-text-muted"
                   >
                     {result.inCurrentWorkspace ? "This workspace" : "Other workspaces"}
                   </p>
@@ -220,7 +220,7 @@ export function QuickSearchModal({
           )}
         </div>
 
-        <div className="flex-shrink-0 px-4 py-2 border-t border-border flex items-center gap-3 text-[10px] text-text-muted font-mono flex-wrap">
+        <div className="flex-shrink-0 px-4 py-2 border-t border-border flex items-center gap-3 text-[0.625rem] text-text-muted font-mono flex-wrap">
           <Hint keys="↑↓">navigate</Hint>
           <Hint keys="↵">open</Hint>
           <Hint keys="⌘↵">reveal</Hint>
