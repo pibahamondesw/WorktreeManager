@@ -28,6 +28,7 @@ struct VaultFile {
 /// Root `_archive/` is deliberately absent: `archive.sh` creates it lazily,
 /// so an unused vault doesn't grow empty folders.
 const VAULT_DIRS: &[&str] = &[
+    ".obsidian",
     "projects",
     "task-logs",
     "task-logs/_archive",
@@ -124,19 +125,18 @@ fn obsidian_config_path() -> Result<std::path::PathBuf, String> {
 }
 
 /// Add `vault_path` to Obsidian's vault registry if it isn't there yet.
-/// Returns whether an entry was added. When Obsidian has never run (its config
-/// directory doesn't exist), does nothing — there is no registry to join.
+/// Returns whether an entry was added. Creates the registry even when Obsidian
+/// has never run, so enabling does not depend on a previous manual setup.
 fn register_vault_at(config_path: &Path, vault_path: &str) -> Result<bool, String> {
-    let Some(config_dir) = config_path.parent() else {
-        return Ok(false);
-    };
-    if !config_dir.exists() {
-        return Ok(false);
-    }
+    let config_dir = config_path
+        .parent()
+        .ok_or("Missing Obsidian config directory")?;
+    fs::create_dir_all(config_dir).map_err(|e| format!("create {}: {e}", config_dir.display()))?;
 
     let mut config: serde_json::Value = match fs::read_to_string(config_path) {
         Ok(raw) => serde_json::from_str(&raw).map_err(|e| format!("parse obsidian.json: {e}"))?,
-        Err(_) => serde_json::json!({}),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(format!("read {}: {e}", config_path.display())),
     };
 
     let vaults = config
@@ -219,31 +219,35 @@ fn quit_obsidian_and_wait() -> bool {
     false
 }
 
-/// Register the vault with Obsidian, best-effort. Obsidian keeps its registry
+/// Register the vault with Obsidian. Obsidian keeps its registry
 /// in memory and rewrites the file on quit, so an entry written while it runs
 /// is both invisible and clobbered — registration only counts with Obsidian
 /// closed. `may_quit_obsidian` is set on the explicit enable flow, where
 /// briefly closing Obsidian is acceptable; the startup self-heal instead skips
 /// and converges on a later launch.
-fn register_vault(vault_path: &str, may_quit_obsidian: bool) {
-    let Ok(config_path) = obsidian_config_path() else {
-        return;
-    };
+fn register_vault(vault_path: &str, may_quit_obsidian: bool) -> Result<(), String> {
+    let config_path = obsidian_config_path()?;
     // An entry in the file almost always means Obsidian itself wrote it (our
     // writes only happen with Obsidian closed), so it is safe to trust.
     if is_registered_at(&config_path, vault_path) {
-        return;
+        return Ok(());
     }
     if obsidian_running() {
-        if !may_quit_obsidian || !quit_obsidian_and_wait() {
-            return;
+        if !may_quit_obsidian {
+            return Ok(());
+        }
+        if !quit_obsidian_and_wait() {
+            return Err(
+                "Could not register the vault. Close Obsidian and try enabling again.".into(),
+            );
         }
         // Obsidian rewrote the registry on quit; re-check against fresh contents.
         if is_registered_at(&config_path, vault_path) {
-            return;
+            return Ok(());
         }
     }
-    let _ = register_vault_at(&config_path, vault_path);
+    register_vault_at(&config_path, vault_path)?;
+    Ok(())
 }
 
 /// Full scaffold + Obsidian registration. Run on explicit enable: fills any
@@ -253,7 +257,7 @@ fn register_vault(vault_path: &str, may_quit_obsidian: bool) {
 pub fn scaffold_vault(vault_path: String) -> Result<String, String> {
     let root = Path::new(&vault_path);
     scaffold_vault_at(root)?;
-    register_vault(&vault_path, true);
+    register_vault(&vault_path, true)?;
     Ok(vault_path)
 }
 
@@ -267,7 +271,7 @@ pub fn ensure_vault(vault_path: String) -> Result<String, String> {
     if !root.exists() {
         scaffold_vault_at(root)?;
     }
-    register_vault(&vault_path, false);
+    register_vault(&vault_path, false)?;
     Ok(vault_path)
 }
 
@@ -288,7 +292,8 @@ mod tests {
 
     #[test]
     fn fresh_scaffold_creates_dirs_and_files() {
-        let root = temp_dir("fresh");
+        let parent = temp_dir("fresh");
+        let root = parent.join("missing").join("vault");
         scaffold_vault_at(&root).unwrap();
 
         for dir in VAULT_DIRS {
@@ -304,7 +309,38 @@ mod tests {
             "root _archive is created lazily by archive.sh"
         );
 
-        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&parent).unwrap();
+    }
+
+    #[test]
+    fn register_vault_preserves_invalid_registry_and_reports_error() {
+        let dir = temp_dir("invalid-registry");
+        let config = dir.join("obsidian.json");
+        fs::write(&config, "invalid json").unwrap();
+        assert!(register_vault_at(&config, "/some/vault").is_err());
+        assert_eq!(fs::read_to_string(&config).unwrap(), "invalid json");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn register_vault_reports_unreadable_registry() {
+        let dir = temp_dir("unreadable-registry");
+        let config = dir.join("obsidian.json");
+        fs::create_dir(&config).unwrap();
+        let error = register_vault_at(&config, "/some/vault").unwrap_err();
+        assert!(error.starts_with("read "), "{error}");
+        assert!(config.is_dir());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn scaffold_reports_when_target_is_a_file() {
+        let dir = temp_dir("blocked-root");
+        let root = dir.join("vault");
+        fs::write(&root, "existing file").unwrap();
+        assert!(scaffold_vault_at(&root).is_err());
+        assert_eq!(fs::read_to_string(&root).unwrap(), "existing file");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -378,11 +414,11 @@ mod tests {
     }
 
     #[test]
-    fn register_vault_skips_when_obsidian_never_ran() {
+    fn register_vault_creates_registry_when_obsidian_never_ran() {
         let dir = temp_dir("no-obsidian");
         let config = dir.join("missing-dir").join("obsidian.json");
-        assert!(!register_vault_at(&config, "/some/vault").unwrap());
-        assert!(!config.exists());
+        assert!(register_vault_at(&config, "/some/vault").unwrap());
+        assert!(is_registered_at(&config, "/some/vault"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -35,7 +35,7 @@ export function agentSetupLine(vault: VaultConfig): string | null {
 
 /**
  * Enable the vault at the managed path: scaffold the full structure (idempotent,
- * never overwrites) and register it with Obsidian. Throws if scaffolding fails —
+ * never overwrites) and register it with Obsidian. Throws if scaffolding or registration fails —
  * this is an explicit user action and the one notes flow that must surface errors.
  * A hand-edited custom `path` in the store is honored everywhere else, but Enable
  * always targets the managed default so the flow stays predictable.
