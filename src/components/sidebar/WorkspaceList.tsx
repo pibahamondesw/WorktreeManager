@@ -202,14 +202,14 @@ export function WorkspaceList({
               )}
               <div className="flex flex-col min-w-0 flex-1">
                 <p className="text-sm font-medium truncate">{workspace.name}</p>
-                <p className="text-[10px] text-text-muted truncate">
+                <p className="text-[0.625rem] text-text-muted truncate">
                   {activeTaskCount} task{activeTaskCount !== 1 ? "s" : ""}
                 </p>
               </div>
 
               {index <= 9 && (
                 <span
-                  className="text-[10px] font-mono text-text-muted/50 flex-shrink-0"
+                  className="text-[0.625rem] font-mono text-text-muted/50 flex-shrink-0"
                   title={`Switch with ⌘${index}`}
                 >
                   ⌘{index}

@@ -440,7 +440,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                   <div key={m.repoId} className="flex items-center gap-1.5 text-xs">
                     <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
                     <span
-                      className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-bg-hover text-text-muted"
+                      className="inline-flex items-center rounded px-1.5 py-0.5 text-[0.625rem] bg-bg-hover text-text-muted"
                       title={m.path}
                     >
                       {m.repoName}
@@ -479,7 +479,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                 <div key={p.url} className="flex items-center gap-1.5 text-xs">
                   <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
                   <span
-                    className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-bg-hover text-text-muted"
+                    className="inline-flex items-center rounded px-1.5 py-0.5 text-[0.625rem] bg-bg-hover text-text-muted"
                     title={p.repoSlug}
                   >
                     {p.repoSlug.split("/")[1] ?? p.repoSlug}
@@ -586,7 +586,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                 : " and remove from disk?"}
             </span>
             {vault.enabled && (
-              <p className="text-[10px] text-text-muted mt-0.5">
+              <p className="text-[0.625rem] text-text-muted mt-0.5">
                 Notes are kept, moved to <span className="font-mono">_archive/</span>.
               </p>
             )}
@@ -656,7 +656,7 @@ function MenuButton({
       className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
     >
       <span>{children}</span>
-      {label && <span className="text-text-muted font-mono text-[10px]">{label}</span>}
+      {label && <span className="text-text-muted font-mono text-[0.625rem]">{label}</span>}
     </button>
   );
 }

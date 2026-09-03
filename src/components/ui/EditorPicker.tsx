@@ -70,7 +70,7 @@ export function EditorPicker({ value, onChange }: EditorPickerProps) {
                 <EditorIcon editor={app.id} size={16} />
                 <span className="flex-1 text-left">{app.label}</span>
                 {installed === false && (
-                  <span className="text-[10px] text-warning">not installed</span>
+                  <span className="text-[0.625rem] text-warning">not installed</span>
                 )}
                 {isSelected && <CheckIcon className="text-accent flex-shrink-0" />}
               </button>

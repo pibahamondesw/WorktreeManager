@@ -27,8 +27,8 @@ export function SetupWizard({ initialSetup, onComplete }: SetupWizardProps) {
   };
 
   return (
-    <div className="flex items-center justify-center h-full" data-drag-region>
-      <div className="w-[420px] flex flex-col items-center gap-8">
+    <div className="flex items-center justify-center h-full overflow-y-auto py-10" data-drag-region>
+      <div className="w-[26.25rem] max-w-[92vw] my-auto flex flex-col items-center gap-8">
         {/* Logo */}
         <div className="flex flex-col items-center gap-3">
           <img src={logo} alt="WorktreeManager" className="w-40 h-40 rounded-2xl object-cover" />

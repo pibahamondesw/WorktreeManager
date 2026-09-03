@@ -34,10 +34,10 @@ export function WorktreeListHeader({
     <>
       <div className="h-[32px] flex-shrink-0" data-drag-region />
       <div
-        className="flex items-center justify-between px-6 h-12 border-b border-border flex-shrink-0"
+        className="flex items-center justify-between flex-wrap gap-2 px-6 min-h-12 py-2 border-b border-border flex-shrink-0"
         data-drag-region
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-wrap">
           {sidebarCollapsed && (
             <button
               type="button"
@@ -75,7 +75,7 @@ export function WorktreeListHeader({
           <Button onClick={onNewTask} className="h-8 text-xs">
             <PlusIcon />
             New Task
-            <kbd className="ml-1 text-[10px] opacity-50 font-mono">N</kbd>
+            <kbd className="ml-1 text-[0.625rem] opacity-50 font-mono">N</kbd>
           </Button>
         </div>
       </div>

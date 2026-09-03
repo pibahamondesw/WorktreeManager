@@ -6,7 +6,7 @@ interface WorktreeListKeyboardHintsProps {
 export function WorktreeListKeyboardHints({ showNotes }: WorktreeListKeyboardHintsProps) {
   return (
     <div className="flex-shrink-0 px-6 py-2 border-t border-border">
-      <div className="flex items-center gap-3 text-[10px] text-text-muted font-mono flex-wrap">
+      <div className="flex items-center gap-3 text-[0.625rem] text-text-muted font-mono flex-wrap">
         <span>
           <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">↑↓</kbd> navigate
         </span>
