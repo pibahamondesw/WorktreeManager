@@ -154,6 +154,8 @@ Scaffolding never overwrites a file that exists, and the app never overwrites or
 
 To make agents write and read the vault, add the one-liner from the vault settings modal to your AI tool's global instructions — it points at `<vault>/agent-setup.md`, which works with any agent that supports global instructions. Details and the optional `/task-log` Claude Code skill live in [`vault-kit/README.md`](vault-kit/README.md) — the agent wiring is the part that decides whether this survives past week three.
 
+You can skip the vault during initial setup and enable it later from the sidebar. Missing vault folders and the Obsidian registry are created automatically, even before Obsidian has been opened for the first time. If creation or registration fails, settings shows the error and lets you retry.
+
 Leave the vault disabled and the whole feature stays off. Disabling it later touches nothing on disk.
 
 ## Tests
