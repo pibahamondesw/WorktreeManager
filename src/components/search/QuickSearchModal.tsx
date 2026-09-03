@@ -85,6 +85,7 @@ export function QuickSearchModal({
 
   // Stay open on failure so the error toast is readable.
   const openInEditor = async (result: TaskSearchResult) => {
+    onReveal(result.task);
     const opened = await openEditorForWorktree(
       editorApp,
       result.task.members.map((m) => m.path),

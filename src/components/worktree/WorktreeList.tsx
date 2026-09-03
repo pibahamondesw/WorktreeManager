@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { LinearProvider } from "../../contexts/LinearContext";
 import { LinearService } from "../../services/linear";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { useWorktreeData } from "../../hooks/useWorktreeData";
 import { WorktreeCard } from "./WorktreeCard";
+import { cardScrollDelta } from "./cardScroll";
 import { WorktreeCardSkeleton } from "./WorktreeCardSkeleton";
 import { WorktreeEmptyWorktrees, WorktreeNoRepoPlaceholder } from "./WorktreeListEmptyStates";
 import { WorktreeListHeader } from "./WorktreeListHeader";
@@ -48,6 +49,8 @@ function aggregateTaskStatus(
   };
 }
 
+const SELECTED_CARD_SCROLL_ATTEMPTS = 60;
+
 export function WorktreeList({
   tasks,
   workspace,
@@ -68,7 +71,9 @@ export function WorktreeList({
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
+  const [revealNonce, setRevealNonce] = useState(0);
   const { toast, showToast } = useEphemeralToast();
+  const listRef = useRef<HTMLDivElement>(null);
 
   const linearApiKey = workspace?.linearApiKey;
   const linearService = useMemo(
@@ -94,8 +99,32 @@ export function WorktreeList({
     const index = tasks.findIndex((t) => t.id === revealTaskId);
     if (index === -1) return;
     setSelectedIndex(index);
+    setRevealNonce((n) => n + 1);
     onRevealHandled();
   }, [revealTaskId, tasks, onRevealHandled]);
+
+  // The card may not be mounted yet when a reveal lands mid workspace switch (skeletons are
+  // rendered instead). Retries on a timer rather than rAF, which is throttled to nothing while
+  // the window sits behind a just-opened editor.
+  useEffect(() => {
+    if (selectedIndex < 0) return;
+    let attempts = 0;
+    const focusSelectedCard = () => {
+      const container = listRef.current;
+      const card = container?.querySelector<HTMLElement>('[data-selected="true"]');
+      if (!container || !card) {
+        if (attempts++ < SELECTED_CARD_SCROLL_ATTEMPTS) timer = setTimeout(focusSelectedCard, 32);
+        return;
+      }
+      container.scrollTop += cardScrollDelta(
+        container.getBoundingClientRect(),
+        card.getBoundingClientRect()
+      );
+      card.focus({ preventScroll: true });
+    };
+    let timer = setTimeout(focusSelectedCard, 0);
+    return () => clearTimeout(timer);
+  }, [selectedIndex, revealNonce, tasks, workspaceSwitching]);
 
   const selectedTask =
     selectedIndex >= 0 && selectedIndex < tasks.length ? tasks[selectedIndex] : null;
@@ -134,7 +163,7 @@ export function WorktreeList({
           onExpandSidebar={onExpandSidebar}
         />
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div ref={listRef} className="flex-1 overflow-y-auto p-6">
           {workspaceSwitching ? (
             <div className="grid gap-3">
               {Array.from({ length: Math.max(tasks.length, 3) }).map((_, i) => (

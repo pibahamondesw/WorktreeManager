@@ -320,7 +320,9 @@ export const WorktreeCard = memo(function WorktreeCard({
   return (
     <div
       onClick={handleOpen}
-      className={`group bg-bg-secondary border rounded-xl p-4 hover:border-border-light hover:bg-bg-tertiary/50 transition-all cursor-pointer ${
+      tabIndex={-1}
+      data-selected={selected ? "true" : undefined}
+      className={`group bg-bg-secondary border rounded-xl p-4 hover:border-border-light hover:bg-bg-tertiary/50 transition-all cursor-pointer outline-none ${
         selected ? "border-accent/50 bg-bg-tertiary/30" : "border-border"
       }`}
     >
