@@ -156,9 +156,16 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
     }
 }
 
-fn gui_app_exists(app_name: &str) -> bool {
+/// True when macOS LaunchServices knows an app bundle by this name.
+pub(crate) fn gui_app_exists(app_name: &str) -> bool {
     Command::new("osascript")
-        .args(["-e", &format!(r#"id of application "{}""#, app_name)])
+        .args([
+            "-e",
+            &format!(
+                r#"id of application "{}""#,
+                escape_applescript_string(app_name)
+            ),
+        ])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)

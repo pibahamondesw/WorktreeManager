@@ -14,6 +14,10 @@ vi.mock("./hooks/useStore", () => ({ useStore: mocks.useStore }));
 vi.mock("./hooks/useUpdater", () => ({ useUpdater: vi.fn() }));
 vi.mock("./hooks/useWindowDrag", () => ({ useWindowDrag: vi.fn() }));
 vi.mock("./hooks/useLinearOrgKeyBackfill", () => ({ useLinearOrgKeyBackfill: vi.fn() }));
+// Shells out and calls Linear; keep it out of a render test.
+vi.mock("./hooks/useDoctor", () => ({
+  useDoctor: () => ({ report: null, running: false, recheck: vi.fn() }),
+}));
 vi.mock("./components/setup/SetupWizard", () => ({ SetupWizard: () => null }));
 vi.mock("./components/sidebar/WorkspaceList", () => ({ WorkspaceList: () => null }));
 vi.mock("./components/worktree/WorktreeList", () => ({ WorktreeList: () => null }));

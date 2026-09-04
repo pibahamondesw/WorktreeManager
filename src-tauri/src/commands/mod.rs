@@ -1,4 +1,5 @@
 pub mod claude_config;
+pub mod doctor;
 pub mod doppler;
 pub mod editor;
 pub mod git;

@@ -193,7 +193,9 @@ interface PullRequestInfo {
    - Local clone path (read-only, populated via native folder picker)
    - Worktree directory (auto-filled as `~/Documents/WorktreeManager/<project-slug>`, editable)
 
-4. **New Worktree Modal** — Two-phase:
+4. **Dependencies Modal** — The startup health check, opened from the sidebar footer or from the banner that appears when something is missing. One row per dependency (`git`, `gh`, the selected editor's app and CLIs, `node` plus the package managers the repos' lockfiles imply, `doppler` when a repo commits a Doppler config, Obsidian while the vault is enabled, and the workspaces' Linear API keys) with its status, what the app uses it for, and a copyable install command. Purely advisory — it never gates the app.
+
+5. **Worktree Modal** — Two-phase:
    - **Phase 1**: Search & select a Linear issue. Shows list of assigned issues (not completed/cancelled). Search bar with 300ms debounce.
    - **Phase 2**: After selection, shows issue details, branch name (copyable), worktree path. "Create Worktree" button with progress status.
 
@@ -375,6 +377,16 @@ This gives instant partial-ID matching (e.g. "3140" matches "TSY-3140") with zer
 ### `open_cursor(path)`
 
 - **Critical**: Use `open -a Cursor <path>` (macOS LaunchServices), NOT `Command::new("cursor")`. The latter inherits the Tauri app's restricted environment/PATH, causing permission issues and "command not found" errors.
+
+### `doctor_probe(clis, apps, repo_paths)`
+
+Backs the Dependencies health check. Returns `{ clis, apps, usage }`:
+
+- `clis` — one `{ name, path, version }` per requested binary. `path` is `command -v` after the same PATH/profile prelude the launch scripts use; `version` is the first line of `<name> --version`. A resolved `path` with a null `version` means the binary exists but won't run — that is how `/usr/bin/git` on a machine without Xcode Command Line Tools is caught.
+- `apps` — one `{ name, installed }` per requested macOS app bundle, via `id of application` (same probe as `check_app_installed`).
+- `usage` — `{ package_managers, doppler }` scanned from the repo clones: which managers their lockfiles imply, and whether any commits a Doppler config with a `setup:` block. Lets the UI ask only for tools the current setup actually uses.
+
+All CLIs are probed in a **single** `zsh -lc` (sourcing profiles is the expensive part) which first `cd`s to `$HOME` — a corepack-managed `npm`/`yarn`/`pnpm` shim refuses to run inside a project pinned to a different manager, so probing from an arbitrary directory would report a working manager as broken. Nothing fails hard: an unresolvable tool is data, not an error.
 
 ---
 

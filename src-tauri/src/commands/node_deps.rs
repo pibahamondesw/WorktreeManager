@@ -37,7 +37,7 @@ const LOCKFILE_MANAGERS: [(&str, &str); 4] = [
 
 /// Package manager for the worktree, from its committed lockfile. Defaults to npm — it also
 /// covers a bare `package.json` with no lockfile.
-fn detect_package_manager(root: &Path) -> &'static str {
+pub(crate) fn detect_package_manager(root: &Path) -> &'static str {
     LOCKFILE_MANAGERS
         .iter()
         .find(|(lockfile, _)| root.join(lockfile).is_file())

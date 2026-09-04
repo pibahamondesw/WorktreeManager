@@ -3,6 +3,7 @@ import { SetupWizard } from "./components/setup/SetupWizard";
 import { WorkspaceList } from "./components/sidebar/WorkspaceList";
 import { WorktreeList } from "./components/worktree/WorktreeList";
 import { QuickSearchModal } from "./components/search/QuickSearchModal";
+import { DoctorModal } from "./components/doctor/DoctorModal";
 import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
@@ -10,8 +11,10 @@ import { enableVault } from "./services/vault";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdater } from "./hooks/useUpdater";
 import { useLinearOrgKeyBackfill } from "./hooks/useLinearOrgKeyBackfill";
+import { useDoctor } from "./hooks/useDoctor";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { withScope } from "./search/query";
+import { CheckSeverity, DoctorConfig } from "./services/doctor";
 import { Task } from "./types";
 
 function App() {
@@ -49,6 +52,8 @@ function App() {
     query: "",
   });
   const [revealTaskId, setRevealTaskId] = useState<string | null>(null);
+  const [showDoctor, setShowDoctor] = useState(false);
+  const [doctorAlertDismissed, setDoctorAlertDismissed] = useState(false);
 
   const openSearch = useCallback(
     (scoped: boolean) => {
@@ -78,6 +83,40 @@ function App() {
     const lastWithKey = [...state.workspaces].reverse().find((w) => w.linearApiKey);
     return lastWithKey?.linearApiKey ?? state.setup.linearApiKey ?? null;
   }, [state.workspaces, state.setup.linearApiKey]);
+
+  // Nothing is checked before setup completes: there are no repos or workspace keys to check yet,
+  // and the wizard validates the Linear key it collects inline.
+  const doctorConfig = useMemo<DoctorConfig | null>(() => {
+    if (loading || !state.setup.isComplete) return null;
+    return {
+      editor: editorApp,
+      vaultEnabled: state.vault.enabled,
+      repoPaths: [...new Set(state.workspaces.flatMap((w) => w.repos.map((r) => r.localPath)))],
+      linearKeys: state.workspaces.map((w) => ({
+        label: w.name,
+        key: w.linearApiKey ?? null,
+      })),
+    };
+  }, [loading, state.setup.isComplete, state.vault.enabled, state.workspaces, editorApp]);
+
+  const {
+    report: doctorReport,
+    running: doctorRunning,
+    recheck: recheckDoctor,
+  } = useDoctor(doctorConfig);
+
+  const doctorSeverity: CheckSeverity | null = doctorReport
+    ? doctorReport.errors > 0
+      ? "error"
+      : doctorReport.warnings > 0
+        ? "warning"
+        : "ok"
+    : null;
+
+  const missingDependencies = (doctorReport?.checks ?? [])
+    .filter((c) => c.severity === "error")
+    .map((c) => c.label);
+  const showDoctorAlert = missingDependencies.length > 0 && !doctorAlertDismissed;
 
   useKeyboardShortcuts({
     p: {
@@ -145,15 +184,40 @@ function App() {
       <div className="absolute top-0 left-0 right-0 h-[32px] z-[5]" data-drag-region />
       {/* Titlebar divider — spans full width at bottom of macOS traffic lights area */}
       <div className="absolute top-[32px] left-0 right-0 h-px bg-border z-10 pointer-events-none" />
-      {persistError && (
-        <div className="absolute top-[39px] left-0 right-0 z-20 px-4 py-2 bg-danger/10 border-b border-danger/20 flex items-center justify-between">
-          <span className="text-xs text-danger">{persistError}</span>
-          <button
-            onClick={dismissPersistError}
-            className="text-xs text-danger/70 hover:text-danger transition-colors cursor-pointer ml-4 flex-shrink-0"
-          >
-            Dismiss
-          </button>
+      {(persistError || showDoctorAlert) && (
+        <div className="absolute top-[39px] left-0 right-0 z-20">
+          {persistError && (
+            <div className="px-4 py-2 bg-danger/10 border-b border-danger/20 flex items-center justify-between">
+              <span className="text-xs text-danger">{persistError}</span>
+              <button
+                onClick={dismissPersistError}
+                className="text-xs text-danger/70 hover:text-danger transition-colors cursor-pointer ml-4 flex-shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {showDoctorAlert && (
+            <div className="px-4 py-2 bg-warning/10 border-b border-warning/20 flex items-center justify-between">
+              <span className="text-xs text-warning truncate">
+                Missing on this machine: {missingDependencies.join(", ")}
+              </span>
+              <span className="flex items-center gap-3 ml-4 flex-shrink-0">
+                <button
+                  onClick={() => setShowDoctor(true)}
+                  className="text-xs text-warning underline hover:no-underline transition-all cursor-pointer"
+                >
+                  Review
+                </button>
+                <button
+                  onClick={() => setDoctorAlertDismissed(true)}
+                  className="text-xs text-warning/70 hover:text-warning transition-colors cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </span>
+            </div>
+          )}
         </div>
       )}
       {!sidebarCollapsed && (
@@ -177,6 +241,8 @@ function App() {
             vault={state.vault}
             onVaultChange={updateVault}
             onCollapse={toggleSidebarCollapsed}
+            doctorSeverity={doctorSeverity}
+            onOpenDoctor={() => setShowDoctor(true)}
           />
         </ErrorBoundary>
       )}
@@ -208,6 +274,13 @@ function App() {
         selectedWorkspaceId={state.selectedWorkspaceId}
         editorApp={editorApp}
         onReveal={handleReveal}
+      />
+      <DoctorModal
+        open={showDoctor}
+        onClose={() => setShowDoctor(false)}
+        report={doctorReport}
+        running={doctorRunning}
+        onRecheck={recheckDoctor}
       />
     </div>
   );

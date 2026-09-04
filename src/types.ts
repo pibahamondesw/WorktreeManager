@@ -126,6 +126,17 @@ export const ALWAYS_COPIED_CONFIG_PATHS: string[] = [
   ".env.development.local",
 ];
 
+export const EDITOR_REQUIREMENTS: Record<
+  EditorApp,
+  { apps: string[]; clis: string[]; optionalClis: string[] }
+> = {
+  cursor: { apps: ["Cursor"], clis: [], optionalClis: [] },
+  vscode: { apps: ["Visual Studio Code"], clis: [], optionalClis: [] },
+  "claude-code": { apps: [], clis: ["claude"], optionalClis: [] },
+  opencode: { apps: ["OpenCode"], clis: [], optionalClis: [] },
+  zed: { apps: ["Zed"], clis: [], optionalClis: ["zed"] },
+};
+
 export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "cursor", label: "Cursor", isCli: false },
   { id: "vscode", label: "VS Code", isCli: false },
