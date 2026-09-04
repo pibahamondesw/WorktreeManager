@@ -41,6 +41,7 @@ export interface Task {
   members: TaskMember[];
   /** Generated .code-workspace file (Cursor/VS Code), when applicable. */
   workspaceFilePath?: string | null;
+  noteFolder?: string;
   createdAt: string;
 }
 

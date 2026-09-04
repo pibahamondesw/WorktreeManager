@@ -200,6 +200,12 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     expect(t.workspaceFilePath).toBeNull();
   });
 
+  it("preserves task note folders on reload and keeps old tasks flat", () => {
+    const [current, legacy] = normalizeTasks([{ id: "new", noteFolder: "new" }, { id: "old" }]);
+    expect(current.noteFolder).toBe("new");
+    expect(legacy.noteFolder).toBeUndefined();
+  });
+
   it("returns empty arrays for nullish input", () => {
     expect(normalizeWorkspaces(undefined)).toEqual([]);
     expect(normalizeTasks(null)).toEqual([]);

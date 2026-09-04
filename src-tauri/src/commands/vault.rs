@@ -94,9 +94,53 @@ const VAULT_FILES: &[VaultFile] = &[
     },
 ];
 
+const TASK_NOTE_FILES: &[VaultFile] = &[
+    VaultFile {
+        rel_path: "skills/task-log/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/task-log/SKILL.md"),
+        executable: false,
+    },
+    VaultFile {
+        rel_path: "scripts/new-task-note.sh",
+        contents: include_str!("../../../vault-kit/scripts/new-task-note.sh"),
+        executable: true,
+    },
+    VaultFile {
+        rel_path: "scripts/archive-task-note.sh",
+        contents: include_str!("../../../vault-kit/scripts/archive-task-note.sh"),
+        executable: true,
+    },
+];
+
+const TASK_NOTE_GUIDE: &str = "\n\n## Task log storage\n\nBefore resolving or writing a task log, read [skills/task-log/SKILL.md](skills/task-log/SKILL.md). Its storage rules supersede legacy instructions about flat filenames and discarding empty notes.\n";
+
+fn ensure_task_note_support(root: &Path) -> Result<(), String> {
+    for file in TASK_NOTE_FILES {
+        let path = root.join(file.rel_path);
+        if path.exists() {
+            continue;
+        }
+        fs::create_dir_all(path.parent().unwrap())
+            .map_err(|e| format!("create task note support: {e}"))?;
+        write_atomic(&path, file.contents)?;
+        if file.executable {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("chmod {}: {e}", path.display()))?;
+        }
+    }
+    let agents = root.join("AGENTS.md");
+    if agents.exists() {
+        let contents = fs::read_to_string(&agents).map_err(|e| format!("read AGENTS.md: {e}"))?;
+        if !contents.contains("[skills/task-log/SKILL.md](skills/task-log/SKILL.md)") {
+            write_atomic(&agents, &format!("{contents}{TASK_NOTE_GUIDE}"))?;
+        }
+    }
+    Ok(())
+}
+
 /// Scaffold the vault structure at `root`. Idempotent: existing files are
-/// skipped entirely (contents and permissions untouched), missing ones are
-/// created. The app never overwrites what the user owns.
+/// preserved and missing ones created. Task-note support adds a skill reference
+/// to the guide without replacing user instructions.
 fn scaffold_vault_at(root: &Path) -> Result<(), String> {
     for dir in VAULT_DIRS {
         let path = root.join(dir);
@@ -113,7 +157,7 @@ fn scaffold_vault_at(root: &Path) -> Result<(), String> {
                 .map_err(|e| format!("chmod {}: {e}", path.display()))?;
         }
     }
-    Ok(())
+    ensure_task_note_support(root)
 }
 
 /// Obsidian's registry of known vaults. Registering here is what makes
@@ -251,7 +295,7 @@ fn register_vault(vault_path: &str, may_quit_obsidian: bool) -> Result<(), Strin
 }
 
 /// Full scaffold + Obsidian registration. Run on explicit enable: fills any
-/// missing files (never overwrites), and may briefly close Obsidian so the
+/// missing files and the task-note skill reference, and may briefly close Obsidian so the
 /// registration sticks.
 #[tauri::command]
 pub fn scaffold_vault(vault_path: String) -> Result<String, String> {
@@ -262,7 +306,7 @@ pub fn scaffold_vault(vault_path: String) -> Result<String, String> {
 }
 
 /// Startup self-heal for an enabled vault: recreate it only when the root
-/// folder is missing entirely (never resurrects individually deleted files),
+/// folder is missing entirely, repair task-note support,
 /// and keep the Obsidian registration current — without ever disturbing a
 /// running Obsidian.
 #[tauri::command]
@@ -271,6 +315,7 @@ pub fn ensure_vault(vault_path: String) -> Result<String, String> {
     if !root.exists() {
         scaffold_vault_at(root)?;
     }
+    ensure_task_note_support(root)?;
     register_vault(&vault_path, false)?;
     Ok(vault_path)
 }
@@ -302,7 +347,12 @@ mod tests {
         for file in VAULT_FILES {
             let path = root.join(file.rel_path);
             assert!(path.is_file(), "missing file {}", file.rel_path);
-            assert_eq!(fs::read_to_string(&path).unwrap(), file.contents);
+            let expected = if file.rel_path == "AGENTS.md" {
+                format!("{}{TASK_NOTE_GUIDE}", file.contents)
+            } else {
+                file.contents.to_string()
+            };
+            assert_eq!(fs::read_to_string(&path).unwrap(), expected);
         }
         assert!(
             !root.join("_archive").exists(),
@@ -444,12 +494,66 @@ mod tests {
 
         scaffold_vault_at(&root).unwrap();
 
-        assert_eq!(fs::read_to_string(&agents).unwrap(), "user-edited contents");
+        assert_eq!(
+            fs::read_to_string(&agents).unwrap(),
+            format!("user-edited contents{TASK_NOTE_GUIDE}")
+        );
         assert_eq!(
             fs::read_to_string(root.join("templates/plan.md")).unwrap(),
             TEMPLATE_PLAN,
         );
 
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn task_note_upgrade_is_additive_and_idempotent() {
+        let root = temp_dir("task-note-upgrade");
+        fs::write(root.join("AGENTS.md"), "User instructions\n").unwrap();
+        fs::create_dir_all(root.join("task-logs/_archive")).unwrap();
+        fs::write(root.join("task-logs/legacy.md"), "legacy note").unwrap();
+        fs::write(root.join("task-logs/_archive/old.md"), "archived history").unwrap();
+        ensure_task_note_support(&root).unwrap();
+        for file in TASK_NOTE_FILES {
+            assert_eq!(
+                fs::read_to_string(root.join(file.rel_path)).unwrap(),
+                file.contents
+            );
+            if file.executable {
+                assert_eq!(
+                    fs::metadata(root.join(file.rel_path))
+                        .unwrap()
+                        .permissions()
+                        .mode()
+                        & 0o777,
+                    0o755
+                );
+            }
+        }
+        let instructions = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(instructions.starts_with("User instructions\n"));
+        fs::write(root.join("scripts/new-task-note.sh"), "user script").unwrap();
+        ensure_task_note_support(&root).unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+            instructions
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("scripts/new-task-note.sh")).unwrap(),
+            "user script"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("task-logs/legacy.md")).unwrap(),
+            "legacy note"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("task-logs/_archive/old.md")).unwrap(),
+            "archived history"
+        );
+        assert!(!root.join("templates/plan.md").exists());
+        fs::remove_file(root.join("AGENTS.md")).unwrap();
+        ensure_task_note_support(&root).unwrap();
+        assert!(!root.join("AGENTS.md").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }
