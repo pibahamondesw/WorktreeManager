@@ -17,8 +17,22 @@ fn validate_file_name(file_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn archive_dir(notes_path: &str) -> PathBuf {
-    PathBuf::from(notes_path).join("_archive")
+fn note_dirs(notes_path: &str, note_folder: Option<&str>) -> Result<(PathBuf, PathBuf), String> {
+    let active = PathBuf::from(notes_path);
+    let archived = active.join("_archive");
+    match note_folder {
+        None => Ok((active, archived)),
+        Some(folder)
+            if !folder.is_empty()
+                && folder != "_archive"
+                && folder
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') =>
+        {
+            Ok((active.join(folder), archived.join(folder)))
+        }
+        Some(_) => Err("Invalid task note folder".into()),
+    }
 }
 
 /// Write `contents` to `path` via a temp sibling + rename, so a reader never sees
@@ -43,23 +57,23 @@ pub fn ensure_task_note(
     notes_path: String,
     file_name: String,
     contents: String,
+    note_folder: Option<String>,
 ) -> Result<String, String> {
     validate_file_name(&file_name)?;
     let file_name = file_name.trim();
 
-    let dir = PathBuf::from(&notes_path);
-    fs::create_dir_all(archive_dir(&notes_path))
-        .map_err(|e| format!("Failed to create notes folder: {e}"))?;
+    let (dir, archived_dir) = note_dirs(&notes_path, note_folder.as_deref())?;
 
     let active = dir.join(file_name);
     if active.exists() {
         return Ok(active.to_string_lossy().to_string());
     }
-    let archived = archive_dir(&notes_path).join(file_name);
+    let archived = archived_dir.join(file_name);
     if archived.exists() {
         return Ok(archived.to_string_lossy().to_string());
     }
 
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create notes folder: {e}"))?;
     write_atomic(&active, &contents)?;
     Ok(active.to_string_lossy().to_string())
 }
@@ -98,104 +112,38 @@ fn archive_frontmatter(contents: &str, today: &str) -> String {
     out
 }
 
-/// Strip HTML comments from a line, carrying an unterminated comment over to the next
-/// line via `in_comment`. Template scaffolding lives in comments, so it doesn't count
-/// as content.
-fn strip_comments(line: &str, in_comment: &mut bool) -> String {
-    let mut rest = line;
-    let mut out = String::new();
-    loop {
-        if *in_comment {
-            match rest.find("-->") {
-                Some(end) => {
-                    rest = &rest[end + 3..];
-                    *in_comment = false;
-                }
-                None => return out,
-            }
-        }
-        match rest.find("<!--") {
-            Some(start) => {
-                out.push_str(&rest[..start]);
-                rest = &rest[start + 4..];
-                *in_comment = true;
-            }
-            None => {
-                out.push_str(rest);
-                return out;
-            }
-        }
-    }
-}
-
-/// True when a note holds nothing beyond the scaffold the app or the template wrote:
-/// frontmatter, headings, comments, and blank lines.
-///
-/// Archiving such a note would only dilute `_archive/` — a folder that should mean
-/// "tasks that left something behind". Deleting it loses nothing by definition.
-fn note_body_is_empty(contents: &str) -> bool {
-    let mut in_frontmatter = false;
-    let mut in_comment = false;
-
-    for (i, line) in contents.lines().enumerate() {
-        let trimmed = line.trim();
-        if i == 0 && trimmed == "---" {
-            in_frontmatter = true;
-            continue;
-        }
-        if in_frontmatter {
-            if trimmed == "---" {
-                in_frontmatter = false;
-            }
-            continue;
-        }
-        let text = strip_comments(line, &mut in_comment);
-        let text = text.trim();
-        if text.is_empty() || text.starts_with('#') {
-            continue;
-        }
-        return false;
-    }
-    true
-}
-
-/// Move the task note into `_archive/`, flipping `status`/`updated` on the way.
-///
-/// A note whose body is still empty is deleted instead — see [`note_body_is_empty`].
-///
-/// Returns the archive path, or `None` when nothing was archived: no note, one already
-/// archived, or an empty one that was discarded. Deleting a task must never fail
-/// because of a note.
 #[tauri::command]
 pub fn archive_task_note(
     notes_path: String,
     file_name: String,
     today: String,
+    note_folder: Option<String>,
 ) -> Result<Option<String>, String> {
     validate_file_name(&file_name)?;
-    let file_name = file_name.trim();
-
-    let src = PathBuf::from(&notes_path).join(file_name);
-    if !src.exists() {
+    let (active_dir, archived_dir) = note_dirs(&notes_path, note_folder.as_deref())?;
+    let src = active_dir.join(file_name.trim());
+    let dest = archived_dir.join(file_name.trim());
+    let (source, target) = if note_folder.is_some() {
+        (active_dir, archived_dir)
+    } else {
+        (src.clone(), dest.clone())
+    };
+    if !source.exists() {
         return Ok(None);
     }
-    let dest = archive_dir(&notes_path).join(file_name);
-    if dest.exists() {
-        return Ok(None);
+    if target.exists() {
+        return Err(format!(
+            "Archive destination already exists: {}",
+            target.display()
+        ));
     }
-
-    let contents = fs::read_to_string(&src).map_err(|e| format!("Failed to read note: {e}"))?;
-    if note_body_is_empty(&contents) {
-        fs::remove_file(&src).map_err(|e| format!("Failed to discard empty note: {e}"))?;
-        return Ok(None);
-    }
-
-    fs::create_dir_all(archive_dir(&notes_path))
+    fs::create_dir_all(target.parent().unwrap())
         .map_err(|e| format!("Failed to create archive folder: {e}"))?;
-
-    write_atomic(&src, &archive_frontmatter(&contents, &today))?;
-    fs::rename(&src, &dest).map_err(|e| format!("Failed to archive note: {e}"))?;
-
+    if src.exists() {
+        let contents = fs::read_to_string(&src).map_err(|e| format!("Failed to read note: {e}"))?;
+        write_atomic(&src, &archive_frontmatter(&contents, &today))?;
+    }
+    fs::rename(&source, &target).map_err(|e| format!("Failed to archive note: {e}"))?;
     Ok(Some(dest.to_string_lossy().to_string()))
 }
 
@@ -241,47 +189,32 @@ mod tests {
     const APP_SCAFFOLD: &str = "---\ntitle: \"WOR-39 — Evaluar\"\ntype: task-log\nstatus: active\ncreated: 2026-08-04\nupdated: 2026-08-04\ntags: []\ntickets: [WOR-39]\nbranch: \"pedro/wor-39\"\nworkspace: \"WM\"\nrepos: [wm]\nworktrees:\n  - repo: wm\n    path: \"/wt/wm\"\nprs: []\nrelated: []\n---\n\n## Context\n\n## Decisions\n\n## Learnings\n\n## Log\n";
 
     #[test]
-    fn an_untouched_note_counts_as_empty() {
-        assert!(note_body_is_empty(APP_SCAFFOLD));
-        // The vault template's guidance lives in HTML comments.
-        assert!(note_body_is_empty(
-            "---\nstatus: active\n---\n\n## Context\n\n<!-- What this task is about. -->\n\n## Log\n"
-        ));
-        // Including a comment spanning several lines.
-        assert!(note_body_is_empty(
-            "---\nstatus: active\n---\n\n## Log\n\n<!-- a\nb\nc -->\n"
-        ));
-    }
-
-    #[test]
-    fn a_note_with_prose_is_not_empty() {
-        assert!(!note_body_is_empty(&format!(
-            "{APP_SCAFFOLD}\n- Dropped polling.\n"
-        )));
-        // Text sharing a line with a comment still counts.
-        assert!(!note_body_is_empty(
-            "---\nstatus: active\n---\n\n## Log\n\n<!-- hint --> real content\n"
-        ));
-        // Frontmatter alone is not content, but a note without frontmatter can be.
-        assert!(!note_body_is_empty("just a body\n"));
-    }
-
-    #[test]
-    fn archive_discards_an_untouched_note_instead_of_keeping_it() {
-        let dir = std::env::temp_dir().join("wm-notes-test-empty");
+    fn archive_preserves_scaffold_and_user_content() {
+        let dir = std::env::temp_dir().join("wm-notes-test-preserve");
         let _ = fs::remove_dir_all(&dir);
         let path = dir.to_string_lossy().to_string();
-
-        ensure_task_note(path.clone(), "WOR-3-z.md".into(), APP_SCAFFOLD.into()).unwrap();
-        assert_eq!(
-            archive_task_note(path.clone(), "WOR-3-z.md".into(), "2026-08-04".into()).unwrap(),
-            None
-        );
-        // Gone from both folders — nothing of the user's was lost.
-        assert!(!dir.join("WOR-3-z.md").exists());
-        assert!(!dir.join("_archive/WOR-3-z.md").exists());
-
-        let _ = fs::remove_dir_all(&dir);
+        for (i, contents) in [
+            APP_SCAFFOLD,
+            "",
+            "# Decision\n",
+            "<!-- investigation -->\n",
+            "---\nprs: [important]\n---\n",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let name = format!("note-{i}.md");
+            ensure_task_note(path.clone(), name.clone(), (*contents).into(), None).unwrap();
+            let archived = archive_task_note(path.clone(), name.clone(), "2026-09-04".into(), None)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                fs::read_to_string(archived).unwrap(),
+                archive_frontmatter(contents, "2026-09-04")
+            );
+            assert!(!dir.join(name).exists());
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -290,9 +223,15 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let path = dir.to_string_lossy().to_string();
 
-        let first = ensure_task_note(path.clone(), "WOR-1-x.md".into(), "original".into()).unwrap();
-        let second =
-            ensure_task_note(path.clone(), "WOR-1-x.md".into(), "replacement".into()).unwrap();
+        let first =
+            ensure_task_note(path.clone(), "WOR-1-x.md".into(), "original".into(), None).unwrap();
+        let second = ensure_task_note(
+            path.clone(),
+            "WOR-1-x.md".into(),
+            "replacement".into(),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(first, second);
         assert_eq!(fs::read_to_string(&first).unwrap(), "original");
@@ -306,14 +245,15 @@ mod tests {
         let path = dir.to_string_lossy().to_string();
 
         assert_eq!(
-            archive_task_note(path.clone(), "gone.md".into(), "2026-08-04".into()).unwrap(),
+            archive_task_note(path.clone(), "gone.md".into(), "2026-08-04".into(), None).unwrap(),
             None
         );
 
-        ensure_task_note(path.clone(), "WOR-2-y.md".into(), note("active")).unwrap();
-        let archived = archive_task_note(path.clone(), "WOR-2-y.md".into(), "2026-08-04".into())
-            .unwrap()
-            .expect("archived");
+        ensure_task_note(path.clone(), "WOR-2-y.md".into(), note("active"), None).unwrap();
+        let archived =
+            archive_task_note(path.clone(), "WOR-2-y.md".into(), "2026-08-04".into(), None)
+                .unwrap()
+                .expect("archived");
         assert!(archived.contains("_archive"));
         assert!(fs::read_to_string(&archived)
             .unwrap()
@@ -321,13 +261,127 @@ mod tests {
 
         // Second call is a no-op, not an error.
         assert_eq!(
-            archive_task_note(path.clone(), "WOR-2-y.md".into(), "2026-08-04".into()).unwrap(),
+            archive_task_note(path.clone(), "WOR-2-y.md".into(), "2026-08-04".into(), None)
+                .unwrap(),
             None
         );
         // And an already-archived note is not recreated as active.
-        let resolved = ensure_task_note(path.clone(), "WOR-2-y.md".into(), "fresh".into()).unwrap();
+        let resolved =
+            ensure_task_note(path.clone(), "WOR-2-y.md".into(), "fresh".into(), None).unwrap();
         assert!(resolved.contains("_archive"));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn task_folders_isolate_repeated_names_and_archive_attachments() {
+        let dir = std::env::temp_dir().join("wm-notes-test-task-folders");
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.to_string_lossy().to_string();
+        let name = "same-branch.md".to_string();
+        fs::create_dir_all(dir.join("_archive")).unwrap();
+        fs::write(dir.join("_archive").join(&name), "legacy history").unwrap();
+        let first = ensure_task_note(
+            path.clone(),
+            name.clone(),
+            note("active"),
+            Some("task-1".into()),
+        )
+        .unwrap();
+        let second = ensure_task_note(
+            path.clone(),
+            name.clone(),
+            "second task".into(),
+            Some("task-2".into()),
+        )
+        .unwrap();
+        fs::write(dir.join("task-1/attachment.txt"), "attachment").unwrap();
+        let archived = archive_task_note(
+            path.clone(),
+            name.clone(),
+            "2026-09-04".into(),
+            Some("task-1".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(!std::path::Path::new(&first).exists());
+        assert_eq!(fs::read_to_string(&second).unwrap(), "second task");
+        assert_eq!(
+            fs::read_to_string(dir.join("_archive/task-1/attachment.txt")).unwrap(),
+            "attachment"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("_archive").join(&name)).unwrap(),
+            "legacy history"
+        );
+        assert_eq!(
+            ensure_task_note(
+                path.clone(),
+                name.clone(),
+                "replacement".into(),
+                Some("task-1".into())
+            )
+            .unwrap(),
+            archived
+        );
+        assert!(archive_task_note(
+            path.clone(),
+            name.clone(),
+            "2026-09-04".into(),
+            Some("task-1".into())
+        )
+        .unwrap()
+        .is_none());
+        let recreated =
+            ensure_task_note(path.clone(), name, "new task".into(), Some("task-3".into())).unwrap();
+        assert_ne!(recreated, archived);
+        assert_eq!(fs::read_to_string(recreated).unwrap(), "new task");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_invalid_task_folders() {
+        for folder in [
+            "",
+            "..",
+            "../escape",
+            "/absolute",
+            "a/b",
+            "a\\b",
+            "_archive",
+        ] {
+            assert!(note_dirs("/notes", Some(folder)).is_err(), "{folder}");
+        }
+    }
+
+    #[test]
+    fn archive_collision_preserves_both_notes() {
+        let dir = std::env::temp_dir().join("wm-notes-test-collision");
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.to_string_lossy().to_string();
+        ensure_task_note(
+            path.clone(),
+            "note.md".into(),
+            note("active"),
+            Some("task-1".into()),
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("_archive/task-1")).unwrap();
+        fs::write(dir.join("_archive/task-1/note.md"), "previous archive").unwrap();
+        assert!(archive_task_note(
+            path,
+            "note.md".into(),
+            "2026-09-04".into(),
+            Some("task-1".into())
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("task-1/note.md")).unwrap(),
+            note("active")
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("_archive/task-1/note.md")).unwrap(),
+            "previous archive"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 }

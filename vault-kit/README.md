@@ -28,15 +28,20 @@ Everything under [`vault/`](vault/) in this directory, verbatim:
   agent-setup.md       # snippet for your AI tools' global instructions (see below)
   .gitignore
   projects/            # YYYY-MM-<slug>/ — investigations, plans, decisions, documents
-  task-logs/           # one note per task, written by the app
+  task-logs/           # <task-id>/<note>.md, written by the app
     _archive/          # tasks that left something behind
   templates/           # project, investigation, plan, decision, task-log
   scripts/
     new-project.sh     # scaffolds a project folder
     archive.sh         # archives finished projects into _archive/
+    new-task-note.sh    # resolves or creates a task note
+    archive-task-note.sh
+  skills/task-log/     # task-note resolution and writing rules
 ```
 
-**The app never overwrites a file that exists.** Scaffolding is idempotent, and while the vault is enabled the app self-heals on launch: a missing folder is recreated and the Obsidian registration restored — but individually deleted files stay deleted and edited files are never touched. After creation, the vault is yours — edit `AGENTS.md`, fill in the repos table, change the templates.
+**Scaffolding preserves existing files.** While the vault is enabled, startup repairs a missing vault and registers it with Obsidian. It also installs missing task-note scripts and `skills/task-log/SKILL.md`, and appends a reference to that skill to the existing `AGENTS.md` once, preserving custom instructions. These support files are repaired if missing; other individually deleted files stay deleted. Existing support files are not overwritten.
+
+New tasks use `task-logs/<task-id>/<note>.md`; deleting them moves the whole folder to `task-logs/_archive/<task-id>/`. Task IDs distinguish separate creations of the same branch. Older tasks keep their flat paths and are always archived too; their historical name collisions are not migrated automatically.
 
 Two layers, one system: **projects** span tickets and repos; a **task log** is one branch. A task log links up to its project note via `related:`, and anything that outlives the branch belongs in the project. The guide's "Task logs" section in `AGENTS.md` carries the full rules.
 
@@ -64,7 +69,7 @@ Run `/task-log` from inside a worktree and it resolves the right note from the b
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | You create a task        | The app writes the note with frontmatter filled in. It never overwrites an existing note, so your prose is safe.                                                                                      |
 | You are working          | Press `O` (or **More actions → Open notes**) to open the note in Obsidian. Your agent appends distilled decisions and learnings as they happen.                                                       |
-| You delete the task      | The note moves to `task-logs/_archive/` with `status: archived`. The body is untouched. A note nobody wrote in is discarded instead, so `_archive/` keeps meaning "tasks that left something behind". |
+| You delete the task      | The task folder moves to `task-logs/_archive/<task-id>/` with the note marked `status: archived`. Notes and attachments are kept, including untouched templates. |
 | You remove the workspace | Same, once per task — whether or not you keep the worktrees on disk.                                                                                                                                  |
 
 The point is not to have notes. The point is that in three months `grep` over `task-logs/` answers questions your git history cannot — and agents are instructed to do exactly that before non-trivial work.
@@ -73,27 +78,29 @@ The point is not to have notes. The point is that in three months `grep` over `t
 
 ## Without the app
 
-The scripts in [`scripts/`](scripts/) do the task-note work from a terminal — useful for debugging the integration or driving it from other tooling. Both are idempotent and take `TASK_LOGS` from the environment (or `--notes-path`).
+The scripts in [`scripts/`](scripts/) do the task-note work from a terminal — useful for debugging the integration or driving it from other tooling. Both take `TASK_LOGS` from the environment (or `--notes-path`).
 
 ```bash
 export TASK_LOGS=~/Documents/worktreemanager-vault/task-logs
 
-# From inside a worktree — infers issue, branch, and repo from the branch and cwd
+# From inside a worktree — resolves an existing note by its worktree path
 ./scripts/new-task-note.sh
 
 # Explicitly
-./scripts/new-task-note.sh --branch pedrobahamondes/wor-39-evaluar-obsidian --repo worktreemanager
+./scripts/new-task-note.sh --task-id <task-id> --branch pedrobahamondes/wor-39-evaluar-obsidian --repo worktreemanager
 
-./scripts/archive-task-note.sh WOR-39-evaluar-obsidian.md
+./scripts/archive-task-note.sh <task-id>/WOR-39-evaluar-obsidian.md
 ```
 
 ---
 
+Creation without an existing match requires `--task-id`: use the app task ID, or a new UUID for a standalone task. Reuse that ID to resolve the same note. The resolver searches recursively by worktree path, prefers active notes, and refuses ambiguous matches. Legacy flat notes remain supported.
+
 ## Deleting notes
 
-**The app never deletes a note you wrote in.** Deleting a task or removing a workspace archives it; that asymmetry is deliberate. A note that outlived its usefulness costs a few KB and one `grep` hit. A note deleted the moment you merged costs the only artifact that was supposed to survive the worktree — which is the whole point.
+**The app never deletes a task note.** Deleting a task or removing a workspace archives it; that asymmetry is deliberate. A note that outlived its usefulness costs a few KB and one `grep` hit. A note deleted the moment you merged costs the only artifact that was supposed to survive the worktree — which is the whole point.
 
-The one exception is a note nobody touched: on archive, a body that still holds only headings and template comments is discarded rather than filed, since there is nothing there to lose.
+Untouched notes are archived too. The app does not infer whether a note contains valuable information.
 
 If you genuinely want one gone, they are plain Markdown files — delete it in Obsidian, or `rm` it. That is a vault operation, and Obsidian is better at it than a button in WorktreeManager would be.
 

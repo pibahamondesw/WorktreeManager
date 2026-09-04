@@ -65,6 +65,7 @@ export function buildTaskNote(
     `updated: ${date}`,
     "tags: []",
     `tickets: ${yamlList(issueId ? [issueId] : [])}`,
+    `task_id: ${yamlString(task.id)}`,
     `branch: ${yamlString(task.branchName)}`,
     `workspace: ${yamlString(workspace.name)}`,
     `repos: ${yamlList(task.members.map((m) => m.repoName))}`,
@@ -96,7 +97,7 @@ export function taskNoteUri(notePath: string): string {
 export function taskNotePath(vault: VaultConfig, task: Task): string | null {
   const dir = taskLogsPath(vault);
   if (!dir) return null;
-  return `${dir}/${taskNoteFileName(task)}`;
+  return `${dir}/${task.noteFolder ? `${task.noteFolder}/` : ""}${taskNoteFileName(task)}`;
 }
 
 /**
@@ -112,7 +113,12 @@ export async function ensureTaskNote(
   if (!notesPath) return null;
   const { fileName, contents } = buildTaskNote(task, workspace);
   try {
-    return await invoke<string>("ensure_task_note", { notesPath, fileName, contents });
+    return await invoke<string>("ensure_task_note", {
+      notesPath,
+      fileName,
+      contents,
+      noteFolder: task.noteFolder ?? null,
+    });
   } catch {
     return null;
   }
@@ -126,6 +132,7 @@ export async function archiveTaskNote(vault: VaultConfig, task: Task): Promise<v
     await invoke("archive_task_note", {
       notesPath,
       fileName: taskNoteFileName(task),
+      noteFolder: task.noteFolder ?? null,
       today: today(),
     });
   } catch {

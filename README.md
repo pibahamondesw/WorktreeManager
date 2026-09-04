@@ -149,9 +149,9 @@ Enable the vault (setup wizard, or **sidebar footer → Obsidian vault**) and th
 
 - **Created** with the task, with the issue, branch, repos, and worktree paths already in frontmatter.
 - **Opened** with `O` or **More actions → Open notes**.
-- **Archived** when you delete the task or remove the workspace — moved to `task-logs/_archive/` with `status: archived`, body untouched.
+- **Archived** when you delete the task or remove the workspace — moved with their task folder to `task-logs/_archive/<task-id>/` with `status: archived`, body untouched.
 
-Scaffolding never overwrites a file that exists, and the app never overwrites or deletes a note you wrote in. The frontmatter is its business; the prose is yours (or your agent's). The one note it will discard is one nobody touched, so `_archive/` keeps meaning "tasks that left something behind".
+Every new task gets its own `task-logs/<task-id>/` folder, so repeated branch names have separate notes. All notes are archived, including untouched templates. Existing flat notes keep their paths. Startup installs missing task-note support and appends a skill reference to the vault guide while preserving custom instructions.
 
 To make agents write and read the vault, add the one-liner from the vault settings modal to your AI tool's global instructions — it points at `<vault>/agent-setup.md`, which works with any agent that supports global instructions. Details and the optional `/task-log` Claude Code skill live in [`vault-kit/README.md`](vault-kit/README.md) — the agent wiring is the part that decides whether this survives past week three.
 

@@ -3,7 +3,7 @@
 # an existing note is left untouched and its path printed.
 #
 #   TASK_LOGS=~/Documents/work-vault/task-logs ./new-task-note.sh
-#   ./new-task-note.sh --notes-path <dir> --branch <name> --repo <name> --title <text>
+#   ./new-task-note.sh --notes-path <dir> --task-id <id> --branch <name> --repo <name> --title <text>
 #
 # With no --branch, the branch and repo are read from the current git worktree.
 set -euo pipefail
@@ -13,6 +13,7 @@ branch=""
 repo=""
 title=""
 workspace=""
+task_id=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -20,6 +21,7 @@ while [ $# -gt 0 ]; do
     --branch)     branch="${2:-}"; shift 2 ;;
     --repo)       repo="${2:-}"; shift 2 ;;
     --title)      title="${2:-}"; shift 2 ;;
+    --task-id)    task_id="${2:-}"; shift 2 ;;
     --workspace)  workspace="${2:-}"; shift 2 ;;
     -h|--help)    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -73,23 +75,50 @@ else
   file_name="${branch_slug}.md"
 fi
 
-mkdir -p "$notes_path/_archive"
-
-# An existing note wins — including one already archived, and one whose slug
-# drifted but whose issue ID matches.
-for dir in "$notes_path" "$notes_path/_archive"; do
-  if [ -f "$dir/$file_name" ]; then
-    printf '%s\n' "$dir/$file_name"
-    exit 0
-  fi
-  if [ -n "$issue_id" ]; then
-    existing=$(find "$dir" -maxdepth 1 -name "${issue_id}-*.md" -print -quit 2>/dev/null || true)
-    if [ -n "$existing" ]; then
-      printf '%s\n' "$existing"
+if [ -n "$task_id" ]; then
+  case "$task_id" in _archive|*[!a-zA-Z0-9_-]*) echo "Invalid task ID" >&2; exit 2 ;; esac
+  for dir in "$notes_path/$task_id" "$notes_path/_archive/$task_id"; do
+    if [ -f "$dir/$file_name" ]; then
+      printf '%s\n' "$dir/$file_name"
       exit 0
     fi
-  fi
-done
+  done
+elif [ -n "$worktree_path" ]; then
+  for archived in false true; do
+    matches=()
+    while IFS= read -r -d '' candidate; do
+      case "$candidate" in
+        "$notes_path/_archive/"*) [ "$archived" = true ] || continue ;;
+        *) [ "$archived" = false ] || continue ;;
+      esac
+      if awk -v expected="    path: \"$worktree_path\"" '
+        NR == 1 { if ($0 != "---") exit; fm = 1; next }
+        fm && $0 == "---" { exit }
+        fm && /^worktrees:/ { worktrees = 1; next }
+        fm && /^[^[:space:]]/ { worktrees = 0 }
+        fm && worktrees && $0 == expected { found = 1; exit }
+        END { exit (found ? 0 : 1) }
+      ' "$candidate"; then
+        matches+=("$candidate")
+      fi
+    done < <(find "$notes_path" -type f -name '*.md' -print0 2>/dev/null)
+    if [ "${#matches[@]}" -gt 1 ]; then
+      echo "Multiple notes match this worktree; pass --task-id." >&2
+      exit 2
+    fi
+    if [ "${#matches[@]}" -eq 1 ]; then
+      printf '%s\n' "${matches[0]}"
+      exit 0
+    fi
+  done
+fi
+
+if [ -z "$task_id" ]; then
+  echo "No matching note. Pass --task-id with the app task ID (or a new UUID for a standalone task)." >&2
+  exit 2
+fi
+notes_path="$notes_path/$task_id"
+mkdir -p "$notes_path"
 
 today=$(date +%Y-%m-%d)
 [ -n "$title" ] || title="${issue_id:+$issue_id — }$branch"
@@ -103,6 +132,7 @@ today=$(date +%Y-%m-%d)
   echo "updated: $today"
   echo "tags: []"
   echo "tickets: [${issue_id}]"
+  echo "task_id: \"$task_id\""
   echo "branch: \"$branch\""
   echo "workspace: \"$workspace\""
   echo "repos: [${repo}]"

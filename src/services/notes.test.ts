@@ -1,5 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { buildTaskNote, taskNoteFileName, taskNotePath, taskNoteUri } from "./notes";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  buildTaskNote,
+  taskNoteFileName,
+  taskNotePath,
+  taskNoteUri,
+  ensureTaskNote,
+  archiveTaskNote,
+} from "./notes";
+import { invoke } from "@tauri-apps/api/core";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+
 import { Task, TaskMember, VaultConfig, Workspace } from "../types";
 
 function member(repoName: string, path: string): TaskMember {
@@ -128,5 +139,49 @@ describe("taskNoteUri", () => {
     expect(taskNoteUri("/vault/task logs/WOR-39.md")).toBe(
       "obsidian://open?path=%2Fvault%2Ftask%20logs%2FWOR-39.md"
     );
+  });
+});
+
+describe("task note storage", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("isolates identical names by task folder", () => {
+    const first = task({ noteFolder: "t1" });
+    const second = task({ id: "t2", noteFolder: "t2" });
+    expect(taskNotePath(vault, first)).toBe("/vault/task-logs/t1/WOR-39-evaluar-obsidian.md");
+    expect(taskNotePath(vault, second)).toBe("/vault/task-logs/t2/WOR-39-evaluar-obsidian.md");
+    expect(buildTaskNote(first, workspace).contents).toContain('task_id: "t1"');
+  });
+
+  it.each([undefined, "t1"])(
+    "uses the same folder for creation and archive: %s",
+    async (noteFolder) => {
+      const current = task({ noteFolder });
+      vi.mocked(invoke).mockResolvedValue("/resolved/note.md");
+      expect(await ensureTaskNote(vault, workspace, current)).toBe("/resolved/note.md");
+      await archiveTaskNote(vault, current);
+      const location = {
+        notesPath: "/vault/task-logs",
+        fileName: taskNoteFileName(current),
+        noteFolder: noteFolder ?? null,
+      };
+      expect(invoke).toHaveBeenNthCalledWith(
+        1,
+        "ensure_task_note",
+        expect.objectContaining(location)
+      );
+      expect(invoke).toHaveBeenNthCalledWith(
+        2,
+        "archive_task_note",
+        expect.objectContaining(location)
+      );
+    }
+  );
+
+  it("does not touch notes when the vault is disabled", async () => {
+    const disabled = { ...vault, enabled: false };
+    expect(await ensureTaskNote(disabled, workspace, task())).toBeNull();
+    await archiveTaskNote(disabled, task());
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

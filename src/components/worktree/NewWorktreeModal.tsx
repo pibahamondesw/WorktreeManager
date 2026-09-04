@@ -279,8 +279,10 @@ export function NewWorktreeModal({
         onError: (msg) => console.warn("Could not open editor:", msg),
       });
 
+      const taskId = uuid();
       const task: Task = {
-        id: uuid(),
+        id: taskId,
+        noteFolder: taskId,
         workspaceId: workspace.id,
         branchName: taskBranch,
         ...(selected

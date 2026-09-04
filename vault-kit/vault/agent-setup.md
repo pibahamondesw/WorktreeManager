@@ -5,7 +5,7 @@ This vault holds **projects** (investigations, plans, decisions that span ticket
 **At the start of every session, before substantive work:**
 
 1. **Read** this vault's `AGENTS.md` (conventions + vault guide) if the session hasn't loaded it already — do this even when the working directory is elsewhere.
-2. **Small, self-contained task?** Work directly in the repo. If the worktree was created by WorktreeManager, it has a task log in this vault's `task-logs/` folder (named after the branch/issue) — record decisions and learnings there as they happen, following the guide's "Task logs" section.
+2. **Small, self-contained task?** Work directly in the repo. If the worktree was created by WorktreeManager, it has a task log in this vault's `task-logs/` folder (a folder per task ID, with the note named after the branch/issue) — record decisions and learnings there as they happen, following the guide's "Task logs" section.
 3. **Multi-ticket, cross-repo, or research-heavy task?** Open or create a project in the vault:
 
    ```bash
@@ -31,4 +31,4 @@ Make your AI tool load this file (or its contents) globally, once, replacing `<v
 | Cursor | Paste into a global rule (Settings → Rules) |
 | Other | Any tool that supports global/user instructions: paste this file's contents there |
 
-Claude Code users can optionally also install the `/task-log` slash command: copy `skills/task-log/` from the [WorktreeManager repo](https://github.com/pibahamondesw/WorktreeManager/tree/main/vault-kit) to `~/.claude/skills/task-log/`. It packages the task-log writing rules as an explicit command; with this snippet installed it's a convenience, not a requirement.
+Claude Code users can optionally also install the `/task-log` slash command: copy this vault's `skills/task-log/` to `~/.claude/skills/task-log/`. It packages the task-log writing rules as an explicit command; with this snippet installed it's a convenience, not a requirement.

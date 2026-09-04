@@ -16,17 +16,18 @@ git rev-parse --show-toplevel       # the worktree path
 
 The task-logs folder is `$TASK_LOGS` if set; otherwise find it (`task-logs/` at the root of the user's vault) and ask if it is ambiguous.
 
-Derive the filename from the branch:
+New tasks store their note at `task-logs/<task-id>/<ISSUE-ID>-<slug>.md`, or `<branch-slug>.md` without an issue. Archiving moves the entire task folder to `task-logs/_archive/<task-id>/`. Every new task gets a fresh ID, even when it reuses a branch name. Older tasks retain their flat notes in `task-logs/` or `task-logs/_archive/`.
 
-- Branch contains a Linear issue ID (e.g. `pedrobahamondes/wor-39-evaluar-obsidian`) → `WOR-39-<slug>.md`, uppercase issue ID.
-- No issue ID → `<branch-slug>.md`.
+Resolve by **worktree identity**, not by filename or ticket alone:
 
-Then:
+1. Search Markdown files recursively under `task-logs/`, excluding `_archive/`, and inspect the frontmatter `worktrees[].path` for the current worktree's absolute path. If the app task ID is known, use its folder and verify `task_id` first.
+2. Use the unique matching active note. Only if none matches, search `_archive/` the same way; tell the user when writing an archived note. Never choose an archived note over an active match just because its name matches.
+3. Multiple matches require checking `task_id`, branch, workspace and worktree paths. If still ambiguous, ask which task is intended; never pick the first ticket/name match.
+4. If there is no note for an app-managed task, use the app's **Open notes** action to create it with the correct identity. Do not guess a folder from the branch or create a flat replacement. For a standalone task, use a new UUID with `scripts/new-task-note.sh --notes-path <vault>/task-logs --task-id <uuid>` from its worktree.
 
-- **Note exists** → append to it. This is the normal case; WorktreeManager creates the note when the task is created.
-- **Exactly one file starts with the same issue ID** → that is the note, even if the slug differs. Do not create a second one.
-- **No note** → create it from `templates/task-log.md`, filling frontmatter from git (branch, repo name, worktree path, today's date). If the vault has no template, use the structure in the vault's `AGENTS.md`.
-- Check `_archive/` too — if the note is archived and the worktree is back, work in the archived file and tell the user.
+The vault's `scripts/new-task-note.sh --notes-path <vault>/task-logs` can resolve existing notes from the current worktree; it refuses ambiguous matches. Renamed notes can be located by their frontmatter. Use vault-relative paths in wikilinks when filenames repeat across task folders.
+
+Notes are always archived, including untouched templates; never delete one because it appears empty. The storage rules here supersede older flat-filename or empty-note guidance in the vault.
 
 ## 2. Decide what is worth writing
 

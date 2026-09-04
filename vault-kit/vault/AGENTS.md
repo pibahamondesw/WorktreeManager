@@ -92,7 +92,8 @@ Prose is **not** hard-wrapped — one line per paragraph/bullet, blank line betw
       decisions/         # decisions made during the project
       documents/         # images, PDFs, human input, references
   task-logs/             # one note per task (a branch + its worktrees) — see "Task logs"
-    <ISSUE-ID>-<slug>.md # written by WorktreeManager at task creation
+    <task-id>/
+      <ISSUE-ID>-<slug>.md # written by WorktreeManager at task creation
     _archive/            # task logs whose task was deleted
   templates/             # note templates — copy and rename when creating notes
     project.md           # scaffolded by new-project.sh as <slug>_project.md
@@ -429,15 +430,17 @@ mention in the body is left alone. (Manual fallback, if ever needed: edit
 
 ```text
 task-logs/
-  WOR-39-evaluar-obsidian.md
-  _archive/                    # tasks that left something behind
+  <task-id>/
+    WOR-39-evaluar-obsidian.md
+  _archive/
+    <previous-task-id>/
 ```
 
-**The app owns the frontmatter; you and your agents own the body.** WorktreeManager creates the note when the task is created and archives it when the task is deleted. It never overwrites or deletes a note with anything written in it — but a note still holding only the empty scaffold is discarded rather than archived, so `_archive/` does not fill up with stubs. Writing something real is what makes a log survive.
+**The app owns the frontmatter; you and your agents own the body.** WorktreeManager creates the note when the task is created and archives the entire task folder when the task is deleted. All notes survive, including untouched templates. Task folders may also hold attachments.
 
 ### Naming
 
-`<ISSUE-ID>-<kebab-slug>.md`, e.g. `WOR-39-evaluar-obsidian.md`. With no Linear issue, use the branch slug: `fix-flaky-webhook-spec.md`. Never a generic name — the folder already says it's a task log.
+`<ISSUE-ID>-<kebab-slug>.md`, e.g. `WOR-39-evaluar-obsidian.md`. With no Linear issue, use the branch slug: `fix-flaky-webhook-spec.md`. Each new task has its own `<task-id>/` folder, even when a branch name is reused. Older tasks keep their flat notes. Resolve notes by `task_id` or `worktrees[].path`, searching active folders before archives; ticket or filename matches alone are not sufficient. Use vault-relative wikilinks when filenames repeat.
 
 ### Frontmatter
 

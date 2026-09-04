@@ -53,6 +53,7 @@ export function normalizeTasks(raw: any[] | undefined | null): Task[] {
     linearIssueTitle: t.linearIssueTitle,
     linearIssueIdentifier: t.linearIssueIdentifier,
     workspaceFilePath: t.workspaceFilePath ?? null,
+    noteFolder: t.noteFolder,
     createdAt: t.createdAt ?? new Date().toISOString(),
     members: (t.members ?? []).map((m: any) => ({
       repoId: m.repoId,
