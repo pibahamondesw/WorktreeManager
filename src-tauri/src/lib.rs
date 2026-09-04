@@ -31,6 +31,7 @@ pub fn run() {
             commands::git::git_worktree_status,
             commands::git::git_worktree_status_batch,
             commands::git::git_remote_url,
+            commands::doctor::doctor_probe,
             commands::doppler::doppler_setup,
             commands::doppler::doppler_cleanup,
             commands::node_deps::install_node_deps,

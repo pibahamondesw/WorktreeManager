@@ -56,6 +56,13 @@ fn has_setup_block(config: &Path) -> bool {
     }
 }
 
+/// Whether this repo commits a Doppler config that `doppler setup --no-interactive` can act on —
+/// the same precondition `doppler_setup` checks, exposed so the startup doctor only asks for the
+/// `doppler` CLI when a repo would actually use it.
+pub(crate) fn repo_uses_doppler(repo_path: &str) -> bool {
+    doppler_config_path(repo_path).is_some_and(|config| has_setup_block(&config))
+}
+
 /// Run `doppler setup --no-interactive` in the worktree when a committed Doppler config with a
 /// `setup:` block is present and the CLI is installed. Never fails hard: missing config,
 /// missing `setup:` block, or a missing CLI are reported via `status` as `skipped_*`, and a

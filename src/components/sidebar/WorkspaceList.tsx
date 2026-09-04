@@ -5,7 +5,16 @@ import { EditWorkspaceModal } from "./EditWorkspaceModal";
 import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
 import { ThemePicker } from "../ui/ThemePicker";
 import { VaultSettingsModal } from "./VaultSettingsModal";
-import { PlusIcon, GearIcon, SunIcon, GripIcon, NotebookIcon, SidebarIcon } from "../ui/Icons";
+import {
+  PlusIcon,
+  GearIcon,
+  SunIcon,
+  GripIcon,
+  NotebookIcon,
+  SidebarIcon,
+  WrenchIcon,
+} from "../ui/Icons";
+import { CheckSeverity } from "../../services/doctor";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -29,6 +38,9 @@ interface WorkspaceListProps {
   vault: VaultConfig;
   onVaultChange: (vault: VaultConfig) => void;
   onCollapse: () => void;
+  /** Worst severity the dependency check found, or null before it has run. */
+  doctorSeverity: CheckSeverity | null;
+  onOpenDoctor: () => void;
 }
 
 export function WorkspaceList({
@@ -50,6 +62,8 @@ export function WorkspaceList({
   vault,
   onVaultChange,
   onCollapse,
+  doctorSeverity,
+  onOpenDoctor,
 }: WorkspaceListProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -246,6 +260,26 @@ export function WorkspaceList({
         >
           <NotebookIcon />
           Obsidian vault
+        </button>
+        <button
+          onClick={onOpenDoctor}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
+          title="Check required tools and API keys"
+        >
+          <WrenchIcon size={14} />
+          Dependencies
+          {doctorSeverity && doctorSeverity !== "ok" && (
+            <span
+              className={`ml-auto w-1.5 h-1.5 rounded-full ${
+                doctorSeverity === "error" ? "bg-danger" : "bg-warning"
+              }`}
+              title={
+                doctorSeverity === "error"
+                  ? "Something this setup needs is missing"
+                  : "Something worth a look"
+              }
+            />
+          )}
         </button>
         <button
           onClick={() => setShowThemes(true)}
