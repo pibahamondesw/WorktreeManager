@@ -41,6 +41,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # tauri-action looks for artifacts under src-tauri/target. The `tauri`
+          # npm script otherwise redirects the build to a shared local cache dir,
+          # which makes the bundle land somewhere the action never inspects.
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
           # Updater signing (free, from `tauri signer generate`). Required so the
           # in-app updater will accept the downloaded build.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
