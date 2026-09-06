@@ -114,7 +114,7 @@ function App() {
     : null;
 
   const missingDependencies = (doctorReport?.checks ?? [])
-    .filter((c) => c.severity === "error")
+    .filter((c) => c.scope === "app" && c.severity === "error")
     .map((c) => c.label);
   const showDoctorAlert = missingDependencies.length > 0 && !doctorAlertDismissed;
 
@@ -179,13 +179,10 @@ function App() {
   }
 
   return (
-    <div className="flex h-full relative">
-      {/* Full-width drag region at the very top for window dragging */}
-      <div className="absolute top-0 left-0 right-0 h-[32px] z-[5]" data-drag-region />
-      {/* Titlebar divider — spans full width at bottom of macOS traffic lights area */}
-      <div className="absolute top-[32px] left-0 right-0 h-px bg-border z-10 pointer-events-none" />
+    <div className="flex flex-col h-full relative">
+      <div className="h-[33px] shrink-0 bg-bg-secondary border-b border-border" data-drag-region />
       {(persistError || showDoctorAlert) && (
-        <div className="absolute top-[39px] left-0 right-0 z-20">
+        <div className="shrink-0 bg-bg-secondary">
           {persistError && (
             <div className="px-4 py-2 bg-danger/10 border-b border-danger/20 flex items-center justify-between">
               <span className="text-xs text-danger">{persistError}</span>
@@ -198,9 +195,12 @@ function App() {
             </div>
           )}
           {showDoctorAlert && (
-            <div className="px-4 py-2 bg-warning/10 border-b border-warning/20 flex items-center justify-between">
-              <span className="text-xs text-warning truncate">
-                Missing on this machine: {missingDependencies.join(", ")}
+            <div
+              role="status"
+              className="px-4 py-2 bg-warning/10 border-b border-warning/20 flex items-center justify-between gap-3"
+            >
+              <span className="min-w-0 text-xs text-warning break-words">
+                WorktreeManager needs attention: {missingDependencies.join(", ")}
               </span>
               <span className="flex items-center gap-3 ml-4 flex-shrink-0">
                 <button
@@ -220,51 +220,53 @@ function App() {
           )}
         </div>
       )}
-      {!sidebarCollapsed && (
-        <ErrorBoundary fallbackClassName="w-60 h-full bg-bg-secondary border-r border-border">
-          <WorkspaceList
-            workspaces={state.workspaces}
-            tasks={state.tasks}
-            selectedWorkspaceId={state.selectedWorkspaceId}
-            onSelect={handleSelectWorkspace}
-            onAdd={addWorkspace}
-            onUpdate={updateWorkspace}
-            onRemove={removeWorkspace}
-            onReorder={reorderWorkspaces}
-            showAddExternal={showAddWorkspace}
-            onCloseAddExternal={() => setShowAddWorkspace(false)}
-            themeId={themeId}
-            onThemeChange={updateThemeId}
-            customColors={customColors}
-            onCustomColorsChange={updateCustomColors}
-            defaultLinearApiKey={defaultLinearApiKey}
+      <div className="flex flex-1 min-h-0">
+        {!sidebarCollapsed && (
+          <ErrorBoundary fallbackClassName="w-60 h-full bg-bg-secondary border-r border-border">
+            <WorkspaceList
+              workspaces={state.workspaces}
+              tasks={state.tasks}
+              selectedWorkspaceId={state.selectedWorkspaceId}
+              onSelect={handleSelectWorkspace}
+              onAdd={addWorkspace}
+              onUpdate={updateWorkspace}
+              onRemove={removeWorkspace}
+              onReorder={reorderWorkspaces}
+              showAddExternal={showAddWorkspace}
+              onCloseAddExternal={() => setShowAddWorkspace(false)}
+              themeId={themeId}
+              onThemeChange={updateThemeId}
+              customColors={customColors}
+              onCustomColorsChange={updateCustomColors}
+              defaultLinearApiKey={defaultLinearApiKey}
+              vault={state.vault}
+              onVaultChange={updateVault}
+              onCollapse={toggleSidebarCollapsed}
+              doctorSeverity={doctorSeverity}
+              onOpenDoctor={() => setShowDoctor(true)}
+            />
+          </ErrorBoundary>
+        )}
+        <ErrorBoundary fallbackClassName="flex-1">
+          <WorktreeList
+            tasks={selectedTasks}
+            workspace={selectedWorkspace}
             vault={state.vault}
-            onVaultChange={updateVault}
-            onCollapse={toggleSidebarCollapsed}
-            doctorSeverity={doctorSeverity}
-            onOpenDoctor={() => setShowDoctor(true)}
+            onTaskCreated={addTask}
+            onTaskDeleted={removeTask}
+            editorApp={editorApp}
+            onEditorChange={updateEditorApp}
+            workspaceSwitching={workspaceSwitching}
+            onWorkspaceReady={clearWorkspaceSwitching}
+            onOpenSearch={() => openSearch(false)}
+            searchOpen={search.open}
+            revealTaskId={revealTaskId}
+            onRevealHandled={() => setRevealTaskId(null)}
+            sidebarCollapsed={sidebarCollapsed}
+            onExpandSidebar={toggleSidebarCollapsed}
           />
         </ErrorBoundary>
-      )}
-      <ErrorBoundary fallbackClassName="flex-1">
-        <WorktreeList
-          tasks={selectedTasks}
-          workspace={selectedWorkspace}
-          vault={state.vault}
-          onTaskCreated={addTask}
-          onTaskDeleted={removeTask}
-          editorApp={editorApp}
-          onEditorChange={updateEditorApp}
-          workspaceSwitching={workspaceSwitching}
-          onWorkspaceReady={clearWorkspaceSwitching}
-          onOpenSearch={() => openSearch(false)}
-          searchOpen={search.open}
-          revealTaskId={revealTaskId}
-          onRevealHandled={() => setRevealTaskId(null)}
-          sidebarCollapsed={sidebarCollapsed}
-          onExpandSidebar={toggleSidebarCollapsed}
-        />
-      </ErrorBoundary>
+      </div>
       <QuickSearchModal
         open={search.open}
         onClose={() => setSearch((s) => ({ ...s, open: false }))}

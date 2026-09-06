@@ -129,8 +129,11 @@ describe("runDoctor", () => {
         usage: { package_managers: ["pnpm"], doppler: false },
       })
     );
-    expect(check(withPnpm, "cli:pnpm")?.severity).toBe("error");
-    expect(check(withPnpm, "cli:node")?.severity).toBe("error");
+    expect(check(withPnpm, "cli:pnpm")?.severity).toBe("warning");
+    expect(check(withPnpm, "cli:pnpm")?.scope).toBe("repository");
+    expect(withPnpm.errors).toBe(0);
+    expect(withPnpm.warnings).toBe(0);
+    expect(check(withPnpm, "cli:node")?.severity).toBe("warning");
     expect(check(withPnpm, "cli:yarn")).toBeUndefined();
   });
 
@@ -148,7 +151,10 @@ describe("runDoctor", () => {
         usage: { package_managers: [], doppler: true },
       })
     );
-    expect(check(used, "cli:doppler")?.severity).toBe("error");
+    expect(check(used, "cli:doppler")?.severity).toBe("warning");
+    expect(check(used, "cli:doppler")?.scope).toBe("repository");
+    expect(used.errors).toBe(0);
+    expect(used.warnings).toBe(0);
   });
 
   it("checks Obsidian only while the vault is enabled", async () => {
