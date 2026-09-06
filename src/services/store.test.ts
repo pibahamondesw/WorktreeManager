@@ -56,9 +56,13 @@ function storedSecrets(): { setup: string | null; workspaces: Record<string, str
 }
 
 /** Re-imports the module so its cached store handle and secrets are rebuilt per test. */
-async function loadState() {
+async function loadModule() {
   vi.resetModules();
-  return (await import("./store")).loadState();
+  return await import("./store");
+}
+
+async function loadState() {
+  return (await loadModule()).loadState();
 }
 
 const workspace = {
@@ -204,6 +208,85 @@ describe("loadState when the keychain refuses", () => {
 
     expect(JSON.stringify(read(STORE))).toContain("lin_live");
     expect(read(STORE).schemaVersion).toBe(3);
+  });
+});
+
+describe("loadState when the keychain refuses mid-migration", () => {
+  function seedV2(): void {
+    seed(STORE, {
+      schemaVersion: 2,
+      setup: { linearApiKey: "lin_live", isComplete: true, githubToken: "github_pat_dead" },
+      vault: { enabled: false, path: null },
+      workspaces: [workspace],
+      tasks: [],
+      selectedWorkspaceId: "w1",
+      repos: [{ id: "r1", name: "api", localPath: "/a", linearApiKey: "lin_stale" }],
+    });
+  }
+
+  it("comes up rather than failing the load outright", async () => {
+    seedV2();
+    keychain.writable = false;
+
+    const state = await loadState();
+
+    expect(state.setup.linearApiKey).toBe("lin_live");
+    expect(state.workspaces[0].linearApiKey).toBe("lin_live");
+  });
+
+  it("leaves the version unbumped so the move retries next launch", async () => {
+    seedV2();
+    keychain.writable = false;
+
+    await loadState();
+
+    expect(read(STORE).schemaVersion).toBe(2);
+  });
+});
+
+describe("persist when the keychain could not be read", () => {
+  function seedV4(): void {
+    seed(STORE, {
+      schemaVersion: 4,
+      setup: { linearApiKey: null, isComplete: true },
+      vault: { enabled: false, path: null },
+      workspaces: [{ ...workspace, linearApiKey: null }],
+      tasks: [],
+      selectedWorkspaceId: "w1",
+    });
+    keychain.value = JSON.stringify({ setup: "lin_live", workspaces: { w1: "lin_ws" } });
+  }
+
+  it("refuses the write rather than replacing keys it never saw", async () => {
+    seedV4();
+    keychain.readable = false;
+    const store = await loadModule();
+    await store.loadState();
+
+    await expect(store.persist([["workspaces", []]])).rejects.toThrow(/refusing to overwrite/);
+  });
+
+  it("leaves the stored bundle intact for the next authorized launch", async () => {
+    seedV4();
+    keychain.readable = false;
+    const before = keychain.value;
+    const store = await loadModule();
+    await store.loadState();
+
+    await store.persist([["workspaces", []]]).catch(() => {});
+
+    expect(keychain.value).toBe(before);
+  });
+
+  it("still writes when the keychain is readable and merely empty", async () => {
+    seedV4();
+    keychain.value = null;
+    const store = await loadModule();
+    await store.loadState();
+
+    await store.persist([["workspaces", []]]);
+
+    expect(storedSecrets()).toEqual({ setup: null, workspaces: {} });
   });
 });
 

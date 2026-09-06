@@ -1,4 +1,4 @@
-import { Component, ReactNode } from "react";
+import { Component, Fragment, ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
@@ -7,12 +7,13 @@ interface Props {
 
 interface State {
   error: Error | null;
+  remountKey: number;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null };
+  state: State = { error: null, remountKey: 0 };
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
   }
 
@@ -43,7 +44,7 @@ export class ErrorBoundary extends Component<Props, State> {
               {this.state.error.message}
             </p>
             <button
-              onClick={() => this.setState({ error: null })}
+              onClick={() => this.setState((s) => ({ error: null, remountKey: s.remountKey + 1 }))}
               className="px-4 py-1.5 text-xs font-medium rounded-lg bg-bg-tertiary text-text-primary hover:bg-bg-hover border border-border transition-colors cursor-pointer"
             >
               Try Again
@@ -53,6 +54,6 @@ export class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    return this.props.children;
+    return <Fragment key={this.state.remountKey}>{this.props.children}</Fragment>;
   }
 }

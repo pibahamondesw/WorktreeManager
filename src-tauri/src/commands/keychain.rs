@@ -6,14 +6,13 @@
 //! is the frontend's concern.
 
 use keyring::{Entry, Error};
+use tauri::AppHandle;
 
-/// Keychain attributes identifying our item. `SERVICE` is what shows up in Keychain
-/// Access; it is only a label, unrelated to the code signature the ACL is keyed on.
-const SERVICE: &str = "com.worktreemanager.dev";
 const ACCOUNT: &str = "linear-api-keys";
 
-fn entry() -> Result<Entry, String> {
-    Entry::new(SERVICE, ACCOUNT).map_err(|e| format!("Failed to open keychain entry: {e}"))
+fn entry(app: &AppHandle) -> Result<Entry, String> {
+    Entry::new(&app.config().identifier, ACCOUNT)
+        .map_err(|e| format!("Failed to open keychain entry: {e}"))
 }
 
 /// Read the stored secret, or `None` when nothing has been stored yet.
@@ -22,8 +21,8 @@ fn entry() -> Result<Entry, String> {
 /// instead, so a caller about to drop its own on-disk copy can tell "nothing here" from
 /// "could not look" and keep the copy in the second case.
 #[tauri::command]
-pub fn keychain_get() -> Result<Option<String>, String> {
-    match entry()?.get_password() {
+pub fn keychain_get(app: AppHandle) -> Result<Option<String>, String> {
+    match entry(&app)?.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(Error::NoEntry) => Ok(None),
         Err(e) => Err(format!("Failed to read from keychain: {e}")),
@@ -31,8 +30,8 @@ pub fn keychain_get() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub fn keychain_set(value: String) -> Result<(), String> {
-    entry()?
+pub fn keychain_set(app: AppHandle, value: String) -> Result<(), String> {
+    entry(&app)?
         .set_password(&value)
         .map_err(|e| format!("Failed to write to keychain: {e}"))
 }
