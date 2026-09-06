@@ -13,6 +13,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "tauri": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/worktreemanager-target} tauri",
+    "tauri:dev:shared": "WTM_DEV_SIGNING_IDENTITY=\"${WTM_DEV_SIGNING_IDENTITY:-WorktreeManager Development}\" pnpm run tauri dev",
     "tauri:dev:local": "CARGO_TARGET_DIR=$HOME/.cache/worktreemanager-target tauri dev --config src-tauri/tauri.dev.conf.json",
     "lint": "pnpm run lint:ts && pnpm run lint:rust",
     "lint:ts": "eslint src --ext .ts,.tsx && eslint eslint.config.js",
