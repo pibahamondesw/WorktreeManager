@@ -76,7 +76,10 @@ export function DoctorModal({ open, onClose, report, running, onRecheck }: Docto
                     {STATUS_LABELS[check.status]}
                   </Badge>
                 </div>
-                <p className="text-xs text-text-muted">{check.reason}</p>
+                <p className="text-xs text-text-muted">
+                  {check.scope === "repository" && "Optional for repositories. "}
+                  {check.reason}
+                </p>
                 {check.detail && (
                   <p className="text-xs text-text-secondary font-mono select-text break-all">
                     {check.detail}
@@ -141,10 +144,14 @@ function Remedy({
 
 function summary(report: DoctorReport | null, running: boolean): string {
   if (!report) return running ? "Checking your machine…" : "Not checked yet.";
-  if (report.errors === 0 && report.warnings === 0) {
+  const suggestions = report.checks.filter(
+    (check) => check.scope === "repository" && check.severity !== "ok"
+  ).length;
+  if (report.errors === 0 && report.warnings === 0 && suggestions === 0) {
     return "Everything this setup needs is installed.";
   }
   const parts = [
+    suggestions > 0 ? `${suggestions} optional repo ${plural(suggestions, "suggestion")}` : null,
     report.errors > 0 ? `${report.errors} ${plural(report.errors, "problem")}` : null,
     report.warnings > 0 ? `${report.warnings} ${plural(report.warnings, "note")}` : null,
   ].filter((p): p is string => p !== null);

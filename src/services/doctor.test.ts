@@ -129,8 +129,11 @@ describe("runDoctor", () => {
         usage: { package_managers: ["pnpm"], doppler: false },
       })
     );
-    expect(check(withPnpm, "cli:pnpm")?.severity).toBe("error");
-    expect(check(withPnpm, "cli:node")?.severity).toBe("error");
+    expect(check(withPnpm, "cli:pnpm")?.severity).toBe("warning");
+    expect(check(withPnpm, "cli:pnpm")?.scope).toBe("repository");
+    expect(withPnpm.errors).toBe(0);
+    expect(withPnpm.warnings).toBe(0);
+    expect(check(withPnpm, "cli:node")?.severity).toBe("warning");
     expect(check(withPnpm, "cli:yarn")).toBeUndefined();
   });
 
@@ -148,7 +151,10 @@ describe("runDoctor", () => {
         usage: { package_managers: [], doppler: true },
       })
     );
-    expect(check(used, "cli:doppler")?.severity).toBe("error");
+    expect(check(used, "cli:doppler")?.severity).toBe("warning");
+    expect(check(used, "cli:doppler")?.scope).toBe("repository");
+    expect(used.errors).toBe(0);
+    expect(used.warnings).toBe(0);
   });
 
   it("checks Obsidian only while the vault is enabled", async () => {
@@ -189,6 +195,21 @@ describe("runDoctor", () => {
 });
 
 describe("runDoctor — Linear keys", () => {
+  it("reports a Keychain failure instead of missing Linear keys", async () => {
+    const validateKey = vi.fn();
+    const report = await runDoctor(
+      config({
+        keychainError: "Failed to read from keychain: authorization denied",
+        linearKeys: [{ label: "WorktreeManager", key: null }],
+      }),
+      { probe: () => Promise.resolve(healthyProbe()), validateKey, online: () => true }
+    );
+    expect(check(report, "keychain-access")?.detail).toContain("authorization denied");
+    expect(check(report, "keychain-access")?.severity).toBe("error");
+    expect(check(report, "linear-api-key")).toBeUndefined();
+    expect(validateKey).not.toHaveBeenCalled();
+  });
+
   it("skips the check when no workspace exists yet", async () => {
     const report = await run(config(), healthyProbe());
     expect(check(report, "linear-api-key")).toBeUndefined();

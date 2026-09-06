@@ -32,7 +32,6 @@ export function WorktreeListHeader({
 }: WorktreeListHeaderProps) {
   return (
     <>
-      <div className="h-[32px] flex-shrink-0" data-drag-region />
       <div
         className="flex items-center justify-between flex-wrap gap-2 px-6 min-h-12 py-2 border-b border-border flex-shrink-0"
         data-drag-region

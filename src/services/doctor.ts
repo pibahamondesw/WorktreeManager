@@ -45,6 +45,7 @@ export type CheckSeverity = "ok" | "warning" | "error";
 export interface DependencyCheck {
   id: string;
   label: string;
+  scope: "app" | "repository";
   status: CheckStatus;
   /** `error` blocks something the current setup needs; `warning` degrades or wasn't verifiable. */
   severity: CheckSeverity;
@@ -75,6 +76,7 @@ export interface DoctorConfig {
   /** Main clones of every configured repo, across all workspaces. */
   repoPaths: string[];
   linearKeys: LinearKeySource[];
+  keychainError?: string | null;
 }
 
 // ---- Catalogue ----
@@ -227,7 +229,18 @@ export async function runDoctor(
 
   const [probe, linear] = await Promise.all([
     deps.probe({ clis, apps, repoPaths: config.repoPaths }),
-    checkLinearKeys(config.linearKeys, deps),
+    config.keychainError
+      ? Promise.resolve<DependencyCheck>({
+          id: "keychain-access",
+          label: "Keychain access",
+          scope: "app",
+          status: "broken",
+          severity: "error",
+          reason:
+            "Could not read your saved Linear credentials. Re-check to retry Keychain access.",
+          detail: config.keychainError,
+        })
+      : checkLinearKeys(config.linearKeys, deps),
   ]);
 
   const checks = [
@@ -238,8 +251,8 @@ export async function runDoctor(
 
   return {
     checks,
-    errors: checks.filter((c) => c.severity === "error").length,
-    warnings: checks.filter((c) => c.severity === "warning").length,
+    errors: checks.filter((c) => c.scope === "app" && c.severity === "error").length,
+    warnings: checks.filter((c) => c.scope === "app" && c.severity === "warning").length,
   };
 }
 
@@ -250,17 +263,20 @@ function cliChecks(
 ): DependencyCheck[] {
   const { package_managers: managers, doppler } = probe.usage;
 
-  const required = new Set(["git", ...requirements.clis, ...managers]);
-  // Managers are useless without the runtime underneath them.
-  if (managers.length > 0) required.add("node");
-  if (doppler) required.add("doppler");
+  const required = new Set(["git", ...requirements.clis]);
+  const repository = new Set(managers);
+  if (managers.length > 0) repository.add("node");
+  if (doppler) repository.add("doppler");
 
   const optional = new Set(["gh", ...requirements.optionalClis]);
 
   const byName = new Map(probe.clis.map((c) => [c.name, c]));
-  return unique([...required, ...optional])
+  return unique([...required, ...optional, ...repository])
     .sort(byCliOrder)
-    .map((name) => cliCheck(name, byName.get(name), required.has(name)));
+    .map((name) => ({
+      ...cliCheck(name, byName.get(name), required.has(name)),
+      scope: repository.has(name) ? ("repository" as const) : ("app" as const),
+    }));
 }
 
 function byCliOrder(a: string, b: string): number {
@@ -276,6 +292,7 @@ function cliCheck(name: string, probe: CliProbe | undefined, required: boolean):
   const status = cliStatus(probe);
   return {
     id: `cli:${name}`,
+    scope: "app",
     label: meta.label,
     status,
     severity: severityFor(status, required),
@@ -305,6 +322,7 @@ function appChecks(probe: ProbeReport): DependencyCheck[] {
     const meta = APP_TOOLS[app.name] ?? { label: app.name, reason: "Used by the app." };
     return {
       id: `app:${app.name}`,
+      scope: "app" as const,
       label: meta.label,
       status: app.installed ? ("ok" as const) : ("missing" as const),
       severity: app.installed ? ("ok" as const) : ("error" as const),
@@ -334,6 +352,7 @@ async function checkLinearKeys(
 
   const base = {
     id: LINEAR_CHECK_ID,
+    scope: "app" as const,
     label: "Linear API key",
     reason: LINEAR_REASON,
     url: "https://linear.app/settings/api",

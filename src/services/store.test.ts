@@ -320,12 +320,31 @@ describe("loadState on an already-migrated store", () => {
     expect(state.workspaces[0].linearApiKey).toBe("lin_ws");
   });
 
+  it("restores credentials on retry and allows subsequent saves", async () => {
+    seedV4();
+    keychain.readable = false;
+    const store = await loadModule();
+    const state = await store.loadState();
+    await expect(store.restoreKeychainSecrets(() => state)).rejects.toThrow("authorization denied");
+    keychain.readable = true;
+    const restored = await store.restoreKeychainSecrets(() => ({
+      ...state,
+      workspaces: state.workspaces.map((workspace) => ({ ...workspace, name: "renamed" })),
+    }));
+    expect(restored.workspaces[0].name).toBe("renamed");
+    expect(restored.workspaces[0].linearApiKey).toBe("lin_ws");
+    await store.persist([["workspaces", restored.workspaces]]);
+    expect(storedSecrets().workspaces.w1).toBe("lin_ws");
+  });
+
   it("comes up without keys, not broken, when the keychain cannot be read", async () => {
     seedV4();
     keychain.readable = false;
 
-    const state = await loadState();
+    const onKeychainError = vi.fn();
+    const state = await (await loadModule()).loadState(onKeychainError);
 
+    expect(onKeychainError).toHaveBeenCalledWith("Error: authorization denied");
     expect(state.setup.linearApiKey).toBeNull();
     expect(state.workspaces[0].linearApiKey).toBeNull();
     expect(state.workspaces[0].name).toBe("api");

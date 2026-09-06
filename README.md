@@ -86,13 +86,73 @@ cp -R src-tauri/target/release/bundle/macos/WorktreeManager.app /Applications/
 
 ### Development mode
 
-To run the app with hot-reload:
+All Tauri development commands start Vite on `localhost:5173` and open the native app with hot reload.
+
+| Command                     | App data and Linear credentials                           | Development signing                                                     |
+| --------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `pnpm run tauri:dev:shared` | Shares the installed app's store and Keychain entry       | Signs each launch with a stable certificate; setup below                |
+| `pnpm run tauri:dev:local`  | Separate store and Keychain entry; configure Linear again | Default development signature                                           |
+| `pnpm run tauri dev`        | Shares the installed app's store and Keychain entry       | Default development signature, unless `WTM_DEV_SIGNING_IDENTITY` is set |
+
+The shared identifier is `com.worktreemanager.dev`; the isolated identifier is `com.worktreemanager.dev.local`. Sharing includes settings, workspaces, tasks, and Linear credentials. Close the installed app before running shared development: both instances can write to the same store.
+
+#### One-time signing setup for shared development
+
+The default development signature can change when the Rust executable is rebuilt. A stable code-signing certificate lets you retain the same signing identity across builds. It does not automatically grant access to an existing Keychain item.
+
+1. Open **Keychain Access** from Terminal:
+
+   ```bash
+   open -a "Keychain Access"
+   ```
+
+2. In the macOS menu bar at the top of the screen, next to the Apple menu, choose **Keychain Access → Certificate Assistant → Create a Certificate…**. Set:
+   - **Name:** `WorktreeManager Development`
+   - **Identity Type:** `Self Signed Root`
+   - **Certificate Type:** `Code Signing`
+
+   Click **Create**, accept the confirmation if shown, then **Done**. If asked for a keychain, choose **login**; some macOS versions do not show that prompt. Keep this certificate and its private key on your Mac.
+
+3. Find **WorktreeManager Development** in Keychain Access and double-click the certificate. Expand **Trust** and set only **Code Signing → Always Trust**. Close the window and authenticate if prompted.
+
+4. Verify the identity is usable:
+
+   ```bash
+   security find-identity -v -p codesigning
+   ```
+
+   The output should list **WorktreeManager Development** among the valid identities. If it reports `0 valid identities found`, use the troubleshooting steps below before launching.
+
+#### Run with the installed app's data
 
 ```bash
-pnpm run tauri dev
+pnpm run tauri:dev:shared
 ```
 
-This starts the Vite dev server on `localhost:5173` and opens the Tauri window pointed at it.
+The Cargo runner signs and verifies the executable before each launch, including Rust hot reloads. Missing identities or failed verification stop the app from opening. The runner does not copy or export credentials or modify the installed app.
+
+The default certificate name is `WorktreeManager Development`. To select another existing code-signing identity, use its exact name or SHA-1 hash from `security find-identity`:
+
+```bash
+WTM_DEV_SIGNING_IDENTITY="Your signing identity" pnpm run tauri:dev:shared
+```
+
+This variable selects a certificate; it does not create one. The ordinary command can also use it:
+
+```bash
+WTM_DEV_SIGNING_IDENTITY="WorktreeManager Development" pnpm run tauri dev
+```
+
+macOS may ask to authorize use of the signing private key and access to the existing Linear credentials. When approving the expected `codesign` or development executable request, choose **Always Allow** to retain that authorization. If Linear credentials cannot be read, open **Dependencies**: Doctor displays the Keychain error and **Re-check** retries access without restarting the app.
+
+#### Troubleshooting signing and Keychain access
+
+- **`no identity found`:** Check that `WTM_DEV_SIGNING_IDENTITY` matches an existing code-signing certificate's name or hash. Use **My Certificates** in Keychain Access to confirm the certificate has an associated private key.
+- **`0 valid identities found`:** Run `security find-identity -p codesigning` without `-v` to include invalid identities. If yours shows `CSSMERR_TP_NOT_TRUSTED`, apply **Trust → Code Signing → Always Trust** as described above, then check again with `-v`.
+- **No keychain selection during certificate creation:** The missing prompt alone is not an error. Search for the certificate in Keychain Access and verify it using `security find-identity`.
+- **Signing succeeds but access to Linear credentials is denied:** Certificate trust and permission to read an existing Keychain item are separate. Inspect Doctor's error, authorize the development executable when macOS prompts, and use **Re-check**. An `ACL partition mismatch` means the item's access policy does not match the requesting executable; changing the certificate name or re-entering the Linear token does not resolve that policy mismatch.
+
+Apple documents [creating self-signed certificates](https://support.apple.com/en-ie/guide/keychain-access/kyca8916/mac), [changing certificate trust](https://support.apple.com/en-au/guide/keychain-access/kyca11871/mac), and [code-signing identity stability](https://developer.apple.com/library/archive/technotes/tn2206/_index.html).
 
 ## Releasing
 
