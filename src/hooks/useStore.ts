@@ -20,9 +20,23 @@ export function useStore() {
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(false);
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<Error | null>(null);
   // Workspaces whose data finished loading at least once this session: switching
   // back to them shows the in-memory data immediately instead of the skeleton.
   const loadedWorkspaceIdsRef = useRef(new Set<string>());
+
+  const stateRef = useRef(state);
+  const editorAppRef = useRef(editorApp);
+
+  const commit = useCallback((next: AppState) => {
+    stateRef.current = next;
+    setState(next);
+  }, []);
+
+  const commitEditorApp = useCallback((next: EditorApp) => {
+    editorAppRef.current = next;
+    setEditorAppState(next);
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -31,234 +45,225 @@ export function useStore() {
       loadThemeId(),
       loadCustomColors(),
       loadSidebarCollapsed(),
-    ]).then(([s, editor, theme, custom, collapsed]) => {
-      setState(s);
-      setEditorAppState(editor);
-      setThemeIdState(theme);
-      setCustomColors(custom);
-      setSidebarCollapsedState(collapsed);
-      applyTheme(theme, theme === CUSTOM_THEME_ID ? (custom ?? undefined) : undefined);
-      setLoading(false);
+    ])
+      .then(([s, editor, theme, custom, collapsed]) => {
+        commit(s);
+        commitEditorApp(editor);
+        setThemeIdState(theme);
+        setCustomColors(custom);
+        setSidebarCollapsedState(collapsed);
+        applyTheme(theme, theme === CUSTOM_THEME_ID ? (custom ?? undefined) : undefined);
+        setLoading(false);
 
-      const basePaths = [
-        ...new Set(s.workspaces.flatMap((w) => w.repos.map((r) => r.worktreeBasePath))),
-      ];
-      void invoke("cleanup_claude_json_stale", { basePaths }).catch(() => {});
+        const basePaths = [
+          ...new Set(s.workspaces.flatMap((w) => w.repos.map((r) => r.worktreeBasePath))),
+        ];
+        void invoke("cleanup_claude_json_stale", { basePaths }).catch(() => {});
 
-      // Self-heal an enabled vault: recreate it if the folder went missing and
-      // keep it registered in Obsidian. Best-effort, never blocks startup.
-      if (s.vault.enabled && s.vault.path) {
-        void invoke("ensure_vault", { vaultPath: s.vault.path }).catch(() => {});
-      }
-    });
-  }, []);
+        // Self-heal an enabled vault: recreate it if the folder went missing and
+        // keep it registered in Obsidian. Best-effort, never blocks startup.
+        if (s.vault.enabled && s.vault.path) {
+          void invoke("ensure_vault", { vaultPath: s.vault.path }).catch(() => {});
+        }
+      })
+      .catch((e: unknown) => {
+        setLoadError(e instanceof Error ? e : new Error(String(e)));
+      });
+  }, [commit, commitEditorApp]);
 
   const dismissPersistError = useCallback(() => setPersistError(null), []);
 
-  const updateSetup = useCallback(async (setup: AppState["setup"]) => {
-    let snapshot: AppState;
-    setState((prev) => {
-      snapshot = prev;
-      return { ...prev, setup };
-    });
-    try {
-      await persist([["setup", setup]]);
-    } catch {
-      setState(snapshot!);
-      setPersistError("Failed to save setup changes");
-    }
-  }, []);
+  const updateSetup = useCallback(
+    async (setup: AppState["setup"]) => {
+      const snapshot = stateRef.current;
+      commit({ ...snapshot, setup });
+      try {
+        await persist([["setup", setup]]);
+      } catch {
+        commit(snapshot);
+        setPersistError("Failed to save setup changes");
+      }
+    },
+    [commit]
+  );
 
-  const updateVault = useCallback(async (vault: VaultConfig) => {
-    let snapshot: AppState;
-    setState((prev) => {
-      snapshot = prev;
-      return { ...prev, vault };
-    });
-    try {
-      await persist([["vault", vault]]);
-    } catch {
-      setState(snapshot!);
-      setPersistError("Failed to save vault settings");
-    }
-  }, []);
+  const updateVault = useCallback(
+    async (vault: VaultConfig) => {
+      const snapshot = stateRef.current;
+      commit({ ...snapshot, vault });
+      try {
+        await persist([["vault", vault]]);
+      } catch {
+        commit(snapshot);
+        setPersistError("Failed to save vault settings");
+      }
+    },
+    [commit]
+  );
 
-  const addWorkspace = useCallback(async (workspace: Workspace) => {
-    let snapshot: AppState;
-    let newWorkspaces: Workspace[];
-    setState((prev) => {
-      snapshot = prev;
-      newWorkspaces = [...prev.workspaces, workspace];
-      return { ...prev, workspaces: newWorkspaces, selectedWorkspaceId: workspace.id };
-    });
-    try {
-      await persist([
-        ["workspaces", newWorkspaces!],
-        ["selectedWorkspaceId", workspace.id],
-      ]);
-    } catch {
-      setState(snapshot!);
-      setPersistError("Failed to save workspace");
-    }
-  }, []);
+  const addWorkspace = useCallback(
+    async (workspace: Workspace) => {
+      const snapshot = stateRef.current;
+      const newWorkspaces = [...snapshot.workspaces, workspace];
+      commit({ ...snapshot, workspaces: newWorkspaces, selectedWorkspaceId: workspace.id });
+      try {
+        await persist([
+          ["workspaces", newWorkspaces],
+          ["selectedWorkspaceId", workspace.id],
+        ]);
+      } catch {
+        commit(snapshot);
+        setPersistError("Failed to save workspace");
+      }
+    },
+    [commit]
+  );
 
   const updateWorkspace = useCallback(
     async (
       workspaceId: string,
       updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
     ) => {
-      let snapshot: AppState;
-      let newWorkspaces: Workspace[];
-      setState((prev) => {
-        snapshot = prev;
-        newWorkspaces = prev.workspaces.map((w) =>
-          w.id === workspaceId ? { ...w, ...updates } : w
-        );
-        return { ...prev, workspaces: newWorkspaces };
-      });
+      const snapshot = stateRef.current;
+      const newWorkspaces = snapshot.workspaces.map((w) =>
+        w.id === workspaceId ? { ...w, ...updates } : w
+      );
+      commit({ ...snapshot, workspaces: newWorkspaces });
       try {
-        await persist([["workspaces", newWorkspaces!]]);
+        await persist([["workspaces", newWorkspaces]]);
       } catch {
-        setState(snapshot!);
+        commit(snapshot);
         setPersistError("Failed to save workspace changes");
       }
     },
-    []
+    [commit]
   );
 
-  const removeWorkspace = useCallback(async (workspaceId: string) => {
-    loadedWorkspaceIdsRef.current.delete(workspaceId);
-    let snapshot: AppState;
-    let newWorkspaces: Workspace[];
-    let newTasks: Task[];
-    let newSelectedId: string | null;
-    setState((prev) => {
-      snapshot = prev;
-      newWorkspaces = prev.workspaces.filter((w) => w.id !== workspaceId);
-      newTasks = prev.tasks.filter((t) => t.workspaceId !== workspaceId);
-      newSelectedId =
-        prev.selectedWorkspaceId === workspaceId
+  const removeWorkspace = useCallback(
+    async (workspaceId: string) => {
+      loadedWorkspaceIdsRef.current.delete(workspaceId);
+      const snapshot = stateRef.current;
+      const newWorkspaces = snapshot.workspaces.filter((w) => w.id !== workspaceId);
+      const newTasks = snapshot.tasks.filter((t) => t.workspaceId !== workspaceId);
+      const newSelectedId =
+        snapshot.selectedWorkspaceId === workspaceId
           ? (newWorkspaces[0]?.id ?? null)
-          : prev.selectedWorkspaceId;
-      return {
-        ...prev,
+          : snapshot.selectedWorkspaceId;
+      commit({
+        ...snapshot,
         workspaces: newWorkspaces,
         tasks: newTasks,
         selectedWorkspaceId: newSelectedId,
-      };
-    });
-    try {
-      await persist([
-        ["workspaces", newWorkspaces!],
-        ["tasks", newTasks!],
-        ["selectedWorkspaceId", newSelectedId!],
-      ]);
-    } catch {
-      setState(snapshot!);
-      setPersistError("Failed to save workspace removal");
-    }
-  }, []);
+      });
+      try {
+        await persist([
+          ["workspaces", newWorkspaces],
+          ["tasks", newTasks],
+          ["selectedWorkspaceId", newSelectedId],
+        ]);
+      } catch {
+        commit(snapshot);
+        setPersistError("Failed to save workspace removal");
+      }
+    },
+    [commit]
+  );
 
-  const reorderWorkspaces = useCallback((fromIndex: number, toIndex: number) => {
-    let snapshot: AppState;
-    let newWorkspaces: Workspace[];
-    setState((prev) => {
-      snapshot = prev;
+  const reorderWorkspaces = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      const snapshot = stateRef.current;
       if (
         fromIndex === toIndex ||
         fromIndex < 0 ||
         toIndex < 0 ||
-        fromIndex >= prev.workspaces.length ||
-        toIndex >= prev.workspaces.length
+        fromIndex >= snapshot.workspaces.length ||
+        toIndex >= snapshot.workspaces.length
       ) {
-        newWorkspaces = prev.workspaces;
-        return prev;
+        return;
       }
-      newWorkspaces = [...prev.workspaces];
+      const newWorkspaces = [...snapshot.workspaces];
       const [moved] = newWorkspaces.splice(fromIndex, 1);
       newWorkspaces.splice(toIndex, 0, moved);
-      return { ...prev, workspaces: newWorkspaces };
-    });
-    if (newWorkspaces! === snapshot!.workspaces) return;
-    void (async () => {
-      try {
-        await persist([["workspaces", newWorkspaces!]]);
-      } catch {
-        setState(snapshot!);
-        setPersistError("Failed to save workspace order");
-      }
-    })();
-  }, []);
+      commit({ ...snapshot, workspaces: newWorkspaces });
+      void (async () => {
+        try {
+          await persist([["workspaces", newWorkspaces]]);
+        } catch {
+          commit(snapshot);
+          setPersistError("Failed to save workspace order");
+        }
+      })();
+    },
+    [commit]
+  );
 
-  const selectWorkspace = useCallback((workspaceId: string) => {
-    let snapshot: AppState;
-    setState((prev) => {
-      snapshot = prev;
-      return { ...prev, selectedWorkspaceId: workspaceId };
-    });
-    if (!loadedWorkspaceIdsRef.current.has(workspaceId)) {
-      setWorkspaceSwitching(true);
-    }
-    setTimeout(async () => {
-      try {
-        await persist([["selectedWorkspaceId", workspaceId]]);
-      } catch {
-        setState(snapshot!);
-        setPersistError("Failed to save selection");
+  const selectWorkspace = useCallback(
+    (workspaceId: string) => {
+      const snapshot = stateRef.current;
+      commit({ ...snapshot, selectedWorkspaceId: workspaceId });
+      if (!loadedWorkspaceIdsRef.current.has(workspaceId)) {
+        setWorkspaceSwitching(true);
       }
-    }, 0);
-  }, []);
+      setTimeout(async () => {
+        try {
+          await persist([["selectedWorkspaceId", workspaceId]]);
+        } catch {
+          commit(snapshot);
+          setPersistError("Failed to save selection");
+        }
+      }, 0);
+    },
+    [commit]
+  );
 
   const clearWorkspaceSwitching = useCallback((workspaceId?: string) => {
     if (workspaceId) loadedWorkspaceIdsRef.current.add(workspaceId);
     setWorkspaceSwitching(false);
   }, []);
 
-  const addTask = useCallback(async (task: Task) => {
-    let snapshot: AppState;
-    let newTasks: Task[];
-    setState((prev) => {
-      snapshot = prev;
-      newTasks = [...prev.tasks, task];
-      return { ...prev, tasks: newTasks };
-    });
-    try {
-      await persist([["tasks", newTasks!]]);
-    } catch {
-      setState(snapshot!);
-      setPersistError("Failed to save task");
-    }
-  }, []);
+  const addTask = useCallback(
+    async (task: Task) => {
+      const snapshot = stateRef.current;
+      const newTasks = [...snapshot.tasks, task];
+      commit({ ...snapshot, tasks: newTasks });
+      try {
+        await persist([["tasks", newTasks]]);
+      } catch {
+        commit(snapshot);
+        setPersistError("Failed to save task");
+      }
+    },
+    [commit]
+  );
 
-  const removeTask = useCallback(async (taskId: string) => {
-    let snapshot: AppState;
-    let newTasks: Task[];
-    setState((prev) => {
-      snapshot = prev;
-      newTasks = prev.tasks.filter((t) => t.id !== taskId);
-      return { ...prev, tasks: newTasks };
-    });
-    try {
-      await persist([["tasks", newTasks!]]);
-    } catch {
-      setState(snapshot!);
-      setPersistError("Failed to save task removal");
-    }
-  }, []);
+  const removeTask = useCallback(
+    async (taskId: string) => {
+      const snapshot = stateRef.current;
+      const newTasks = snapshot.tasks.filter((t) => t.id !== taskId);
+      commit({ ...snapshot, tasks: newTasks });
+      try {
+        await persist([["tasks", newTasks]]);
+      } catch {
+        commit(snapshot);
+        setPersistError("Failed to save task removal");
+      }
+    },
+    [commit]
+  );
 
-  const updateEditorApp = useCallback(async (editor: EditorApp) => {
-    let prevEditor: EditorApp;
-    setEditorAppState((current) => {
-      prevEditor = current;
-      return editor;
-    });
-    try {
-      await persist([["editorApp", editor]]);
-    } catch {
-      setEditorAppState(prevEditor!);
-      setPersistError("Failed to save editor preference");
-    }
-  }, []);
+  const updateEditorApp = useCallback(
+    async (editor: EditorApp) => {
+      const prevEditor = editorAppRef.current;
+      commitEditorApp(editor);
+      try {
+        await persist([["editorApp", editor]]);
+      } catch {
+        commitEditorApp(prevEditor);
+        setPersistError("Failed to save editor preference");
+      }
+    },
+    [commitEditorApp]
+  );
 
   const toggleSidebarCollapsed = useCallback(() => {
     setSidebarCollapsedState((prev) => {
@@ -328,6 +333,8 @@ export function useStore() {
     () => state.tasks.filter((t) => t.workspaceId === state.selectedWorkspaceId),
     [state.tasks, state.selectedWorkspaceId]
   );
+
+  if (loadError) throw loadError;
 
   return {
     state,

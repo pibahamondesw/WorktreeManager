@@ -34,6 +34,8 @@ const SCHEMA_VERSION = 4;
  */
 let secrets: SecretBundle = EMPTY_SECRETS;
 
+let secretsReadable = true;
+
 /** Pre-multi-repo root keys, superseded by `workspaces`/`tasks`/`selectedWorkspaceId`. */
 const LEGACY_KEYS = ["repos", "worktrees", "selectedRepoId"];
 
@@ -80,6 +82,9 @@ export async function persist(entries: [string, unknown][]): Promise<void> {
     // out of the file is only safe once the keychain holds it. The caller rolls its state
     // back and the file still agrees with what the keychain has.
     if (carriesSecrets) {
+      if (!secretsReadable) {
+        throw new Error("Keychain unreadable; refusing to overwrite the stored secrets");
+      }
       await saveSecrets(next);
       secrets = next;
     }
@@ -144,6 +149,10 @@ async function clearLegacyBackup(): Promise<void> {
   }
 }
 
+async function persistOrRetryNextLaunch(entries: [string, unknown][]): Promise<void> {
+  await persist(entries).catch(() => {});
+}
+
 function resolveSelectedWorkspaceId(
   candidate: string | null | undefined,
   workspaces: AppState["workspaces"]
@@ -172,10 +181,9 @@ export async function loadState(): Promise<AppState> {
     // the file winning, so a store caught between the two — keys already in the keychain
     // but the version not yet bumped, or the reverse — still comes up holding all of them.
     // Loaded before the migrations below because each one persists through `persist`.
-    secrets = mergeSecrets(
-      (await loadSecrets()) ?? EMPTY_SECRETS,
-      collectSecrets(setup, workspaces)
-    );
+    const stored = await loadSecrets();
+    secretsReadable = stored != null;
+    secrets = mergeSecrets(stored ?? EMPTY_SECRETS, collectSecrets(setup, workspaces));
 
     // v1 → v2: the per-workspace notesPath is dropped; the global vault starts
     // disabled — enabling is always an explicit user action against the managed
@@ -183,7 +191,7 @@ export async function loadState(): Promise<AppState> {
     let vault = await s.get<VaultConfig>("vault");
     if (vault == null) {
       vault = DEFAULT_STATE.vault;
-      await persist([
+      await persistOrRetryNextLaunch([
         ["vault", vault],
         ["workspaces", workspaces],
       ]);
@@ -196,7 +204,7 @@ export async function loadState(): Promise<AppState> {
     if (schemaVersion < 3) {
       await pruneLegacyKeys(s);
       await clearLegacyBackup();
-      await persist([
+      await persistOrRetryNextLaunch([
         ["setup", setup],
         // Records v3 rather than SCHEMA_VERSION: the v4 step owns its own bump, so a
         // keychain that cannot be reached can never leave the version overstated.
@@ -208,17 +216,12 @@ export async function loadState(): Promise<AppState> {
     // file is rewritten, so it is only stripped once the keychain demonstrably holds
     // them; an unreachable keychain leaves the file as it is and retries next launch.
     if (schemaVersion < 4) {
-      try {
-        if (!hasSecrets(secrets) || (await saveAndVerifySecrets(secrets))) {
-          await persist([
-            ["setup", setup],
-            ["workspaces", workspaces],
-            ["schemaVersion", SCHEMA_VERSION],
-          ]);
-        }
-      } catch {
-        // Keychain unavailable. The keys stay in the file and the version stays put,
-        // so the app keeps working and the move is retried on the next launch.
+      if (!hasSecrets(secrets) || (secretsReadable && (await saveAndVerifySecrets(secrets)))) {
+        await persistOrRetryNextLaunch([
+          ["setup", setup],
+          ["workspaces", workspaces],
+          ["schemaVersion", SCHEMA_VERSION],
+        ]);
       }
     }
 
