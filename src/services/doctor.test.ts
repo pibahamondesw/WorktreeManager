@@ -195,6 +195,21 @@ describe("runDoctor", () => {
 });
 
 describe("runDoctor — Linear keys", () => {
+  it("reports a Keychain failure instead of missing Linear keys", async () => {
+    const validateKey = vi.fn();
+    const report = await runDoctor(
+      config({
+        keychainError: "Failed to read from keychain: authorization denied",
+        linearKeys: [{ label: "WorktreeManager", key: null }],
+      }),
+      { probe: () => Promise.resolve(healthyProbe()), validateKey, online: () => true }
+    );
+    expect(check(report, "keychain-access")?.detail).toContain("authorization denied");
+    expect(check(report, "keychain-access")?.severity).toBe("error");
+    expect(check(report, "linear-api-key")).toBeUndefined();
+    expect(validateKey).not.toHaveBeenCalled();
+  });
+
   it("skips the check when no workspace exists yet", async () => {
     const report = await run(config(), healthyProbe());
     expect(check(report, "linear-api-key")).toBeUndefined();

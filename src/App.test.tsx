@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import App from "./App";
 import { ZoomControls } from "./components/ui/ZoomControls";
 import { DEFAULT_STATE } from "./types";
@@ -140,6 +140,67 @@ describe("doctor alerts", () => {
       view.getByText("Optional for repositories. Installs repository dependencies.")
     ).toBeTruthy();
     expect(view.getByText("1 optional repo suggestion. Nothing here blocks the app.")).toBeTruthy();
+  });
+
+  it("retries Keychain access before validating restored Linear keys", async () => {
+    const recheck = vi.fn();
+    const store = mocks.useStore();
+    const restored = {
+      ...store.state,
+      workspaces: [{ ...workspaces[0], linearApiKey: "lin_recovered" }],
+    };
+    const retryKeychain = vi.fn().mockResolvedValue(restored);
+    mocks.useStore.mockReturnValue({ ...store, keychainError: "Access denied", retryKeychain });
+    mocks.useDoctor.mockReturnValue({
+      report: {
+        checks: [{ ...git, id: "keychain-access", label: "Keychain access" }],
+        errors: 1,
+        warnings: 0,
+      },
+      running: false,
+      recheck,
+    });
+    const view = render(<App />);
+    fireEvent.click(view.getByRole("button", { name: "Review" }));
+    fireEvent.click(view.getByRole("button", { name: "Re-check" }));
+    await waitFor(() =>
+      expect(recheck).toHaveBeenCalledWith(
+        expect.objectContaining({
+          keychainError: null,
+          linearKeys: [{ label: "First", key: "lin_recovered" }],
+        })
+      )
+    );
+    expect(retryKeychain).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the Keychain failure visible when retry is denied", async () => {
+    const recheck = vi.fn();
+    const store = mocks.useStore();
+    mocks.useStore.mockReturnValue({
+      ...store,
+      keychainError: "Access denied",
+      retryKeychain: vi.fn().mockRejectedValue(new Error("Still denied")),
+    });
+    mocks.useDoctor.mockReturnValue({
+      report: {
+        checks: [{ ...git, id: "keychain-access", label: "Keychain access" }],
+        errors: 1,
+        warnings: 0,
+      },
+      running: false,
+      recheck,
+    });
+    const view = render(<App />);
+    fireEvent.click(view.getByRole("button", { name: "Review" }));
+    fireEvent.click(view.getByRole("button", { name: "Re-check" }));
+    await waitFor(() =>
+      expect(recheck).toHaveBeenCalledWith(
+        expect.objectContaining({
+          keychainError: "Error: Still denied",
+        })
+      )
+    );
   });
 
   it("only names app dependencies in the alert and allows reviewing and dismissing it", () => {

@@ -19,8 +19,8 @@ export function useDoctor(config: DoctorConfig | null) {
     configRef.current = config;
   }, [config]);
 
-  const recheck = useCallback(async () => {
-    const current = configRef.current;
+  const recheck = useCallback(async (override?: DoctorConfig) => {
+    const current = override ?? configRef.current;
     if (!current) return;
     setRunning(true);
     try {

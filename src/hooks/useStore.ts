@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   loadState,
+  restoreKeychainSecrets,
   loadEditorApp,
   loadThemeId,
   loadCustomColors,
@@ -20,6 +21,8 @@ export function useStore() {
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(false);
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
+  const [keychainRetrying, setKeychainRetrying] = useState(false);
+  const [keychainError, setKeychainError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<Error | null>(null);
   // Workspaces whose data finished loading at least once this session: switching
   // back to them shows the in-memory data immediately instead of the skeleton.
@@ -40,7 +43,7 @@ export function useStore() {
 
   useEffect(() => {
     Promise.all([
-      loadState(),
+      loadState(setKeychainError),
       loadEditorApp(),
       loadThemeId(),
       loadCustomColors(),
@@ -70,6 +73,21 @@ export function useStore() {
         setLoadError(e instanceof Error ? e : new Error(String(e)));
       });
   }, [commit, commitEditorApp]);
+
+  const retryKeychain = useCallback(async () => {
+    setKeychainRetrying(true);
+    try {
+      const restored = await restoreKeychainSecrets(() => stateRef.current);
+      commit(restored);
+      setKeychainError(null);
+      return restored;
+    } catch (error) {
+      setKeychainError(String(error));
+      throw error;
+    } finally {
+      setKeychainRetrying(false);
+    }
+  }, [commit]);
 
   const dismissPersistError = useCallback(() => setPersistError(null), []);
 
@@ -346,6 +364,9 @@ export function useStore() {
     selectedTasks,
     workspaceSwitching,
     persistError,
+    keychainError,
+    keychainRetrying,
+    retryKeychain,
     dismissPersistError,
     updateSetup,
     updateVault,

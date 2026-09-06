@@ -76,6 +76,7 @@ export interface DoctorConfig {
   /** Main clones of every configured repo, across all workspaces. */
   repoPaths: string[];
   linearKeys: LinearKeySource[];
+  keychainError?: string | null;
 }
 
 // ---- Catalogue ----
@@ -228,7 +229,18 @@ export async function runDoctor(
 
   const [probe, linear] = await Promise.all([
     deps.probe({ clis, apps, repoPaths: config.repoPaths }),
-    checkLinearKeys(config.linearKeys, deps),
+    config.keychainError
+      ? Promise.resolve<DependencyCheck>({
+          id: "keychain-access",
+          label: "Keychain access",
+          scope: "app",
+          status: "broken",
+          severity: "error",
+          reason:
+            "Could not read your saved Linear credentials. Re-check to retry Keychain access.",
+          detail: config.keychainError,
+        })
+      : checkLinearKeys(config.linearKeys, deps),
   ]);
 
   const checks = [

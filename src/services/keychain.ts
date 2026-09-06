@@ -1,19 +1,36 @@
 import { invoke } from "@tauri-apps/api/core";
 import { SecretBundle, EMPTY_SECRETS } from "../utils";
 
-/**
- * Read the stored keys. `null` means the keychain could not be read — a denied
- * authorization prompt, or a blob we cannot parse — which is deliberately distinct
- * from an empty bundle: a caller about to drop its own plaintext copy must not treat
- * "could not look" as "nothing was there".
- */
-export async function loadSecrets(): Promise<SecretBundle | null> {
+export type SecretReadResult =
+  | { secrets: SecretBundle; error: null }
+  | { secrets: null; error: string };
+
+export async function loadSecrets(): Promise<SecretReadResult> {
+  let raw: string | null;
   try {
-    const raw = await invoke<string | null>("keychain_get");
-    if (raw == null) return EMPTY_SECRETS;
-    return JSON.parse(raw) as SecretBundle;
+    raw = await invoke<string | null>("keychain_get");
+  } catch (error) {
+    return { secrets: null, error: String(error) };
+  }
+  if (raw == null) return { secrets: EMPTY_SECRETS, error: null };
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !("setup" in value) ||
+      !("workspaces" in value) ||
+      (value.setup !== null && typeof value.setup !== "string") ||
+      !value.workspaces ||
+      typeof value.workspaces !== "object" ||
+      Array.isArray(value.workspaces) ||
+      !Object.values(value.workspaces).every((key) => typeof key === "string")
+    ) {
+      return { secrets: null, error: "The Linear credentials in Keychain have an invalid format." };
+    }
+    return { secrets: value as SecretBundle, error: null };
   } catch {
-    return null;
+    return { secrets: null, error: "The Linear credentials in Keychain could not be decoded." };
   }
 }
 
@@ -33,5 +50,5 @@ export async function saveAndVerifySecrets(secrets: SecretBundle): Promise<boole
     return false;
   }
   const readBack = await loadSecrets();
-  return readBack != null && JSON.stringify(readBack) === JSON.stringify(secrets);
+  return readBack.secrets != null && JSON.stringify(readBack.secrets) === JSON.stringify(secrets);
 }

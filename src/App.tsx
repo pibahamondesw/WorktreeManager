@@ -27,6 +27,9 @@ function App() {
     selectedWorkspace,
     selectedTasks,
     persistError,
+    keychainError,
+    keychainRetrying,
+    retryKeychain,
     dismissPersistError,
     updateSetup,
     updateVault,
@@ -90,6 +93,7 @@ function App() {
     if (loading || !state.setup.isComplete) return null;
     return {
       editor: editorApp,
+      keychainError,
       vaultEnabled: state.vault.enabled,
       repoPaths: [...new Set(state.workspaces.flatMap((w) => w.repos.map((r) => r.localPath)))],
       linearKeys: state.workspaces.map((w) => ({
@@ -97,7 +101,14 @@ function App() {
         key: w.linearApiKey ?? null,
       })),
     };
-  }, [loading, state.setup.isComplete, state.vault.enabled, state.workspaces, editorApp]);
+  }, [
+    loading,
+    state.setup.isComplete,
+    state.vault.enabled,
+    state.workspaces,
+    editorApp,
+    keychainError,
+  ]);
 
   const {
     report: doctorReport,
@@ -281,8 +292,26 @@ function App() {
         open={showDoctor}
         onClose={() => setShowDoctor(false)}
         report={doctorReport}
-        running={doctorRunning}
-        onRecheck={recheckDoctor}
+        running={doctorRunning || keychainRetrying}
+        onRecheck={async () => {
+          if (!keychainError || !doctorConfig) {
+            await recheckDoctor();
+            return;
+          }
+          try {
+            const restored = await retryKeychain();
+            await recheckDoctor({
+              ...doctorConfig,
+              keychainError: null,
+              linearKeys: restored.workspaces.map((workspace) => ({
+                label: workspace.name,
+                key: workspace.linearApiKey ?? null,
+              })),
+            });
+          } catch (error) {
+            await recheckDoctor({ ...doctorConfig, keychainError: String(error) });
+          }
+        }}
       />
     </div>
   );

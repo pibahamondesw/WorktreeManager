@@ -161,7 +161,22 @@ function resolveSelectedWorkspaceId(
   return workspaces[0]?.id ?? null;
 }
 
-export async function loadState(): Promise<AppState> {
+export async function restoreKeychainSecrets(getState: () => AppState): Promise<AppState> {
+  const stored = await loadSecrets();
+  if (!stored.secrets) throw new Error(stored.error);
+  const state = getState();
+  secrets = mergeSecrets(stored.secrets, collectSecrets(state.setup, state.workspaces));
+  secretsReadable = true;
+  return {
+    ...state,
+    setup: setupWithSecret(state.setup, secrets),
+    workspaces: workspacesWithSecrets(state.workspaces, secrets),
+  };
+}
+
+export async function loadState(
+  onKeychainError?: (error: string | null) => void
+): Promise<AppState> {
   const s = await getStore();
   const rawSetup = await s.get<any>("setup");
   const schemaVersion = (await s.get<number>("schemaVersion")) ?? 0;
@@ -182,8 +197,9 @@ export async function loadState(): Promise<AppState> {
     // but the version not yet bumped, or the reverse — still comes up holding all of them.
     // Loaded before the migrations below because each one persists through `persist`.
     const stored = await loadSecrets();
-    secretsReadable = stored != null;
-    secrets = mergeSecrets(stored ?? EMPTY_SECRETS, collectSecrets(setup, workspaces));
+    onKeychainError?.(stored.error);
+    secretsReadable = stored.secrets != null;
+    secrets = mergeSecrets(stored.secrets ?? EMPTY_SECRETS, collectSecrets(setup, workspaces));
 
     // v1 → v2: the per-workspace notesPath is dropped; the global vault starts
     // disabled — enabling is always an explicit user action against the managed
