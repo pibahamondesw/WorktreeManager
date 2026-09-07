@@ -14,6 +14,7 @@ import { useLinearOrgKeyBackfill } from "./hooks/useLinearOrgKeyBackfill";
 import { useDoctor } from "./hooks/useDoctor";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useNavigationHistory } from "./hooks/useNavigationHistory";
+import { useOpenTask } from "./hooks/useOpenTask";
 import { NavigationEntry } from "./navigation/history";
 import { withScope } from "./search/query";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
@@ -116,13 +117,22 @@ function App() {
     [showTask, recordTaskVisit]
   );
 
+  const { openedTask, openTask, closeTask } = useOpenTask({
+    editorApp,
+    workspaces: state.workspaces,
+    tasks: state.tasks,
+    recordTaskVisit,
+    showTask,
+  });
+
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
       if (workspaceId === state.selectedWorkspaceId) return;
+      closeTask();
       selectWorkspace(workspaceId);
       recordWorkspaceVisit(workspaceId);
     },
-    [state.selectedWorkspaceId, selectWorkspace, recordWorkspaceVisit]
+    [state.selectedWorkspaceId, selectWorkspace, recordWorkspaceVisit, closeTask]
   );
 
   const defaultLinearApiKey = useMemo(() => {
@@ -325,6 +335,9 @@ function App() {
             revealTaskId={revealTaskId}
             onRevealHandled={() => setRevealTaskId(null)}
             onTaskOpened={recordTaskVisit}
+            openedTask={openedTask}
+            onOpenTask={openTask}
+            onCloseTask={closeTask}
             canGoBack={history.canGoBack}
             canGoForward={history.canGoForward}
             onGoBack={history.back}

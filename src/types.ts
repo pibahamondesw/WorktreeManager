@@ -106,6 +106,12 @@ export interface IssueLinearInfo {
 
 export type EditorApp = "cursor" | "vscode" | "claude-code" | "opencode" | "zed";
 
+/** CLI agents that can run inside an embedded terminal. */
+export type AgentId = "claude";
+
+/** Where a task opens: an external editor process, or a surface rendered inside the app. */
+export type TaskSurface = { kind: "external" } | { kind: "terminal"; agent: AgentId };
+
 /**
  * Editor-specific local config directories carried into a new worktree.
  * `git worktree add` only checks out tracked files, so gitignored editor config

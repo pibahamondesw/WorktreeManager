@@ -17,12 +17,10 @@ import {
   TaskMember,
   VaultConfig,
   Workspace,
-  EditorApp,
   GitStatus,
   IssueLinearInfo,
   PullRequestInfo,
 } from "../../types";
-import { openEditorForWorktree } from "../../services/openEditor";
 import { archiveTaskNote, ensureTaskNote, taskNoteUri } from "../../services/notes";
 import { linearIssueUrl, timeAgo } from "../../utils";
 
@@ -35,10 +33,9 @@ interface WorktreeCardProps {
   gitStatus?: GitStatus;
   selected?: boolean;
   index?: number;
-  editorApp?: EditorApp;
   onOpenError?: (msg: string) => void;
   onToast?: (msg: string) => void;
-  onOpened?: () => void;
+  onOpen?: () => void;
   repoSlugs: Record<string, string> | null;
   requestDelete?: boolean;
   onRequestDeleteHandled?: () => void;
@@ -65,10 +62,9 @@ export const WorktreeCard = memo(function WorktreeCard({
   gitStatus,
   selected,
   index,
-  editorApp = "cursor",
   onOpenError,
   onToast,
-  onOpened,
+  onOpen,
   repoSlugs,
   requestDelete,
   onRequestDeleteHandled,
@@ -107,13 +103,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
 
-  const handleOpen = async () => {
-    onOpened?.();
-    await openEditorForWorktree(editorApp, folders, task.branchName, workspace.name, {
-      onMessage: onToast,
-      onError: onOpenError,
-    });
-  };
+  const handleOpen = () => onOpen?.();
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -242,19 +232,6 @@ export const WorktreeCard = memo(function WorktreeCard({
         } else onOpenError?.("Could not open the task note");
         break;
       }
-      case "open-claude-code":
-        try {
-          await invoke<{ message: string; workspaceFile: string | null }>("open_editor", {
-            editor: "claude-code",
-            folders,
-            branchName: task.branchName,
-            workspaceName: workspace.name,
-          });
-        } catch (e) {
-          const msg = typeof e === "string" ? e : "Failed to open Claude Code";
-          onOpenError?.(msg);
-        }
-        break;
     }
   };
 
@@ -516,9 +493,6 @@ export const WorktreeCard = memo(function WorktreeCard({
                 </MenuButton>
                 <MenuButton label="⌘⇧C" onClick={() => handleMenuAction("copy-path")}>
                   {folders.length > 1 ? "Copy folder paths" : "Copy worktree path"}
-                </MenuButton>
-                <MenuButton onClick={() => handleMenuAction("open-claude-code")}>
-                  Open in Claude Code
                 </MenuButton>
                 {vault.enabled && (
                   <MenuButton label="O" onClick={() => handleMenuAction("open-notes")}>

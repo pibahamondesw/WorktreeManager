@@ -34,7 +34,9 @@ export function keyMatches(eventKey: string, shortcutKey: string): boolean {
 }
 
 function isTextEntryTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+  if (!(target instanceof HTMLElement)) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
+  return target.isContentEditable || target.closest(".xterm") !== null;
 }
 
 export function useKeyboardShortcuts(

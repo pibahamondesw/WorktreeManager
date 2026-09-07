@@ -1,8 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
-import { Task, VaultConfig, Workspace, EditorApp } from "../types";
-import { openEditorForWorktree } from "../services/openEditor";
+import { Task, VaultConfig, Workspace } from "../types";
+import { OpenTaskOptions } from "./useOpenTask";
 import { ensureTaskNote, taskNoteUri } from "../services/notes";
 import { linearIssueUrl } from "../utils";
 
@@ -11,7 +11,6 @@ interface Params {
   vault: VaultConfig;
   tasks: Task[];
   selectedTask: Task | null;
-  editorApp: EditorApp;
   showNew: boolean;
   searchOpen: boolean;
   setShowNew: (v: boolean) => void;
@@ -19,7 +18,8 @@ interface Params {
   setDeleteRequested: (v: boolean) => void;
   handleRefresh: () => void;
   showToast: (msg: string) => void;
-  onTaskOpened: (task: Task) => void;
+  onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<void>;
+  taskOpen: boolean;
 }
 
 export function useWorktreeListKeyboardShortcuts({
@@ -27,7 +27,6 @@ export function useWorktreeListKeyboardShortcuts({
   vault,
   tasks,
   selectedTask,
-  editorApp,
   showNew,
   searchOpen,
   setShowNew,
@@ -35,7 +34,8 @@ export function useWorktreeListKeyboardShortcuts({
   setDeleteRequested,
   handleRefresh,
   showToast,
-  onTaskOpened,
+  onOpenTask,
+  taskOpen,
 }: Params): void {
   useKeyboardShortcuts(
     {
@@ -60,14 +60,7 @@ export function useWorktreeListKeyboardShortcuts({
       Enter: {
         handler: () => {
           if (selectedTask) {
-            onTaskOpened(selectedTask);
-            void openEditorForWorktree(
-              editorApp,
-              selectedTask.members.map((m) => m.path),
-              selectedTask.branchName,
-              workspace?.name,
-              { onMessage: showToast, onError: showToast }
-            );
+            void onOpenTask(selectedTask, { onMessage: showToast, onError: showToast });
           }
         },
         enabled: !!selectedTask,
@@ -123,6 +116,6 @@ export function useWorktreeListKeyboardShortcuts({
         ])
       ),
     },
-    { enabled: !showNew && !searchOpen }
+    { enabled: !showNew && !searchOpen && !taskOpen }
   );
 }
