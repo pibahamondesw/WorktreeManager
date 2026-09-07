@@ -48,7 +48,10 @@ pub fn build_launch_script(slug: &str, resume: bool, extra_dirs: &[String]) -> S
         .iter()
         .map(|d| format!(" --add-dir {}", shell_single_quoted(d)))
         .collect::<String>();
-    let named = format!("exec claude -n {} /color{add_dirs}", shell_single_quoted(slug));
+    let named = format!(
+        "exec claude -n {} /color{add_dirs}",
+        shell_single_quoted(slug)
+    );
     let prelude = claude_env_prelude();
     if resume {
         format!(
@@ -132,7 +135,8 @@ mod tests {
     use super::*;
 
     fn temp_store(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("wm-agent-claude-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("wm-agent-claude-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -186,13 +190,19 @@ mod tests {
 
     #[test]
     fn slug_normalizes_branch_names() {
-        assert_eq!(branch_to_session_slug(Some("Feat/My Thing!"), "/x"), "wm-feat-my-thing");
+        assert_eq!(
+            branch_to_session_slug(Some("Feat/My Thing!"), "/x"),
+            "wm-feat-my-thing"
+        );
         assert_eq!(branch_to_session_slug(Some("a__b--c"), "/x"), "wm-a__b-c");
     }
 
     #[test]
     fn slug_falls_back_to_path_then_hash() {
-        assert_eq!(branch_to_session_slug(None, "/repos/worktrees/wt-1"), "wm-wt-1");
+        assert_eq!(
+            branch_to_session_slug(None, "/repos/worktrees/wt-1"),
+            "wm-wt-1"
+        );
         assert_eq!(branch_to_session_slug(Some("   "), "/repos/wt2"), "wm-wt2");
         let hashed = branch_to_session_slug(Some("///"), "");
         assert!(hashed.starts_with("wm-") && hashed.len() > 3);
