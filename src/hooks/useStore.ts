@@ -219,9 +219,7 @@ export function useStore() {
     (workspaceId: string) => {
       const snapshot = stateRef.current;
       commit({ ...snapshot, selectedWorkspaceId: workspaceId });
-      if (!loadedWorkspaceIdsRef.current.has(workspaceId)) {
-        setWorkspaceSwitching(true);
-      }
+      setWorkspaceSwitching(!loadedWorkspaceIdsRef.current.has(workspaceId));
       setTimeout(async () => {
         try {
           await persist([["selectedWorkspaceId", workspaceId]]);
