@@ -2,6 +2,30 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
 
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    for variable in [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(variable);
+    }
+    command
+}
+
 #[derive(Serialize)]
 pub struct WorktreeInfo {
     pub path: String,
@@ -12,7 +36,7 @@ pub struct WorktreeInfo {
 
 /// True when `refname` resolves to a commit in `repo_path`.
 fn ref_resolves(repo_path: &str, refname: &str) -> bool {
-    Command::new("git")
+    git_command()
         .args([
             "-C",
             repo_path,
@@ -30,7 +54,7 @@ fn ref_resolves(repo_path: &str, refname: &str) -> bool {
 /// falling back to local branches so an unreachable origin still yields a usable answer.
 fn detect_default_branch(repo_path: &str) -> String {
     // Try reading the remote HEAD symbolic ref
-    if let Ok(output) = Command::new("git")
+    if let Ok(output) = git_command()
         .args(["-C", repo_path, "symbolic-ref", "refs/remotes/origin/HEAD"])
         .output()
     {
@@ -89,6 +113,61 @@ pub struct WorktreeAddResult {
     pub warning: Option<String>,
 }
 
+fn exclude_generated_files(worktree_path: &str) -> Result<(), String> {
+    let output = git_command()
+        .args([
+            "-C",
+            worktree_path,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to locate Git exclusions: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let path = std::path::PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let mut contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("Failed to read Git exclusions: {e}")),
+    };
+    let patterns = [
+        "/.vscode/tasks.json".to_string(),
+        format!("/{}", super::vscode_task::WM_CLAUDE_SESSION_MARKER_FILE),
+    ]
+    .into_iter()
+    .chain([".vscode", ".zed"].into_iter().flat_map(|dir| {
+        [
+            super::vscode_task::WM_CLAUDE_SCRIPT_FILE,
+            super::vscode_task::WM_CLAUDE_SESSION_MARKER_FILE,
+        ]
+        .map(|file| format!("/{dir}/{file}"))
+    }));
+    let mut changed = false;
+    for pattern in patterns {
+        if !contents.lines().any(|line| line == pattern) {
+            if !contents.is_empty() && !contents.ends_with('\n') {
+                contents.push('\n');
+            }
+            contents.push_str(&pattern);
+            contents.push('\n');
+            changed = true;
+        }
+    }
+    if changed {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create Git info directory: {e}"))?;
+        }
+        std::fs::write(path, contents)
+            .map_err(|e| format!("Failed to write Git exclusions: {e}"))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn git_worktree_add(
     repo_path: String,
@@ -117,6 +196,7 @@ fn worktree_add_blocking(
     // If the worktree already exists from a previous attempt, reuse it
     let wt_path = std::path::Path::new(&worktree_path);
     if wt_path.exists() && wt_path.join(".git").exists() {
+        exclude_generated_files(&worktree_path)?;
         return Ok(WorktreeAddResult {
             output: format!("Worktree already exists at {}", worktree_path),
             warning: None,
@@ -126,7 +206,7 @@ fn worktree_add_blocking(
     // 1. Fetch latest from origin so the new branch starts from up-to-date main. Best-effort:
     //    when origin is unreachable (offline, GitHub down, expired credentials) we branch from
     //    the local repo instead of refusing to create the worktree.
-    let fetch_error = match Command::new("git")
+    let fetch_error = match git_command()
         .args(["-C", &repo_path, "fetch", "origin"])
         .output()
     {
@@ -167,7 +247,7 @@ fn worktree_add_blocking(
     };
 
     // 4. Create worktree with new branch based on the resolved start point
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "-C",
             &repo_path,
@@ -182,6 +262,7 @@ fn worktree_add_blocking(
         .map_err(|e| format!("Failed to execute git: {}", e))?;
 
     if output.status.success() {
+        exclude_generated_files(&worktree_path)?;
         return Ok(WorktreeAddResult {
             output: String::from_utf8_lossy(&output.stdout).to_string(),
             warning,
@@ -194,7 +275,7 @@ fn worktree_add_blocking(
     }
 
     // The branch already exists, so check it out into the worktree instead
-    let output2 = Command::new("git")
+    let output2 = git_command()
         .args([
             "-C",
             &repo_path,
@@ -207,6 +288,7 @@ fn worktree_add_blocking(
         .map_err(|e| format!("Failed to execute git: {}", e))?;
 
     if output2.status.success() {
+        exclude_generated_files(&worktree_path)?;
         Ok(WorktreeAddResult {
             output: String::from_utf8_lossy(&output2.stdout).to_string(),
             // The start point never applied to an existing branch, so only a failed fetch is
@@ -290,13 +372,13 @@ pub fn git_worktree_remove(repo_path: String, worktree_path: String) -> Result<S
 
     if !wt_path.exists() {
         // Directory already gone — prune stale git worktree references
-        let _ = Command::new("git")
+        let _ = git_command()
             .args(["-C", &repo_path, "worktree", "prune"])
             .output();
         return Ok("Worktree directory already removed".to_string());
     }
 
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "-C",
             &repo_path,
@@ -314,7 +396,7 @@ pub fn git_worktree_remove(repo_path: String, worktree_path: String) -> Result<S
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         // "not a working tree" means git no longer tracks it — prune and succeed
         if stderr.contains("not a working tree") {
-            let _ = Command::new("git")
+            let _ = git_command()
                 .args(["-C", &repo_path, "worktree", "prune"])
                 .output();
             Ok("Worktree reference cleaned up".to_string())
@@ -333,7 +415,7 @@ pub struct WorktreeStatus {
 }
 
 fn compute_worktree_status(worktree_path: &str, upstream: &str) -> WorktreeStatus {
-    let (ahead, behind) = if let Ok(output) = Command::new("git")
+    let (ahead, behind) = if let Ok(output) = git_command()
         .args([
             "-C",
             worktree_path,
@@ -359,7 +441,7 @@ fn compute_worktree_status(worktree_path: &str, upstream: &str) -> WorktreeStatu
         (0, 0)
     };
 
-    let dirty = if let Ok(output) = Command::new("git")
+    let dirty = if let Ok(output) = git_command()
         .args(["-C", worktree_path, "status", "--porcelain"])
         .output()
     {
@@ -368,7 +450,7 @@ fn compute_worktree_status(worktree_path: &str, upstream: &str) -> WorktreeStatu
         false
     };
 
-    let last_commit_epoch = if let Ok(output) = Command::new("git")
+    let last_commit_epoch = if let Ok(output) = git_command()
         .args(["-C", worktree_path, "log", "-1", "--format=%ct"])
         .output()
     {
@@ -424,7 +506,7 @@ pub async fn git_worktree_status_batch(
 #[tauri::command]
 pub async fn git_remote_url(repo_path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let output = Command::new("git")
+        let output = git_command()
             .args(["-C", &repo_path, "remote", "get-url", "origin"])
             .output()
             .map_err(|e| format!("Failed to get remote URL: {}", e))?;
@@ -448,7 +530,7 @@ pub async fn git_remote_url(repo_path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn git_worktree_list(repo_path: String) -> Result<Vec<WorktreeInfo>, String> {
-    let output = Command::new("git")
+    let output = git_command()
         .args(["-C", &repo_path, "worktree", "list", "--porcelain"])
         .output()
         .map_err(|e| format!("Failed to execute git: {}", e))?;
@@ -525,7 +607,7 @@ fn slugify(input: &str) -> String {
 /// repo's git identity (`user.email` local-part, then `user.name`). Falls back to `"local"`.
 fn git_user_slug_internal(repo_path: &str) -> String {
     let read = |key: &str| -> Option<String> {
-        let out = Command::new("git")
+        let out = git_command()
             .args(["-C", repo_path, "config", key])
             .output()
             .ok()?;
@@ -581,7 +663,7 @@ fn sanitize_branch_input(raw: &str) -> String {
 }
 
 fn branch_exists(repo_path: &str, branch: &str) -> bool {
-    Command::new("git")
+    git_command()
         .args([
             "-C",
             repo_path,
@@ -647,6 +729,126 @@ fn resolve_manual_worktree_blocking(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static NEXT_REPO_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    struct TestRepo(std::path::PathBuf);
+
+    impl TestRepo {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "wm-git-exclude-{}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                NEXT_REPO_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            let repo = Self(path);
+            repo.git(&["init", "--initial-branch=main"]);
+            repo.git(&[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ]);
+            repo
+        }
+
+        fn git(&self, args: &[&str]) {
+            let output = git_command()
+                .arg("-C")
+                .arg(&self.0)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    impl Drop for TestRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn worktree_creation_excludes_generated_files_for_new_and_existing_branches() {
+        for existing_branch in [false, true] {
+            let repo = TestRepo::new();
+            if existing_branch {
+                repo.git(&["branch", "feature"]);
+            }
+            let worktree = repo.0.join("linked worktree");
+            let path = worktree.to_str().unwrap();
+            worktree_add_blocking(
+                repo.0.to_str().unwrap().into(),
+                path.into(),
+                "feature".into(),
+            )
+            .unwrap();
+            assert!(worktree.join(".git").is_file());
+            for file in [
+                ".vscode/tasks.json",
+                ".vscode/wm-start-claude.sh",
+                ".vscode/.wm-claude-session-init",
+                ".zed/wm-start-claude.sh",
+                ".zed/.wm-claude-session-init",
+                ".wm-claude-session-init",
+            ] {
+                let file = worktree.join(file);
+                std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+                std::fs::write(file, "generated").unwrap();
+            }
+            assert!(!compute_worktree_status(path, "HEAD").dirty);
+            std::fs::write(worktree.join(".vscode/settings.json"), "user config").unwrap();
+            assert!(compute_worktree_status(path, "HEAD").dirty);
+            std::fs::remove_file(worktree.join(".vscode/settings.json")).unwrap();
+            let output = git_command()
+                .args(["-C", path, "add", "-f", ".vscode/tasks.json"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert!(compute_worktree_status(path, "HEAD").dirty);
+        }
+    }
+
+    #[test]
+    fn exclusions_preserve_existing_rules_and_are_idempotent_on_reuse() {
+        let repo = TestRepo::new();
+        let path = repo.0.to_str().unwrap();
+        let exclude = repo.0.join(".git/info/exclude");
+        let original = "# user rules\n/local-only\n/.vscode/tasks.json";
+        std::fs::write(&exclude, original).unwrap();
+        worktree_add_blocking(path.into(), path.into(), "main".into()).unwrap();
+        let contents = std::fs::read_to_string(&exclude).unwrap();
+        assert!(contents.starts_with(&format!("{original}\n")));
+        assert_eq!(contents.matches("/.vscode/tasks.json").count(), 1);
+        worktree_add_blocking(path.into(), path.into(), "main".into()).unwrap();
+        assert_eq!(std::fs::read_to_string(&exclude).unwrap(), contents);
+        std::fs::remove_dir_all(exclude.parent().unwrap()).unwrap();
+        exclude_generated_files(path).unwrap();
+        assert!(exclude.exists());
+    }
+
+    #[test]
+    fn exclusions_report_invalid_repository() {
+        let repo = TestRepo::new();
+        std::fs::remove_dir_all(repo.0.join(".git")).unwrap();
+        assert!(exclude_generated_files(repo.0.to_str().unwrap()).is_err());
+    }
 
     #[test]
     fn slugify_lowercases_and_collapses() {
