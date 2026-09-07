@@ -19,6 +19,7 @@ interface Params {
   setDeleteRequested: (v: boolean) => void;
   handleRefresh: () => void;
   showToast: (msg: string) => void;
+  onTaskOpened: (task: Task) => void;
 }
 
 export function useWorktreeListKeyboardShortcuts({
@@ -34,6 +35,7 @@ export function useWorktreeListKeyboardShortcuts({
   setDeleteRequested,
   handleRefresh,
   showToast,
+  onTaskOpened,
 }: Params): void {
   useKeyboardShortcuts(
     {
@@ -58,6 +60,7 @@ export function useWorktreeListKeyboardShortcuts({
       Enter: {
         handler: () => {
           if (selectedTask) {
+            onTaskOpened(selectedTask);
             void openEditorForWorktree(
               editorApp,
               selectedTask.members.map((m) => m.path),

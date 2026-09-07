@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { WorkspaceList } from "./components/sidebar/WorkspaceList";
 import { WorktreeList } from "./components/worktree/WorktreeList";
@@ -13,6 +13,8 @@ import { useUpdater } from "./hooks/useUpdater";
 import { useLinearOrgKeyBackfill } from "./hooks/useLinearOrgKeyBackfill";
 import { useDoctor } from "./hooks/useDoctor";
 import { useWindowDrag } from "./hooks/useWindowDrag";
+import { useNavigationHistory } from "./hooks/useNavigationHistory";
+import { NavigationEntry } from "./navigation/history";
 import { withScope } from "./search/query";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
 import { Task } from "./types";
@@ -66,7 +68,7 @@ function App() {
     [selectedWorkspace?.name]
   );
 
-  const handleReveal = useCallback(
+  const showTask = useCallback(
     (task: Task) => {
       if (task.workspaceId !== state.selectedWorkspaceId) selectWorkspace(task.workspaceId);
       setRevealTaskId(task.id);
@@ -74,12 +76,53 @@ function App() {
     [state.selectedWorkspaceId, selectWorkspace]
   );
 
+  const isNavigable = useCallback(
+    (entry: NavigationEntry) =>
+      entry.kind === "task"
+        ? state.tasks.some((t) => t.id === entry.taskId)
+        : state.workspaces.some((w) => w.id === entry.workspaceId),
+    [state.tasks, state.workspaces]
+  );
+
+  const navigateTo = useCallback(
+    (entry: NavigationEntry) => {
+      if (entry.kind === "task") {
+        const task = state.tasks.find((t) => t.id === entry.taskId);
+        if (task) showTask(task);
+      } else if (entry.workspaceId !== state.selectedWorkspaceId) {
+        selectWorkspace(entry.workspaceId);
+      }
+    },
+    [state.tasks, state.selectedWorkspaceId, showTask, selectWorkspace]
+  );
+
+  const { recordTaskVisit, recordWorkspaceVisit, ...history } = useNavigationHistory({
+    isNavigable,
+    onNavigate: navigateTo,
+  });
+
+  const initialVisitRecorded = useRef(false);
+  useEffect(() => {
+    if (loading || initialVisitRecorded.current || !state.selectedWorkspaceId) return;
+    initialVisitRecorded.current = true;
+    recordWorkspaceVisit(state.selectedWorkspaceId);
+  }, [loading, state.selectedWorkspaceId, recordWorkspaceVisit]);
+
+  const handleReveal = useCallback(
+    (task: Task) => {
+      showTask(task);
+      recordTaskVisit(task);
+    },
+    [showTask, recordTaskVisit]
+  );
+
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
       if (workspaceId === state.selectedWorkspaceId) return;
       selectWorkspace(workspaceId);
+      recordWorkspaceVisit(workspaceId);
     },
-    [state.selectedWorkspaceId, selectWorkspace]
+    [state.selectedWorkspaceId, selectWorkspace, recordWorkspaceVisit]
   );
 
   const defaultLinearApiKey = useMemo(() => {
@@ -148,6 +191,14 @@ function App() {
       handler: () => openSearch(true),
       enabled: state.setup.isComplete,
       inTextFields: true,
+    },
+    "meta+ArrowLeft": {
+      handler: history.back,
+      enabled: state.setup.isComplete && !search.open && history.canGoBack,
+    },
+    "meta+ArrowRight": {
+      handler: history.forward,
+      enabled: state.setup.isComplete && !search.open && history.canGoForward,
     },
     ...Object.fromEntries(
       Array.from({ length: 10 }, (_, i) => [
@@ -273,6 +324,11 @@ function App() {
             searchOpen={search.open}
             revealTaskId={revealTaskId}
             onRevealHandled={() => setRevealTaskId(null)}
+            onTaskOpened={recordTaskVisit}
+            canGoBack={history.canGoBack}
+            canGoForward={history.canGoForward}
+            onGoBack={history.back}
+            onGoForward={history.forward}
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={toggleSidebarCollapsed}
           />

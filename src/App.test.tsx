@@ -1,18 +1,33 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import App from "./App";
 import { ZoomControls } from "./components/ui/ZoomControls";
 import { DEFAULT_STATE } from "./types";
 
 const mocks = vi.hoisted(() => ({
   selectWorkspace: vi.fn(),
+  historyBack: vi.fn(),
+  historyForward: vi.fn(),
+  historyParams: { onNavigate: (() => undefined) as (entry: unknown) => void },
   useStore: vi.fn(),
   useDoctor: vi.fn(),
 }));
 
 vi.mock("./hooks/useStore", () => ({ useStore: mocks.useStore }));
 vi.mock("./hooks/useUpdater", () => ({ useUpdater: vi.fn() }));
+vi.mock("./hooks/useNavigationHistory", () => ({
+  useNavigationHistory: (params: { onNavigate: (entry: unknown) => void }) => ({
+    ...(mocks.historyParams = params),
+    entries: [],
+    canGoBack: true,
+    canGoForward: true,
+    back: mocks.historyBack,
+    forward: mocks.historyForward,
+    recordWorkspaceVisit: vi.fn(),
+    recordTaskVisit: vi.fn(),
+  }),
+}));
 vi.mock("./hooks/useWindowDrag", () => ({ useWindowDrag: vi.fn() }));
 vi.mock("./hooks/useLinearOrgKeyBackfill", () => ({ useLinearOrgKeyBackfill: vi.fn() }));
 // Shells out and calls Linear; keep it out of a render test.
@@ -36,6 +51,8 @@ const workspaces = [
 beforeEach(() => {
   localStorage.clear();
   mocks.selectWorkspace.mockClear();
+  mocks.historyBack.mockClear();
+  mocks.historyForward.mockClear();
   mocks.useDoctor.mockReturnValue({ report: null, running: false, recheck: vi.fn() });
   mocks.useStore.mockReturnValue({
     state: {
@@ -218,5 +235,30 @@ describe("doctor alerts", () => {
     fireEvent.click(view.getByRole("button", { name: "Dismiss" }));
     expect(view.queryByRole("status")).toBeNull();
     expect(view.getByRole("button", { name: "Dependencies" })).toBeTruthy();
+  });
+});
+
+describe("navigation history shortcuts", () => {
+  it.each([
+    ["ArrowLeft", "historyBack"],
+    ["ArrowRight", "historyForward"],
+  ] as const)("maps Cmd+%s to %s", (key, handler) => {
+    render(<App />);
+    fireEvent.keyDown(window, { key, metaKey: true });
+    expect(mocks[handler]).toHaveBeenCalledOnce();
+  });
+
+  it("switches workspace when history navigation lands on another one", () => {
+    render(<App />);
+    act(() => mocks.historyParams.onNavigate({ kind: "workspace", workspaceId: "first", at: "" }));
+    expect(mocks.selectWorkspace).toHaveBeenCalledExactlyOnceWith("first");
+  });
+
+  it("leaves Cmd+Arrow alone while typing in a text field", () => {
+    render(<App />);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    fireEvent.keyDown(input, { key: "ArrowLeft", metaKey: true });
+    expect(mocks.historyBack).not.toHaveBeenCalled();
   });
 });

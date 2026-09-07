@@ -26,6 +26,7 @@ interface NewWorktreeModalProps {
   workspace: Workspace;
   vault: VaultConfig;
   onCreated: (task: Task) => void;
+  onTaskOpened?: (task: Task) => void;
   editorApp: EditorApp;
   onOpenHint?: (msg: string) => void;
 }
@@ -55,6 +56,7 @@ export function NewWorktreeModal({
   workspace,
   vault,
   onCreated,
+  onTaskOpened,
   editorApp,
   onOpenHint,
 }: NewWorktreeModalProps) {
@@ -297,6 +299,7 @@ export function NewWorktreeModal({
         createdAt: new Date().toISOString(),
       };
       onCreated(task);
+      onTaskOpened?.(task);
 
       // Obsidian task log, when the workspace has one. Best-effort: the task exists.
       void ensureTaskNote(vault, workspace, task);

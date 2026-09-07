@@ -1,6 +1,13 @@
 import { Button } from "../ui/Button";
 import { EditorPicker } from "../ui/EditorPicker";
-import { RefreshIcon, PlusIcon, SearchIcon, SidebarIcon } from "../ui/Icons";
+import {
+  RefreshIcon,
+  PlusIcon,
+  SearchIcon,
+  SidebarIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+} from "../ui/Icons";
 import { EditorApp } from "../../types";
 
 interface WorktreeListHeaderProps {
@@ -15,6 +22,10 @@ interface WorktreeListHeaderProps {
   onOpenSearch: () => void;
   sidebarCollapsed: boolean;
   onExpandSidebar: () => void;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  onGoBack: () => void;
+  onGoForward: () => void;
 }
 
 export function WorktreeListHeader({
@@ -29,6 +40,10 @@ export function WorktreeListHeader({
   onOpenSearch,
   sidebarCollapsed,
   onExpandSidebar,
+  canGoBack,
+  canGoForward,
+  onGoBack,
+  onGoForward,
 }: WorktreeListHeaderProps) {
   return (
     <>
@@ -37,6 +52,14 @@ export function WorktreeListHeader({
         data-drag-region
       >
         <div className="flex items-center gap-3 min-w-0 flex-wrap">
+          <div className="flex items-center gap-0.5">
+            <HistoryButton title="Back (⌘←)" disabled={!canGoBack} onClick={onGoBack}>
+              <ChevronLeftIcon size={14} />
+            </HistoryButton>
+            <HistoryButton title="Forward (⌘→)" disabled={!canGoForward} onClick={onGoForward}>
+              <ChevronRightIcon size={14} />
+            </HistoryButton>
+          </div>
           {sidebarCollapsed && (
             <button
               type="button"
@@ -79,5 +102,30 @@ export function WorktreeListHeader({
         </div>
       </div>
     </>
+  );
+}
+
+function HistoryButton({
+  title,
+  disabled,
+  onClick,
+  children,
+}: {
+  title: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={title}
+      title={title}
+      className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:text-text-muted disabled:hover:bg-transparent"
+    >
+      {children}
+    </button>
   );
 }

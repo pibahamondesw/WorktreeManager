@@ -6,8 +6,13 @@ import { WorktreeListHeader } from "./WorktreeListHeader";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(false) }));
 
-function renderHeader(sidebarCollapsed: boolean) {
+function renderHeader(
+  sidebarCollapsed: boolean,
+  history = { canGoBack: false, canGoForward: false }
+) {
   const onExpandSidebar = vi.fn();
+  const onGoBack = vi.fn();
+  const onGoForward = vi.fn();
   render(
     <WorktreeListHeader
       workspaceName="Payments"
@@ -21,9 +26,13 @@ function renderHeader(sidebarCollapsed: boolean) {
       onOpenSearch={vi.fn()}
       sidebarCollapsed={sidebarCollapsed}
       onExpandSidebar={onExpandSidebar}
+      canGoBack={history.canGoBack}
+      canGoForward={history.canGoForward}
+      onGoBack={onGoBack}
+      onGoForward={onGoForward}
     />
   );
-  return onExpandSidebar;
+  return { onExpandSidebar, onGoBack, onGoForward };
 }
 
 afterEach(cleanup);
@@ -35,8 +44,24 @@ describe("WorktreeListHeader sidebar toggle", () => {
   });
 
   it("expands the sidebar when the button is clicked", () => {
-    const onExpandSidebar = renderHeader(true);
+    const { onExpandSidebar } = renderHeader(true);
     fireEvent.click(screen.getByTitle("Expand sidebar ["));
     expect(onExpandSidebar).toHaveBeenCalledOnce();
+  });
+});
+
+describe("WorktreeListHeader history controls", () => {
+  it("disables both buttons when there is nowhere to go", () => {
+    renderHeader(false);
+    expect(screen.getByTitle("Back (⌘←)")).toBeDisabled();
+    expect(screen.getByTitle("Forward (⌘→)")).toBeDisabled();
+  });
+
+  it("navigates when a direction is available", () => {
+    const { onGoBack, onGoForward } = renderHeader(false, { canGoBack: true, canGoForward: true });
+    fireEvent.click(screen.getByTitle("Back (⌘←)"));
+    fireEvent.click(screen.getByTitle("Forward (⌘→)"));
+    expect(onGoBack).toHaveBeenCalledOnce();
+    expect(onGoForward).toHaveBeenCalledOnce();
   });
 });
