@@ -44,6 +44,8 @@ No GitHub integration required — PR info is retrieved from Linear's issue atta
     "@tauri-apps/plugin-opener": "^2.5.3",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@tauri-apps/plugin-store": "^2.4.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "uuid": "^13.0.0"
@@ -64,6 +66,8 @@ tauri-plugin-store = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
+portable-pty = "0.9"
+libc = "0.2"
 ```
 
 ---
@@ -180,6 +184,26 @@ interface PullRequestInfo {
 └─────────────────────────────────────────────────────┘
 ```
 
+### Task View (embedded surfaces)
+
+```text
+┌──────────┬──────────────────────────────────────────┐
+│ PROJECTS │ ‹  WOR-87 [In Progress]  Embedded agent  ⑂ feat/x ↑2   ● running │  ← compact TaskHeader (same height as the list header)
+│          ├──────────────────────────────────────────┤
+│ • Proj A │                                          │
+│ • Proj B │   xterm.js pane running the agent CLI    │  ← TaskSurfaceView, switches on surface.kind
+│          │                                          │
+└──────────┴──────────────────────────────────────────┘
+```
+
+Three layers, each ignorant of the ones above it:
+
+- **TaskView** (`src/components/task/`) — "a task is open": compact header + a surface chosen by `TaskSurface.kind`. `taskSurfaceFor(editor)` in `src/embedded/taskSurface.ts` is the only place mapping an editor to a surface (`claude-code` → `{ kind: "terminal", agent: "claude" }`, everything else external). Adding an embedded editor (e.g. VS Code) is a new `kind` here.
+- **Terminal** (`src-tauri/src/commands/terminal.rs`, `src/services/terminal.ts`, `src/hooks/useTerminalSession.ts`) — a generic PTY per task, held in Tauri managed state while the app runs. Attaching replays the retained scrollback (2 MiB); leaving the view only detaches. Output streams over a `tauri::ipc::Channel`; `terminal-exit` is also emitted as an app event so cards can show session state.
+- **Agent** (`src-tauri/src/commands/agents/`) — how a CLI agent is launched: `LaunchSpec { program, args, env, cwd }`. `claude.rs` owns the session logic (`-n wm-<slug>` first, `-c` afterwards, `/color`, `--add-dir` for extra repos) and a session marker under `app_data_dir/agent-sessions/`, outside the worktree. A new agent is a new module plus an arm in `agents/mod.rs`.
+
+While a task is open, the list stays mounted but hidden so returning is instant (no editor re-probing). Keyboard: bare keys inside the terminal reach the agent; `⌘[` (or the Back button) returns to the list.
+
 ### Screens
 
 1. **Setup Wizard** — Shown on first launch. Single step: enter Linear API key. Link to `https://linear.app/settings/api` to generate one. Validates the key by calling `viewer` query.
@@ -194,6 +218,8 @@ interface PullRequestInfo {
    - Worktree directory (auto-filled as `~/Documents/WorktreeManager/<project-slug>`, editable)
 
 4. **Dependencies Modal** — The startup health check, opened from the sidebar footer or from the banner that appears when something is missing. One row per dependency (`git`, `gh`, the selected editor's app and CLIs, `node` plus the package managers the repos' lockfiles imply, `doppler` when a repo commits a Doppler config, Obsidian while the vault is enabled, and the workspaces' Linear API keys) with its status, what the app uses it for, and a copyable install command. Purely advisory — it never gates the app.
+
+6. **Task View** — Entered by clicking a card, pressing `Enter`, creating a task, or opening from quick search while the editor is Claude Code. The agent session outlives the view; the card shows a dot while it is running. Deleting the task closes its session first.
 
 5. **Worktree Modal** — Two-phase:
    - **Phase 1**: Search & select a Linear issue. Shows list of assigned issues (not completed/cancelled). Search bar with 300ms debounce.
@@ -374,9 +400,14 @@ This gives instant partial-ID matching (e.g. "3140" matches "TSY-3140") with zer
 
 - Startup self-heal, fired on every launch while the vault is enabled: runs the full scaffold **only when the root folder is missing entirely** (so individually deleted files are never resurrected), then keeps the Obsidian registration current — but never disturbs a running Obsidian (it skips and converges on a later launch). Best-effort, never blocks startup.
 
-### `open_cursor(path)`
+### `open_editor(editor, folders, branch_name, workspace_name)`
 
-- **Critical**: Use `open -a Cursor <path>` (macOS LaunchServices), NOT `Command::new("cursor")`. The latter inherits the Tauri app's restricted environment/PATH, causing permission issues and "command not found" errors.
+- **Critical**: GUI editors are opened with `open -a <App> <path>` (macOS LaunchServices), NOT `Command::new("cursor")`. The latter inherits the Tauri app's restricted environment/PATH, causing permission issues and "command not found" errors. CLI launches go through `claude_env_prelude()` for the same reason.
+- `claude-code` is not handled here anymore: it runs embedded (see `terminal_open`).
+
+### `terminal_open(task_id, agent, folders, branch_name, cols, rows, on_event)`
+
+Idempotent attach-or-spawn for the task's PTY. Returns `{ created, status, replay }`; `on_event` is a `Channel` receiving `{ type: "data", data }` and `{ type: "exit", code }`. Companion commands: `terminal_write`, `terminal_resize`, `terminal_detach` (drop the webview sink, keep the PTY), `terminal_close` (SIGHUP, 500 ms grace, kill, forget the agent's session marker), `terminal_list`. All sessions are killed on `RunEvent::Exit`.
 
 ### `doctor_probe(clis, apps, repo_paths)`
 
@@ -400,9 +431,9 @@ When the user clicks "Create Worktree" after selecting a Linear issue:
 4. **Call** `git_worktree_add` (Rust): fetches origin, creates branch from `origin/main`
 5. **Show status**: "Updating Linear issue..."
 6. **Call** `startIssue(issueId)`: transitions issue to "started" state
-7. **Save worktree record** to store **before** opening Cursor (so a Cursor failure doesn't lose the record)
-8. **Show status**: "Opening Cursor..."
-9. **Call** `open_cursor(path)` — best-effort, failure is non-fatal
+7. **Save worktree record** to store **before** opening the editor (so an editor failure doesn't lose the record)
+8. **Show status**: "Opening editor..." (external editors only)
+9. **Open the task** — external editors via `open_editor` (best-effort, failure is non-fatal; a `.code-workspace` path is persisted when returned); embedded surfaces open the Task View once the record exists
 10. **Write the Obsidian task note** via `ensure_task_note`, when the global vault is enabled — fire-and-forget, never blocks or fails creation
 11. **Close modal**
 

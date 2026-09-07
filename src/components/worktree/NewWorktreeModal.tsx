@@ -19,6 +19,8 @@ import {
 } from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
 import { ensureTaskNote } from "../../services/notes";
+import { isEmbedded, taskSurfaceFor } from "../../embedded/taskSurface";
+import { OpenTaskOptions } from "../../hooks/useOpenTask";
 
 interface NewWorktreeModalProps {
   open: boolean;
@@ -26,7 +28,7 @@ interface NewWorktreeModalProps {
   workspace: Workspace;
   vault: VaultConfig;
   onCreated: (task: Task) => void;
-  onTaskOpened?: (task: Task) => void;
+  onOpenTask?: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
   editorApp: EditorApp;
   onOpenHint?: (msg: string) => void;
 }
@@ -56,7 +58,7 @@ export function NewWorktreeModal({
   workspace,
   vault,
   onCreated,
-  onTaskOpened,
+  onOpenTask,
   editorApp,
   onOpenHint,
 }: NewWorktreeModalProps) {
@@ -273,13 +275,18 @@ export function NewWorktreeModal({
         });
       }
 
-      // Open all included folders together (multi-root window / one Claude session).
-      setCreatingStatus("Opening editor...");
-      const folders = members.map((m) => m.path);
-      const result = await openEditorForWorktree(editorApp, folders, taskBranch, workspace.name, {
-        onMessage: onOpenHint,
-        onError: (msg) => console.warn("Could not open editor:", msg),
-      });
+      // External editors open all included folders together (multi-root window) and may hand
+      // back a `.code-workspace` to persist. Embedded surfaces open once the task exists.
+      const embedded = isEmbedded(taskSurfaceFor(editorApp));
+      let result: Awaited<ReturnType<typeof openEditorForWorktree>> = null;
+      if (!embedded) {
+        setCreatingStatus("Opening editor...");
+        const folders = members.map((m) => m.path);
+        result = await openEditorForWorktree(editorApp, folders, taskBranch, workspace.name, {
+          onMessage: onOpenHint,
+          onError: (msg) => console.warn("Could not open editor:", msg),
+        });
+      }
 
       const taskId = uuid();
       const task: Task = {
@@ -299,7 +306,7 @@ export function NewWorktreeModal({
         createdAt: new Date().toISOString(),
       };
       onCreated(task);
-      onTaskOpened?.(task);
+      if (embedded) void onOpenTask?.(task);
 
       // Obsidian task log, when the workspace has one. Best-effort: the task exists.
       void ensureTaskNote(vault, workspace, task);

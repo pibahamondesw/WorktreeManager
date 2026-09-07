@@ -16,6 +16,7 @@ import { NewWorktreeModal } from "./NewWorktreeModal";
 import { Task, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
 import { TaskView } from "../task/TaskView";
 import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
+import { useAgentSessions } from "../../hooks/useAgentSessions";
 
 interface WorktreeListProps {
   tasks: Task[];
@@ -35,9 +36,8 @@ interface WorktreeListProps {
   revealTaskId: string | null;
   onRevealHandled: () => void;
   /** A task was opened in the editor (card, Enter, or just created): record the visit. */
-  onTaskOpened: (task: Task) => void;
   openedTask: OpenedTask | null;
-  onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<void>;
+  onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
   onCloseTask: () => void;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -79,7 +79,6 @@ export function WorktreeList({
   searchOpen,
   revealTaskId,
   onRevealHandled,
-  onTaskOpened,
   openedTask,
   onOpenTask,
   onCloseTask,
@@ -160,6 +159,8 @@ export function WorktreeList({
     onCloseTask();
   };
 
+  const agentSessions = useAgentSessions(openTask !== null);
+
   useWorktreeListKeyboardShortcuts({
     workspace,
     vault,
@@ -187,6 +188,8 @@ export function WorktreeList({
           <TaskView
             task={openTask}
             surface={openedTask.surface}
+            linearInfo={openTask.linearIssueId ? linearInfo[openTask.linearIssueId] : undefined}
+            gitStatus={aggregateTaskStatus(openTask, gitStatuses)}
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={onExpandSidebar}
             onBack={handleCloseTask}
@@ -235,6 +238,7 @@ export function WorktreeList({
                   gitStatus={aggregateTaskStatus(task, gitStatuses)}
                   selected={i === selectedIndex}
                   index={i}
+                  sessionStatus={agentSessions[task.id]}
                   onOpenError={showToast}
                   onToast={showToast}
                   onOpen={() => void onOpenTask(task, { onMessage: showToast, onError: showToast })}
@@ -258,7 +262,7 @@ export function WorktreeList({
           workspace={workspace}
           vault={vault}
           onCreated={onTaskCreated}
-          onTaskOpened={onTaskOpened}
+          onOpenTask={onOpenTask}
           editorApp={editorApp}
           onOpenHint={showToast}
         />

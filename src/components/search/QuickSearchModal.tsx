@@ -4,10 +4,10 @@ import { Badge } from "../ui/Badge";
 import { SearchIcon, BranchIcon } from "../ui/Icons";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { WorktreeListToast } from "../worktree/WorktreeListToast";
-import { openEditorForWorktree } from "../../services/openEditor";
+import { OpenTaskOptions } from "../../hooks/useOpenTask";
 import { parseQuery, scopeValues, withScope, withoutScope } from "../../search/query";
 import { searchTasks, TaskSearchResult } from "../../search/searchTasks";
-import { EditorApp, Task, Workspace } from "../../types";
+import { Task, Workspace } from "../../types";
 import { NavigationEntry, lastTaskVisits } from "../../navigation/history";
 import { linearIssueUrl } from "../../utils";
 
@@ -20,10 +20,11 @@ interface QuickSearchModalProps {
   tasks: Task[];
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
-  editorApp: EditorApp;
   historyEntries?: NavigationEntry[];
   /** Switch to the task's workspace and select it in the list. */
   onReveal: (task: Task) => void;
+  /** Reveal and open the task (embedded view or external editor, per the editor setting). */
+  onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
 }
 
 export function QuickSearchModal({
@@ -33,9 +34,9 @@ export function QuickSearchModal({
   tasks,
   workspaces,
   selectedWorkspaceId,
-  editorApp,
   historyEntries = EMPTY_ENTRIES,
   onReveal,
+  onOpenTask,
 }: QuickSearchModalProps) {
   const [query, setQuery] = useState(initialQuery);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -92,14 +93,7 @@ export function QuickSearchModal({
 
   // Stay open on failure so the error toast is readable.
   const openInEditor = async (result: TaskSearchResult) => {
-    onReveal(result.task);
-    const opened = await openEditorForWorktree(
-      editorApp,
-      result.task.members.map((m) => m.path),
-      result.task.branchName,
-      result.workspace?.name,
-      { onMessage: showToast, onError: showToast }
-    );
+    const opened = await onOpenTask(result.task, { onMessage: showToast, onError: showToast });
     if (opened) onClose();
   };
 

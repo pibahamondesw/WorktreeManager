@@ -23,6 +23,8 @@ import {
 } from "../../types";
 import { archiveTaskNote, ensureTaskNote, taskNoteUri } from "../../services/notes";
 import { linearIssueUrl, timeAgo } from "../../utils";
+import { terminalClose, TerminalStatus } from "../../services/terminal";
+import { stateVariant } from "./cardStyles";
 
 interface WorktreeCardProps {
   task: Task;
@@ -36,19 +38,11 @@ interface WorktreeCardProps {
   onOpenError?: (msg: string) => void;
   onToast?: (msg: string) => void;
   onOpen?: () => void;
+  sessionStatus?: TerminalStatus;
   repoSlugs: Record<string, string> | null;
   requestDelete?: boolean;
   onRequestDeleteHandled?: () => void;
 }
-
-const stateVariant: Record<string, "success" | "warning" | "accent" | "danger" | "default"> = {
-  started: "accent",
-  unstarted: "default",
-  completed: "success",
-  canceled: "danger",
-  backlog: "default",
-  triage: "warning",
-};
 
 const prBadgeVariant = (state: string) =>
   state === "open" ? "success" : state === "merged" ? "accent" : "default";
@@ -65,6 +59,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   onOpenError,
   onToast,
   onOpen,
+  sessionStatus,
   repoSlugs,
   requestDelete,
   onRequestDeleteHandled,
@@ -141,6 +136,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     setDeleteError(null);
     setDeleting(true);
     try {
+      await terminalClose(task.id);
       // Remove the worktree for each member.
       for (const m of task.members) {
         await invoke<string>("git_worktree_remove", {
@@ -163,6 +159,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   const handleForceRemove = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setDeleteError(null);
+    await terminalClose(task.id);
     await cleanupWorkspaceFile();
     await cleanupClaudeConfig();
     await cleanupDopplerConfig();
@@ -310,6 +307,7 @@ export const WorktreeCard = memo(function WorktreeCard({
             {status && (
               <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
             )}
+            {sessionStatus && <SessionDot status={sessionStatus} />}
             {age && age.label && (
               <span
                 className={`text-xs ml-auto flex-shrink-0 ${
@@ -604,5 +602,15 @@ function MenuButton({
       <span>{children}</span>
       {label && <span className="text-text-muted font-mono text-[0.625rem]">{label}</span>}
     </button>
+  );
+}
+
+function SessionDot({ status }: { status: TerminalStatus }) {
+  const running = status.kind === "running";
+  return (
+    <span
+      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${running ? "bg-success animate-pulse" : "bg-text-muted"}`}
+      title={running ? "Agent session running" : "Agent session ended"}
+    />
   );
 }

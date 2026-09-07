@@ -6,9 +6,6 @@ import { QuickSearchModal } from "./QuickSearchModal";
 import { Task, Workspace } from "../../types";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
-vi.mock("../../services/openEditor", () => ({
-  openEditorForWorktree: vi.fn().mockResolvedValue(true),
-}));
 
 Element.prototype.scrollIntoView = vi.fn();
 
@@ -27,6 +24,7 @@ const otherTask: Task = {
 
 function renderModal(props: Partial<React.ComponentProps<typeof QuickSearchModal>> = {}) {
   const onReveal = vi.fn();
+  const onOpenTask = vi.fn().mockResolvedValue(true);
   render(
     <QuickSearchModal
       open
@@ -35,27 +33,34 @@ function renderModal(props: Partial<React.ComponentProps<typeof QuickSearchModal
       tasks={[otherTask]}
       workspaces={workspaces}
       selectedWorkspaceId="ws-1"
-      editorApp="cursor"
       onReveal={onReveal}
+      onOpenTask={onOpenTask}
       {...props}
     />
   );
-  return onReveal;
+  return { onReveal, onOpenTask };
 }
 
 afterEach(cleanup);
 
 describe("QuickSearchModal navigation", () => {
-  it("reveals the task in its workspace when opened with Enter", () => {
-    const onReveal = renderModal();
+  it("opens the task when Enter is pressed", () => {
+    const { onOpenTask } = renderModal();
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-    expect(onReveal).toHaveBeenCalledWith(otherTask);
+    expect(onOpenTask).toHaveBeenCalledWith(otherTask, expect.any(Object));
   });
 
-  it("reveals the task in its workspace when the result is clicked", () => {
-    const onReveal = renderModal();
-    fireEvent.click(screen.getByRole("button", { name: /feature\/ledger-sync/ }));
+  it("only reveals the task when Enter is pressed with meta", () => {
+    const { onReveal, onOpenTask } = renderModal();
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", metaKey: true });
     expect(onReveal).toHaveBeenCalledWith(otherTask);
+    expect(onOpenTask).not.toHaveBeenCalled();
+  });
+
+  it("opens the task when the result is clicked", () => {
+    const { onOpenTask } = renderModal();
+    fireEvent.click(screen.getByRole("button", { name: /feature\/ledger-sync/ }));
+    expect(onOpenTask).toHaveBeenCalledWith(otherTask, expect.any(Object));
   });
 });
 

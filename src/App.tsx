@@ -334,7 +334,6 @@ function App() {
             searchOpen={search.open}
             revealTaskId={revealTaskId}
             onRevealHandled={() => setRevealTaskId(null)}
-            onTaskOpened={recordTaskVisit}
             openedTask={openedTask}
             onOpenTask={openTask}
             onCloseTask={closeTask}
@@ -354,9 +353,9 @@ function App() {
         tasks={state.tasks}
         workspaces={state.workspaces}
         selectedWorkspaceId={state.selectedWorkspaceId}
-        editorApp={editorApp}
         historyEntries={history.entries}
         onReveal={handleReveal}
+        onOpenTask={openTask}
       />
       <DoctorModal
         open={showDoctor}

@@ -18,7 +18,7 @@ interface Params {
   setDeleteRequested: (v: boolean) => void;
   handleRefresh: () => void;
   showToast: (msg: string) => void;
-  onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<void>;
+  onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
   taskOpen: boolean;
 }
 

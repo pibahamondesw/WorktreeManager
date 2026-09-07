@@ -34,23 +34,25 @@ export function useOpenTask({ editorApp, workspaces, tasks, recordTaskVisit, sho
     if (openedTask && !tasks.some((t) => t.id === openedTask.taskId)) setOpenedTask(null);
   }, [tasks, openedTask]);
 
+  /** Resolves to whether the task was opened (embedded, or the external editor launched). */
   const openTask = useCallback(
-    async (task: Task, options: OpenTaskOptions = {}) => {
+    async (task: Task, options: OpenTaskOptions = {}): Promise<boolean> => {
+      showTask(task);
       recordTaskVisit(task);
       const surface = options.surface ?? taskSurfaceFor(editorApp);
       if (isEmbedded(surface)) {
-        showTask(task);
         setOpenedTask({ taskId: task.id, surface });
-        return;
+        return true;
       }
       const workspace = workspaces.find((w) => w.id === task.workspaceId);
-      await openEditorForWorktree(
+      const result = await openEditorForWorktree(
         editorApp,
         task.members.map((m) => m.path),
         task.branchName,
         workspace?.name,
         { onMessage: options.onMessage, onError: options.onError }
       );
+      return result !== null;
     },
     [editorApp, workspaces, recordTaskVisit, showTask]
   );

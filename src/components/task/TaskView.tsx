@@ -3,18 +3,28 @@ import { TaskHeader } from "./TaskHeader";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { SessionStatus } from "../../hooks/useTerminalSession";
-import { Task, TaskSurface } from "../../types";
+import { GitStatus, IssueLinearInfo, Task, TaskSurface } from "../../types";
 
 interface TaskViewProps {
   task: Task;
   surface: TaskSurface;
+  linearInfo?: IssueLinearInfo;
+  gitStatus?: GitStatus;
   sidebarCollapsed: boolean;
   onExpandSidebar: () => void;
   onBack: () => void;
 }
 
 /** A task opened inside the app: compact header on top, the task's surface filling the rest. */
-export function TaskView({ task, surface, sidebarCollapsed, onExpandSidebar, onBack }: TaskViewProps) {
+export function TaskView({
+  task,
+  surface,
+  linearInfo,
+  gitStatus,
+  sidebarCollapsed,
+  onExpandSidebar,
+  onBack,
+}: TaskViewProps) {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({ kind: "connecting" });
 
   useKeyboardShortcuts({
@@ -26,6 +36,8 @@ export function TaskView({ task, surface, sidebarCollapsed, onExpandSidebar, onB
     <div className="flex-1 flex flex-col min-h-0 min-w-0">
       <TaskHeader
         task={task}
+        linearInfo={linearInfo}
+        gitStatus={gitStatus}
         sessionStatus={sessionStatus}
         sidebarCollapsed={sidebarCollapsed}
         onExpandSidebar={onExpandSidebar}
