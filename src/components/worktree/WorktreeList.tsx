@@ -31,6 +31,12 @@ interface WorktreeListProps {
   /** Task picked in the quick search: select it once this workspace's tasks are in. */
   revealTaskId: string | null;
   onRevealHandled: () => void;
+  /** A task was opened in the editor (card, Enter, or just created): record the visit. */
+  onTaskOpened: (task: Task) => void;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  onGoBack: () => void;
+  onGoForward: () => void;
 }
 
 /** Collapse the per-member git statuses of a task into one summary for its card. */
@@ -67,6 +73,11 @@ export function WorktreeList({
   searchOpen,
   revealTaskId,
   onRevealHandled,
+  onTaskOpened,
+  canGoBack,
+  canGoForward,
+  onGoBack,
+  onGoForward,
 }: WorktreeListProps) {
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
@@ -142,6 +153,7 @@ export function WorktreeList({
     setDeleteRequested,
     handleRefresh,
     showToast,
+    onTaskOpened,
   });
 
   if (!workspace) return <WorktreeNoRepoPlaceholder />;
@@ -161,6 +173,10 @@ export function WorktreeList({
           onOpenSearch={onOpenSearch}
           sidebarCollapsed={sidebarCollapsed}
           onExpandSidebar={onExpandSidebar}
+          canGoBack={canGoBack}
+          canGoForward={canGoForward}
+          onGoBack={onGoBack}
+          onGoForward={onGoForward}
         />
 
         <div ref={listRef} className="flex-1 overflow-y-auto p-6">
@@ -188,6 +204,7 @@ export function WorktreeList({
                   editorApp={editorApp}
                   onOpenError={showToast}
                   onToast={showToast}
+                  onOpened={() => onTaskOpened(task)}
                   requestDelete={i === selectedIndex && deleteRequested}
                   onRequestDeleteHandled={() => setDeleteRequested(false)}
                 />
@@ -206,6 +223,7 @@ export function WorktreeList({
           workspace={workspace}
           vault={vault}
           onCreated={onTaskCreated}
+          onTaskOpened={onTaskOpened}
           editorApp={editorApp}
           onOpenHint={showToast}
         />

@@ -17,6 +17,7 @@ import {
   workspacesWithoutSecrets,
 } from "../utils";
 import { loadSecrets, saveAndVerifySecrets, saveSecrets } from "./keychain";
+import { NavigationEntry, isNavigationEntry } from "../navigation/history";
 
 let store: Store | null = null;
 
@@ -327,4 +328,10 @@ export async function loadEditorApp(): Promise<EditorApp> {
 export async function loadSidebarCollapsed(): Promise<boolean> {
   const s = await getStore();
   return (await s.get<boolean>("sidebarCollapsed")) ?? false;
+}
+
+export async function loadNavigationHistory(): Promise<NavigationEntry[]> {
+  const s = await getStore();
+  const stored = await s.get<unknown[]>("navigationHistory");
+  return Array.isArray(stored) ? stored.filter(isNavigationEntry) : [];
 }

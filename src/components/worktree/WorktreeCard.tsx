@@ -38,6 +38,7 @@ interface WorktreeCardProps {
   editorApp?: EditorApp;
   onOpenError?: (msg: string) => void;
   onToast?: (msg: string) => void;
+  onOpened?: () => void;
   requestDelete?: boolean;
   onRequestDeleteHandled?: () => void;
 }
@@ -71,6 +72,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   editorApp = "cursor",
   onOpenError,
   onToast,
+  onOpened,
   requestDelete,
   onRequestDeleteHandled,
 }: WorktreeCardProps) {
@@ -137,6 +139,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   }, [showRepoChips, task.members]);
 
   const handleOpen = async () => {
+    onOpened?.();
     await openEditorForWorktree(editorApp, folders, task.branchName, workspace.name, {
       onMessage: onToast,
       onError: onOpenError,

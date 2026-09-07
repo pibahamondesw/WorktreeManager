@@ -436,6 +436,7 @@ Uses `@tauri-apps/plugin-store` with a `store.json` file. Keys:
 - `workspaces`: `Workspace[]`
 - `tasks`: `Task[]`
 - `selectedWorkspaceId`: `string | null`
+- `navigationHistory`: `NavigationEntry[]`
 - `schemaVersion`: `number` (currently `2`)
 
 Schema v2 dropped the per-workspace `notesPath` in favor of the global `vault` key, which starts **disabled** — enabling is always an explicit user action, and always targets the managed default path (`~/Documents/worktreemanager-vault`). A pre-v2 `notesPath` is deliberately not migrated: the old field pointed at arbitrary user folders, and deriving config from them proved confusing; the handful of early users re-enable with one click. The migration runs when the `vault` key is absent (retry-safe on partial writes). A custom `vault.path` hand-edited in `store.json` is honored by note writing, opening, and the startup self-heal — but the Enable button always resets to the managed default. Reminder: `normalizeWorkspaces` whitelists fields, so any new `Workspace` key must be added there or it is silently dropped on load.

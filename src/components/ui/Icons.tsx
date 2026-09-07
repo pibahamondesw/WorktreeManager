@@ -119,6 +119,22 @@ export function ChevronLeftIcon({ size = 14, className = "" }: IconProps) {
   );
 }
 
+export function ChevronRightIcon({ size = 14, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      className={className}
+    >
+      <path d="M5.5 3l4 4-4 4" />
+    </svg>
+  );
+}
+
 export function ExternalLinkIcon({ size = 10, className = "" }: IconProps) {
   return (
     <svg

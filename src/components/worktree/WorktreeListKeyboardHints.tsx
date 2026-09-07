@@ -37,6 +37,9 @@ export function WorktreeListKeyboardHints({ showNotes }: WorktreeListKeyboardHin
           <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">⌘K</kbd> search
         </span>
         <span>
+          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">⌘← ⌘→</kbd> history
+        </span>
+        <span>
           <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">⌘R</kbd> refresh
         </span>
       </div>
