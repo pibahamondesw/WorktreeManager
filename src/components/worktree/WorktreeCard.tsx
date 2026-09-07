@@ -39,6 +39,7 @@ interface WorktreeCardProps {
   onOpenError?: (msg: string) => void;
   onToast?: (msg: string) => void;
   onOpened?: () => void;
+  repoSlugs: Record<string, string> | null;
   requestDelete?: boolean;
   onRequestDeleteHandled?: () => void;
 }
@@ -55,11 +56,6 @@ const stateVariant: Record<string, "success" | "warning" | "accent" | "danger" |
 const prBadgeVariant = (state: string) =>
   state === "open" ? "success" : state === "merged" ? "accent" : "default";
 
-const githubSlugFromRemote = (remoteUrl: string): string | null => {
-  const match = remoteUrl.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
-  return match ? match[1].toLowerCase() : null;
-};
-
 export const WorktreeCard = memo(function WorktreeCard({
   task,
   workspace,
@@ -73,6 +69,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   onOpenError,
   onToast,
   onOpened,
+  repoSlugs,
   requestDelete,
   onRequestDeleteHandled,
 }: WorktreeCardProps) {
@@ -85,8 +82,6 @@ export const WorktreeCard = memo(function WorktreeCard({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  // "owner/repo" of each member's origin remote, keyed by repoId; null until resolved.
-  const [memberRepoSlugs, setMemberRepoSlugs] = useState<Record<string, string> | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const folders = task.members.map((m) => m.path);
@@ -111,32 +106,6 @@ export const WorktreeCard = memo(function WorktreeCard({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
-
-  useEffect(() => {
-    if (!showRepoChips) return;
-    let cancelled = false;
-    (async () => {
-      const entries = await Promise.all(
-        task.members.map(async (m) => {
-          try {
-            const remoteUrl = await invoke<string>("git_remote_url", { repoPath: m.localPath });
-            return [m.repoId, githubSlugFromRemote(remoteUrl)] as const;
-          } catch {
-            return [m.repoId, null] as const;
-          }
-        })
-      );
-      if (cancelled) return;
-      const slugs: Record<string, string> = {};
-      for (const [repoId, slug] of entries) {
-        if (slug) slugs[repoId] = slug;
-      }
-      setMemberRepoSlugs(slugs);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [showRepoChips, task.members]);
 
   const handleOpen = async () => {
     onOpened?.();
@@ -238,16 +207,16 @@ export const WorktreeCard = memo(function WorktreeCard({
   };
 
   const prForMember = (m: TaskMember): PullRequestInfo | undefined => {
-    const slug = memberRepoSlugs?.[m.repoId];
+    const slug = repoSlugs?.[m.repoId];
     if (!slug || !prs) return undefined;
     return prs.find((p) => p.repoSlug.toLowerCase() === slug);
   };
 
   // PRs attached to the Linear issue whose repo doesn't match any member's remote
   // (e.g. a fork, or a repo not part of this workspace) — still shown, never dropped.
-  const memberSlugSet = new Set(Object.values(memberRepoSlugs ?? {}));
+  const memberSlugSet = new Set(Object.values(repoSlugs ?? {}));
   const unmatchedPrs =
-    prs && memberRepoSlugs !== null
+    prs && repoSlugs !== null
       ? prs.filter((p) => !memberSlugSet.has(p.repoSlug.toLowerCase()))
       : [];
 
@@ -449,7 +418,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                       {m.repoName}
                     </span>
                     {prs !== undefined &&
-                      memberRepoSlugs !== null &&
+                      repoSlugs !== null &&
                       (memberPr ? (
                         <span
                           role="button"

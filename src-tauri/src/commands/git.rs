@@ -422,25 +422,28 @@ pub async fn git_worktree_status_batch(
 }
 
 #[tauri::command]
-pub fn git_remote_url(repo_path: String) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["-C", &repo_path, "remote", "get-url", "origin"])
-        .output()
-        .map_err(|e| format!("Failed to get remote URL: {}", e))?;
+pub async fn git_remote_url(repo_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args(["-C", &repo_path, "remote", "get-url", "origin"])
+            .output()
+            .map_err(|e| format!("Failed to get remote URL: {}", e))?;
 
-    if output.status.success() {
-        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        // Convert SSH URL to HTTPS: git@github.com:org/repo.git -> https://github.com/org/repo
-        if url.starts_with("git@") {
-            let cleaned = url.trim_end_matches(".git");
-            let https = cleaned.replace(":", "/").replace("git@", "https://");
-            Ok(https)
+        if output.status.success() {
+            let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Convert SSH URL to HTTPS: git@github.com:org/repo.git -> https://github.com/org/repo
+            if url.starts_with("git@") {
+                let cleaned = url.trim_end_matches(".git");
+                Ok(cleaned.replace(":", "/").replace("git@", "https://"))
+            } else {
+                Ok(url.trim_end_matches(".git").to_string())
+            }
         } else {
-            Ok(url.trim_end_matches(".git").to_string())
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
         }
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
-    }
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 #[tauri::command]

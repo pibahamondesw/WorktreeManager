@@ -4,6 +4,7 @@ import { LinearService } from "../../services/linear";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { useWorktreeData } from "../../hooks/useWorktreeData";
+import { useRepoSlugs } from "../../hooks/useRepoSlugs";
 import { WorktreeCard } from "./WorktreeCard";
 import { cardScrollDelta } from "./cardScroll";
 import { WorktreeCardSkeleton } from "./WorktreeCardSkeleton";
@@ -92,6 +93,7 @@ export function WorktreeList({
     [linearApiKey]
   );
 
+  const repoSlugs = useRepoSlugs(workspace);
   const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(
     tasks,
     workspace,
@@ -205,6 +207,7 @@ export function WorktreeList({
                   onOpenError={showToast}
                   onToast={showToast}
                   onOpened={() => onTaskOpened(task)}
+                  repoSlugs={repoSlugs}
                   requestDelete={i === selectedIndex && deleteRequested}
                   onRequestDeleteHandled={() => setDeleteRequested(false)}
                 />
