@@ -138,13 +138,13 @@ fn exclude_generated_files(worktree_path: &str) -> Result<(), String> {
     };
     let patterns = [
         "/.vscode/tasks.json".to_string(),
-        format!("/{}", super::vscode_task::WM_CLAUDE_SESSION_MARKER_FILE),
+        format!("/{}", super::shell_env::WM_CLAUDE_SESSION_MARKER_FILE),
     ]
     .into_iter()
     .chain([".vscode", ".zed"].into_iter().flat_map(|dir| {
         [
-            super::vscode_task::WM_CLAUDE_SCRIPT_FILE,
-            super::vscode_task::WM_CLAUDE_SESSION_MARKER_FILE,
+            super::shell_env::WM_CLAUDE_SCRIPT_FILE,
+            super::shell_env::WM_CLAUDE_SESSION_MARKER_FILE,
         ]
         .map(|file| format!("/{dir}/{file}"))
     }));

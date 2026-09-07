@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use super::vscode_task;
+use super::shell_env;
 
 /// Slugify a string to lowercase `[a-z0-9-]`, collapsing runs of other chars into `-`.
 fn slugify(input: &str) -> String {
@@ -94,7 +94,7 @@ pub(crate) fn build_workspace_json(folders: &[String], existing: Option<Value>) 
         .cloned()
         .unwrap_or_default();
     tasks_arr.retain(|t| {
-        t.get("label").and_then(Value::as_str) != Some(vscode_task::WM_CLAUDE_TASK_LABEL)
+        t.get("label").and_then(Value::as_str) != Some(shell_env::WM_CLAUDE_TASK_LABEL)
     });
     if tasks_arr.is_empty() {
         // Only keep an (empty) tasks block if one already existed, to avoid churn.
@@ -208,7 +208,7 @@ mod tests {
                 "version": "2.0.0",
                 "tasks": [
                     { "label": "User Task", "type": "shell", "command": "echo hi" },
-                    { "label": vscode_task::WM_CLAUDE_TASK_LABEL, "type": "shell", "command": "x" }
+                    { "label": shell_env::WM_CLAUDE_TASK_LABEL, "type": "shell", "command": "x" }
                 ]
             }
         });

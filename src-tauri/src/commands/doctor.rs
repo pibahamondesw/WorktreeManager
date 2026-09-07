@@ -17,7 +17,7 @@ use std::process::Command;
 use crate::commands::doppler::repo_uses_doppler;
 use crate::commands::editor::gui_app_exists;
 use crate::commands::node_deps::detect_package_manager;
-use crate::commands::vscode_task::claude_env_prelude;
+use crate::commands::shell_env::claude_env_prelude;
 
 #[derive(serde::Serialize)]
 pub struct CliProbe {

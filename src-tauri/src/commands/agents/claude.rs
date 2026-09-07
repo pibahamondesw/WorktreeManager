@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use super::{LaunchContext, LaunchSpec};
-use crate::commands::vscode_task::{claude_cli_available, claude_env_prelude, shell_single_quoted};
+use crate::commands::shell_env::{claude_cli_available, claude_env_prelude, shell_single_quoted};
 
 /// Env var holding the per-worktree session name. Long, prefixed name avoids clashing with
 /// anything a user might already export in their shell.
