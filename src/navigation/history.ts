@@ -70,6 +70,14 @@ export function nextNavigableIndex(
   return null;
 }
 
+export function lastTaskVisits(entries: NavigationEntry[]): Map<string, string> {
+  const visits = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.kind === "task") visits.set(entry.taskId, entry.at);
+  }
+  return visits;
+}
+
 export function isNavigationEntry(value: unknown): value is NavigationEntry {
   if (!value || typeof value !== "object") return false;
   const e = value as Record<string, unknown>;

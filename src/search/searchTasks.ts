@@ -13,6 +13,7 @@ interface SearchArgs {
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
   query: string;
+  lastVisitAt?: Map<string, string>;
 }
 
 /** Ranked so an exact Linear identifier always beats an incidental title hit. */
@@ -116,7 +117,9 @@ export function searchTasks({
   workspaces,
   selectedWorkspaceId,
   query,
+  lastVisitAt,
 }: SearchArgs): TaskSearchResult[] {
+  const recencyOf = (task: Task) => lastVisitAt?.get(task.id) ?? task.createdAt;
   const parsed = parseQuery(query);
   const workspaceById = new Map(workspaces.map((w) => [w.id, w]));
   const results: TaskSearchResult[] = [];
@@ -137,6 +140,6 @@ export function searchTasks({
     const rankA = a.score + (a.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0);
     const rankB = b.score + (b.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0);
     if (rankA !== rankB) return rankB - rankA;
-    return b.task.createdAt.localeCompare(a.task.createdAt);
+    return recencyOf(b.task).localeCompare(recencyOf(a.task));
   });
 }

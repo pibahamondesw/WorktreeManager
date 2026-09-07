@@ -7,6 +7,7 @@ import {
   historyFromEntries,
   seedSession,
   isNavigationEntry,
+  lastTaskVisits,
   nextNavigableIndex,
   pushEntry,
 } from "./history";
@@ -25,6 +26,20 @@ const task = (
   taskId: id,
   workspaceId,
   at,
+});
+
+describe("lastTaskVisits", () => {
+  it("maps each task to its latest visit and ignores workspace entries", () => {
+    const visits = lastTaskVisits([
+      task("t1", "w1", "2026-09-01T00:00:00.000Z"),
+      ws("w1"),
+      task("t2", "w1", "2026-09-02T00:00:00.000Z"),
+      task("t1", "w1", "2026-09-03T00:00:00.000Z"),
+    ]);
+    expect(visits.get("t1")).toBe("2026-09-03T00:00:00.000Z");
+    expect(visits.get("t2")).toBe("2026-09-02T00:00:00.000Z");
+    expect(visits.size).toBe(2);
+  });
 });
 
 describe("pushEntry", () => {

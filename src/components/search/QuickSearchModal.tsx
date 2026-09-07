@@ -8,7 +8,10 @@ import { openEditorForWorktree } from "../../services/openEditor";
 import { parseQuery, scopeValues, withScope, withoutScope } from "../../search/query";
 import { searchTasks, TaskSearchResult } from "../../search/searchTasks";
 import { EditorApp, Task, Workspace } from "../../types";
+import { NavigationEntry, lastTaskVisits } from "../../navigation/history";
 import { linearIssueUrl } from "../../utils";
+
+const EMPTY_ENTRIES: NavigationEntry[] = [];
 
 interface QuickSearchModalProps {
   open: boolean;
@@ -18,6 +21,7 @@ interface QuickSearchModalProps {
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
   editorApp: EditorApp;
+  historyEntries?: NavigationEntry[];
   /** Switch to the task's workspace and select it in the list. */
   onReveal: (task: Task) => void;
 }
@@ -30,6 +34,7 @@ export function QuickSearchModal({
   workspaces,
   selectedWorkspaceId,
   editorApp,
+  historyEntries = EMPTY_ENTRIES,
   onReveal,
 }: QuickSearchModalProps) {
   const [query, setQuery] = useState(initialQuery);
@@ -56,12 +61,14 @@ export function QuickSearchModal({
     });
   }, [open, initialQuery]);
 
+  const lastVisitAt = useMemo(() => lastTaskVisits(historyEntries), [historyEntries]);
+
   const results = useMemo(
     () =>
       open
-        ? searchTasks({ tasks, workspaces, selectedWorkspaceId, query })
+        ? searchTasks({ tasks, workspaces, selectedWorkspaceId, query, lastVisitAt })
         : ([] as TaskSearchResult[]),
-    [open, tasks, workspaces, selectedWorkspaceId, query]
+    [open, tasks, workspaces, selectedWorkspaceId, query, lastVisitAt]
   );
 
   useEffect(() => {

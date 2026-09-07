@@ -129,6 +129,39 @@ describe("searchTasks", () => {
     expect(results.map((r) => r.task.id)).toEqual(["newer", "older"]);
   });
 
+  it("breaks ties by last visit, falling back to createdAt for unvisited tasks", () => {
+    const visitedLongAgo = task({ id: "visited-long-ago", createdAt: "2026-01-01T00:00:00.000Z" });
+    const visitedRecently = task({ id: "visited-recently", createdAt: "2026-02-01T00:00:00.000Z" });
+    const unvisitedNewest = task({ id: "unvisited-newest", createdAt: "2026-06-01T00:00:00.000Z" });
+    const lastVisitAt = new Map([
+      ["visited-long-ago", "2026-03-01T00:00:00.000Z"],
+      ["visited-recently", "2026-09-01T00:00:00.000Z"],
+    ]);
+    const ids = (query: string) =>
+      searchTasks({
+        tasks: [visitedLongAgo, unvisitedNewest, visitedRecently],
+        workspaces,
+        selectedWorkspaceId: "ws-web",
+        query,
+        lastVisitAt,
+      }).map((r) => r.task.id);
+    expect(ids("")).toEqual(["visited-recently", "unvisited-newest", "visited-long-ago"]);
+    expect(ids("branch")).toEqual(["visited-recently", "unvisited-newest", "visited-long-ago"]);
+  });
+
+  it("keeps a better text match above a more recently visited task", () => {
+    const recentSubstring = task({ id: "recent", linearIssueTitle: "Refactor quick search" });
+    const exactIdentifier = task({ id: "exact", linearIssueIdentifier: "WOR-1" });
+    const results = searchTasks({
+      tasks: [recentSubstring, exactIdentifier],
+      workspaces,
+      selectedWorkspaceId: "ws-web",
+      query: "wor-1",
+      lastVisitAt: new Map([["recent", "2026-09-01T00:00:00.000Z"]]),
+    });
+    expect(results.map((r) => r.task.id)).toEqual(["exact"]);
+  });
+
   it("attaches the workspace and current-workspace flag to each result", () => {
     const [first] = run("wor-12");
     expect(first.workspace?.name).toBe("API");
