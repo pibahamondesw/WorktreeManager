@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod claude_config;
 pub mod doctor;
 pub mod doppler;
@@ -7,5 +8,6 @@ pub mod keychain;
 pub mod node_deps;
 pub mod notes;
 pub mod vault;
+pub mod terminal;
 pub mod vscode_task;
 pub mod workspace;
