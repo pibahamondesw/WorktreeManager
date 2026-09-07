@@ -25,7 +25,7 @@ const otherTask: Task = {
   createdAt: "2026-01-01T00:00:00Z",
 };
 
-function renderModal() {
+function renderModal(props: Partial<React.ComponentProps<typeof QuickSearchModal>> = {}) {
   const onReveal = vi.fn();
   render(
     <QuickSearchModal
@@ -37,6 +37,7 @@ function renderModal() {
       selectedWorkspaceId="ws-1"
       editorApp="cursor"
       onReveal={onReveal}
+      {...props}
     />
   );
   return onReveal;
@@ -55,5 +56,22 @@ describe("QuickSearchModal navigation", () => {
     const onReveal = renderModal();
     fireEvent.click(screen.getByRole("button", { name: /feature\/ledger-sync/ }));
     expect(onReveal).toHaveBeenCalledWith(otherTask);
+  });
+});
+
+describe("QuickSearchModal ordering", () => {
+  it("lists the most recently visited task first", () => {
+    const older: Task = { ...otherTask, id: "t-old", branchName: "feature/old", createdAt: "2026-01-01T00:00:00Z" };
+    const newer: Task = { ...otherTask, id: "t-new", branchName: "feature/new", createdAt: "2026-05-01T00:00:00Z" };
+    renderModal({
+      initialQuery: "",
+      tasks: [newer, older],
+      historyEntries: [
+        { kind: "task", taskId: "t-old", workspaceId: "ws-2", at: "2026-09-01T00:00:00Z" },
+      ],
+    });
+    const names = screen.getAllByRole("button", { name: /feature\// }).map((b) => b.textContent);
+    expect(names[0]).toContain("feature/old");
+    expect(names[1]).toContain("feature/new");
   });
 });

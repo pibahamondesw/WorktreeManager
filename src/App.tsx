@@ -342,6 +342,7 @@ function App() {
         workspaces={state.workspaces}
         selectedWorkspaceId={state.selectedWorkspaceId}
         editorApp={editorApp}
+        historyEntries={history.entries}
         onReveal={handleReveal}
       />
       <DoctorModal
