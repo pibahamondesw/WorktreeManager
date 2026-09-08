@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::commands::vscode_task::{claude_env_prelude, cli_available, shell_single_quoted};
+use crate::commands::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
 
 #[derive(serde::Serialize)]
 pub struct InstallDepsResult {

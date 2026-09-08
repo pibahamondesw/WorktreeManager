@@ -2,25 +2,27 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
 
+pub(crate) const GIT_ENV_SCRUB: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
 fn git_command() -> Command {
     let mut command = Command::new("git");
-    for variable in [
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_CONFIG",
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_CONFIG_COUNT",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_IMPLICIT_WORK_TREE",
-        "GIT_GRAFT_FILE",
-        "GIT_INDEX_FILE",
-        "GIT_NO_REPLACE_OBJECTS",
-        "GIT_REPLACE_REF_BASE",
-        "GIT_PREFIX",
-        "GIT_SHALLOW_FILE",
-        "GIT_COMMON_DIR",
-    ] {
+    for variable in GIT_ENV_SCRUB {
         command.env_remove(variable);
     }
     command
@@ -136,13 +138,13 @@ fn exclude_generated_files(worktree_path: &str) -> Result<(), String> {
     };
     let patterns = [
         "/.vscode/tasks.json".to_string(),
-        format!("/{}", super::vscode_task::WM_CLAUDE_SESSION_MARKER_FILE),
+        format!("/{}", super::shell_env::WM_CLAUDE_SESSION_MARKER_FILE),
     ]
     .into_iter()
     .chain([".vscode", ".zed"].into_iter().flat_map(|dir| {
         [
-            super::vscode_task::WM_CLAUDE_SCRIPT_FILE,
-            super::vscode_task::WM_CLAUDE_SESSION_MARKER_FILE,
+            super::shell_env::WM_CLAUDE_SCRIPT_FILE,
+            super::shell_env::WM_CLAUDE_SESSION_MARKER_FILE,
         ]
         .map(|file| format!("/{dir}/{file}"))
     }));

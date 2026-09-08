@@ -14,6 +14,9 @@ import { WorktreeListKeyboardHints } from "./WorktreeListKeyboardHints";
 import { WorktreeListToast } from "./WorktreeListToast";
 import { NewWorktreeModal } from "./NewWorktreeModal";
 import { Task, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
+import { TaskView } from "../task/TaskView";
+import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
+import { useAgentSessions } from "../../hooks/useAgentSessions";
 
 interface WorktreeListProps {
   tasks: Task[];
@@ -33,7 +36,9 @@ interface WorktreeListProps {
   revealTaskId: string | null;
   onRevealHandled: () => void;
   /** A task was opened in the editor (card, Enter, or just created): record the visit. */
-  onTaskOpened: (task: Task) => void;
+  openedTask: OpenedTask | null;
+  onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
+  onCloseTask: () => void;
   canGoBack: boolean;
   canGoForward: boolean;
   onGoBack: () => void;
@@ -74,7 +79,9 @@ export function WorktreeList({
   searchOpen,
   revealTaskId,
   onRevealHandled,
-  onTaskOpened,
+  openedTask,
+  onOpenTask,
+  onCloseTask,
   canGoBack,
   canGoForward,
   onGoBack,
@@ -142,12 +149,23 @@ export function WorktreeList({
   const selectedTask =
     selectedIndex >= 0 && selectedIndex < tasks.length ? tasks[selectedIndex] : null;
 
+  const openTask = openedTask ? (tasks.find((t) => t.id === openedTask.taskId) ?? null) : null;
+
+  const handleCloseTask = () => {
+    if (openTask) {
+      setSelectedIndex(tasks.indexOf(openTask));
+      setRevealNonce((n) => n + 1);
+    }
+    onCloseTask();
+  };
+
+  const agentSessions = useAgentSessions(openTask !== null);
+
   useWorktreeListKeyboardShortcuts({
     workspace,
     vault,
     tasks,
     selectedTask,
-    editorApp,
     showNew,
     searchOpen,
     setShowNew,
@@ -155,14 +173,31 @@ export function WorktreeList({
     setDeleteRequested,
     handleRefresh,
     showToast,
-    onTaskOpened,
+    onOpenTask,
+    taskOpen: openTask !== null,
   });
 
   if (!workspace) return <WorktreeNoRepoPlaceholder />;
 
+  const taskOpen = openTask !== null && openedTask !== null;
+
   return (
     <LinearProvider apiKey={workspace.linearApiKey ?? null}>
       <div className="flex-1 flex flex-col min-h-0 min-w-0 relative">
+        {openTask && openedTask && (
+          <TaskView
+            task={openTask}
+            surface={openedTask.surface}
+            linearInfo={openTask.linearIssueId ? linearInfo[openTask.linearIssueId] : undefined}
+            gitStatus={aggregateTaskStatus(openTask, gitStatuses)}
+            sidebarCollapsed={sidebarCollapsed}
+            onExpandSidebar={onExpandSidebar}
+            onBack={handleCloseTask}
+          />
+        )}
+        {/* The grid stays mounted while a task is open so returning is instant (no re-probing of
+            editors, no card remounts). */}
+        <div className="contents" hidden={taskOpen}>
         <WorktreeListHeader
           workspaceName={workspace.name}
           taskCount={tasks.length}
@@ -203,10 +238,10 @@ export function WorktreeList({
                   gitStatus={aggregateTaskStatus(task, gitStatuses)}
                   selected={i === selectedIndex}
                   index={i}
-                  editorApp={editorApp}
+                  sessionStatus={agentSessions[task.id]}
                   onOpenError={showToast}
                   onToast={showToast}
-                  onOpened={() => onTaskOpened(task)}
+                  onOpen={() => void onOpenTask(task, { onMessage: showToast, onError: showToast })}
                   repoSlugs={repoSlugs}
                   requestDelete={i === selectedIndex && deleteRequested}
                   onRequestDeleteHandled={() => setDeleteRequested(false)}
@@ -217,6 +252,7 @@ export function WorktreeList({
         </div>
 
         {tasks.length > 0 && <WorktreeListKeyboardHints showNotes={vault.enabled} />}
+        </div>
 
         {toast && <WorktreeListToast message={toast} />}
 
@@ -226,7 +262,7 @@ export function WorktreeList({
           workspace={workspace}
           vault={vault}
           onCreated={onTaskCreated}
-          onTaskOpened={onTaskOpened}
+          onOpenTask={onOpenTask}
           editorApp={editorApp}
           onOpenHint={showToast}
         />

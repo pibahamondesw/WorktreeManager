@@ -10,6 +10,7 @@ A lightweight macOS desktop app for managing Git worktrees with Linear integrati
 - **Linear integration** — Search issues, auto-create branches, set issues as "In Progress"
 - **Worktree management** — Create, open, and delete Git worktrees from a clean UI
 - **Multi-editor support** — Open worktrees in Cursor, VS Code, Zed, OpenCode, or Claude Code
+- **Embedded agent terminal** — With Claude Code as the editor, each task opens inside the app; the session keeps running in the background while you switch tasks
 - **PR tracking** — See linked GitHub PRs on worktree cards, or create new PRs in one click
 - **Git status** — See ahead/behind counts, dirty state, and worktree age at a glance
 - **Obsidian task logs** — Optional per-task note in your vault, created and archived with the task
@@ -73,7 +74,7 @@ Only needed for development, or if you'd rather not use Homebrew.
    - [VS Code](https://code.visualstudio.com/) — Microsoft's code editor
    - [Zed](https://zed.dev/) — high-performance code editor
    - [OpenCode](https://opencode.ai/) — AI-native desktop editor
-   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Anthropic's CLI coding agent (runs in Terminal)
+   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Anthropic's CLI coding agent (runs in a terminal embedded in the app, one session per task)
 
 ### Build
 
@@ -191,6 +192,7 @@ By default, new projects store worktrees in:
 | `⌘0`–`⌘9`         | Jump to project by displayed index |
 | `⌘+` / `⌘−`       | Zoom in / out (80%–150%)           |
 | `Enter`           | Open selected worktree in editor   |
+| `⌘[`              | Back to the task list from an open task |
 | `N`               | New worktree                       |
 | `P`               | Add new project                    |
 | `R`               | Refresh Linear info                |
@@ -240,6 +242,7 @@ Tests cover pure utility functions (time formatting, PR extraction from Linear a
 - **Tauri v2** — Native desktop shell (~5-10 MB app)
 - **React 19 + TypeScript** — Frontend UI
 - **Tailwind CSS v4** — Dark-mode styling with theme support
+- **xterm.js + portable-pty** — Embedded agent terminals
 - **@linear/sdk** — Linear API integration (raw GraphQL for performance)
 
 Interface zoom scales text, icons, and spacing, and is remembered across app launches. The titlebar also provides zoom controls; click the percentage to reset. `⌘=` also zooms in, and zoom shortcuts accept `Ctrl` in place of `⌘`. `⌘0`–`⌘9` keep their existing project navigation behavior.

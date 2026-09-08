@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{vscode_task, workspace};
+use super::{shell_env, workspace};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,11 +72,7 @@ fn open_editor_blocking(
                 Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
             }
         }
-        "claude-code" => Ok(OpenEditorResult::message(open_claude_in_terminal(
-            primary,
-            &extra_canon,
-            branch,
-        )?)),
+        "claude-code" => Err("Claude Code runs embedded; use terminal_open".to_string()),
         "opencode" => {
             let mut msg = open_gui_editor("OpenCode", primary)?;
             if multi {
@@ -118,13 +114,13 @@ fn dropped_folders_hint(extra: &[String], editor: &str) -> String {
 /// Open all folders as one multi-root Zed window via the `zed` CLI. Falls back to opening the
 /// first folder with `open -a Zed` (plus a hint) when the CLI isn't on PATH.
 fn open_zed(folders: &[String]) -> Result<String, String> {
-    if vscode_task::cli_available("zed") {
+    if shell_env::cli_available("zed") {
         let joined = folders
             .iter()
-            .map(|f| vscode_task::shell_single_quoted(f))
+            .map(|f| shell_env::shell_single_quoted(f))
             .collect::<Vec<_>>()
             .join(" ");
-        let cmd = format!("{}; zed {joined}", vscode_task::claude_env_prelude());
+        let cmd = format!("{}; zed {joined}", shell_env::claude_env_prelude());
         Command::new("/bin/zsh")
             .args(["-lc", &cmd])
             .spawn()
@@ -150,7 +146,7 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
         "cursor" => Ok(gui_app_exists("Cursor")),
         "vscode" => Ok(gui_app_exists("Visual Studio Code")),
         "opencode" => Ok(gui_app_exists("OpenCode")),
-        "claude-code" => Ok(vscode_task::claude_cli_available()),
+        "claude-code" => Ok(shell_env::claude_cli_available()),
         "zed" => Ok(gui_app_exists("Zed")),
         _ => Err(format!("Unknown editor: {}", editor)),
     }
@@ -212,82 +208,4 @@ fn escape_applescript_string(s: &str) -> String {
         }
     }
     out
-}
-
-fn open_claude_in_terminal(
-    worktree_path: &str,
-    extra_dirs: &[String],
-    branch_name: Option<&str>,
-) -> Result<String, String> {
-    let canon = canonical_worktree_path(worktree_path);
-    let canon_str = canon.to_string_lossy().to_string();
-    let script_path =
-        vscode_task::ensure_worktree_launch_script(&canon_str, ".vscode", branch_name, extra_dirs)?;
-    // `exec` the script so quitting Claude closes the Terminal tab, matching the in-editor tasks.
-    let run = format!(
-        "exec {}",
-        vscode_task::shell_single_quoted(&script_path.to_string_lossy())
-    );
-    open_terminal_applescript("claude", &canon_str, &run)
-}
-
-/// Focus or create a Terminal.app tab running `shell_cmd`; tab title `WM:<tag>:<path>`.
-fn open_terminal_applescript(
-    tag: &str,
-    path_for_title: &str,
-    shell_cmd: &str,
-) -> Result<String, String> {
-    let tab_title = format!("WM:{tag}:{path_for_title}");
-    let tab_title_esc = escape_applescript_string(&tab_title);
-    let script_esc = escape_applescript_string(shell_cmd);
-
-    let script = format!(
-        r#"
-tell application "Terminal"
-    set found to false
-
-    repeat with w in windows
-        repeat with t in tabs of w
-            try
-                if custom title of t is "{tab_title_esc}" then
-                    set selected tab of w to t
-                    set index of w to 1
-                    set found to true
-                    exit repeat
-                end if
-            end try
-        end repeat
-        if found then exit repeat
-    end repeat
-
-    if not found then
-        activate
-        if (count of windows) is 0 then
-            do script "{script_esc}"
-        else
-            tell application "System Events"
-                tell process "Terminal"
-                    click menu item "New Tab" of menu "Shell" of menu bar 1
-                end tell
-            end tell
-            delay 0.3
-            do script "{script_esc}" in selected tab of front window
-        end if
-        set custom title of selected tab of front window to "{tab_title_esc}"
-    end if
-
-    activate
-end tell
-"#
-    );
-
-    Command::new("osascript")
-        .args(["-e", &script])
-        .spawn()
-        .map_err(|e| format!("Failed to open Terminal: {}", e))?;
-
-    Ok(format!(
-        "{} opened in Terminal for path: {}",
-        tag, path_for_title
-    ))
 }

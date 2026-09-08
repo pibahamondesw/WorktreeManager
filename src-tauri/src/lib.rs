@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -8,6 +10,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
+        .manage(commands::terminal::TerminalRegistry::default())
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -46,7 +49,19 @@ pub fn run() {
             commands::claude_config::cleanup_claude_json_stale,
             commands::keychain::keychain_get,
             commands::keychain::keychain_set,
+            commands::terminal::terminal_open,
+            commands::terminal::terminal_write,
+            commands::terminal::terminal_resize,
+            commands::terminal::terminal_detach,
+            commands::terminal::terminal_close,
+            commands::terminal::terminal_list,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<commands::terminal::TerminalRegistry>()
+                    .shutdown_all();
+            }
+        });
 }
