@@ -12,6 +12,8 @@ interface TaskHeaderProps {
   sidebarCollapsed: boolean;
   onExpandSidebar: () => void;
   onBack: () => void;
+  onCloseEditor?: () => void;
+  closingEditor?: boolean;
 }
 
 const statusLabel: Record<SessionStatus["kind"], { text: string; dot: string }> = {
@@ -28,6 +30,8 @@ export function TaskHeader({
   sidebarCollapsed,
   onExpandSidebar,
   onBack,
+  onCloseEditor,
+  closingEditor,
 }: TaskHeaderProps) {
   const status = statusLabel[sessionStatus.kind];
   const issueStatus = linearInfo?.status ?? null;
@@ -84,6 +88,16 @@ export function TaskHeader({
         )}
       </span>
       <span className="ml-auto flex items-center gap-1.5 text-xs text-text-muted flex-shrink-0">
+        {onCloseEditor && (
+          <button
+            type="button"
+            onClick={onCloseEditor}
+            disabled={closingEditor}
+            className="mr-3 hover:text-text-primary cursor-pointer disabled:opacity-50"
+          >
+            {closingEditor ? "Closing…" : "Close editor"}
+          </button>
+        )}
         <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
         {status.text}
       </span>

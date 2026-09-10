@@ -10,6 +10,7 @@ import { searchTasks, TaskSearchResult } from "../../search/searchTasks";
 import { Task, Workspace } from "../../types";
 import { NavigationEntry, lastTaskVisits } from "../../navigation/history";
 import { linearIssueUrl } from "../../utils";
+import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 
 const EMPTY_ENTRIES: NavigationEntry[] = [];
 
@@ -38,6 +39,7 @@ export function QuickSearchModal({
   onReveal,
   onOpenTask,
 }: QuickSearchModalProps) {
+  useEditorOcclusion(open);
   const [query, setQuery] = useState(initialQuery);
   const [activeIndex, setActiveIndex] = useState(0);
   const { toast, showToast } = useEphemeralToast();

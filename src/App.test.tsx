@@ -12,6 +12,15 @@ const mocks = vi.hoisted(() => ({
   historyParams: { onNavigate: (() => undefined) as (entry: unknown) => void },
   useStore: vi.fn(),
   useDoctor: vi.fn(),
+  listen: vi.fn(),
+  unlisten: vi.fn(),
+  invoke: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  invoke: mocks.invoke,
 }));
 
 vi.mock("./hooks/useStore", () => ({ useStore: mocks.useStore }));
@@ -41,7 +50,10 @@ vi.mock("./components/sidebar/WorkspaceList", () => ({
   ),
 }));
 vi.mock("./components/worktree/WorktreeList", () => ({ WorktreeList: () => null }));
-vi.mock("./components/search/QuickSearchModal", () => ({ QuickSearchModal: () => null }));
+vi.mock("./components/search/QuickSearchModal", () => ({
+  QuickSearchModal: ({ open }: { open: boolean }) =>
+    open ? <div role="dialog">Task search</div> : null,
+}));
 
 const workspaces = [
   { id: "first", name: "First", repos: [] },
@@ -53,6 +65,9 @@ beforeEach(() => {
   mocks.selectWorkspace.mockClear();
   mocks.historyBack.mockClear();
   mocks.historyForward.mockClear();
+  mocks.listen.mockReset().mockResolvedValue(mocks.unlisten);
+  mocks.unlisten.mockReset();
+  mocks.invoke.mockReset().mockResolvedValue(undefined);
   mocks.useDoctor.mockReturnValue({ report: null, running: false, recheck: vi.fn() });
   mocks.useStore.mockReturnValue({
     state: {
@@ -67,6 +82,31 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+describe("native editor navigation", () => {
+  it("opens task search from the native editor event", async () => {
+    const view = render(<App />);
+    expect(mocks.listen).toHaveBeenCalledWith("editor-navigate", expect.any(Function));
+    expect(view.queryByRole("dialog")).toBeNull();
+    const notify = mocks.listen.mock.calls[0][1];
+    await act(async () => notify({ payload: "search" }));
+    expect(view.getByRole("dialog").textContent).toBe("Task search");
+  });
+
+  it("releases a native subscription that finishes registering after unmount", async () => {
+    let registered!: (stop: () => void) => void;
+    mocks.listen.mockReturnValueOnce(
+      new Promise<() => void>((resolve) => {
+        registered = resolve;
+      })
+    );
+    const view = render(<App />);
+    view.unmount();
+    expect(mocks.unlisten).not.toHaveBeenCalled();
+    await act(async () => registered(mocks.unlisten));
+    expect(mocks.unlisten).toHaveBeenCalledOnce();
+  });
+});
 
 describe("workspace keyboard navigation with zoom mounted", () => {
   it("maps Cmd+0 to the first workspace without changing zoom", () => {

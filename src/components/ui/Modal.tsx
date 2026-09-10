@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useRef } from "react";
 import { CloseIcon } from "./Icons";
+import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 
 interface ModalProps {
   open: boolean;
@@ -10,6 +11,7 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children, wide }: ModalProps) {
+  useEditorOcclusion(open);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

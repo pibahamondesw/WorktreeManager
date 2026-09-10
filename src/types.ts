@@ -104,13 +104,16 @@ export interface IssueLinearInfo {
   prs: PullRequestInfo[];
 }
 
-export type EditorApp = "cursor" | "vscode" | "claude-code" | "opencode" | "zed";
+export type EditorApp = "cursor" | "vscode" | "vscode-web" | "claude-code" | "opencode" | "zed";
 
 /** CLI agents that can run inside an embedded terminal. */
 export type AgentId = "claude";
 
 /** Where a task opens: an external editor process, or a surface rendered inside the app. */
-export type TaskSurface = { kind: "external" } | { kind: "terminal"; agent: AgentId };
+export type TaskSurface =
+  | { kind: "external" }
+  | { kind: "terminal"; agent: AgentId }
+  | { kind: "editor" };
 
 /**
  * Editor-specific local config directories carried into a new worktree.
@@ -120,6 +123,7 @@ export type TaskSurface = { kind: "external" } | { kind: "terminal"; agent: Agen
 export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
   cursor: [".cursor", ".claude"],
   vscode: [".vscode", ".claude"],
+  "vscode-web": [".vscode", ".claude"],
   "claude-code": [".claude"],
   opencode: [".opencode"],
   zed: [".zed", ".claude"],
@@ -139,6 +143,7 @@ export const EDITOR_REQUIREMENTS: Record<
 > = {
   cursor: { apps: ["Cursor"], clis: [], optionalClis: [] },
   vscode: { apps: ["Visual Studio Code"], clis: [], optionalClis: [] },
+  "vscode-web": { apps: [], clis: [], optionalClis: [] },
   "claude-code": { apps: [], clis: ["claude"], optionalClis: [] },
   opencode: { apps: ["OpenCode"], clis: [], optionalClis: [] },
   zed: { apps: ["Zed"], clis: [], optionalClis: ["zed"] },
@@ -147,6 +152,7 @@ export const EDITOR_REQUIREMENTS: Record<
 export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "cursor", label: "Cursor", isCli: false },
   { id: "vscode", label: "VS Code", isCli: false },
+  { id: "vscode-web", label: "VS Code embedded", isCli: false },
   { id: "opencode", label: "OpenCode", isCli: false },
   { id: "claude-code", label: "Claude Code", isCli: true },
   { id: "zed", label: "Zed", isCli: false },

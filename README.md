@@ -11,6 +11,7 @@ A lightweight macOS desktop app for managing Git worktrees with Linear integrati
 - **Worktree management** — Create, open, and delete Git worktrees from a clean UI
 - **Multi-editor support** — Open worktrees in Cursor, VS Code, Zed, OpenCode, or Claude Code
 - **Embedded agent terminal** — With Claude Code as the editor, each task opens inside the app; the session keeps running in the background while you switch tasks
+- **Embedded VS Code** — Select VS Code embedded for an independent editor per task, including multi-repository tasks and your choice of extensions. Requires macOS 14 or later; the first launch installs the official code-server bundle.
 - **PR tracking** — See linked GitHub PRs on worktree cards, or create new PRs in one click
 - **Git status** — See ahead/behind counts, dirty state, and worktree age at a glance
 - **Obsidian task logs** — Optional per-task note in your vault, created and archived with the task
@@ -185,23 +186,32 @@ By default, new projects store worktrees in:
 
 ## Keyboard Shortcuts
 
-| Key               | Action                             |
-| ----------------- | ---------------------------------- |
-| `↑` `↓` / `j` `k` | Navigate worktree cards            |
-| `0`–`9`           | Jump to worktree by index          |
-| `⌘0`–`⌘9`         | Jump to project by displayed index |
-| `⌘+` / `⌘−`       | Zoom in / out (80%–150%)           |
-| `Enter`           | Open selected worktree in editor   |
+| Key               | Action                                  |
+| ----------------- | --------------------------------------- |
+| `↑` `↓` / `j` `k` | Navigate worktree cards                 |
+| `0`–`9`           | Jump to worktree by index               |
+| `⌘0`–`⌘9`         | Jump to project by displayed index      |
+| `⌘+` / `⌘−`       | Zoom in / out (80%–150%)                |
+| `Enter`           | Open selected worktree in editor        |
 | `⌘[`              | Back to the task list from an open task |
-| `N`               | New worktree                       |
-| `P`               | Add new project                    |
-| `R`               | Refresh Linear info                |
-| `L`               | Open selected issue on Linear      |
-| `O`               | Open task notes in Obsidian        |
-| `⌘B`              | Copy branch name                   |
-| `⌘⇧C`             | Copy worktree path                 |
-| `⌘D`              | Delete selected worktree           |
-| `Esc`             | Clear selection                    |
+| `⌘⌥P`             | Search tasks                            |
+| `N`               | New worktree                            |
+| `P`               | Add new project                         |
+| `R`               | Refresh Linear info                     |
+| `L`               | Open selected issue on Linear           |
+| `O`               | Open task notes in Obsidian             |
+| `⌘B`              | Copy branch name                        |
+| `⌘⇧C`             | Copy worktree path                      |
+| `⌘D`              | Delete selected worktree                |
+| `Esc`             | Clear selection                         |
+
+## Embedded VS Code
+
+Choose **VS Code embedded** in the editor selector, open a task and click **Install editor**. WTM downloads the pinned official code-server distribution.
+
+Each task keeps its own native view, server, extension host, workspace state and browser storage. Returning to the list or switching tasks keeps editors running. **Close editor**, deleting the task or quitting WTM terminates that session's processes. Settings, keybindings and extension packages are shared; session data and restorable buffers live under the application's data directory, outside worktrees. Each task retains its local port so VS Code can restore its backups; if another process takes that port, opening fails instead of silently changing the task's identity.
+
+Use **⌘[** to return to the list and **⌘⌥P** to search from inside an editor. WTM temporarily hides editor views while its modals are open. External authentication links open in the default browser.
 
 ## Obsidian vault
 

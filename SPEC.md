@@ -198,11 +198,17 @@ interface PullRequestInfo {
 
 Three layers, each ignorant of the ones above it:
 
-- **TaskView** (`src/components/task/`) — "a task is open": compact header + a surface chosen by `TaskSurface.kind`. `taskSurfaceFor(editor)` in `src/embedded/taskSurface.ts` is the only place mapping an editor to a surface (`claude-code` → `{ kind: "terminal", agent: "claude" }`, everything else external). Adding an embedded editor (e.g. VS Code) is a new `kind` here.
+- **TaskView** (`src/components/task/`) — "a task is open": compact header + a surface chosen by `TaskSurface.kind`. `taskSurfaceFor(editor)` in `src/embedded/taskSurface.ts` maps `claude-code` to `{ kind: "terminal", agent: "claude" }` and `vscode-web` to `{ kind: "editor" }`; other editors open externally.
 - **Terminal** (`src-tauri/src/commands/terminal.rs`, `src/services/terminal.ts`, `src/hooks/useTerminalSession.ts`) — a generic PTY per task, held in Tauri managed state while the app runs. Attaching replays the retained scrollback (2 MiB); leaving the view only detaches. Output streams over a `tauri::ipc::Channel`; `terminal-exit` is also emitted as an app event so cards can show session state.
 - **Agent** (`src-tauri/src/commands/agents/`) — how a CLI agent is launched: `LaunchSpec { program, args, env, cwd }`. `claude.rs` owns the session logic (`-n wm-<slug>` first, `-c` afterwards, `/color`, `--add-dir` for extra repos) and a session marker under `app_data_dir/agent-sessions/`, outside the worktree. A new agent is a new module plus an arm in `agents/mod.rs`.
 
 While a task is open, the list stays mounted but hidden so returning is instant (no editor re-probing). Keyboard: bare keys inside the terminal reach the agent; `⌘[` (or the Back button) returns to the list.
+
+Embedded VS Code uses `commands/code_server/` and `EditorPane`. The managed registry reserves one session per task, with a process group, a persistent native child webview and separate state. Generation identifiers reject stale session events; presentation revisions reject delayed navigation or modal commands. Only the main WTM webview receives IPC capabilities and task events. A child view cannot invoke WTM commands.
+
+The official code-server 4.136.2 bundle supplies its own Node runtime. Installation verifies a pinned archive hash and is serialized against session creation. Extensions and their update preferences are user-owned; none are installed by WTM. Readiness checks the runtime independently of extension installation. Doctor and the task view share persisted installation progress (stages, byte counts, elapsed time and logs), including interruption/error reporting. Native background webviews and browser data-store isolation require macOS 14+.
+
+All task folders appear in a stable multi-root workspace under app data. Each task retains its loopback port, browser data store, user-data directory and authentication cookie name; sharing settings/keybindings symlinks and extension packages does not share workspace state. Switching tasks only hides/shows views. Modals suppress all editors and restore the active view's focus on dismissal. Close/delete/quit terminates owned process groups; a crashed server is reported per task and can be restarted. The native Tasks menu exposes `⌘[` and `⌘⌥P` while editor webviews have keyboard focus.
 
 ### Screens
 
@@ -219,9 +225,9 @@ While a task is open, the list stays mounted but hidden so returning is instant 
 
 4. **Dependencies Modal** — The startup health check, opened from the sidebar footer or from the banner that appears when something is missing. One row per dependency (`git`, `gh`, the selected editor's app and CLIs, `node` plus the package managers the repos' lockfiles imply, `doppler` when a repo commits a Doppler config, Obsidian while the vault is enabled, and the workspaces' Linear API keys) with its status, what the app uses it for, and a copyable install command. Purely advisory — it never gates the app.
 
-6. **Task View** — Entered by clicking a card, pressing `Enter`, creating a task, or opening from quick search while the editor is Claude Code. The agent session outlives the view; the card shows a dot while it is running. Deleting the task closes its session first.
+5. **Task View** — Entered by clicking a card, pressing `Enter`, creating a task, or opening from quick search while the editor is Claude Code or VS Code embedded. The agent session outlives the view; the card shows a dot while it is running. Deleting the task closes its session first.
 
-5. **Worktree Modal** — Two-phase:
+6. **Worktree Modal** — Two-phase:
    - **Phase 1**: Search & select a Linear issue. Shows list of assigned issues (not completed/cancelled). Search bar with 300ms debounce.
    - **Phase 2**: After selection, shows issue details, branch name (copyable), worktree path. "Create Worktree" button with progress status.
 

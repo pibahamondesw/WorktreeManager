@@ -49,7 +49,7 @@ export function EditorPicker({ value, onChange }: EditorPickerProps) {
       {open && (
         <div className="absolute right-0 top-9 z-50 w-60 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
           {EDITOR_APPS.map((app) => {
-            const installed = installedMap[app.id];
+            const installed = app.id === "vscode-web" ? true : installedMap[app.id];
             const isSelected = app.id === value;
             return (
               <button
@@ -92,6 +92,7 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
         </svg>
       );
     case "vscode":
+    case "vscode-web":
       return (
         <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0">
           <path d="M11.5 1L6 6.5 3.5 4.5 1 6.5v3L3.5 11.5 6 9.5 11.5 15 15 13.5v-11L11.5 1zM3.5 9.5l-1-1.5 1-1.5L6 9.5l-2.5 0zm8-5v7L7 8l4.5-3.5z" />

@@ -16,7 +16,7 @@ const task = {
   members: [{ path: "/wt/a" }, { path: "/wt/b" }],
 } as unknown as Task;
 
-function setup(editorApp: "cursor" | "claude-code", tasks: Task[] = [task]) {
+function setup(editorApp: "cursor" | "claude-code" | "vscode-web", tasks: Task[] = [task]) {
   const recordTaskVisit = vi.fn();
   const showTask = vi.fn();
   const hook = renderHook(
@@ -30,6 +30,24 @@ function setup(editorApp: "cursor" | "claude-code", tasks: Task[] = [task]) {
 beforeEach(() => openEditorForWorktree.mockClear());
 
 describe("useOpenTask", () => {
+  it("restores a task from history without recording another visit or opening an external editor", async () => {
+    const second = { ...task, id: "t2" };
+    const { result, recordTaskVisit } = setup("vscode-web", [task, second]);
+    await act(() => result.current.openTask(second));
+    act(() => result.current.restoreTask(task));
+    expect(result.current.openedTask?.taskId).toBe(task.id);
+    expect(recordTaskVisit).toHaveBeenCalledTimes(1);
+    expect(openEditorForWorktree).not.toHaveBeenCalled();
+  });
+  it("switches embedded editors by task without launching an external workspace", async () => {
+    const second = { ...task, id: "t2" };
+    const { result } = setup("vscode-web", [task, second]);
+    await act(() => result.current.openTask(task));
+    expect(result.current.openedTask).toEqual({ taskId: "t1", surface: { kind: "editor" } });
+    await act(() => result.current.openTask(second));
+    expect(result.current.openedTask).toEqual({ taskId: "t2", surface: { kind: "editor" } });
+    expect(openEditorForWorktree).not.toHaveBeenCalled();
+  });
   it("launches the external editor and keeps nothing open", async () => {
     const { result, recordTaskVisit } = setup("cursor");
     await act(() => result.current.openTask(task, { onError: () => undefined }));

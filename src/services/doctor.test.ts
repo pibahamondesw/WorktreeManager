@@ -52,6 +52,37 @@ function check(report: Awaited<ReturnType<typeof runDoctor>>, id: string) {
 }
 
 describe("runDoctor", () => {
+  it("checks the managed embedded runtime instead of accepting any code-server on PATH", async () => {
+    const runtime = vi
+      .fn()
+      .mockResolvedValue({
+        installed: true,
+        ready: false,
+        version: "4.136.2",
+        detail: "Repair the editor",
+      });
+    const report = await runDoctor(config({ editor: "vscode-web" }), {
+      probe: async () => healthyProbe({ apps: [] }),
+      editorProbe: runtime,
+    });
+    expect(check(report, "embedded-editor")).toMatchObject({
+      severity: "error",
+      status: "broken",
+      detail: "Repair the editor",
+    });
+    expect(check(report, "cli:code-server")).toBeUndefined();
+    runtime.mockResolvedValue({
+      installed: true,
+      ready: true,
+      version: "4.136.2",
+      detail: "Ready",
+    });
+    const ready = await runDoctor(config({ editor: "vscode-web" }), {
+      probe: async () => healthyProbe({ apps: [] }),
+      editorProbe: runtime,
+    });
+    expect(check(ready, "embedded-editor")?.severity).toBe("ok");
+  });
   it("reports no problems when everything the setup needs is present", async () => {
     const report = await run(config(), healthyProbe());
     expect(report.errors).toBe(0);

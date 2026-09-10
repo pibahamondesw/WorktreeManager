@@ -23,7 +23,8 @@ import {
 } from "../../types";
 import { archiveTaskNote, ensureTaskNote, taskNoteUri } from "../../services/notes";
 import { linearIssueUrl, timeAgo } from "../../utils";
-import { terminalClose, TerminalStatus } from "../../services/terminal";
+import { TerminalStatus } from "../../services/terminal";
+import { closeTaskSessions } from "../../services/taskSessions";
 import { stateVariant } from "./cardStyles";
 
 interface WorktreeCardProps {
@@ -136,7 +137,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     setDeleteError(null);
     setDeleting(true);
     try {
-      await terminalClose(task.id);
+      await closeTaskSessions(task.id);
       // Remove the worktree for each member.
       for (const m of task.members) {
         await invoke<string>("git_worktree_remove", {
@@ -159,7 +160,12 @@ export const WorktreeCard = memo(function WorktreeCard({
   const handleForceRemove = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setDeleteError(null);
-    await terminalClose(task.id);
+    try {
+      await closeTaskSessions(task.id);
+    } catch (error) {
+      setDeleteError(String(error));
+      return;
+    }
     await cleanupWorkspaceFile();
     await cleanupClaudeConfig();
     await cleanupDopplerConfig();
