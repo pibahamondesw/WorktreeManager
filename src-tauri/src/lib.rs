@@ -11,7 +11,9 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .manage(commands::terminal::TerminalRegistry::default())
+        .manage(commands::code_server::EditorRegistry::default())
         .setup(|app| {
+            commands::code_server::setup_menu(app)?;
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
@@ -24,42 +26,63 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::git::git_worktree_add,
-            commands::git::resolve_manual_worktree,
-            commands::git::git_user_slug,
-            commands::git::copy_local_configs,
-            commands::git::git_worktree_remove,
-            commands::git::git_worktree_list,
-            commands::git::git_worktree_status,
-            commands::git::git_worktree_status_batch,
-            commands::git::git_remote_url,
-            commands::doctor::doctor_probe,
-            commands::doppler::doppler_setup,
-            commands::doppler::doppler_cleanup,
-            commands::node_deps::install_node_deps,
-            commands::editor::open_editor,
-            commands::editor::check_app_installed,
-            commands::workspace::delete_workspace_file,
-            commands::notes::ensure_task_note,
-            commands::notes::archive_task_note,
-            commands::vault::scaffold_vault,
-            commands::vault::ensure_vault,
-            commands::claude_config::cleanup_claude_json,
-            commands::claude_config::cleanup_claude_json_stale,
-            commands::keychain::keychain_get,
-            commands::keychain::keychain_set,
-            commands::terminal::terminal_open,
-            commands::terminal::terminal_write,
-            commands::terminal::terminal_resize,
-            commands::terminal::terminal_detach,
-            commands::terminal::terminal_close,
-            commands::terminal::terminal_list,
-        ])
+        .invoke_handler({
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                commands::git::git_worktree_add,
+                commands::git::resolve_manual_worktree,
+                commands::git::git_user_slug,
+                commands::git::copy_local_configs,
+                commands::git::git_worktree_remove,
+                commands::git::git_worktree_list,
+                commands::git::git_worktree_status,
+                commands::git::git_worktree_status_batch,
+                commands::git::git_remote_url,
+                commands::doctor::doctor_probe,
+                commands::doppler::doppler_setup,
+                commands::doppler::doppler_cleanup,
+                commands::node_deps::install_node_deps,
+                commands::editor::open_editor,
+                commands::editor::check_app_installed,
+                commands::workspace::delete_workspace_file,
+                commands::notes::ensure_task_note,
+                commands::notes::archive_task_note,
+                commands::vault::scaffold_vault,
+                commands::vault::ensure_vault,
+                commands::claude_config::cleanup_claude_json,
+                commands::claude_config::cleanup_claude_json_stale,
+                commands::keychain::keychain_get,
+                commands::keychain::keychain_set,
+                commands::terminal::terminal_open,
+                commands::terminal::terminal_write,
+                commands::terminal::terminal_resize,
+                commands::terminal::terminal_detach,
+                commands::terminal::terminal_close,
+                commands::terminal::terminal_list,
+                commands::code_server::vscode_probe,
+                commands::code_server::vscode_install,
+                commands::code_server::vscode_install_status,
+                commands::code_server::vscode_open,
+                commands::code_server::vscode_present,
+                commands::code_server::vscode_close,
+                commands::code_server::vscode_list,
+            ];
+            move |invoke| {
+                if invoke.message.webview_ref().label() != "main" {
+                    invoke
+                        .resolver
+                        .reject("WTM commands are available only to its main interface");
+                    true
+                } else {
+                    handler(invoke)
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                app.state::<commands::code_server::EditorRegistry>()
+                    .shutdown_all();
                 app.state::<commands::terminal::TerminalRegistry>()
                     .shutdown_all();
             }

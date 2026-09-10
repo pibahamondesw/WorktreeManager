@@ -19,6 +19,8 @@ import { NavigationEntry } from "./navigation/history";
 import { withScope } from "./search/query";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
 import { Task } from "./types";
+import { listen } from "@tauri-apps/api/event";
+import { editorPresentation } from "./services/codeEditor";
 
 function App() {
   const {
@@ -61,6 +63,10 @@ function App() {
   const [showDoctor, setShowDoctor] = useState(false);
   const [doctorAlertDismissed, setDoctorAlertDismissed] = useState(false);
 
+  useEffect(() => {
+    editorPresentation.reset();
+  }, []);
+
   const openSearch = useCallback(
     (scoped: boolean) => {
       const name = selectedWorkspace?.name;
@@ -85,21 +91,17 @@ function App() {
     [state.tasks, state.workspaces]
   );
 
-  const navigateTo = useCallback(
-    (entry: NavigationEntry) => {
-      if (entry.kind === "task") {
-        const task = state.tasks.find((t) => t.id === entry.taskId);
-        if (task) showTask(task);
-      } else if (entry.workspaceId !== state.selectedWorkspaceId) {
-        selectWorkspace(entry.workspaceId);
-      }
-    },
-    [state.tasks, state.selectedWorkspaceId, showTask, selectWorkspace]
-  );
-
   const { recordTaskVisit, recordWorkspaceVisit, ...history } = useNavigationHistory({
     isNavigable,
-    onNavigate: navigateTo,
+    onNavigate: (entry) => {
+      if (entry.kind === "task") {
+        const task = state.tasks.find((t) => t.id === entry.taskId);
+        if (task) restoreTask(task);
+      } else {
+        closeTask();
+        if (entry.workspaceId !== state.selectedWorkspaceId) selectWorkspace(entry.workspaceId);
+      }
+    },
   });
 
   const initialVisitRecorded = useRef(false);
@@ -117,13 +119,23 @@ function App() {
     [showTask, recordTaskVisit]
   );
 
-  const { openedTask, openTask, closeTask } = useOpenTask({
+  const { openedTask, openTask, closeTask, restoreTask } = useOpenTask({
     editorApp,
     workspaces: state.workspaces,
     tasks: state.tasks,
     recordTaskVisit,
     showTask,
   });
+
+  useEffect(() => {
+    const unlisten = listen<string>("editor-navigate", ({ payload }) => {
+      if (payload === "back") closeTask();
+      if (payload === "search") openSearch(false);
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+  }, [closeTask, openSearch]);
 
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {

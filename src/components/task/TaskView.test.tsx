@@ -75,6 +75,32 @@ function renderView(onBack = vi.fn()) {
 }
 
 describe("TaskView", () => {
+  it("closes an embedded editor before returning to the task list", async () => {
+    let finishClose: (() => void) | undefined;
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "vscode_probe") return Promise.resolve({ ready: false });
+      if (command === "vscode_close")
+        return new Promise<void>((resolve) => {
+          finishClose = resolve;
+        });
+      return Promise.resolve();
+    });
+    const onBack = vi.fn();
+    render(
+      <TaskView
+        task={task}
+        surface={{ kind: "editor" }}
+        sidebarCollapsed={false}
+        onExpandSidebar={vi.fn()}
+        onBack={onBack}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    expect(mocks.invoke).toHaveBeenCalledWith("vscode_close", { taskId: task.id });
+    expect(onBack).not.toHaveBeenCalled();
+    finishClose?.();
+    await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
+  });
   it("shows the task header and attaches to the task terminal", async () => {
     mocks.invoke.mockResolvedValue({ created: true, status: { kind: "running" }, replay: "old" });
     renderView();

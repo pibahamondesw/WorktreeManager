@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Modal } from "../ui/Modal";
+import { EditorInstallation } from "../editor/EditorInstallation";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 import { CopyIcon, ExternalLinkIcon, SpinnerIcon } from "../ui/Icons";
@@ -85,9 +86,12 @@ export function DoctorModal({ open, onClose, report, running, onRecheck }: Docto
                     {check.detail}
                   </p>
                 )}
-                {check.severity !== "ok" && (
-                  <Remedy check={check} copiedId={copiedId} onCopy={copy} />
-                )}
+                {check.severity !== "ok" &&
+                  (check.id === "embedded-editor" ? (
+                    open && <EditorInstallation onReady={onRecheck} />
+                  ) : (
+                    <Remedy check={check} copiedId={copiedId} onCopy={copy} />
+                  ))}
               </div>
             </div>
           ))}

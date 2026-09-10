@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { terminalClose } from "../../services/terminal";
+import { closeTaskSessions } from "../../services/taskSessions";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Task, VaultConfig, Workspace } from "../../types";
@@ -29,7 +29,13 @@ export function RemoveWorkspaceModal({
   const handleRemove = async (deleteFromDisk: boolean) => {
     setRemoving(true);
     setError(null);
-    await Promise.all(tasks.map((task) => terminalClose(task.id)));
+    try {
+      await Promise.all(tasks.map((task) => closeTaskSessions(task.id)));
+    } catch (error) {
+      setError(String(error));
+      setRemoving(false);
+      return;
+    }
 
     if (deleteFromDisk && tasks.length > 0) {
       const errors: string[] = [];

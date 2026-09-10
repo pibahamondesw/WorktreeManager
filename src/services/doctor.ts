@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { EditorApp, EDITOR_REQUIREMENTS } from "../types";
 import { validateLinearToken } from "./linear";
+import { editorProbe, EditorRuntime } from "./codeEditor";
 
 /**
  * Startup health check. The `.app` bundle has a minimal PATH, so every tool the app shells out
@@ -209,12 +210,14 @@ interface DoctorDeps {
   probe: (input: { clis: string[]; apps: string[]; repoPaths: string[] }) => Promise<ProbeReport>;
   validateKey: typeof validateLinearToken;
   online: () => boolean;
+  editorProbe: () => Promise<EditorRuntime>;
 }
 
 const defaultDeps: DoctorDeps = {
   probe: (input) => invoke<ProbeReport>("doctor_probe", input),
   validateKey: validateLinearToken,
   online: () => navigator.onLine,
+  editorProbe,
 };
 
 export async function runDoctor(
@@ -227,7 +230,7 @@ export async function runDoctor(
   const apps = [...requirements.apps, ...(config.vaultEnabled ? ["Obsidian"] : [])];
   const clis = unique([...BASE_CLIS, ...requirements.clis, ...requirements.optionalClis]);
 
-  const [probe, linear] = await Promise.all([
+  const [probe, linear, embedded] = await Promise.all([
     deps.probe({ clis, apps, repoPaths: config.repoPaths }),
     config.keychainError
       ? Promise.resolve<DependencyCheck>({
@@ -241,12 +244,14 @@ export async function runDoctor(
           detail: config.keychainError,
         })
       : checkLinearKeys(config.linearKeys, deps),
+    config.editor === "vscode-web" ? checkEmbeddedEditor(deps.editorProbe) : Promise.resolve(null),
   ]);
 
   const checks = [
     ...cliChecks(probe, requirements),
     ...appChecks(probe),
     ...(linear ? [linear] : []),
+    ...(embedded ? [embedded] : []),
   ];
 
   return {
@@ -254,6 +259,27 @@ export async function runDoctor(
     errors: checks.filter((c) => c.scope === "app" && c.severity === "error").length,
     warnings: checks.filter((c) => c.scope === "app" && c.severity === "warning").length,
   };
+}
+
+async function checkEmbeddedEditor(probe: () => Promise<EditorRuntime>): Promise<DependencyCheck> {
+  const base = {
+    id: "embedded-editor",
+    label: "VS Code embedded",
+    scope: "app" as const,
+    reason: "An independent VS Code editor for each task. Extensions are your choice.",
+    url: "https://coder.com/docs/code-server",
+  };
+  try {
+    const runtime = await probe();
+    return {
+      ...base,
+      status: runtime.ready ? "ok" : runtime.installed ? "broken" : "missing",
+      severity: runtime.ready ? "ok" : "error",
+      detail: runtime.detail,
+    };
+  } catch (error) {
+    return { ...base, status: "unknown", severity: "warning", detail: String(error) };
+  }
 }
 
 /** Which probed CLIs are worth showing, and whether their absence is an error or a note. */

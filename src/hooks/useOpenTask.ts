@@ -27,7 +27,13 @@ interface UseOpenTaskArgs {
  * Single routing point for "open this task": external editors launch a process, embedded
  * surfaces render inside the app as the `openedTask`.
  */
-export function useOpenTask({ editorApp, workspaces, tasks, recordTaskVisit, showTask }: UseOpenTaskArgs) {
+export function useOpenTask({
+  editorApp,
+  workspaces,
+  tasks,
+  recordTaskVisit,
+  showTask,
+}: UseOpenTaskArgs) {
   const [openedTask, setOpenedTask] = useState<OpenedTask | null>(null);
 
   useEffect(() => {
@@ -58,6 +64,14 @@ export function useOpenTask({ editorApp, workspaces, tasks, recordTaskVisit, sho
   );
 
   const closeTask = useCallback(() => setOpenedTask(null), []);
+  const restoreTask = useCallback(
+    (task: Task) => {
+      showTask(task);
+      const surface = taskSurfaceFor(editorApp);
+      setOpenedTask(isEmbedded(surface) ? { taskId: task.id, surface } : null);
+    },
+    [editorApp, showTask]
+  );
 
-  return { openedTask, openTask, closeTask };
+  return { openedTask, openTask, closeTask, restoreTask };
 }
