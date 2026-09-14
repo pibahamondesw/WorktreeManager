@@ -11,7 +11,7 @@ interface VaultSettingsModalProps {
   open: boolean;
   onClose: () => void;
   vault: VaultConfig;
-  onVaultChange: (vault: VaultConfig) => void;
+  onVaultChange: (vault: VaultConfig) => void | Promise<void>;
 }
 
 /**
@@ -41,7 +41,7 @@ export function VaultSettingsModal({
     setBusy(true);
     setError(null);
     try {
-      onVaultChange(await enableVault());
+      await onVaultChange(await enableVault());
     } catch (e) {
       setError(typeof e === "string" ? e : "Could not create the vault");
     } finally {
@@ -49,9 +49,13 @@ export function VaultSettingsModal({
     }
   };
 
-  const handleDisable = () => {
+  const handleDisable = async () => {
     // Path is retained so re-enabling reuses the same folder. Files are untouched.
-    onVaultChange({ enabled: false, path: vault.path });
+    try {
+      await onVaultChange({ enabled: false, path: vault.path });
+    } catch {
+      setError("Could not save vault settings");
+    }
   };
 
   const setupLine = agentSetupLine(vault);

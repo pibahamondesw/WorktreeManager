@@ -1,10 +1,8 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { closeTaskSessions } from "../../services/taskSessions";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Task, VaultConfig, Workspace } from "../../types";
-import { archiveTaskNote } from "../../services/notes";
+import { OperationResult } from "../../services/operations";
 
 interface RemoveWorkspaceModalProps {
   open: boolean;
@@ -12,7 +10,7 @@ interface RemoveWorkspaceModalProps {
   workspace: Workspace;
   vault: VaultConfig;
   tasks: Task[];
-  onConfirm: (deleteFromDisk: boolean) => void;
+  onConfirm: (deleteFromDisk: boolean) => Promise<OperationResult<{ id: string }>>;
 }
 
 export function RemoveWorkspaceModal({
@@ -30,64 +28,12 @@ export function RemoveWorkspaceModal({
     setRemoving(true);
     setError(null);
     try {
-      await Promise.all(tasks.map((task) => closeTaskSessions(task.id)));
+      await onConfirm(deleteFromDisk);
     } catch (error) {
-      setError(String(error));
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
       setRemoving(false);
-      return;
     }
-
-    if (deleteFromDisk && tasks.length > 0) {
-      const errors: string[] = [];
-      for (const task of tasks) {
-        for (const m of task.members) {
-          try {
-            await invoke<string>("git_worktree_remove", {
-              repoPath: m.localPath,
-              worktreePath: m.path,
-            });
-          } catch (e) {
-            errors.push(`${task.branchName} / ${m.repoName}: ${e}`);
-          }
-        }
-        if (task.workspaceFilePath) {
-          try {
-            await invoke("delete_workspace_file", { path: task.workspaceFilePath });
-          } catch {
-            /* workspace-file cleanup is best-effort */
-          }
-        }
-      }
-      try {
-        await invoke("cleanup_claude_json", {
-          paths: tasks.flatMap((t) => t.members.map((m) => m.path)),
-        });
-      } catch {
-        /* claude.json cleanup is best-effort */
-      }
-      try {
-        await invoke("doppler_cleanup", {
-          paths: tasks.flatMap((t) => t.members.map((m) => m.path)),
-        });
-      } catch {
-        /* doppler.yaml cleanup is best-effort */
-      }
-      if (errors.length > 0) {
-        setError(
-          `Some worktrees could not be removed from disk:\n${errors.join("\n")}\n\nThe workspace will still be removed from the app.`
-        );
-      }
-    }
-
-    // The app is forgetting these tasks either way, so their notes are archived
-    // whether or not the worktrees stay on disk — otherwise they'd sit in
-    // task-logs/ with nothing left to ever archive them.
-    for (const task of tasks) {
-      await archiveTaskNote(vault, task);
-    }
-
-    onConfirm(deleteFromDisk);
-    setRemoving(false);
   };
 
   return (

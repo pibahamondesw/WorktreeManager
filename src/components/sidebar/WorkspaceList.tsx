@@ -14,6 +14,7 @@ import {
   SidebarIcon,
   WrenchIcon,
 } from "../ui/Icons";
+import { DeleteOptions, OperationResult } from "../../services/operations";
 import { CheckSeverity } from "../../services/doctor";
 
 interface WorkspaceListProps {
@@ -21,12 +22,15 @@ interface WorkspaceListProps {
   tasks: Task[];
   selectedWorkspaceId: string | null;
   onSelect: (workspaceId: string) => void;
-  onAdd: (workspace: Workspace) => void;
+  onAdd: (workspace: Workspace) => Promise<Workspace>;
   onUpdate: (
     workspaceId: string,
     updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
-  ) => void;
-  onRemove: (workspaceId: string) => void;
+  ) => Promise<Workspace>;
+  onRemove: (
+    workspaceId: string,
+    options: DeleteOptions
+  ) => Promise<OperationResult<{ id: string }>>;
   onReorder: (fromIndex: number, toIndex: number) => void;
   showAddExternal?: boolean;
   onCloseAddExternal?: () => void;
@@ -299,8 +303,8 @@ export function WorkspaceList({
       <AddWorkspaceModal
         open={addOpen}
         onClose={closeAdd}
-        onAdd={(workspace) => {
-          onAdd(workspace);
+        onAdd={async (workspace) => {
+          await onAdd(workspace);
           closeAdd();
         }}
         defaultLinearApiKey={defaultLinearApiKey}
@@ -326,9 +330,13 @@ export function WorkspaceList({
           workspace={removeWorkspace}
           vault={vault}
           tasks={tasks.filter((t) => t.workspaceId === removeWorkspace.id)}
-          onConfirm={() => {
-            onRemove(removeWorkspace.id);
+          onConfirm={async (deleteWorktrees) => {
+            const result = await onRemove(removeWorkspace.id, {
+              deleteWorktrees,
+              force: deleteWorktrees,
+            });
             setRemoveWorkspace(null);
+            return result;
           }}
         />
       )}

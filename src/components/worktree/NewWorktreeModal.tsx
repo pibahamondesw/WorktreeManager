@@ -1,24 +1,13 @@
 import { useState, useEffect, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { v4 as uuid } from "uuid";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 import { SpinnerIcon, SearchIcon, ChevronLeftIcon } from "../ui/Icons";
 import { useDebounce } from "../../hooks/useDebounce";
 import { useLinear } from "../../contexts/useLinear";
-import {
-  ALWAYS_COPIED_CONFIG_PATHS,
-  EDITOR_CONFIG_PATHS,
-  EditorApp,
-  LinearIssue,
-  Task,
-  TaskMember,
-  VaultConfig,
-  Workspace,
-} from "../../types";
+import { EditorApp, LinearIssue, Task, Workspace } from "../../types";
 import { openEditorForWorktree } from "../../services/openEditor";
-import { ensureTaskNote } from "../../services/notes";
+import { CreateTaskInput, OperationResult } from "../../services/operations";
 import { isEmbedded, taskSurfaceFor } from "../../embedded/taskSurface";
 import { OpenTaskOptions } from "../../hooks/useOpenTask";
 
@@ -26,8 +15,10 @@ interface NewWorktreeModalProps {
   open: boolean;
   onClose: () => void;
   workspace: Workspace;
-  vault: VaultConfig;
-  onCreated: (task: Task) => void;
+  onCreated: (
+    input: CreateTaskInput,
+    progress?: (message: string) => void
+  ) => Promise<OperationResult<Task>>;
   onOpenTask?: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
   editorApp: EditorApp;
   onOpenHint?: (msg: string) => void;
@@ -56,7 +47,6 @@ export function NewWorktreeModal({
   open,
   onClose,
   workspace,
-  vault,
   onCreated,
   onOpenTask,
   editorApp,
@@ -167,150 +157,43 @@ export function NewWorktreeModal({
     setError(null);
 
     try {
-      // Each repo's chain (resolve branch → worktree add → copy configs) only touches its own
-      // repo, so all repos run in parallel.
-      const total = includedRepos.length;
-      let done = 0;
-      setCreatingStatus(`Creating ${total === 1 ? "worktree" : `${total} worktrees`}...`);
-      const members: TaskMember[] = await Promise.all(
-        includedRepos.map(async (r) => {
-          // Every included repo gets its own isolated worktree on the task branch.
-          if (!r.worktreeBasePath) {
-            throw new Error(`${r.name} has no worktree directory configured — edit the workspace.`);
-          }
-          let branchName = branchInput;
-          let worktreePath = `${r.worktreeBasePath}/${branchName}`;
-
-          // Manual (non-Linear) branches aren't unique by construction the way Linear branch
-          // names are, so namespace them under the git username and append a unique suffix on
-          // collision — guaranteeing each repo gets its own distinct workspace.
-          if (!selected) {
-            const resolved = await invoke<{ branchName: string; path: string }>(
-              "resolve_manual_worktree",
-              {
-                repoPath: r.localPath,
-                worktreeBasePath: r.worktreeBasePath,
-                rawName: branchInput,
+      const { data: task, warnings } = await onCreated(
+        {
+          workspaceId: workspace.id,
+          branchName: branchInput,
+          repoIds: includedRepos.map((repo) => repo.id),
+          ...(selected
+            ? {
+                linearIssue: {
+                  id: selected.id,
+                  identifier: selected.identifier,
+                  title: selected.title,
+                },
               }
-            );
-            branchName = resolved.branchName;
-            worktreePath = resolved.path;
-          }
-
-          const added = await invoke<{ output: string; warning: string | null }>(
-            "git_worktree_add",
-            {
-              repoPath: r.localPath,
-              worktreePath,
-              branchName,
-            }
-          );
-
-          // The worktree exists, but it was based on local refs because origin was unreachable.
-          if (added.warning) {
-            onOpenHint?.(`${r.name}: ${added.warning}`);
-          }
-
-          // Copy local (gitignored) config so the worktree doesn't start from scratch — editor
-          // config for the editor in use + env files. Best-effort: must not abort creation.
-          try {
-            await invoke<string[]>("copy_local_configs", {
-              sourceRepo: r.localPath,
-              worktreePath,
-              paths: [...EDITOR_CONFIG_PATHS[editorApp], ...ALWAYS_COPIED_CONFIG_PATHS],
-            });
-          } catch (cfgErr) {
-            console.warn(`Could not copy local config for ${r.name}:`, cfgErr);
-          }
-
-          // If the repo commits a Doppler config with a setup: block, scope it for this worktree
-          // automatically so no manual `doppler setup` is needed. Runs in the background so it
-          // doesn't block opening the editor — the setup shells out through the login profile and
-          // hits the network, which the window doesn't need to wait on. Deliberately not awaited.
-          invoke<{ status: string; message: string }>("doppler_setup", { worktreePath })
-            .then((doppler) => {
-              if (doppler.status === "error") {
-                console.warn(`Doppler setup failed for ${r.name}: ${doppler.message}`);
-                onOpenHint?.(`Doppler setup failed for ${r.name} — check you're logged in`);
-              }
-            })
-            .catch((dopplerErr) => {
-              console.warn(`Could not run Doppler setup for ${r.name}:`, dopplerErr);
-            });
-
-          // Install JS deps (detected from the lockfile) in the background so the editor opens
-          // immediately — the worktree just isn't test-ready for the first minute or two.
-          // Deliberately not awaited; installs can take minutes.
-          invoke<{ status: string; message: string }>("install_node_deps", { worktreePath })
-            .then((deps) => {
-              if (deps.status === "error") {
-                console.warn(`Dependency install failed for ${r.name}: ${deps.message}`);
-                onOpenHint?.(`Dependency install failed in ${r.name} — run it manually`);
-              }
-            })
-            .catch((depsErr) => {
-              console.warn(`Could not install dependencies for ${r.name}:`, depsErr);
-            });
-
-          done += 1;
-          setCreatingStatus(`Created ${done}/${total} worktree${total === 1 ? "" : "s"}...`);
-
-          return {
-            repoId: r.id,
-            repoName: r.name,
-            localPath: r.localPath,
-            path: worktreePath,
-            branchName,
-          };
-        })
+            : {}),
+        },
+        setCreatingStatus
       );
-
-      // Shared task branch: the first member's resolved branch, else the raw input.
-      const taskBranch = members[0]?.branchName ?? branchInput;
-
+      for (const warning of warnings) onOpenHint?.(warning.message);
       if (selected && linear) {
-        linear.startIssue(selected.id).catch((linearErr) => {
-          console.warn("Could not update Linear issue status:", linearErr);
-          onOpenHint?.("Could not update Linear issue status — update it manually");
-        });
+        void linear
+          .startIssue(selected.id)
+          .catch(() => onOpenHint?.("Could not update Linear issue status"));
       }
-
-      // External editors open all included folders together (multi-root window) and may hand
-      // back a `.code-workspace` to persist. Embedded surfaces open once the task exists.
-      const embedded = isEmbedded(taskSurfaceFor(editorApp));
-      let result: Awaited<ReturnType<typeof openEditorForWorktree>> = null;
-      if (!embedded) {
-        setCreatingStatus("Opening editor...");
-        const folders = members.map((m) => m.path);
-        result = await openEditorForWorktree(editorApp, folders, taskBranch, workspace.name, {
-          onMessage: onOpenHint,
-          onError: (msg) => console.warn("Could not open editor:", msg),
-        });
+      if (isEmbedded(taskSurfaceFor(editorApp))) {
+        void onOpenTask?.(task);
+      } else {
+        await openEditorForWorktree(
+          editorApp,
+          task.members.map((member) => member.path),
+          task.branchName,
+          workspace.name,
+          {
+            onMessage: onOpenHint,
+            onError: onOpenHint,
+          }
+        );
       }
-
-      const taskId = uuid();
-      const task: Task = {
-        id: taskId,
-        noteFolder: taskId,
-        workspaceId: workspace.id,
-        branchName: taskBranch,
-        ...(selected
-          ? {
-              linearIssueId: selected.id,
-              linearIssueTitle: selected.title,
-              linearIssueIdentifier: selected.identifier,
-            }
-          : {}),
-        members,
-        workspaceFilePath: result?.workspaceFile ?? null,
-        createdAt: new Date().toISOString(),
-      };
-      onCreated(task);
-      if (embedded) void onOpenTask?.(task);
-
-      // Obsidian task log, when the workspace has one. Best-effort: the task exists.
-      void ensureTaskNote(vault, workspace, task);
-
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

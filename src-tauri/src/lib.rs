@@ -28,6 +28,8 @@ pub fn run() {
         })
         .invoke_handler({
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                commands::validation::validate_workspace_repos,
+                commands::validation::validate_task_worktrees,
                 commands::git::git_worktree_add,
                 commands::git::resolve_manual_worktree,
                 commands::git::git_user_slug,
@@ -44,6 +46,7 @@ pub fn run() {
                 commands::editor::open_editor,
                 commands::editor::check_app_installed,
                 commands::workspace::delete_workspace_file,
+                commands::workspace::prepare_task_workspace,
                 commands::notes::ensure_task_note,
                 commands::notes::archive_task_note,
                 commands::vault::scaffold_vault,

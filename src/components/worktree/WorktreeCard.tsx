@@ -21,17 +21,17 @@ import {
   IssueLinearInfo,
   PullRequestInfo,
 } from "../../types";
-import { archiveTaskNote, ensureTaskNote, taskNoteUri } from "../../services/notes";
+import { ensureTaskNote, taskNoteUri } from "../../services/notes";
 import { linearIssueUrl, timeAgo } from "../../utils";
 import { TerminalStatus } from "../../services/terminal";
-import { closeTaskSessions } from "../../services/taskSessions";
+import { DeleteOptions, OperationResult } from "../../services/operations";
 import { stateVariant } from "./cardStyles";
 
 interface WorktreeCardProps {
   task: Task;
   workspace: Workspace;
   vault: VaultConfig;
-  onDelete: (taskId: string) => void;
+  onDelete: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
   linearInfo?: IssueLinearInfo;
   gitStatus?: GitStatus;
   selected?: boolean;
@@ -106,71 +106,28 @@ export const WorktreeCard = memo(function WorktreeCard({
     setConfirmDelete(true);
   };
 
-  const cleanupWorkspaceFile = async () => {
-    if (!task.workspaceFilePath) return;
-    try {
-      await invoke("delete_workspace_file", { path: task.workspaceFilePath });
-    } catch {
-      /* workspace-file cleanup is best-effort */
-    }
-  };
-
-  const cleanupClaudeConfig = async () => {
-    try {
-      await invoke("cleanup_claude_json", { paths: task.members.map((m) => m.path) });
-    } catch {
-      /* claude.json cleanup is best-effort */
-    }
-  };
-
-  const cleanupDopplerConfig = async () => {
-    try {
-      await invoke("doppler_cleanup", { paths: task.members.map((m) => m.path) });
-    } catch {
-      /* doppler.yaml cleanup is best-effort */
-    }
-  };
-
-  const handleDeleteConfirm = async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const deleteTask = async (deleteWorktrees: boolean) => {
     setConfirmDelete(false);
     setDeleteError(null);
     setDeleting(true);
     try {
-      await closeTaskSessions(task.id);
-      // Remove the worktree for each member.
-      for (const m of task.members) {
-        await invoke<string>("git_worktree_remove", {
-          repoPath: m.localPath,
-          worktreePath: m.path,
-        });
-      }
-      await cleanupWorkspaceFile();
-      await cleanupClaudeConfig();
-      await cleanupDopplerConfig();
-      await archiveTaskNote(vault, task);
-      onDelete(task.id);
-    } catch (e) {
-      const msg = typeof e === "string" ? e : "Failed to remove one or more worktrees from disk";
-      setDeleteError(msg);
+      const result = await onDelete(task.id, { deleteWorktrees, force: deleteWorktrees });
+      for (const warning of result.warnings) onToast?.(warning.message);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error));
+    } finally {
       setDeleting(false);
     }
   };
 
-  const handleForceRemove = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setDeleteError(null);
-    try {
-      await closeTaskSessions(task.id);
-    } catch (error) {
-      setDeleteError(String(error));
-      return;
-    }
-    await cleanupWorkspaceFile();
-    await cleanupClaudeConfig();
-    await cleanupDopplerConfig();
-    await archiveTaskNote(vault, task);
-    onDelete(task.id);
+  const handleDeleteConfirm = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    await deleteTask(true);
+  };
+
+  const handleForceRemove = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    await deleteTask(false);
   };
 
   const handleDeleteCancel = (e: React.MouseEvent) => {

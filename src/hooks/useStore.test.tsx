@@ -15,7 +15,7 @@ vi.mock("../services/store", () => ({
   persist: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { loadState } from "../services/store";
+import { loadState, persist } from "../services/store";
 
 const workspaces = [
   { id: "a", name: "A", repos: [] },
@@ -33,6 +33,44 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("useStore workspace switching", () => {
+  it("publishes CLI changes to React only after persistence and restores them on load", async () => {
+    const { result, unmount } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let saved!: () => void;
+    vi.mocked(persist).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          saved = resolve;
+        })
+    );
+    let writing!: Promise<void>;
+    act(() => {
+      writing = result.current.operations.change(() => ({
+        tasks: [
+          {
+            id: "cli-task",
+            workspaceId: "a",
+            branchName: "feature",
+            members: [],
+            createdAt: "2026-09-11",
+          },
+        ],
+      }));
+    });
+    await waitFor(() => expect(saved).toBeTypeOf("function"));
+    expect(result.current.state.tasks).toEqual([]);
+    await act(async () => {
+      saved();
+      await writing;
+    });
+    expect(result.current.selectedTasks[0].id).toBe("cli-task");
+    vi.mocked(loadState).mockResolvedValue(result.current.state);
+    unmount();
+    const reloaded = renderHook(() => useStore());
+    await waitFor(() => expect(reloaded.result.current.loading).toBe(false));
+    expect(reloaded.result.current.selectedTasks[0].id).toBe("cli-task");
+  });
+
   it("stops showing skeletons when returning to a loaded workspace before the other one finished", async () => {
     const { result } = renderHook(() => useStore());
     await waitFor(() => expect(result.current.loading).toBe(false));

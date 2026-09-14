@@ -16,14 +16,15 @@ import { NewWorktreeModal } from "./NewWorktreeModal";
 import { Task, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
 import { TaskView } from "../task/TaskView";
 import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
+import { CreateTaskInput, DeleteOptions, OperationResult } from "../../services/operations";
 import { useAgentSessions } from "../../hooks/useAgentSessions";
 
 interface WorktreeListProps {
   tasks: Task[];
   workspace: Workspace | undefined;
   vault: VaultConfig;
-  onTaskCreated: (task: Task) => void;
-  onTaskDeleted: (taskId: string) => void;
+  onTaskCreated: (input: CreateTaskInput, progress?: (message: string) => void) => Promise<OperationResult<Task>>;
+  onTaskDeleted: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
   workspaceSwitching: boolean;
@@ -261,7 +262,6 @@ export function WorktreeList({
           open={showNew}
           onClose={() => setShowNew(false)}
           workspace={workspace}
-          vault={vault}
           onCreated={onTaskCreated}
           onOpenTask={onOpenTask}
           editorApp={editorApp}

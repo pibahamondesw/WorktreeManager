@@ -20,7 +20,7 @@ pub(crate) const GIT_ENV_SCRUB: &[&str] = &[
     "GIT_COMMON_DIR",
 ];
 
-fn git_command() -> Command {
+pub(crate) fn git_command() -> Command {
     let mut command = Command::new("git");
     for variable in GIT_ENV_SCRUB {
         command.env_remove(variable);
@@ -369,7 +369,11 @@ fn copy_local_configs_blocking(
 }
 
 #[tauri::command]
-pub fn git_worktree_remove(repo_path: String, worktree_path: String) -> Result<String, String> {
+pub fn git_worktree_remove(
+    repo_path: String,
+    worktree_path: String,
+    force: Option<bool>,
+) -> Result<String, String> {
     let wt_path = std::path::Path::new(&worktree_path);
 
     if !wt_path.exists() {
@@ -380,15 +384,12 @@ pub fn git_worktree_remove(repo_path: String, worktree_path: String) -> Result<S
         return Ok("Worktree directory already removed".to_string());
     }
 
-    let output = git_command()
-        .args([
-            "-C",
-            &repo_path,
-            "worktree",
-            "remove",
-            &worktree_path,
-            "--force",
-        ])
+    let mut command = git_command();
+    command.args(["-C", &repo_path, "worktree", "remove", &worktree_path]);
+    if force.unwrap_or(false) {
+        command.arg("--force");
+    }
+    let output = command
         .output()
         .map_err(|e| format!("Failed to execute git: {}", e))?;
 
@@ -396,15 +397,7 @@ pub fn git_worktree_remove(repo_path: String, worktree_path: String) -> Result<S
         Ok("Worktree removed successfully".to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        // "not a working tree" means git no longer tracks it — prune and succeed
-        if stderr.contains("not a working tree") {
-            let _ = git_command()
-                .args(["-C", &repo_path, "worktree", "prune"])
-                .output();
-            Ok("Worktree reference cleaned up".to_string())
-        } else {
-            Err(stderr)
-        }
+        Err(stderr)
     }
 }
 
@@ -784,6 +777,36 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn removal_requires_force_for_local_changes_and_preserves_the_branch() {
+        let repo = TestRepo::new();
+        let worktree = repo.0.join("linked");
+        let root = repo.0.to_string_lossy().into_owned();
+        let path = worktree.to_string_lossy().into_owned();
+        worktree_add_blocking(root.clone(), path.clone(), "feature".into()).unwrap();
+        std::fs::write(worktree.join("uncommitted"), "keep me").unwrap();
+        assert!(git_worktree_remove(root.clone(), path.clone(), None).is_err());
+        assert!(worktree.join("uncommitted").exists());
+        git_worktree_remove(root.clone(), path.clone(), Some(true)).unwrap();
+        assert!(!worktree.exists());
+        assert!(ref_resolves(&root, "refs/heads/feature"));
+        git_worktree_remove(root, path, None).unwrap();
+    }
+
+    #[test]
+    fn removal_does_not_claim_to_delete_an_unregistered_directory() {
+        let repo = TestRepo::new();
+        let other = repo.0.join("ordinary-folder");
+        std::fs::create_dir(&other).unwrap();
+        assert!(git_worktree_remove(
+            repo.0.to_string_lossy().into_owned(),
+            other.to_string_lossy().into_owned(),
+            Some(true)
+        )
+        .is_err());
+        assert!(other.exists());
     }
 
     #[test]

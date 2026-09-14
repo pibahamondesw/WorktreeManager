@@ -4,7 +4,7 @@ import { Workspace } from "../types";
 
 export function useLinearOrgKeyBackfill(
   workspaces: Workspace[],
-  onResolved: (workspaceId: string, updates: { linearOrgUrlKey: string }) => void
+  onResolved: (workspaceId: string, updates: { linearOrgUrlKey: string }) => void | Promise<unknown>
 ): void {
   const attemptedRef = useRef(new Set<string>());
 
@@ -20,7 +20,8 @@ export function useLinearOrgKeyBackfill(
         attemptedRef.current.add(w.id);
         const urlKey = await new LinearService(w.linearApiKey!).fetchOrgUrlKey();
         if (cancelled) return;
-        if (urlKey) onResolved(w.id, { linearOrgUrlKey: urlKey });
+        if (urlKey)
+          await Promise.resolve(onResolved(w.id, { linearOrgUrlKey: urlKey })).catch(() => {});
       }
     })();
 
