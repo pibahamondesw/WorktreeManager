@@ -30,7 +30,6 @@ The typical flow for multi-ticket, cross-repo, or research-heavy task: Open or c
 
 Use the vault to store plans, investigations, decisions, and documents that shouldn't live in any single repo.
 
-
 ---
 
 ## Conventions
@@ -42,11 +41,13 @@ Use the vault to store plans, investigations, decisions, and documents that shou
   central store *outside* the repos:
   `~/Documents/.worktreemanager/worktrees/<repo>/<branch>` (e.g.
   `~/Documents/.worktreemanager/worktrees/my-api/proj-123-fix-webhook-retries`).
-  **Agents never create worktrees** — they are always created from the app, by the
-  user. Don't run `git worktree add`, don't use the `EnterWorktree` tool, and don't
-  hand-roll them under `<repo>/.claude/worktrees/` or as siblings of the repo. If
-  work needs a worktree that doesn't exist yet, ask the user to create it in the app.
-  To find existing ones: `git -C <repo-path> worktree list`.
+  Agents may create tasks through `wtm task create --input <file|->` when the user requests them. WorktreeManager must be open; start with `wtm --help` and
+  `wtm workspace list`. Use Linear's MCP to create issues, pass their metadata
+  to WTM, then use Git in the returned member paths to distribute the code.
+  Do not run `git worktree add`, use `EnterWorktree`, or create unmanaged sibling worktrees. If `wtm` is unavailable, ask the user to create the task in the app.
+
+  Do not retry a mutation automatically after a disconnect; inspect `wtm task list` and the reported paths first. Deleting files requires `--delete-worktrees`; use `--force` only when the user intends to discard local changes.
+
 - **Secrets** — never put credentials, `.env` files, or tokens in the vault.
   The vault may be synced via Obsidian Sync.
 - **Vault internals** — do not commit or modify `.obsidian/`; it is managed by
@@ -453,7 +454,7 @@ Body sections: `## Context`, `## Decisions`, `## Learnings`, `## Log`.
 A task log records the **conclusion**, not the conversation. Write:
 
 - **Context** — what the task is actually about, in two or three sentences.
-- **Decisions** — what was decided and _why_. Include what was rejected and the reason; that is the part nobody can reconstruct later.
+- **Decisions** — what was decided and *why*. Include what was rejected and the reason; that is the part nobody can reconstruct later.
 - **Learnings** — what surprised you. A non-obvious constraint, a misleading error, a pattern that already existed and should have been reused.
 - **Log** — dated one-liners, only for things a future reader needs: a blocker hit, an approach abandoned, a spec that changed.
 
