@@ -56,7 +56,15 @@ async function getStore(): Promise<Store> {
  * The Linear keys are diverted to the keychain on the way through, so callers can keep
  * passing whole `setup`/`workspaces` values without knowing where the secrets end up.
  */
-export async function persist(entries: [string, unknown][]): Promise<void> {
+let pendingPersist: Promise<unknown> = Promise.resolve();
+
+export function persist(entries: [string, unknown][]): Promise<void> {
+  const result = pendingPersist.then(() => persistEntries(entries));
+  pendingPersist = result.catch(() => {});
+  return result;
+}
+
+async function persistEntries(entries: [string, unknown][]): Promise<void> {
   try {
     const s = await getStore();
     let next = secrets;
@@ -79,21 +87,29 @@ export async function persist(entries: [string, unknown][]): Promise<void> {
       }
     }
 
-    // The keychain is written first and its failure aborts the whole write: taking a key
-    // out of the file is only safe once the keychain holds it. The caller rolls its state
-    // back and the file still agrees with what the keychain has.
-    if (carriesSecrets) {
-      if (!secretsReadable) {
-        throw new Error("Keychain unreadable; refusing to overwrite the stored secrets");
+    const previous = await Promise.all(
+      toWrite.map(async ([key]) => [key, await s.get(key)] as const)
+    );
+    const previousSecrets = secrets;
+    let secretsWritten = false;
+    try {
+      if (carriesSecrets) {
+        if (!secretsReadable)
+          throw new Error("Keychain unreadable; refusing to overwrite the stored secrets");
+        await saveSecrets(next);
+        secretsWritten = true;
       }
-      await saveSecrets(next);
-      secrets = next;
+      for (const [key, value] of toWrite) await s.set(key, value);
+      await s.save();
+      if (secretsWritten) secrets = next;
+    } catch (error) {
+      for (const [key, value] of previous) {
+        if (value === undefined) await s.delete(key);
+        else await s.set(key, value);
+      }
+      if (secretsWritten) await saveSecrets(previousSecrets);
+      throw error;
     }
-
-    for (const [key, value] of toWrite) {
-      await s.set(key, value);
-    }
-    await s.save();
   } catch (e) {
     console.error(
       "[persist] failed for keys",
