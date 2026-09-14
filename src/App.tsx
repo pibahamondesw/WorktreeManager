@@ -20,6 +20,7 @@ import { withScope } from "./search/query";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
 import { Task } from "./types";
 import { listen } from "@tauri-apps/api/event";
+import { useAutomation } from "./hooks/useAutomation";
 import { editorPresentation } from "./services/codeEditor";
 
 function App() {
@@ -46,6 +47,7 @@ function App() {
     clearWorkspaceSwitching,
     workspaceSwitching,
     createTask,
+    operations,
     removeTask,
     updateEditorApp,
     sidebarCollapsed,
@@ -53,6 +55,8 @@ function App() {
     updateThemeId,
     updateCustomColors,
   } = useStore();
+
+  useAutomation(operations, !loading);
 
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
   const [search, setSearch] = useState<{ open: boolean; query: string }>({

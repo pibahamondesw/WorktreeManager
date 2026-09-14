@@ -96,6 +96,14 @@ jobs:
         if: ${{ env.TAP_TOKEN != '' }}
         run: |
           CASK=tap/Casks/worktreemanager.rb
+          python3 - "$CASK" <<'PY'
+          import pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          contents = path.read_text()
+          if 'target: "wtm"' not in contents:
+              contents = contents.replace('  app "WorktreeManager.app"', '  app "WorktreeManager.app"\n  binary "#{appdir}/WorktreeManager.app/Contents/MacOS/worktree-manager", target: "wtm"')
+              path.write_text(contents)
+          PY
           sed -i -E "s/  version \"[^\"]+\"/  version \"${{ steps.meta.outputs.version }}\"/" "$CASK"
           sed -i -E "s/  sha256 \"[^\"]+\"/  sha256 \"${{ steps.meta.outputs.sha256 }}\"/" "$CASK"
           cd tap
