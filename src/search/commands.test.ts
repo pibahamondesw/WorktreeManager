@@ -98,4 +98,24 @@ describe("buildCommands", () => {
     );
     expect(all.filter((id) => id.startsWith("open-pr:t-1:")).length).toBe(2);
   });
+
+  it("includes existing shortcuts for runnable commands", () => {
+    const commands = buildCommands({
+      workspaces,
+      selectedWorkspaceId: "ws-1",
+      tasks: [task],
+      themeId: "default",
+      editorApp: "cursor",
+    });
+
+    expect(commands.find((command) => command.id === "new-task")?.shortcut).toEqual({
+      key: "n",
+      label: "N",
+    });
+    expect(commands.find((command) => command.id === "switch-ws:ws-2")?.shortcut).toEqual({
+      key: "1",
+      label: "⌘1",
+      meta: true,
+    });
+  });
 });
