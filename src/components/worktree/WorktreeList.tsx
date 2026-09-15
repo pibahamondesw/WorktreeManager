@@ -44,6 +44,9 @@ interface WorktreeListProps {
   canGoForward: boolean;
   onGoBack: () => void;
   onGoForward: () => void;
+  /** Palette asking this list to open the new-task modal. */
+  requestNewTask?: boolean;
+  onRequestNewTaskHandled?: () => void;
 }
 
 /** Collapse the per-member git statuses of a task into one summary for its card. */
@@ -87,6 +90,8 @@ export function WorktreeList({
   canGoForward,
   onGoBack,
   onGoForward,
+  requestNewTask,
+  onRequestNewTaskHandled,
 }: WorktreeListProps) {
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
@@ -108,6 +113,12 @@ export function WorktreeList({
     linearService,
     onWorkspaceReady
   );
+
+  useEffect(() => {
+    if (!requestNewTask) return;
+    setShowNew(true);
+    onRequestNewTaskHandled?.();
+  }, [requestNewTask, onRequestNewTaskHandled]);
 
   useEffect(() => {
     setSelectedIndex(-1);

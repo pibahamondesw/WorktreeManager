@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, memo } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "../ui/Badge";
 import {
@@ -22,6 +21,7 @@ import {
   PullRequestInfo,
 } from "../../types";
 import { ensureTaskNote, taskNoteUri } from "../../services/notes";
+import { openCreatePr } from "../../services/pullRequest";
 import { linearIssueUrl, timeAgo } from "../../utils";
 import { TerminalStatus } from "../../services/terminal";
 import { DeleteOptions, OperationResult } from "../../services/operations";
@@ -136,23 +136,12 @@ export const WorktreeCard = memo(function WorktreeCard({
     setDeleteError(null);
   };
 
-  const openCreatePr = async (member: TaskMember) => {
-    try {
-      const remoteUrl = await invoke<string>("git_remote_url", {
-        repoPath: member.localPath,
-      });
-      openUrl(`${remoteUrl}/compare/${task.branchName}?expand=1`);
-    } catch {
-      console.error("Could not determine remote URL");
-    }
-  };
-
   const handlePrClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (pr) {
       openUrl(pr.url);
     } else if (primaryRepo) {
-      await openCreatePr(primaryRepo);
+      await openCreatePr(task.branchName, primaryRepo);
     }
   };
 
@@ -375,7 +364,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                           role="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openCreatePr(m);
+                            openCreatePr(task.branchName, m);
                           }}
                           className="pointer-events-auto text-text-muted hover:text-accent transition-colors cursor-pointer"
                         >

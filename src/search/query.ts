@@ -74,6 +74,18 @@ export function parseQuery(input: string): ParsedQuery {
   return parsed;
 }
 
+/**
+ * `>` at the start of the input switches the palette to commands-only, like VS Code.
+ * The rest of the string is the query that filters those commands.
+ */
+export function parsePaletteInput(input: string): { commandsOnly: boolean; query: string } {
+  const trimmed = input.trimStart();
+  if (trimmed.startsWith(">")) {
+    return { commandsOnly: true, query: trimmed.slice(1).trimStart() };
+  }
+  return { commandsOnly: false, query: input };
+}
+
 /** The `in:` values of a query, used to keep the scope tabs in sync with the text. */
 export function scopeValues(parsed: ParsedQuery): string[] {
   return parsed.filters.filter((f) => f.field === "in").flatMap((f) => f.values);

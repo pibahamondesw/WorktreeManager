@@ -24,6 +24,12 @@ export function linearIssueUrl(identifier: string, orgUrlKey?: string | null): s
     : `https://linear.app/issue/${identifier}`;
 }
 
+/** "owner/repo" from a GitHub remote URL, lowercased; null for non-GitHub remotes. */
+export function githubSlugFromRemote(remoteUrl: string): string | null {
+  const match = remoteUrl.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/);
+  return match ? match[1].toLowerCase() : null;
+}
+
 /**
  * Normalize workspace objects loaded from the store, filling defaults for fields
  * that may be missing in data written by older builds.

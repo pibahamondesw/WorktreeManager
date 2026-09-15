@@ -46,21 +46,22 @@ Enable **Obsidian vault** from the sidebar to create task notes in `~/Documents/
 
 ## Keyboard shortcuts
 
-| Key                    | Action                      |
-| ---------------------- | --------------------------- |
-| `↑` / `↓` or `j` / `k` | Navigate tasks              |
-| `0`–`9`                | Jump to task                |
-| `⌘0`–`⌘9`              | Jump to workspace           |
-| `Enter`                | Open selected task          |
-| `⌘[`                   | Return to task list         |
-| `⌘⌥P`                  | Search tasks                |
-| `N` / `P`              | New task / workspace        |
-| `R`                    | Refresh Linear info         |
-| `L` / `O`              | Open issue / notes          |
-| `⌘B` / `⌘⇧C`           | Copy branch / worktree path |
-| `⌘D`                   | Delete selected task        |
-| `⌘+` / `⌘−`            | Zoom in / out               |
-| `Esc`                  | Clear selection             |
+| Key                    | Action                           |
+| ---------------------- | -------------------------------- |
+| `↑` / `↓` or `j` / `k` | Navigate tasks                   |
+| `0`–`9`                | Jump to task                     |
+| `⌘0`–`⌘9`              | Jump to workspace                |
+| `Enter`                | Open selected task               |
+| `⌘[`                   | Return to task list              |
+| `⌘K` / `⌘F`            | Command palette / this workspace |
+| `⌘⌥P`                  | Search (in embedded editor)      |
+| `N` / `P`              | New task / workspace             |
+| `R`                    | Refresh Linear info              |
+| `L` / `O`              | Open issue / notes               |
+| `⌘B` / `⌘⇧C`           | Copy branch / worktree path      |
+| `⌘D`                   | Delete selected task             |
+| `⌘+` / `⌘−`            | Zoom in / out                    |
+| `Esc`                  | Clear selection                  |
 
 ## Development
 
