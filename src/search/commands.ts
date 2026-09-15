@@ -19,6 +19,13 @@ export type CommandAction =
 
 export type CommandGroup = "workspace" | "settings" | "action";
 
+export interface CommandShortcut {
+  key: string;
+  label: string;
+  meta?: boolean;
+  shift?: boolean;
+}
+
 export interface PaletteCommand {
   id: string;
   label: string;
@@ -29,6 +36,7 @@ export interface PaletteCommand {
   keywords: string;
   /** Shown on a blank query (after tasks) so the palette is discoverable. */
   emptyVisible: boolean;
+  shortcut?: CommandShortcut;
   action: CommandAction;
 }
 
@@ -68,15 +76,15 @@ export function buildCommands({
     commands.push({
       id: "new-task",
       label: "New task",
-      hint: "N",
       group: "action",
       keywords: `new task create ${current.name}`.toLowerCase(),
       emptyVisible: true,
+      shortcut: { key: "n", label: "N" },
       action: { type: "new-task" },
     });
   }
 
-  for (const workspace of workspaces) {
+  for (const [index, workspace] of workspaces.entries()) {
     const isCurrent = workspace.id === selectedWorkspaceId;
     commands.push({
       id: `switch-ws:${workspace.id}`,
@@ -85,6 +93,7 @@ export function buildCommands({
       group: "workspace",
       keywords: `switch workspace change ${workspace.name}`.toLowerCase(),
       emptyVisible: !isCurrent,
+      shortcut: index <= 9 ? { key: String(index), label: `⌘${index}`, meta: true } : undefined,
       action: { type: "select-workspace", workspaceId: workspace.id },
     });
     commands.push({

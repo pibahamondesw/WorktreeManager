@@ -100,6 +100,34 @@ describe("QuickSearchModal navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: /feature\/ledger-sync/ }));
     expect(onOpenTask).toHaveBeenCalledWith(otherTask, expect.any(Object));
   });
+
+  it("navigates results with the arrow keys", () => {
+    const secondTask = { ...otherTask, id: "t-3", branchName: "feature/second" };
+    const { onOpenTask } = renderModal({ initialQuery: "", tasks: [otherTask, secondTask] });
+    const input = screen.getByRole("textbox");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onOpenTask).toHaveBeenCalledWith(secondTask, expect.any(Object));
+  });
+
+  it("jumps to a task result by number", () => {
+    const secondTask = { ...otherTask, id: "t-3", branchName: "feature/second" };
+    const { onOpenTask } = renderModal({ initialQuery: "", tasks: [otherTask, secondTask] });
+    const input = screen.getByRole("textbox");
+
+    fireEvent.keyDown(input, { key: "1" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onOpenTask).toHaveBeenCalledWith(secondTask, expect.any(Object));
+  });
+
+  it("keeps number keys available while searching", () => {
+    renderModal({ initialQuery: "wor-" });
+
+    expect(fireEvent.keyDown(screen.getByRole("textbox"), { key: "1" })).toBe(true);
+  });
 });
 
 describe("QuickSearchModal ordering", () => {
@@ -166,5 +194,23 @@ describe("QuickSearchModal commands", () => {
     const { onNewTask } = renderModal({ initialQuery: ">new task" });
     fireEvent.click(screen.getByRole("button", { name: /New task/ }));
     expect(onNewTask).toHaveBeenCalledOnce();
+  });
+
+  it("runs a visible command from its shortcut", () => {
+    const onClose = vi.fn();
+    const { onNewTask } = renderModal({ initialQuery: "", onClose });
+
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "n" });
+
+    expect(onNewTask).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("runs a visible workspace command from its meta shortcut", () => {
+    const { onSelectWorkspace } = renderModal({ initialQuery: "" });
+
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "1", metaKey: true });
+
+    expect(onSelectWorkspace).toHaveBeenCalledWith("ws-2");
   });
 });

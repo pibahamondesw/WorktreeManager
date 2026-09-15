@@ -11,7 +11,7 @@ import {
   withScope,
   withoutScope,
 } from "../../search/query";
-import { buildCommands, WorkspaceAction } from "../../search/commands";
+import { buildCommands, CommandShortcut, WorkspaceAction } from "../../search/commands";
 import { PaletteItem, searchPalette } from "../../search/searchPalette";
 import { activatePaletteItem, PaletteActionDeps } from "../../search/runCommand";
 import { EditorApp, Task, Workspace } from "../../types";
@@ -119,10 +119,17 @@ export function QuickSearchModal({
 
   if (!open) return null;
 
-  const { commandsOnly } = parsePaletteInput(query);
-  const scoped = scopeValues(parseQuery(query)).length > 0;
+  const paletteInput = parsePaletteInput(query);
+  const parsedQuery = parseQuery(paletteInput.query);
+  const { commandsOnly } = paletteInput;
+  const scoped = scopeValues(parsedQuery).length > 0;
+  const bareShortcutsEnabled =
+    !commandsOnly && parsedQuery.terms.length === 0 && parsedQuery.negTerms.length === 0;
   const active = results[activeIndex];
-  const taskCount = results.filter((r) => r.kind === "task").length;
+  const taskResultIndexes = results
+    .map((result, index) => (result.kind === "task" ? index : -1))
+    .filter((index) => index >= 0);
+  const taskCount = taskResultIndexes.length;
   const commandCount = results.length - taskCount;
 
   const setScoped = (next: boolean) => {
@@ -162,6 +169,26 @@ export function QuickSearchModal({
     if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
       e.preventDefault();
       setActiveIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (/^[0-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey && bareShortcutsEnabled) {
+      const resultIndex = taskResultIndexes[Number(e.key)];
+      if (resultIndex !== undefined) {
+        e.preventDefault();
+        setActiveIndex(resultIndex);
+      }
+      return;
+    }
+    const shortcutCommand = results.find(
+      (item) =>
+        item.kind === "command" &&
+        item.command.shortcut &&
+        commandShortcutMatches(e, item.command.shortcut) &&
+        (item.command.shortcut.meta || bareShortcutsEnabled)
+    );
+    if (shortcutCommand) {
+      e.preventDefault();
+      activate(shortcutCommand);
       return;
     }
     if (e.key === "Enter" && active) {
@@ -242,6 +269,7 @@ export function QuickSearchModal({
 
         <div className="flex-shrink-0 px-4 py-2 border-t border-border flex items-center gap-3 text-[0.625rem] text-text-muted font-mono flex-wrap">
           <Hint keys="↑↓">navigate</Hint>
+          {taskCount > 0 && <Hint keys="0-9">jump</Hint>}
           <Hint keys="↵">{active?.kind === "command" ? "run" : "open"}</Hint>
           {active?.kind === "task" && (
             <>
@@ -269,6 +297,19 @@ export function QuickSearchModal({
 
       {toast && <WorktreeListToast message={toast} />}
     </div>
+  );
+}
+
+function commandShortcutMatches(
+  event: React.KeyboardEvent<HTMLInputElement>,
+  shortcut: CommandShortcut
+): boolean {
+  const metaPressed = event.metaKey || event.ctrlKey;
+  return (
+    event.key.toLowerCase() === shortcut.key.toLowerCase() &&
+    metaPressed === Boolean(shortcut.meta) &&
+    event.shiftKey === Boolean(shortcut.shift) &&
+    !event.altKey
   );
 }
 

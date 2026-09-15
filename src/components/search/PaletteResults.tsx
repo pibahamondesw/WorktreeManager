@@ -22,6 +22,8 @@ export function PaletteResults({
     return <p className="text-sm text-text-muted text-center py-10">{emptyMessage}</p>;
   }
 
+  let taskIndex = 0;
+
   return (
     <>
       {results.map((item, i) => {
@@ -37,6 +39,7 @@ export function PaletteResults({
             {item.kind === "task" ? (
               <TaskRow
                 item={item}
+                index={taskIndex++}
                 active={i === activeIndex}
                 onHover={() => onHover(i)}
                 onClick={() => onActivate(item)}
@@ -72,11 +75,13 @@ function itemHeader(item: PaletteItem): string {
 
 function TaskRow({
   item,
+  index,
   active,
   onHover,
   onClick,
 }: {
   item: Extract<PaletteItem, { kind: "task" }>;
+  index: number;
   active: boolean;
   onHover: () => void;
   onClick: () => void;
@@ -89,6 +94,11 @@ function TaskRow({
       onClick={onClick}
       className={`${ROW_CLASS} ${active ? "bg-bg-hover" : "hover:bg-bg-hover/50"}`}
     >
+      {index <= 9 && (
+        <span className="text-xs font-mono text-text-muted/40 flex-shrink-0 w-4 text-right">
+          {index}
+        </span>
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           {result.task.linearIssueIdentifier && (
@@ -128,7 +138,10 @@ function CommandRow({
       onClick={onClick}
       className={`${ROW_CLASS} ${active ? "bg-bg-hover" : "hover:bg-bg-hover/50"}`}
     >
-      <span className="flex-1 min-w-0 text-sm text-text-primary truncate">{item.command.label}</span>
+      <span className="flex-1 min-w-0 text-sm text-text-primary truncate">
+        {item.command.label}
+      </span>
+      {item.command.shortcut && <Badge>{item.command.shortcut.label}</Badge>}
       {item.command.hint && <Badge>{item.command.hint}</Badge>}
     </button>
   );
