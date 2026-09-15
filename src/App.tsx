@@ -17,6 +17,7 @@ import { useNavigationHistory } from "./hooks/useNavigationHistory";
 import { useOpenTask } from "./hooks/useOpenTask";
 import { NavigationEntry } from "./navigation/history";
 import { withScope } from "./search/query";
+import { WorkspaceAction } from "./search/commands";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
 import { Task } from "./types";
 import { listen } from "@tauri-apps/api/event";
@@ -66,6 +67,8 @@ function App() {
   const [revealTaskId, setRevealTaskId] = useState<string | null>(null);
   const [showDoctor, setShowDoctor] = useState(false);
   const [doctorAlertDismissed, setDoctorAlertDismissed] = useState(false);
+  const [workspaceAction, setWorkspaceAction] = useState<WorkspaceAction | null>(null);
+  const [newTaskRequested, setNewTaskRequested] = useState(false);
 
   useEffect(() => {
     editorPresentation.reset();
@@ -309,8 +312,8 @@ function App() {
         </div>
       )}
       <div className="flex flex-1 min-h-0">
-        {!sidebarCollapsed && (
-          <ErrorBoundary fallbackClassName="w-60 h-full bg-bg-secondary border-r border-border">
+        <ErrorBoundary fallbackClassName="w-60 h-full bg-bg-secondary border-r border-border">
+          <div className={sidebarCollapsed ? "hidden" : "h-full"}>
             <WorkspaceList
               workspaces={state.workspaces}
               tasks={state.tasks}
@@ -332,9 +335,11 @@ function App() {
               onCollapse={toggleSidebarCollapsed}
               doctorSeverity={doctorSeverity}
               onOpenDoctor={() => setShowDoctor(true)}
+              workspaceAction={workspaceAction}
+              onWorkspaceActionHandled={() => setWorkspaceAction(null)}
             />
-          </ErrorBoundary>
-        )}
+          </div>
+        </ErrorBoundary>
         <ErrorBoundary fallbackClassName="flex-1">
           <WorktreeList
             tasks={selectedTasks}
@@ -359,6 +364,8 @@ function App() {
             onGoForward={history.forward}
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={toggleSidebarCollapsed}
+            requestNewTask={newTaskRequested}
+            onRequestNewTaskHandled={() => setNewTaskRequested(false)}
           />
         </ErrorBoundary>
       </div>
@@ -370,8 +377,15 @@ function App() {
         workspaces={state.workspaces}
         selectedWorkspaceId={state.selectedWorkspaceId}
         historyEntries={history.entries}
+        themeId={themeId}
+        editorApp={editorApp}
         onReveal={handleReveal}
         onOpenTask={openTask}
+        onSelectWorkspace={handleSelectWorkspace}
+        onWorkspaceAction={setWorkspaceAction}
+        onThemeChange={updateThemeId}
+        onEditorChange={updateEditorApp}
+        onNewTask={() => setNewTaskRequested(true)}
       />
       <DoctorModal
         open={showDoctor}

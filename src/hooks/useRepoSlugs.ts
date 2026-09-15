@@ -1,12 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Workspace } from "../types";
+import { githubSlugFromRemote } from "../utils";
 
-/** "owner/repo" from a GitHub remote URL, lowercased; null for non-GitHub remotes. */
-export function githubSlugFromRemote(remoteUrl: string): string | null {
-  const match = remoteUrl.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/);
-  return match ? match[1].toLowerCase() : null;
-}
+export { githubSlugFromRemote };
 
 const slugByRepoPath = new Map<string, Promise<string | null>>();
 

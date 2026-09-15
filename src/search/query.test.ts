@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseQuery, scopeValues, withScope, withoutScope } from "./query";
+import { parseQuery, parsePaletteInput, scopeValues, withScope, withoutScope } from "./query";
 
 describe("parseQuery", () => {
   it("collects free-text terms lowercased", () => {
@@ -78,5 +78,20 @@ describe("withScope / withoutScope", () => {
 
   it("leaves other filters alone", () => {
     expect(withoutScope("repo:web in:api")).toBe("repo:web");
+  });
+});
+
+describe("parsePaletteInput", () => {
+  it("treats a leading > as commands-only", () => {
+    expect(parsePaletteInput(">theme")).toEqual({ commandsOnly: true, query: "theme" });
+    expect(parsePaletteInput("  > theme indigo")).toEqual({
+      commandsOnly: true,
+      query: "theme indigo",
+    });
+  });
+
+  it("leaves task search queries alone", () => {
+    expect(parsePaletteInput("wor-67")).toEqual({ commandsOnly: false, query: "wor-67" });
+    expect(parsePaletteInput("")).toEqual({ commandsOnly: false, query: "" });
   });
 });

@@ -1,16 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Badge } from "../ui/Badge";
-import { SearchIcon, BranchIcon } from "../ui/Icons";
+import { SearchIcon } from "../ui/Icons";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { WorktreeListToast } from "../worktree/WorktreeListToast";
 import { OpenTaskOptions } from "../../hooks/useOpenTask";
-import { parseQuery, scopeValues, withScope, withoutScope } from "../../search/query";
-import { searchTasks, TaskSearchResult } from "../../search/searchTasks";
-import { Task, Workspace } from "../../types";
+import {
+  parseQuery,
+  parsePaletteInput,
+  scopeValues,
+  withScope,
+  withoutScope,
+} from "../../search/query";
+import { buildCommands, WorkspaceAction } from "../../search/commands";
+import { PaletteItem, searchPalette } from "../../search/searchPalette";
+import { activatePaletteItem, PaletteActionDeps } from "../../search/runCommand";
+import { EditorApp, Task, Workspace } from "../../types";
 import { NavigationEntry, lastTaskVisits } from "../../navigation/history";
 import { linearIssueUrl } from "../../utils";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
+import { PaletteResults } from "./PaletteResults";
 
 const EMPTY_ENTRIES: NavigationEntry[] = [];
 
@@ -22,10 +30,17 @@ interface QuickSearchModalProps {
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
   historyEntries?: NavigationEntry[];
+  themeId: string;
+  editorApp: EditorApp;
   /** Switch to the task's workspace and select it in the list. */
   onReveal: (task: Task) => void;
   /** Reveal and open the task (embedded view or external editor, per the editor setting). */
   onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
+  onSelectWorkspace: (workspaceId: string) => void;
+  onWorkspaceAction: (action: WorkspaceAction) => void;
+  onThemeChange: (themeId: string) => void;
+  onEditorChange: (editor: EditorApp) => void;
+  onNewTask: () => void;
 }
 
 export function QuickSearchModal({
@@ -36,8 +51,15 @@ export function QuickSearchModal({
   workspaces,
   selectedWorkspaceId,
   historyEntries = EMPTY_ENTRIES,
+  themeId,
+  editorApp,
   onReveal,
   onOpenTask,
+  onSelectWorkspace,
+  onWorkspaceAction,
+  onThemeChange,
+  onEditorChange,
+  onNewTask,
 }: QuickSearchModalProps) {
   useEditorOcclusion(open);
   const [query, setQuery] = useState(initialQuery);
@@ -66,12 +88,25 @@ export function QuickSearchModal({
 
   const lastVisitAt = useMemo(() => lastTaskVisits(historyEntries), [historyEntries]);
 
+  const commands = useMemo(
+    () =>
+      open ? buildCommands({ workspaces, selectedWorkspaceId, tasks, themeId, editorApp }) : [],
+    [open, workspaces, selectedWorkspaceId, tasks, themeId, editorApp]
+  );
+
   const results = useMemo(
     () =>
       open
-        ? searchTasks({ tasks, workspaces, selectedWorkspaceId, query, lastVisitAt })
-        : ([] as TaskSearchResult[]),
-    [open, tasks, workspaces, selectedWorkspaceId, query, lastVisitAt]
+        ? searchPalette({
+            tasks,
+            workspaces,
+            selectedWorkspaceId,
+            query,
+            lastVisitAt,
+            commands,
+          })
+        : ([] as PaletteItem[]),
+    [open, tasks, workspaces, selectedWorkspaceId, query, lastVisitAt, commands]
   );
 
   useEffect(() => {
@@ -84,8 +119,11 @@ export function QuickSearchModal({
 
   if (!open) return null;
 
+  const { commandsOnly } = parsePaletteInput(query);
   const scoped = scopeValues(parseQuery(query)).length > 0;
   const active = results[activeIndex];
+  const taskCount = results.filter((r) => r.kind === "task").length;
+  const commandCount = results.length - taskCount;
 
   const setScoped = (next: boolean) => {
     if (!next) setQuery(withoutScope);
@@ -93,11 +131,20 @@ export function QuickSearchModal({
     inputRef.current?.focus();
   };
 
-  // Stay open on failure so the error toast is readable.
-  const openInEditor = async (result: TaskSearchResult) => {
-    const opened = await onOpenTask(result.task, { onMessage: showToast, onError: showToast });
-    if (opened) onClose();
+  const deps: PaletteActionDeps = {
+    tasks,
+    workspaces,
+    onClose,
+    onSelectWorkspace,
+    onWorkspaceAction,
+    onThemeChange,
+    onEditorChange,
+    onNewTask,
+    onOpenTask,
+    showToast,
   };
+
+  const activate = (item: PaletteItem) => void activatePaletteItem(item, deps);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
@@ -119,22 +166,36 @@ export function QuickSearchModal({
     }
     if (e.key === "Enter" && active) {
       e.preventDefault();
-      if (e.metaKey) {
-        onReveal(active.task);
+      if (e.metaKey && active.kind === "task") {
+        onReveal(active.result.task);
         onClose();
       } else {
-        void openInEditor(active);
+        activate(active);
       }
       return;
     }
-    if (e.key === "l" && e.metaKey && active?.task.linearIssueIdentifier) {
+    if (
+      e.key === "l" &&
+      e.metaKey &&
+      active?.kind === "task" &&
+      active.result.task.linearIssueIdentifier
+    ) {
       e.preventDefault();
-      openUrl(linearIssueUrl(active.task.linearIssueIdentifier, active.workspace?.linearOrgUrlKey));
+      openUrl(
+        linearIssueUrl(
+          active.result.task.linearIssueIdentifier,
+          active.result.workspace?.linearOrgUrlKey
+        )
+      );
       onClose();
     }
   };
 
-  let lastGroup: boolean | null = null;
+  const emptyMessage = commandsOnly
+    ? "No commands match"
+    : tasks.length === 0
+      ? "No tasks yet"
+      : "No tasks match";
 
   return (
     <div
@@ -150,7 +211,7 @@ export function QuickSearchModal({
             <input
               ref={inputRef}
               className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-bg-tertiary text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors"
-              placeholder="Search tasks by Linear ID, title, or branch…"
+              placeholder="Search tasks and commands…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -164,73 +225,44 @@ export function QuickSearchModal({
               This workspace
             </ScopeTab>
             <span className="ml-auto text-[0.625rem] text-text-muted font-mono">
-              in:web|api · repo: · branch: · -exclude
+              in:web|api · repo: · branch: · -exclude · &gt;commands
             </span>
           </div>
         </div>
 
         <div ref={listRef} className="flex-1 overflow-y-auto">
-          {results.length === 0 ? (
-            <p className="text-sm text-text-muted text-center py-10">
-              {tasks.length === 0 ? "No tasks yet" : "No tasks match"}
-            </p>
-          ) : (
-            results.map((result, i) => {
-              const header =
-                result.inCurrentWorkspace !== lastGroup ? (
-                  <p
-                    key={`h-${i}`}
-                    className="px-4 pt-3 pb-1 text-[0.625rem] uppercase tracking-wide text-text-muted"
-                  >
-                    {result.inCurrentWorkspace ? "This workspace" : "Other workspaces"}
-                  </p>
-                ) : null;
-              lastGroup = result.inCurrentWorkspace;
-              return (
-                <div key={result.task.id}>
-                  {header}
-                  <button
-                    data-active={i === activeIndex}
-                    onMouseMove={() => setActiveIndex(i)}
-                    onClick={() => void openInEditor(result)}
-                    className={`w-full text-left px-4 py-2.5 flex items-center gap-3 cursor-pointer transition-colors ${
-                      i === activeIndex ? "bg-bg-hover" : "hover:bg-bg-hover/50"
-                    }`}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        {result.task.linearIssueIdentifier && (
-                          <span className="text-xs font-mono text-text-muted flex-shrink-0">
-                            {result.task.linearIssueIdentifier}
-                          </span>
-                        )}
-                        <span className="text-sm text-text-primary truncate">
-                          {result.task.linearIssueTitle || result.task.branchName}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-0.5 text-xs text-text-muted min-w-0">
-                        <BranchIcon />
-                        <span className="font-mono truncate">{result.task.branchName}</span>
-                      </div>
-                    </div>
-                    {!result.inCurrentWorkspace && result.workspace && (
-                      <Badge>{result.workspace.name}</Badge>
-                    )}
-                  </button>
-                </div>
-              );
-            })
-          )}
+          <PaletteResults
+            results={results}
+            activeIndex={activeIndex}
+            emptyMessage={emptyMessage}
+            onHover={setActiveIndex}
+            onActivate={activate}
+          />
         </div>
 
         <div className="flex-shrink-0 px-4 py-2 border-t border-border flex items-center gap-3 text-[0.625rem] text-text-muted font-mono flex-wrap">
           <Hint keys="↑↓">navigate</Hint>
-          <Hint keys="↵">open</Hint>
-          <Hint keys="⌘↵">reveal</Hint>
-          <Hint keys="⌘L">linear</Hint>
+          <Hint keys="↵">{active?.kind === "command" ? "run" : "open"}</Hint>
+          {active?.kind === "task" && (
+            <>
+              <Hint keys="⌘↵">reveal</Hint>
+              <Hint keys="⌘L">linear</Hint>
+            </>
+          )}
           <Hint keys="esc">close</Hint>
           <span className="ml-auto">
-            {results.length} result{results.length !== 1 ? "s" : ""}
+            {taskCount > 0 && (
+              <>
+                {taskCount} task{taskCount !== 1 ? "s" : ""}
+              </>
+            )}
+            {taskCount > 0 && commandCount > 0 && " · "}
+            {commandCount > 0 && (
+              <>
+                {commandCount} command{commandCount !== 1 ? "s" : ""}
+              </>
+            )}
+            {results.length === 0 && "0 results"}
           </span>
         </div>
       </div>

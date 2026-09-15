@@ -79,7 +79,7 @@ export function WorktreeListHeader({
             type="button"
             onClick={onOpenSearch}
             className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-            title="Search tasks (⌘K — ⌘F for this workspace)"
+            title="Search tasks and commands (⌘K — ⌘F for this workspace)"
           >
             <SearchIcon />
           </button>

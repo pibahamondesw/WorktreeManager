@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Task, VaultConfig, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { EditWorkspaceModal } from "./EditWorkspaceModal";
@@ -16,6 +16,7 @@ import {
 } from "../ui/Icons";
 import { DeleteOptions, OperationResult } from "../../services/operations";
 import { CheckSeverity } from "../../services/doctor";
+import { WorkspaceAction } from "../../search/commands";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
@@ -45,6 +46,9 @@ interface WorkspaceListProps {
   /** Worst severity the dependency check found, or null before it has run. */
   doctorSeverity: CheckSeverity | null;
   onOpenDoctor: () => void;
+  /** Palette (or anything else) asking this list to open a sidebar overlay. */
+  workspaceAction?: WorkspaceAction | null;
+  onWorkspaceActionHandled?: () => void;
 }
 
 export function WorkspaceList({
@@ -68,6 +72,8 @@ export function WorkspaceList({
   onCollapse,
   doctorSeverity,
   onOpenDoctor,
+  workspaceAction,
+  onWorkspaceActionHandled,
 }: WorkspaceListProps) {
   const [showAdd, setShowAdd] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -121,6 +127,29 @@ export function WorkspaceList({
     }
     return m;
   }, [tasks]);
+
+  useEffect(() => {
+    if (!workspaceAction) return;
+    switch (workspaceAction.kind) {
+      case "vault":
+        setShowVault(true);
+        break;
+      case "themes":
+        setShowThemes(true);
+        break;
+      case "edit": {
+        const workspace = workspaces.find((w) => w.id === workspaceAction.workspaceId);
+        if (workspace) setEditWorkspace(workspace);
+        break;
+      }
+      case "remove": {
+        const workspace = workspaces.find((w) => w.id === workspaceAction.workspaceId);
+        if (workspace) setRemoveWorkspace(workspace);
+        break;
+      }
+    }
+    onWorkspaceActionHandled?.();
+  }, [workspaceAction, workspaces, onWorkspaceActionHandled]);
 
   const addOpen = showAdd || !!showAddExternal;
   const closeAdd = () => {
