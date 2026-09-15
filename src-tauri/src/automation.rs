@@ -5,7 +5,7 @@ use std::{
     os::{
         fd::AsRawFd,
         unix::{
-            fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
             net::{UnixListener, UnixStream},
         },
     },
@@ -92,9 +92,8 @@ fn send(stream: &mut UnixStream, value: &Value) -> std::io::Result<()> {
 }
 
 fn prepare_directory(path: &Path) -> Result<(), String> {
-    match fs::create_dir(path) {
-        Ok(()) => fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-            .map_err(|_| "Cannot protect socket directory")?,
+    match fs::DirBuilder::new().mode(0o700).create(path) {
+        Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(_) => return Err("Cannot create socket directory".into()),
     }
@@ -349,6 +348,8 @@ pub fn automation_complete(
 mod tests {
     use super::*;
 
+    static NEXT_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
+
     struct Server {
         automation: Option<Automation>,
         directory: PathBuf,
@@ -356,12 +357,13 @@ mod tests {
     impl Server {
         fn new() -> Self {
             let directory = PathBuf::from(format!(
-                "/tmp/wtm-test-{}-{}",
+                "/tmp/wtm-test-{}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed)
             ));
             Self {
                 automation: Some(Automation::start(directory.join("app.sock")).unwrap()),
@@ -385,6 +387,47 @@ mod tests {
             self.automation.take();
             let _ = fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn concurrent_servers_use_distinct_directories() {
+        let barrier = std::sync::Barrier::new(16);
+        let servers = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        Server::new()
+                    })
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let directories: std::collections::HashSet<_> =
+            servers.iter().map(|server| &server.directory).collect();
+        assert_eq!(directories.len(), servers.len());
+    }
+
+    #[test]
+    fn concurrent_directory_preparation_is_private_and_preserves_existing_permissions() {
+        let server = Server::new();
+        let directory = server.directory.join("shared");
+        let barrier = std::sync::Barrier::new(16);
+        std::thread::scope(|scope| {
+            for _ in 0..16 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    prepare_directory(&directory).unwrap();
+                    assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
+                });
+            }
+        });
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(prepare_directory(&directory).is_err());
+        assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o755);
     }
 
     #[test]
