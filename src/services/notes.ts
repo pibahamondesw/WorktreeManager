@@ -125,7 +125,11 @@ export async function ensureTaskNote(
 }
 
 /** Move a task's note into `_archive/`. Best-effort, for the same reason. */
-export async function archiveTaskNote(vault: VaultConfig, task: Task): Promise<void> {
+export async function archiveTaskNote(
+  vault: VaultConfig,
+  task: Task,
+  throwOnError = false
+): Promise<void> {
   const notesPath = taskLogsPath(vault);
   if (!notesPath) return;
   try {
@@ -135,7 +139,8 @@ export async function archiveTaskNote(vault: VaultConfig, task: Task): Promise<v
       noteFolder: task.noteFolder ?? null,
       today: today(),
     });
-  } catch {
+  } catch (error) {
+    if (throwOnError) throw error;
     /* note archiving is best-effort */
   }
 }

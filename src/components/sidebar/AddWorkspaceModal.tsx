@@ -12,7 +12,7 @@ import { useLinearKeyValidation } from "../../hooks/useLinearKeyValidation";
 interface AddWorkspaceModalProps {
   open: boolean;
   onClose: () => void;
-  onAdd: (workspace: Workspace) => void;
+  onAdd: (workspace: Workspace) => void | Promise<unknown>;
   defaultLinearApiKey?: string | null;
 }
 
@@ -49,7 +49,7 @@ export function AddWorkspaceModal({
 
   const suggestedName = repos.length === 1 ? repos[0].name.trim() : "";
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setError(null);
     const finalName = name.trim() || suggestedName;
     if (!finalName) {
@@ -70,17 +70,21 @@ export function AddWorkspaceModal({
         return;
       }
     }
-    onAdd({
-      id: uuid(),
-      name: finalName,
-      repos: repos.map((r) => ({
-        ...r,
-        name: r.name.trim(),
-        worktreeBasePath: r.worktreeBasePath.trim(),
-      })),
-      linearApiKey: linear.linearValid ? linear.linearKey.trim() : null,
-      linearOrgUrlKey: linear.linearValid ? linear.linearOrgUrlKey : null,
-    });
+    try {
+      await onAdd({
+        id: uuid(),
+        name: finalName,
+        repos: repos.map((r) => ({
+          ...r,
+          name: r.name.trim(),
+          worktreeBasePath: r.worktreeBasePath.trim(),
+        })),
+        linearApiKey: linear.linearValid ? linear.linearKey.trim() : null,
+        linearOrgUrlKey: linear.linearValid ? linear.linearOrgUrlKey : null,
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not save workspace");
+    }
   };
 
   return (

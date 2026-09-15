@@ -15,7 +15,7 @@ interface EditWorkspaceModalProps {
   onSave: (
     workspaceId: string,
     updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
-  ) => void;
+  ) => void | Promise<unknown>;
   onRequestDelete: () => void;
 }
 
@@ -53,7 +53,7 @@ export function EditWorkspaceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setError(null);
     if (!name.trim()) {
       setError("Workspace name is required");
@@ -74,17 +74,21 @@ export function EditWorkspaceModal({
       }
     }
     const newLinearKey = linear.linearValid ? linear.linearKey.trim() : null;
-    onSave(workspace.id, {
-      name: name.trim(),
-      repos: repos.map((r) => ({
-        ...r,
-        name: r.name.trim(),
-        worktreeBasePath: r.worktreeBasePath.trim(),
-      })),
-      linearApiKey: newLinearKey,
-      linearOrgUrlKey: newLinearKey ? linear.linearOrgUrlKey : null,
-    });
-    onClose();
+    try {
+      await onSave(workspace.id, {
+        name: name.trim(),
+        repos: repos.map((r) => ({
+          ...r,
+          name: r.name.trim(),
+          worktreeBasePath: r.worktreeBasePath.trim(),
+        })),
+        linearApiKey: newLinearKey,
+        linearOrgUrlKey: newLinearKey ? linear.linearOrgUrlKey : null,
+      });
+      onClose();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not save workspace");
+    }
   };
 
   return (

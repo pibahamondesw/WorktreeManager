@@ -12,3 +12,5 @@ pub mod shell_env;
 pub mod terminal;
 pub mod vault;
 pub mod workspace;
+
+pub mod validation;

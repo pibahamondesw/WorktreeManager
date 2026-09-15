@@ -9,7 +9,8 @@ import {
   loadSidebarCollapsed,
   persist,
 } from "../services/store";
-import { AppState, DEFAULT_STATE, EditorApp, Task, VaultConfig, Workspace } from "../types";
+import { AppState, DEFAULT_STATE, EditorApp, VaultConfig, Workspace } from "../types";
+import { Operations, CreateTaskInput, DeleteOptions } from "../services/operations";
 import { applyTheme, themes, CUSTOM_THEME_ID } from "../themes";
 
 export function useStore() {
@@ -39,6 +40,24 @@ export function useStore() {
   const commitEditorApp = useCallback((next: EditorApp) => {
     editorAppRef.current = next;
     setEditorAppState(next);
+  }, []);
+
+  const [operations] = useState(
+    () =>
+      new Operations(
+        () => stateRef.current,
+        commit,
+        () => editorAppRef.current
+      )
+  );
+
+  const report = useCallback(async <T>(action: Promise<T>): Promise<T> => {
+    try {
+      return await action;
+    } catch (error) {
+      setPersistError(error instanceof Error ? error.message : "Operation failed");
+      throw error;
+    }
   }, []);
 
   useEffect(() => {
@@ -77,8 +96,7 @@ export function useStore() {
   const retryKeychain = useCallback(async () => {
     setKeychainRetrying(true);
     try {
-      const restored = await restoreKeychainSecrets(() => stateRef.current);
-      commit(restored);
+      const restored = await operations.refresh(restoreKeychainSecrets);
       setKeychainError(null);
       return restored;
     } catch (error) {
@@ -87,149 +105,75 @@ export function useStore() {
     } finally {
       setKeychainRetrying(false);
     }
-  }, [commit]);
+  }, [operations]);
 
   const dismissPersistError = useCallback(() => setPersistError(null), []);
 
   const updateSetup = useCallback(
-    async (setup: AppState["setup"]) => {
-      const snapshot = stateRef.current;
-      commit({ ...snapshot, setup });
-      try {
-        await persist([["setup", setup]]);
-      } catch {
-        commit(snapshot);
-        setPersistError("Failed to save setup changes");
-      }
-    },
-    [commit]
+    (setup: AppState["setup"]) => report(operations.change(() => ({ setup }))),
+    [operations, report]
   );
 
   const updateVault = useCallback(
-    async (vault: VaultConfig) => {
-      const snapshot = stateRef.current;
-      commit({ ...snapshot, vault });
-      try {
-        await persist([["vault", vault]]);
-      } catch {
-        commit(snapshot);
-        setPersistError("Failed to save vault settings");
-      }
-    },
-    [commit]
+    (vault: VaultConfig) => report(operations.change(() => ({ vault }))),
+    [operations, report]
   );
 
   const addWorkspace = useCallback(
-    async (workspace: Workspace) => {
-      const snapshot = stateRef.current;
-      const newWorkspaces = [...snapshot.workspaces, workspace];
-      commit({ ...snapshot, workspaces: newWorkspaces, selectedWorkspaceId: workspace.id });
-      try {
-        await persist([
-          ["workspaces", newWorkspaces],
-          ["selectedWorkspaceId", workspace.id],
-        ]);
-      } catch {
-        commit(snapshot);
-        setPersistError("Failed to save workspace");
-      }
-    },
-    [commit]
+    (workspace: Workspace) => report(operations.addWorkspace(workspace)),
+    [operations, report]
   );
 
   const updateWorkspace = useCallback(
-    async (
-      workspaceId: string,
+    (
+      id: string,
       updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
-    ) => {
-      const snapshot = stateRef.current;
-      const newWorkspaces = snapshot.workspaces.map((w) =>
-        w.id === workspaceId ? { ...w, ...updates } : w
-      );
-      commit({ ...snapshot, workspaces: newWorkspaces });
-      try {
-        await persist([["workspaces", newWorkspaces]]);
-      } catch {
-        commit(snapshot);
-        setPersistError("Failed to save workspace changes");
-      }
-    },
-    [commit]
+    ) => report(operations.updateWorkspace(id, updates)),
+    [operations, report]
   );
 
   const removeWorkspace = useCallback(
-    async (workspaceId: string) => {
-      loadedWorkspaceIdsRef.current.delete(workspaceId);
-      const snapshot = stateRef.current;
-      const newWorkspaces = snapshot.workspaces.filter((w) => w.id !== workspaceId);
-      const newTasks = snapshot.tasks.filter((t) => t.workspaceId !== workspaceId);
-      const newSelectedId =
-        snapshot.selectedWorkspaceId === workspaceId
-          ? (newWorkspaces[0]?.id ?? null)
-          : snapshot.selectedWorkspaceId;
-      commit({
-        ...snapshot,
-        workspaces: newWorkspaces,
-        tasks: newTasks,
-        selectedWorkspaceId: newSelectedId,
-      });
-      try {
-        await persist([
-          ["workspaces", newWorkspaces],
-          ["tasks", newTasks],
-          ["selectedWorkspaceId", newSelectedId],
-        ]);
-      } catch {
-        commit(snapshot);
-        setPersistError("Failed to save workspace removal");
-      }
-    },
-    [commit]
+    (id: string, options?: DeleteOptions) =>
+      report(operations.deleteWorkspace(id, options)).then((result) => {
+        loadedWorkspaceIdsRef.current.delete(id);
+        return result;
+      }),
+    [operations, report]
   );
 
   const reorderWorkspaces = useCallback(
     (fromIndex: number, toIndex: number) => {
-      const snapshot = stateRef.current;
-      if (
-        fromIndex === toIndex ||
-        fromIndex < 0 ||
-        toIndex < 0 ||
-        fromIndex >= snapshot.workspaces.length ||
-        toIndex >= snapshot.workspaces.length
-      ) {
-        return;
-      }
-      const newWorkspaces = [...snapshot.workspaces];
-      const [moved] = newWorkspaces.splice(fromIndex, 1);
-      newWorkspaces.splice(toIndex, 0, moved);
-      commit({ ...snapshot, workspaces: newWorkspaces });
-      void (async () => {
-        try {
-          await persist([["workspaces", newWorkspaces]]);
-        } catch {
-          commit(snapshot);
-          setPersistError("Failed to save workspace order");
-        }
-      })();
+      void report(
+        operations.change((snapshot) => {
+          const workspaces = [...snapshot.workspaces];
+          if (
+            fromIndex < 0 ||
+            toIndex < 0 ||
+            fromIndex >= workspaces.length ||
+            toIndex >= workspaces.length
+          )
+            return {};
+          const [moved] = workspaces.splice(fromIndex, 1);
+          workspaces.splice(toIndex, 0, moved);
+          return { workspaces };
+        })
+      ).catch(() => {});
     },
-    [commit]
+    [operations, report]
   );
 
   const selectWorkspace = useCallback(
     (workspaceId: string) => {
-      const snapshot = stateRef.current;
-      commit({ ...snapshot, selectedWorkspaceId: workspaceId });
       setWorkspaceSwitching(!loadedWorkspaceIdsRef.current.has(workspaceId));
-      setTimeout(async () => {
-        try {
-          await persist([["selectedWorkspaceId", workspaceId]]);
-        } catch {
-          commit(snapshot);
-          setPersistError("Failed to save selection");
-        }
-      }, 0);
+      void report(
+        operations.change((snapshot) => ({
+          selectedWorkspaceId: snapshot.workspaces.some((workspace) => workspace.id === workspaceId)
+            ? workspaceId
+            : snapshot.selectedWorkspaceId,
+        }))
+      ).catch(() => {});
     },
-    [commit]
+    [operations, report]
   );
 
   const clearWorkspaceSwitching = useCallback((workspaceId?: string) => {
@@ -237,34 +181,15 @@ export function useStore() {
     setWorkspaceSwitching(false);
   }, []);
 
-  const addTask = useCallback(
-    async (task: Task) => {
-      const snapshot = stateRef.current;
-      const newTasks = [...snapshot.tasks, task];
-      commit({ ...snapshot, tasks: newTasks });
-      try {
-        await persist([["tasks", newTasks]]);
-      } catch {
-        commit(snapshot);
-        setPersistError("Failed to save task");
-      }
-    },
-    [commit]
+  const createTask = useCallback(
+    (input: CreateTaskInput, progress?: (message: string) => void) =>
+      report(operations.createTask(input, progress)),
+    [operations, report]
   );
 
   const removeTask = useCallback(
-    async (taskId: string) => {
-      const snapshot = stateRef.current;
-      const newTasks = snapshot.tasks.filter((t) => t.id !== taskId);
-      commit({ ...snapshot, tasks: newTasks });
-      try {
-        await persist([["tasks", newTasks]]);
-      } catch {
-        commit(snapshot);
-        setPersistError("Failed to save task removal");
-      }
-    },
-    [commit]
+    (id: string, options: DeleteOptions) => report(operations.deleteTask(id, options)),
+    [operations, report]
   );
 
   const updateEditorApp = useCallback(
@@ -374,7 +299,8 @@ export function useStore() {
     reorderWorkspaces,
     selectWorkspace,
     clearWorkspaceSwitching,
-    addTask,
+    createTask,
+    operations,
     removeTask,
     updateEditorApp,
     sidebarCollapsed,

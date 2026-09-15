@@ -1,5 +1,9 @@
 use tauri::Manager;
 
+#[cfg(unix)]
+mod automation;
+#[cfg(unix)]
+pub mod cli;
 mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -13,6 +17,11 @@ pub fn run() {
         .manage(commands::terminal::TerminalRegistry::default())
         .manage(commands::code_server::EditorRegistry::default())
         .setup(|app| {
+            #[cfg(unix)]
+            app.manage(
+                automation::Automation::start(automation::socket_path(&app.config().identifier))
+                    .map_err(std::io::Error::other)?,
+            );
             commands::code_server::setup_menu(app)?;
             #[cfg(desktop)]
             app.handle()
@@ -28,6 +37,12 @@ pub fn run() {
         })
         .invoke_handler({
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                automation::automation_register,
+                automation::automation_unregister,
+                automation::automation_progress,
+                automation::automation_complete,
+                commands::validation::validate_workspace_repos,
+                commands::validation::validate_task_worktrees,
                 commands::git::git_worktree_add,
                 commands::git::resolve_manual_worktree,
                 commands::git::git_user_slug,
@@ -44,6 +59,7 @@ pub fn run() {
                 commands::editor::open_editor,
                 commands::editor::check_app_installed,
                 commands::workspace::delete_workspace_file,
+                commands::workspace::prepare_task_workspace,
                 commands::notes::ensure_task_note,
                 commands::notes::archive_task_note,
                 commands::vault::scaffold_vault,

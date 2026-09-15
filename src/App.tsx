@@ -20,6 +20,7 @@ import { withScope } from "./search/query";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
 import { Task } from "./types";
 import { listen } from "@tauri-apps/api/event";
+import { useAutomation } from "./hooks/useAutomation";
 import { editorPresentation } from "./services/codeEditor";
 
 function App() {
@@ -45,7 +46,8 @@ function App() {
     selectWorkspace,
     clearWorkspaceSwitching,
     workspaceSwitching,
-    addTask,
+    createTask,
+    operations,
     removeTask,
     updateEditorApp,
     sidebarCollapsed,
@@ -53,6 +55,8 @@ function App() {
     updateThemeId,
     updateCustomColors,
   } = useStore();
+
+  useAutomation(operations, !loading);
 
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
   const [search, setSearch] = useState<{ open: boolean; query: string }>({
@@ -250,7 +254,7 @@ function App() {
       <SetupWizard
         initialSetup={state.setup}
         onComplete={(setup, { enableVault: wantsVault }) => {
-          void updateSetup(setup);
+          void updateSetup(setup).catch(() => {});
           // Best-effort here — the sidebar's vault settings are the recovery path.
           if (wantsVault) {
             enableVault()
@@ -336,7 +340,7 @@ function App() {
             tasks={selectedTasks}
             workspace={selectedWorkspace}
             vault={state.vault}
-            onTaskCreated={addTask}
+            onTaskCreated={createTask}
             onTaskDeleted={removeTask}
             editorApp={editorApp}
             onEditorChange={updateEditorApp}

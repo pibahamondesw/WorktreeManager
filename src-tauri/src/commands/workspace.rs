@@ -169,6 +169,15 @@ pub fn delete_workspace_file(path: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+pub fn prepare_task_workspace(
+    workspace_name: String,
+    branch_name: String,
+    folders: Vec<String>,
+) -> Result<String, String> {
+    ensure_code_workspace_file(Some(&workspace_name), Some(&branch_name), &folders)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

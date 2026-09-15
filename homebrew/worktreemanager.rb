@@ -13,6 +13,7 @@ cask "worktreemanager" do
   depends_on macos: :catalina
 
   app "WorktreeManager.app"
+  binary "#{appdir}/WorktreeManager.app/Contents/MacOS/worktree-manager", target: "wtm"
 
   # The app isn't notarized yet, so strip the download quarantine Homebrew adds
   # by default — otherwise Gatekeeper blocks the unsigned (ad-hoc) app on first

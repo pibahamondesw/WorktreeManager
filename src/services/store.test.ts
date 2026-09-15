@@ -7,7 +7,8 @@ const SIDECAR = "store.backup-preMultiRepo.json";
 // handles and `savedPaths` records which were actually flushed, so a test can tell an
 // untouched sidecar from one created empty. `keychain` doubles as a fault injector: the
 // readable/writable flags simulate a denied authorization prompt.
-const { files, savedPaths, keychain } = vi.hoisted(() => ({
+const { files, savedPaths, keychain, disk } = vi.hoisted(() => ({
+  disk: { failNextSave: false },
   files: new Map<string, Map<string, unknown>>(),
   savedPaths: new Set<string>(),
   keychain: { value: null as string | null, readable: true, writable: true },
@@ -23,7 +24,13 @@ vi.mock("@tauri-apps/plugin-store", () => ({
       delete: async (key: string) => data.delete(key),
       clear: async () => data.clear(),
       keys: async () => [...data.keys()],
-      save: async () => void savedPaths.add(path),
+      save: async () => {
+        if (disk.failNextSave) {
+          disk.failNextSave = false;
+          throw new Error("disk full");
+        }
+        savedPaths.add(path);
+      },
     };
   },
 }));
@@ -74,6 +81,7 @@ const workspace = {
 };
 
 beforeEach(() => {
+  disk.failNextSave = false;
   files.clear();
   savedPaths.clear();
   keychain.value = null;
@@ -398,5 +406,34 @@ describe("loadState v0 → v4 migration", () => {
     expect(sidecar.worktrees).toHaveLength(1);
     expect(JSON.stringify(sidecar)).not.toContain("lin_live");
     expect(JSON.stringify(sidecar)).not.toContain("github_pat_dead");
+  });
+});
+
+describe("failed store writes", () => {
+  it("restores cached values and credentials so a later save cannot flush a failed deletion", async () => {
+    seed(STORE, {
+      schemaVersion: 4,
+      setup: { isComplete: true },
+      workspaces: [{ ...workspace, linearApiKey: undefined }],
+      tasks: [],
+      vault: { enabled: false, path: null },
+    });
+    keychain.value = JSON.stringify({ setup: null, workspaces: { w1: "workspace-secret" } });
+    const module = await loadModule();
+    const original = await module.loadState();
+    disk.failNextSave = true;
+    await expect(
+      module.persist([
+        ["workspaces", []],
+        ["selectedWorkspaceId", null],
+      ])
+    ).rejects.toThrow("disk full");
+    expect(read(STORE).workspaces).toHaveLength(1);
+    expect(storedSecrets().workspaces.w1).toBe("workspace-secret");
+    await module.persist([["themeId", "ocean"]]);
+    expect(read(STORE).workspaces).toHaveLength(1);
+    expect((await module.loadState()).workspaces[0].linearApiKey).toBe(
+      original.workspaces[0].linearApiKey
+    );
   });
 });
