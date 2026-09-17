@@ -15,6 +15,7 @@ export type CommandAction =
   | { type: "copy-linear"; text: string }
   | { type: "open-pr"; taskId: string; repoId: string }
   | { type: "open-claude"; taskId: string }
+  | { type: "open-codex"; taskId: string }
   | { type: "new-task" };
 
 export type CommandGroup = "workspace" | "settings" | "action";
@@ -205,6 +206,16 @@ export function buildCommands({
         action: { type: "open-pr", taskId: task.id, repoId: member.repoId },
       });
     }
+
+    commands.push({
+      id: `open-codex:${task.id}`,
+      label: `Open in Codex · ${label}`,
+      hint,
+      group: "action",
+      keywords: `open codex terminal agent ${taskKeywords}`,
+      emptyVisible: false,
+      action: { type: "open-codex", taskId: task.id },
+    });
 
     commands.push({
       id: `open-claude:${task.id}`,

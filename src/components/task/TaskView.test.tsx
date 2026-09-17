@@ -75,6 +75,33 @@ function renderView(onBack = vi.fn()) {
 }
 
 describe("TaskView", () => {
+  it("switches agents without closing either session and detaches the previous agent", async () => {
+    mocks.invoke.mockResolvedValue({ created: true, status: { kind: "running" }, replay: "" });
+    const props = {
+      task,
+      sidebarCollapsed: false,
+      onExpandSidebar: vi.fn(),
+      onBack: vi.fn(),
+    };
+    const view = render(<TaskView {...props} surface={{ kind: "terminal", agent: "claude" }} />);
+    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    view.rerender(<TaskView {...props} surface={{ kind: "terminal", agent: "codex" }} />);
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "terminal_open",
+        expect.objectContaining({
+          taskId: "t1",
+          agent: "codex",
+          folders: ["/wt/a", "/wt/b"],
+        })
+      )
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("terminal_detach", { taskId: "t1", agent: "claude" });
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "terminal_close")).toBe(false);
+    view.unmount();
+    expect(mocks.invoke).toHaveBeenCalledWith("terminal_detach", { taskId: "t1", agent: "codex" });
+  });
+
   it("closes an embedded editor before returning to the task list", async () => {
     let finishClose: (() => void) | undefined;
     mocks.invoke.mockImplementation((command: string) => {

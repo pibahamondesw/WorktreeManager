@@ -73,6 +73,7 @@ fn open_editor_blocking(
             }
         }
         "claude-code" => Err("Claude Code runs embedded; use terminal_open".to_string()),
+        "codex" => Err("Codex runs embedded; use terminal_open".to_string()),
         "vscode-web" => Err("VS Code runs embedded; use vscode_open".to_string()),
         "opencode" => {
             let mut msg = open_gui_editor("OpenCode", primary)?;
@@ -149,6 +150,7 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
         "vscode-web" => Ok(true),
         "opencode" => Ok(gui_app_exists("OpenCode")),
         "claude-code" => Ok(shell_env::claude_cli_available()),
+        "codex" => Ok(shell_env::cli_available("codex")),
         "zed" => Ok(gui_app_exists("Zed")),
         _ => Err(format!("Unknown editor: {}", editor)),
     }

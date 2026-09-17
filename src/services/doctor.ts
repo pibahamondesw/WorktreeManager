@@ -152,6 +152,12 @@ const CLI_TOOLS: Record<string, ToolMeta> = {
     install: "curl -fsSL https://claude.ai/install.sh | bash",
     url: "https://docs.claude.com/en/docs/claude-code/setup",
   },
+  codex: {
+    label: "Codex",
+    reason: "Run inside the worktree by the Codex editor option.",
+    install: "brew install --cask codex",
+    url: "https://developers.openai.com/codex/cli",
+  },
   zed: {
     label: "Zed CLI",
     reason:

@@ -113,6 +113,7 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
           <path d="M4 8.5l2 2 3.5-4" />
         </svg>
       );
+    case "codex":
     case "opencode":
       return (
         <svg
