@@ -40,6 +40,23 @@ export function TaskHeader({
       className="flex items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
       data-drag-region
     >
+      {sidebarCollapsed && (
+        <>
+          <button
+            type="button"
+            onClick={onExpandSidebar}
+            className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
+            title="Expand sidebar ["
+          >
+            <SidebarIcon size={14} />
+          </button>
+          <span
+            role="separator"
+            aria-orientation="vertical"
+            className="self-stretch -my-2 w-px bg-border"
+          />
+        </>
+      )}
       <button
         type="button"
         onClick={onBack}
@@ -49,16 +66,6 @@ export function TaskHeader({
       >
         <ChevronLeftIcon size={14} />
       </button>
-      {sidebarCollapsed && (
-        <button
-          type="button"
-          onClick={onExpandSidebar}
-          className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-          title="Expand sidebar ["
-        >
-          <SidebarIcon size={14} />
-        </button>
-      )}
       {task.linearIssueIdentifier && (
         <span className="text-xs font-mono text-text-muted">{task.linearIssueIdentifier}</span>
       )}
