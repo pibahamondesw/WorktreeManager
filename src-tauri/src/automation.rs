@@ -186,6 +186,9 @@ impl Drop for Automation {
 }
 
 fn handle_connection(mut stream: UnixStream, shared: Arc<Shared>) {
+    if stream.set_nonblocking(false).is_err() {
+        return;
+    }
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
     let mut reader = BufReader::new(match stream.try_clone() {
@@ -513,8 +516,42 @@ mod tests {
     }
 
     #[test]
+    fn accepted_nonblocking_connections_wait_for_complete_frames() {
+        use std::io::Read;
+
+        let (mut client, connection) = UnixStream::pair().unwrap();
+        connection.set_nonblocking(true).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        client.write_all(b"{\"id\":").unwrap();
+        let handler = std::thread::spawn(move || {
+            handle_connection(connection, Arc::new(Shared::default()));
+        });
+
+        let error = client.read(&mut [0]).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        writeln!(
+            client,
+            "\"r1\",\"version\":{VERSION},\"method\":\"workspace.list\",\"params\":{{}}}}"
+        )
+        .unwrap();
+        let response = read_message(&mut BufReader::new(client)).unwrap();
+        assert_eq!(response["id"], "r1");
+        assert_eq!(response["error"]["code"], "app_not_ready");
+        handler.join().unwrap();
+    }
+
+    #[test]
     fn cleans_up_socket_and_recovers_a_stale_socket_under_the_instance_lock() {
         let mut server = Server::new();
+        assert_eq!(server.request(VERSION)["error"]["code"], "app_not_ready");
         let socket = server.automation().socket.clone();
         server.automation.take();
         assert!(!socket.exists());

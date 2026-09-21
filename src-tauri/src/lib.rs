@@ -5,6 +5,7 @@ mod automation;
 #[cfg(unix)]
 pub mod cli;
 mod commands;
+mod menu;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,7 +23,7 @@ pub fn run() {
                 automation::Automation::start(automation::socket_path(&app.config().identifier))
                     .map_err(std::io::Error::other)?,
             );
-            commands::code_server::setup_menu(app)?;
+            menu::setup(app)?;
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;

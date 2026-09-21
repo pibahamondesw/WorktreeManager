@@ -18,39 +18,6 @@ use tauri::{AppHandle, Emitter, Manager, State, Webview};
 
 use process::OwnedProcess;
 
-pub fn setup_menu(app: &tauri::App) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem, Submenu};
-    let menu = Menu::default(app.handle())?;
-    let back = MenuItem::with_id(
-        app,
-        "editor-back",
-        "Back to tasks",
-        true,
-        Some("CmdOrCtrl+["),
-    )?;
-    let search = MenuItem::with_id(
-        app,
-        "editor-search",
-        "Search tasks",
-        true,
-        Some("CmdOrCtrl+Alt+P"),
-    )?;
-    menu.append(&Submenu::with_items(app, "Tasks", true, &[&back, &search])?)?;
-    app.set_menu(menu)?;
-    app.on_menu_event(|app, event| {
-        let action = match event.id().as_ref() {
-            "editor-back" => "back",
-            "editor-search" => "search",
-            _ => return,
-        };
-        if let Some(main) = app.get_webview("main") {
-            let _ = main.set_focus();
-        }
-        let _ = app.emit_to("main", "editor-navigate", action);
-    });
-    Ok(())
-}
-
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub struct Bounds {
     pub x: f64,
