@@ -6,7 +6,7 @@ A macOS app for managing Git worktrees and Linear issues, built with Tauri, Reac
 
 - Group local repositories into workspaces; create a task with one worktree per repository.
 - Create branches from Linear issues and track Git status and linked PRs.
-- Open tasks in Cursor, VS Code, Zed, OpenCode, or an embedded Claude Code terminal.
+- Open tasks in Cursor, VS Code, Zed, OpenCode, or embedded Claude Code and Codex terminals.
 - Use an independent embedded VS Code editor per task (macOS 14+).
 - Keep optional Obsidian task notes, archived when tasks are removed.
 - Manage workspaces and tasks from the UI or the local `wtm` CLI.
@@ -39,6 +39,8 @@ Task setup copies configured editor/environment files from the **source reposito
 Creation and deletion failures can leave partial results: inspect error details before retrying. Failed disk deletions retain task records; auxiliary setup failures keep the task and return warnings. Updating a workspace affects future tasks; existing tasks keep their member paths.
 
 ## Editors and notes
+
+For embedded Codex, install Codex CLI (`brew install --cask codex`), select **Codex**, and open a task. Sign in from the terminal if needed. It resumes the latest conversation in that worktree, or starts a new one when none exists. Claude and Codex keep separate sessions when you switch agents.
 
 For embedded VS Code, select **VS Code embedded** and click **Install editor** when opening a task. Editors and agent terminals keep running while you switch tasks. Close them explicitly, delete the task, or quit the app to end their sessions.
 

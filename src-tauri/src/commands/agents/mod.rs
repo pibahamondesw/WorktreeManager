@@ -3,6 +3,7 @@
 //! The terminal layer only executes the spec and never inspects which agent it is running.
 
 pub mod claude;
+pub mod codex;
 
 use std::path::Path;
 
@@ -24,6 +25,7 @@ pub struct LaunchContext<'a> {
 pub fn launch_spec(agent: &str, ctx: &LaunchContext) -> Result<LaunchSpec, String> {
     match agent {
         "claude" => claude::launch_spec(ctx),
+        "codex" => codex::launch_spec(ctx),
         _ => Err(format!("Unknown agent: {agent}")),
     }
 }

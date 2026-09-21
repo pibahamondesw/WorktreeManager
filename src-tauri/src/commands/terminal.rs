@@ -1,4 +1,4 @@
-//! Embedded PTY sessions, one per task. A session keeps running while the app is open, whether or
+//! Embedded PTY sessions, one per task and agent. A session keeps running while the app is open, whether or
 //! not a webview pane is attached; attaching replays the retained scrollback. This layer knows
 //! nothing about which agent it runs — see `agents` for how a `LaunchSpec` is built.
 
@@ -40,6 +40,7 @@ pub enum TermEvent {
 #[serde(rename_all = "camelCase")]
 struct ExitPayload {
     task_id: String,
+    agent: String,
     code: Option<i32>,
 }
 
@@ -60,9 +61,21 @@ pub struct TerminalInfo {
 }
 
 #[derive(Default)]
-pub struct TerminalRegistry(Mutex<HashMap<String, TerminalSession>>);
+pub struct TerminalRegistry(Mutex<HashMap<(String, String), TerminalSession>>);
 
 impl TerminalRegistry {
+    fn remove_task(&self, task_id: &str) -> Vec<TerminalSession> {
+        let mut sessions = self.0.lock().unwrap();
+        let keys: Vec<_> = sessions
+            .keys()
+            .filter(|(id, _)| id == task_id)
+            .cloned()
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| sessions.remove(&key))
+            .collect()
+    }
+
     pub fn shutdown_all(&self) {
         let sessions: Vec<TerminalSession> =
             self.0.lock().unwrap().drain().map(|(_, s)| s).collect();
@@ -314,9 +327,20 @@ fn canonical(path: &str) -> String {
         .to_string()
 }
 
-fn exit_notifier(app: AppHandle, task_id: String) -> impl FnOnce(Option<i32>) + Send + 'static {
+fn exit_notifier(
+    app: AppHandle,
+    task_id: String,
+    agent: String,
+) -> impl FnOnce(Option<i32>) + Send + 'static {
     move |code| {
-        let _ = app.emit(EXIT_EVENT, ExitPayload { task_id, code });
+        let _ = app.emit(
+            EXIT_EVENT,
+            ExitPayload {
+                task_id,
+                agent,
+                code,
+            },
+        );
     }
 }
 
@@ -338,9 +362,10 @@ pub async fn terminal_open(
     }
     let (cols, rows) = (cols.max(2), rows.max(1));
 
+    let key = (task_id.clone(), agent.clone());
     let stale = {
         let mut sessions = registry.0.lock().unwrap();
-        match sessions.get_mut(&task_id) {
+        match sessions.get_mut(&key) {
             Some(session) if session.status() == TermStatus::Running => {
                 let _ = session.resize(cols, rows);
                 let replay = session.attach(on_event);
@@ -350,7 +375,7 @@ pub async fn terminal_open(
                     replay,
                 });
             }
-            Some(_) => sessions.remove(&task_id),
+            Some(_) => sessions.remove(&key),
             None => None,
         }
     };
@@ -379,10 +404,10 @@ pub async fn terminal_open(
         &agent,
         cols,
         rows,
-        exit_notifier(app.clone(), task_id.clone()),
+        exit_notifier(app.clone(), task_id.clone(), agent.clone()),
     )?;
     let replay = session.attach(on_event);
-    let previous = registry.0.lock().unwrap().insert(task_id, session);
+    let previous = registry.0.lock().unwrap().insert(key, session);
     if let Some(mut previous) = previous {
         previous.terminate();
     }
@@ -397,11 +422,12 @@ pub async fn terminal_open(
 pub fn terminal_write(
     registry: State<'_, TerminalRegistry>,
     task_id: String,
+    agent: String,
     data: String,
 ) -> Result<(), String> {
     let mut sessions = registry.0.lock().unwrap();
     sessions
-        .get_mut(&task_id)
+        .get_mut(&(task_id, agent))
         .ok_or("no terminal for task")?
         .write(&data)
 }
@@ -410,19 +436,20 @@ pub fn terminal_write(
 pub fn terminal_resize(
     registry: State<'_, TerminalRegistry>,
     task_id: String,
+    agent: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
     let sessions = registry.0.lock().unwrap();
     sessions
-        .get(&task_id)
+        .get(&(task_id, agent))
         .ok_or("no terminal for task")?
         .resize(cols.max(2), rows.max(1))
 }
 
 #[tauri::command]
-pub fn terminal_detach(registry: State<'_, TerminalRegistry>, task_id: String) {
-    if let Some(session) = registry.0.lock().unwrap().get(&task_id) {
+pub fn terminal_detach(registry: State<'_, TerminalRegistry>, task_id: String, agent: String) {
+    if let Some(session) = registry.0.lock().unwrap().get(&(task_id, agent)) {
         session.detach();
     }
 }
@@ -433,20 +460,19 @@ pub async fn terminal_close(
     registry: State<'_, TerminalRegistry>,
     task_id: String,
 ) -> Result<(), String> {
-    let removed = registry.0.lock().unwrap().remove(&task_id);
-    let Some(mut session) = removed else {
-        return Ok(());
-    };
     let store = session_store(&app)?;
+    let removed = registry.remove_task(&task_id);
     tauri::async_runtime::spawn_blocking(move || {
-        session.terminate();
-        let ctx = LaunchContext {
-            canonical_dir: &session.canonical_dir,
-            extra_dirs: &[],
-            branch_name: None,
-            session_store: &store,
-        };
-        agents::forget_session(&session.agent, &ctx);
+        for mut session in removed {
+            session.terminate();
+            let ctx = LaunchContext {
+                canonical_dir: &session.canonical_dir,
+                extra_dirs: &[],
+                branch_name: None,
+                session_store: &store,
+            };
+            agents::forget_session(&session.agent, &ctx);
+        }
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))
@@ -459,7 +485,7 @@ pub fn terminal_list(registry: State<'_, TerminalRegistry>) -> Vec<TerminalInfo>
         .lock()
         .unwrap()
         .iter()
-        .map(|(task_id, s)| TerminalInfo {
+        .map(|((task_id, _), s)| TerminalInfo {
             task_id: task_id.clone(),
             agent: s.agent.clone(),
             status: s.status(),
@@ -470,6 +496,64 @@ pub fn terminal_list(registry: State<'_, TerminalRegistry>) -> Vec<TerminalInfo>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_agents_keep_independent_terminals_and_close_together() {
+        let registry = TerminalRegistry::default();
+        let spec = LaunchSpec {
+            program: "/bin/cat".to_string(),
+            args: vec![],
+            env: vec![],
+            cwd: "/tmp".to_string(),
+        };
+        for (task, agent) in [("task", "claude"), ("task", "codex"), ("other", "codex")] {
+            let session = TerminalSession::spawn(&spec, agent, 80, 24, |_| {}).unwrap();
+            registry
+                .0
+                .lock()
+                .unwrap()
+                .insert((task.into(), agent.into()), session);
+        }
+        {
+            let mut sessions = registry.0.lock().unwrap();
+            let codex = sessions.get_mut(&("task".into(), "codex".into())).unwrap();
+            codex.write("codex-only\n").unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let sessions = registry.0.lock().unwrap();
+            let codex = &sessions[&("task".into(), "codex".into())];
+            if codex
+                .scrollback
+                .lock()
+                .unwrap()
+                .replay()
+                .contains("codex-only")
+            {
+                let claude = &sessions[&("task".into(), "claude".into())];
+                assert!(claude.scrollback.lock().unwrap().replay().is_empty());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Codex terminal did not receive input"
+            );
+            drop(sessions);
+            thread::sleep(Duration::from_millis(10));
+        }
+        let removed = registry.remove_task("task");
+        assert_eq!(removed.len(), 2);
+        for mut session in removed {
+            session.terminate();
+            assert!(matches!(session.status(), TermStatus::Exited { .. }));
+        }
+        assert_eq!(registry.0.lock().unwrap().len(), 1);
+        assert_eq!(
+            registry.0.lock().unwrap().values().next().unwrap().status(),
+            TermStatus::Running
+        );
+        registry.shutdown_all();
+    }
 
     #[test]
     fn scrollback_trims_to_cap_and_replays_from_escape_boundary() {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { onTerminalExit, terminalList, TerminalStatus } from "../services/terminal";
+import { onTerminalExit, terminalList, TerminalInfo, TerminalStatus } from "../services/terminal";
 import { editorList, onEditorSession, EditorSession } from "../services/codeEditor";
 
 /**
@@ -7,7 +7,7 @@ import { editorList, onEditorSession, EditorSession } from "../services/codeEdit
  * refreshed whenever that view opens or closes; exits arrive as events.
  */
 export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStatus> {
-  const [sessions, setSessions] = useState<Record<string, TerminalStatus>>({});
+  const [sessions, setSessions] = useState<TerminalInfo[]>([]);
   const [editors, setEditors] = useState<Record<string, EditorSession>>({});
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStat
     terminalList()
       .then((list) => {
         if (stale) return;
-        setSessions(Object.fromEntries(list.map((s) => [s.taskId, s.status])));
+        setSessions(list);
       })
       .catch(() => undefined);
     return () => {
@@ -47,8 +47,11 @@ export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStat
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    onTerminalExit(({ taskId, code }) => {
-      setSessions((prev) => ({ ...prev, [taskId]: { kind: "exited", code } }));
+    onTerminalExit(({ taskId, agent, code }) => {
+      setSessions((prev) => [
+        ...prev.filter((session) => session.taskId !== taskId || session.agent !== agent),
+        { taskId, agent, status: { kind: "exited", code } },
+      ]);
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
@@ -59,7 +62,10 @@ export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStat
     };
   }, []);
 
-  const combined = { ...sessions };
+  const combined: Record<string, TerminalStatus> = {};
+  for (const session of sessions) {
+    if (combined[session.taskId]?.kind !== "running") combined[session.taskId] = session.status;
+  }
   for (const editor of Object.values(editors)) {
     if (editor.status === "running" || editor.status === "starting")
       combined[editor.taskId] = { kind: "running" };

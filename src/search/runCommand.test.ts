@@ -52,6 +52,28 @@ describe("runPaletteCommand", () => {
     expect(d.onClose).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["open-claude", "claude"],
+    ["open-codex", "codex"],
+  ] as const)("opens the requested agent for %s", async (type, agent) => {
+    const d = deps();
+    await runPaletteCommand({ type, taskId: task.id }, d);
+    expect(d.onOpenTask).toHaveBeenCalledWith(task, {
+      surface: { kind: "terminal", agent },
+      onMessage: d.showToast,
+      onError: d.showToast,
+    });
+    expect(d.onClose).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the palette open if the Codex task no longer exists", async () => {
+    const d = deps();
+    await runPaletteCommand({ type: "open-codex", taskId: "missing" }, d);
+    expect(d.onOpenTask).not.toHaveBeenCalled();
+    expect(d.showToast).toHaveBeenCalledWith("Could not open Codex");
+    expect(d.onClose).not.toHaveBeenCalled();
+  });
+
   it("copies without closing", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });

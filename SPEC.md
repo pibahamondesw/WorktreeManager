@@ -198,9 +198,9 @@ interface PullRequestInfo {
 
 Three layers, each ignorant of the ones above it:
 
-- **TaskView** (`src/components/task/`) — "a task is open": compact header + a surface chosen by `TaskSurface.kind`. `taskSurfaceFor(editor)` in `src/embedded/taskSurface.ts` maps `claude-code` to `{ kind: "terminal", agent: "claude" }` and `vscode-web` to `{ kind: "editor" }`; other editors open externally.
-- **Terminal** (`src-tauri/src/commands/terminal.rs`, `src/services/terminal.ts`, `src/hooks/useTerminalSession.ts`) — a generic PTY per task, held in Tauri managed state while the app runs. Attaching replays the retained scrollback (2 MiB); leaving the view only detaches. Output streams over a `tauri::ipc::Channel`; `terminal-exit` is also emitted as an app event so cards can show session state.
-- **Agent** (`src-tauri/src/commands/agents/`) — how a CLI agent is launched: `LaunchSpec { program, args, env, cwd }`. `claude.rs` owns the session logic (`-n wm-<slug>` first, `-c` afterwards, `/color`, `--add-dir` for extra repos) and a session marker under `app_data_dir/agent-sessions/`, outside the worktree. A new agent is a new module plus an arm in `agents/mod.rs`.
+- **TaskView** (`src/components/task/`) — "a task is open": compact header + a surface chosen by `TaskSurface.kind`. `taskSurfaceFor(editor)` in `src/embedded/taskSurface.ts` maps `claude-code` to `{ kind: "terminal", agent: "claude" }`, `codex` to `{ kind: "terminal", agent: "codex" }`, and `vscode-web` to `{ kind: "editor" }`; other editors open externally.
+- **Terminal** (`src-tauri/src/commands/terminal.rs`, `src/services/terminal.ts`, `src/hooks/useTerminalSession.ts`) — a generic PTY per task and agent, held in Tauri managed state while the app runs. Attaching replays the retained scrollback (2 MiB); leaving the view only detaches. Output streams over a `tauri::ipc::Channel`; `terminal-exit` includes the task and agent so cards stay running while either agent is alive.
+- **Agent** (`src-tauri/src/commands/agents/`) — how a CLI agent is launched: `LaunchSpec { program, args, env, cwd }`. `claude.rs` owns the session logic (`-n wm-<slug>` first, `-c` afterwards, `/color`, `--add-dir` for extra repos) and a session marker under `app_data_dir/agent-sessions/`, outside the worktree. `codex.rs` runs `codex resume --last --cd <worktree>` with `--add-dir` for extra repos, using Codex's own directory-scoped history and starting fresh if none exists. A new agent is a new module plus an arm in `agents/mod.rs`.
 
 While a task is open, the list stays mounted but hidden so returning is instant (no editor re-probing). Keyboard: bare keys inside the terminal reach the agent; `⌘[` (or the Back button) returns to the list.
 
@@ -225,7 +225,7 @@ All task folders appear in a stable multi-root workspace under app data. Each ta
 
 4. **Dependencies Modal** — The startup health check, opened from the sidebar footer or from the banner that appears when something is missing. One row per dependency (`git`, `gh`, the selected editor's app and CLIs, `node` plus the package managers the repos' lockfiles imply, `doppler` when a repo commits a Doppler config, Obsidian while the vault is enabled, and the workspaces' Linear API keys) with its status, what the app uses it for, and a copyable install command. Purely advisory — it never gates the app.
 
-5. **Task View** — Entered by clicking a card, pressing `Enter`, creating a task, or opening from quick search while the editor is Claude Code or VS Code embedded. The agent session outlives the view; the card shows a dot while it is running. Deleting the task closes its session first.
+5. **Task View** — Entered by clicking a card, pressing `Enter`, creating a task, or opening from quick search while the editor is Claude Code, Codex, or VS Code embedded. The agent session outlives the view; the card shows a dot while it is running. Deleting the task closes its session first.
 
 6. **Worktree Modal** — Two-phase:
    - **Phase 1**: Search & select a Linear issue. Shows list of assigned issues (not completed/cancelled). Search bar with 300ms debounce.
@@ -409,11 +409,11 @@ This gives instant partial-ID matching (e.g. "3140" matches "TSY-3140") with zer
 ### `open_editor(editor, folders, branch_name, workspace_name)`
 
 - **Critical**: GUI editors are opened with `open -a <App> <path>` (macOS LaunchServices), NOT `Command::new("cursor")`. The latter inherits the Tauri app's restricted environment/PATH, causing permission issues and "command not found" errors. CLI launches go through `claude_env_prelude()` for the same reason.
-- `claude-code` is not handled here anymore: it runs embedded (see `terminal_open`).
+- `claude-code` and `codex` run embedded (see `terminal_open`).
 
 ### `terminal_open(task_id, agent, folders, branch_name, cols, rows, on_event)`
 
-Idempotent attach-or-spawn for the task's PTY. Returns `{ created, status, replay }`; `on_event` is a `Channel` receiving `{ type: "data", data }` and `{ type: "exit", code }`. Companion commands: `terminal_write`, `terminal_resize`, `terminal_detach` (drop the webview sink, keep the PTY), `terminal_close` (SIGHUP, 500 ms grace, kill, forget the agent's session marker), `terminal_list`. All sessions are killed on `RunEvent::Exit`.
+Idempotent attach-or-spawn for the task and agent's PTY. Returns `{ created, status, replay }`; `on_event` is a `Channel` receiving `{ type: "data", data }` and `{ type: "exit", code }`. Companion commands: `terminal_write`, `terminal_resize`, `terminal_detach` target a task and agent (detach drops the webview sink, keeping the PTY). `terminal_close` closes every agent for the task (SIGHUP, 500 ms grace, kill, forget session markers); `terminal_list` lists each task and agent pair. All sessions are killed on `RunEvent::Exit`.
 
 ### `doctor_probe(clis, apps, repo_paths)`
 

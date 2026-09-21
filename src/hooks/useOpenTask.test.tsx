@@ -16,7 +16,10 @@ const task = {
   members: [{ path: "/wt/a" }, { path: "/wt/b" }],
 } as unknown as Task;
 
-function setup(editorApp: "cursor" | "claude-code" | "vscode-web", tasks: Task[] = [task]) {
+function setup(
+  editorApp: "cursor" | "claude-code" | "codex" | "vscode-web",
+  tasks: Task[] = [task]
+) {
   const recordTaskVisit = vi.fn();
   const showTask = vi.fn();
   const hook = renderHook(
@@ -62,14 +65,17 @@ describe("useOpenTask", () => {
     expect(result.current.openedTask).toBeNull();
   });
 
-  it("opens the embedded surface for the claude-code editor", async () => {
-    const { result, showTask } = setup("claude-code");
+  it.each([
+    ["claude-code", "claude"],
+    ["codex", "codex"],
+  ] as const)("opens the embedded surface for %s", async (editor, agent) => {
+    const { result, showTask } = setup(editor);
     await act(() => result.current.openTask(task));
     expect(showTask).toHaveBeenCalledWith(task);
     expect(openEditorForWorktree).not.toHaveBeenCalled();
     expect(result.current.openedTask).toEqual({
       taskId: "t1",
-      surface: { kind: "terminal", agent: "claude" },
+      surface: { kind: "terminal", agent },
     });
     act(() => result.current.closeTask());
     expect(result.current.openedTask).toBeNull();

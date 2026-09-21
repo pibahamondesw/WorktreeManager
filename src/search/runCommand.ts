@@ -1,5 +1,5 @@
 import { OpenTaskOptions } from "../hooks/useOpenTask";
-import { CLAUDE_TERMINAL } from "../embedded/taskSurface";
+import { CLAUDE_TERMINAL, CODEX_TERMINAL } from "../embedded/taskSurface";
 import { openPrForMember } from "../services/pullRequest";
 import { CommandAction, WorkspaceAction } from "./commands";
 import { PaletteItem } from "./searchPalette";
@@ -73,14 +73,15 @@ export async function runPaletteCommand(
       else deps.showToast("Could not open the pull request");
       return;
     }
-    case "open-claude": {
+    case "open-claude":
+    case "open-codex": {
       const task = deps.tasks.find((t) => t.id === action.taskId);
       if (!task) {
-        deps.showToast("Could not open Claude Code");
+        deps.showToast(`Could not open ${action.type === "open-codex" ? "Codex" : "Claude Code"}`);
         return;
       }
       const opened = await deps.onOpenTask(task, {
-        surface: CLAUDE_TERMINAL,
+        surface: action.type === "open-codex" ? CODEX_TERMINAL : CLAUDE_TERMINAL,
         onMessage: deps.showToast,
         onError: deps.showToast,
       });

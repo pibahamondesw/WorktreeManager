@@ -75,6 +75,7 @@ describe("searchPalette", () => {
 
   it("finds settings without a leading >", () => {
     expect(commandIds("theme")).toEqual(expect.arrayContaining(["theme-picker", "theme:default"]));
+    expect(commandIds("codex")).toEqual(expect.arrayContaining(["editor:codex", "open-codex:t-1"]));
     expect(commandIds("claude")).toEqual(
       expect.arrayContaining(["editor:claude-code", "open-claude:t-1"])
     );

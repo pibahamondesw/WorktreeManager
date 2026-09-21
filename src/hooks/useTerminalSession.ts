@@ -97,10 +97,10 @@ export function useTerminalSession(
     attachRef.current = attach;
     void attach();
 
-    const input = term.onData((data) => void terminalWrite(taskId, data));
+    const input = term.onData((data) => void terminalWrite(taskId, agent, data));
     const observer = new ResizeObserver(() => {
       safeFit();
-      void terminalResize(taskId, term.cols, term.rows);
+      void terminalResize(taskId, agent, term.cols, term.rows);
     });
     observer.observe(el);
 
@@ -108,7 +108,7 @@ export function useTerminalSession(
       disposed = true;
       observer.disconnect();
       input.dispose();
-      void terminalDetach(taskId);
+      void terminalDetach(taskId, agent);
       term.dispose();
       termRef.current = null;
     };

@@ -34,14 +34,14 @@ export function terminalOpen({ onEvent, ...args }: TerminalOpenArgs): Promise<Te
   return invoke<TerminalOpenResult>("terminal_open", { ...args, onEvent: channel });
 }
 
-export const terminalWrite = (taskId: string, data: string) =>
-  invoke<void>("terminal_write", { taskId, data });
+export const terminalWrite = (taskId: string, agent: AgentId, data: string) =>
+  invoke<void>("terminal_write", { taskId, agent, data });
 
-export const terminalResize = (taskId: string, cols: number, rows: number) =>
-  invoke<void>("terminal_resize", { taskId, cols, rows });
+export const terminalResize = (taskId: string, agent: AgentId, cols: number, rows: number) =>
+  invoke<void>("terminal_resize", { taskId, agent, cols, rows });
 
-export const terminalDetach = (taskId: string) =>
-  invoke<void>("terminal_detach", { taskId }).catch(() => undefined);
+export const terminalDetach = (taskId: string, agent: AgentId) =>
+  invoke<void>("terminal_detach", { taskId, agent }).catch(() => undefined);
 
 /** Best-effort: delete flows must not fail because no session existed. */
 export const terminalClose = (taskId: string) =>
@@ -50,6 +50,8 @@ export const terminalClose = (taskId: string) =>
 export const terminalList = () => invoke<TerminalInfo[]>("terminal_list");
 
 export const onTerminalExit = (
-  callback: (payload: { taskId: string; code: number | null }) => void
+  callback: (payload: { taskId: string; agent: AgentId; code: number | null }) => void
 ): Promise<UnlistenFn> =>
-  listen<{ taskId: string; code: number | null }>("terminal-exit", (e) => callback(e.payload));
+  listen<{ taskId: string; agent: AgentId; code: number | null }>("terminal-exit", (e) =>
+    callback(e.payload)
+  );

@@ -114,6 +114,10 @@ describe("runDoctor", () => {
     const claudeCode = await probed("claude-code");
     expect(claudeCode.apps).toEqual([]);
     expect(claudeCode.clis).toContain("claude");
+
+    const codex = await probed("codex");
+    expect(codex.apps).toEqual([]);
+    expect(codex.clis).toContain("codex");
   });
 
   it("treats a missing editor CLI as an error and a missing optional one as a warning", async () => {
@@ -133,6 +137,23 @@ describe("runDoctor", () => {
     );
     expect(check(optional, "cli:zed")?.severity).toBe("warning");
     expect(optional.errors).toBe(0);
+  });
+
+  it("reports a missing Codex CLI with installation instructions", async () => {
+    const report = await run(
+      config({ editor: "codex" }),
+      healthyProbe({ clis: [found("git"), found("gh"), absent("codex")], apps: [] })
+    );
+    expect(check(report, "cli:codex")).toMatchObject({
+      severity: "error",
+      install: "brew install --cask codex",
+    });
+    expect(report.errors).toBe(1);
+    const ready = await run(
+      config({ editor: "codex" }),
+      healthyProbe({ clis: [found("git"), found("gh"), found("codex")], apps: [] })
+    );
+    expect(ready.errors).toBe(0);
   });
 
   it("flags a binary that resolves but will not run", async () => {
