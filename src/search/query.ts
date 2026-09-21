@@ -1,6 +1,6 @@
-export type FilterField = "in" | "repo" | "branch" | "id" | "path";
+export type FilterField = "in" | "repo" | "branch" | "id" | "path" | "session";
 
-const FILTER_FIELDS: FilterField[] = ["in", "repo", "branch", "id", "path"];
+const FILTER_FIELDS: FilterField[] = ["in", "repo", "branch", "id", "path", "session"];
 
 /** One `key:a|b` filter. Values are OR'd against each other. */
 export interface Filter {
@@ -91,6 +91,10 @@ export function scopeValues(parsed: ParsedQuery): string[] {
   return parsed.filters.filter((f) => f.field === "in").flatMap((f) => f.values);
 }
 
+export function sessionValues(parsed: ParsedQuery): string[] {
+  return parsed.filters.filter((f) => f.field === "session").flatMap((f) => f.values);
+}
+
 /** Strip every `in:` token, quoted values included. */
 export function withoutScope(query: string): string {
   return query
@@ -105,4 +109,16 @@ export function withScope(query: string, workspaceName: string): string {
   const rest = withoutScope(query);
   // Trailing space when there's nothing else: the caret lands ready to type.
   return rest ? `${token} ${rest}` : `${token} `;
+}
+
+export function withoutActiveSession(query: string): string {
+  return query
+    .replace(/(^|\s)session:active(?=\s|$)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function withActiveSession(query: string): string {
+  const rest = withoutActiveSession(query);
+  return rest ? `session:active ${rest}` : "session:active ";
 }

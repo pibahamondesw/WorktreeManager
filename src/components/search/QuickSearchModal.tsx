@@ -8,8 +8,11 @@ import {
   parseQuery,
   parsePaletteInput,
   scopeValues,
+  sessionValues,
   withScope,
+  withActiveSession,
   withoutScope,
+  withoutActiveSession,
 } from "../../search/query";
 import { buildCommands, CommandShortcut, WorkspaceAction } from "../../search/commands";
 import { PaletteItem, searchPalette } from "../../search/searchPalette";
@@ -19,6 +22,7 @@ import { NavigationEntry, lastTaskVisits } from "../../navigation/history";
 import { linearIssueUrl } from "../../utils";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 import { PaletteResults } from "./PaletteResults";
+import { TerminalStatus } from "../../services/terminal";
 
 const EMPTY_ENTRIES: NavigationEntry[] = [];
 
@@ -30,6 +34,7 @@ interface QuickSearchModalProps {
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
   historyEntries?: NavigationEntry[];
+  agentSessions?: Record<string, TerminalStatus>;
   themeId: string;
   editorApp: EditorApp;
   /** Switch to the task's workspace and select it in the list. */
@@ -51,6 +56,7 @@ export function QuickSearchModal({
   workspaces,
   selectedWorkspaceId,
   historyEntries = EMPTY_ENTRIES,
+  agentSessions = {},
   themeId,
   editorApp,
   onReveal,
@@ -103,10 +109,11 @@ export function QuickSearchModal({
             selectedWorkspaceId,
             query,
             lastVisitAt,
+            agentSessions,
             commands,
           })
         : ([] as PaletteItem[]),
-    [open, tasks, workspaces, selectedWorkspaceId, query, lastVisitAt, commands]
+    [open, tasks, workspaces, selectedWorkspaceId, query, lastVisitAt, agentSessions, commands]
   );
 
   useEffect(() => {
@@ -123,6 +130,7 @@ export function QuickSearchModal({
   const parsedQuery = parseQuery(paletteInput.query);
   const { commandsOnly } = paletteInput;
   const scoped = scopeValues(parsedQuery).length > 0;
+  const activeSessionsOnly = sessionValues(parsedQuery).includes("active");
   const bareShortcutsEnabled =
     !commandsOnly && parsedQuery.terms.length === 0 && parsedQuery.negTerms.length === 0;
   const active = results[activeIndex];
@@ -135,6 +143,11 @@ export function QuickSearchModal({
   const setScoped = (next: boolean) => {
     if (!next) setQuery(withoutScope);
     else if (currentWorkspace) setQuery((q) => withScope(q, currentWorkspace.name));
+    inputRef.current?.focus();
+  };
+
+  const setActiveSessionsOnly = (next: boolean) => {
+    setQuery(next ? withActiveSession : withoutActiveSession);
     inputRef.current?.focus();
   };
 
@@ -251,8 +264,14 @@ export function QuickSearchModal({
             <ScopeTab active={scoped} onClick={() => setScoped(true)} disabled={!currentWorkspace}>
               This workspace
             </ScopeTab>
+            <ScopeTab
+              active={activeSessionsOnly}
+              onClick={() => setActiveSessionsOnly(!activeSessionsOnly)}
+            >
+              Active sessions
+            </ScopeTab>
             <span className="ml-auto text-[0.625rem] text-text-muted font-mono">
-              in:web|api · repo: · branch: · -exclude · &gt;commands
+              in:web|api · session:active · repo: · branch: · -exclude · &gt;commands
             </span>
           </div>
         </div>

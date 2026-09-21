@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { parseQuery, parsePaletteInput, scopeValues, withScope, withoutScope } from "./query";
+import {
+  parseQuery,
+  parsePaletteInput,
+  scopeValues,
+  sessionValues,
+  withScope,
+  withoutScope,
+  withActiveSession,
+  withoutActiveSession,
+} from "./query";
 
 describe("parseQuery", () => {
   it("collects free-text terms lowercased", () => {
@@ -12,6 +21,9 @@ describe("parseQuery", () => {
 
   it("parses field filters and splits OR values", () => {
     expect(parseQuery("in:web|api").filters).toEqual([{ field: "in", values: ["web", "api"] }]);
+    expect(parseQuery("session:active").filters).toEqual([
+      { field: "session", values: ["active"] },
+    ]);
   });
 
   it("parses negated terms and filters", () => {
@@ -40,6 +52,16 @@ describe("parseQuery", () => {
       filters: [],
       negFilters: [],
     });
+  });
+});
+
+describe("active session filter", () => {
+  it("reads and toggles the active-session filter without changing the rest of the query", () => {
+    expect(sessionValues(parseQuery("session:active repo:web"))).toEqual(["active"]);
+    expect(withActiveSession("repo:web")).toBe("session:active repo:web");
+    expect(withoutActiveSession("repo:web session:active branch:main")).toBe(
+      "repo:web branch:main"
+    );
   });
 });
 

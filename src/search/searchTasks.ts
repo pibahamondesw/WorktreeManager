@@ -1,4 +1,5 @@
 import { Task, Workspace } from "../types";
+import { TerminalStatus } from "../services/terminal";
 import { Filter, ParsedQuery, parseQuery } from "./query";
 
 export interface TaskSearchResult {
@@ -6,6 +7,7 @@ export interface TaskSearchResult {
   workspace: Workspace | undefined;
   score: number;
   inCurrentWorkspace: boolean;
+  activeSession: boolean;
 }
 
 interface SearchArgs {
@@ -14,6 +16,7 @@ interface SearchArgs {
   selectedWorkspaceId: string | null;
   query: string;
   lastVisitAt?: Map<string, string>;
+  agentSessions?: Record<string, TerminalStatus>;
 }
 
 /** Ranked so an exact Linear identifier always beats an incidental title hit. */
@@ -31,6 +34,7 @@ const SCORES = {
 
 /** Outranks any achievable text score, so the current workspace always sorts first. */
 const CURRENT_WORKSPACE_BOOST = 1_000_000;
+const ACTIVE_SESSION_BOOST = 2_000_000;
 
 interface TaskFields {
   identifier: string;
@@ -39,9 +43,14 @@ interface TaskFields {
   repos: string[];
   paths: string[];
   workspace: string;
+  activeSession: boolean;
 }
 
-function fieldsOf(task: Task, workspace: Workspace | undefined): TaskFields {
+function fieldsOf(
+  task: Task,
+  workspace: Workspace | undefined,
+  activeSession: boolean
+): TaskFields {
   return {
     identifier: (task.linearIssueIdentifier ?? "").toLowerCase(),
     title: (task.linearIssueTitle ?? "").toLowerCase(),
@@ -51,6 +60,7 @@ function fieldsOf(task: Task, workspace: Workspace | undefined): TaskFields {
     repos: task.members.map((m) => m.repoName.toLowerCase()),
     paths: task.members.map((m) => m.path.toLowerCase()),
     workspace: (workspace?.name ?? "").toLowerCase(),
+    activeSession,
   };
 }
 
@@ -90,6 +100,8 @@ function matchesFilter(f: TaskFields, filter: Filter): boolean {
         return f.identifier.includes(value);
       case "path":
         return f.paths.some((p) => p.includes(value));
+      case "session":
+        return value === "active" && f.activeSession;
     }
   });
 }
@@ -109,8 +121,8 @@ function scoreTask(f: TaskFields, parsed: ParsedQuery): number | null {
 }
 
 /**
- * Rank every task against the palette query. Tasks in the current workspace always come
- * first (the ⌘K requirement), then by text score, then most recently created.
+ * Rank every task against the palette query. Active sessions come first, followed by tasks in
+ * the current workspace, then by text score and most recent visit.
  */
 export function searchTasks({
   tasks,
@@ -118,6 +130,7 @@ export function searchTasks({
   selectedWorkspaceId,
   query,
   lastVisitAt,
+  agentSessions = {},
 }: SearchArgs): TaskSearchResult[] {
   const recencyOf = (task: Task) => lastVisitAt?.get(task.id) ?? task.createdAt;
   const parsed = parseQuery(query);
@@ -126,19 +139,27 @@ export function searchTasks({
 
   for (const task of tasks) {
     const workspace = workspaceById.get(task.workspaceId);
-    const score = scoreTask(fieldsOf(task, workspace), parsed);
+    const activeSession = agentSessions[task.id]?.kind === "running";
+    const score = scoreTask(fieldsOf(task, workspace, activeSession), parsed);
     if (score === null) continue;
     results.push({
       task,
       workspace,
       score,
       inCurrentWorkspace: task.workspaceId === selectedWorkspaceId,
+      activeSession,
     });
   }
 
   return results.sort((a, b) => {
-    const rankA = a.score + (a.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0);
-    const rankB = b.score + (b.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0);
+    const rankA =
+      a.score +
+      (a.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0) +
+      (a.activeSession ? ACTIVE_SESSION_BOOST : 0);
+    const rankB =
+      b.score +
+      (b.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0) +
+      (b.activeSession ? ACTIVE_SESSION_BOOST : 0);
     if (rankA !== rankB) return rankB - rankA;
     return recencyOf(b.task).localeCompare(recencyOf(a.task));
   });

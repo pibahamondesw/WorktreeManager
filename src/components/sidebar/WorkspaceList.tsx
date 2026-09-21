@@ -17,10 +17,12 @@ import {
 import { DeleteOptions, OperationResult } from "../../services/operations";
 import { CheckSeverity } from "../../services/doctor";
 import { WorkspaceAction } from "../../search/commands";
+import { TerminalStatus } from "../../services/terminal";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
   tasks: Task[];
+  agentSessions?: Record<string, TerminalStatus>;
   selectedWorkspaceId: string | null;
   onSelect: (workspaceId: string) => void;
   onAdd: (workspace: Workspace) => Promise<Workspace>;
@@ -54,6 +56,7 @@ interface WorkspaceListProps {
 export function WorkspaceList({
   workspaces,
   tasks,
+  agentSessions = {},
   selectedWorkspaceId,
   onSelect,
   onAdd,
@@ -127,6 +130,16 @@ export function WorkspaceList({
     }
     return m;
   }, [tasks]);
+
+  const activeSessionWorkspaceIds = useMemo(
+    () =>
+      new Set(
+        tasks
+          .filter((task) => agentSessions[task.id]?.kind === "running")
+          .map((task) => task.workspaceId)
+      ),
+    [tasks, agentSessions]
+  );
 
   useEffect(() => {
     if (!workspaceAction) return;
@@ -246,7 +259,15 @@ export function WorkspaceList({
                 />
               )}
               <div className="flex flex-col min-w-0 flex-1">
-                <p className="text-sm font-medium truncate">{workspace.name}</p>
+                <div className="flex items-center gap-2 min-w-0">
+                  <p className="text-sm font-medium truncate">{workspace.name}</p>
+                  {activeSessionWorkspaceIds.has(workspace.id) && (
+                    <span
+                      className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-success animate-pulse"
+                      title="Active agent session in this workspace"
+                    />
+                  )}
+                </div>
                 <p className="text-[0.625rem] text-text-muted truncate">
                   {activeTaskCount} task{activeTaskCount !== 1 ? "s" : ""}
                 </p>
