@@ -48,6 +48,16 @@ describe("WorktreeListHeader sidebar toggle", () => {
     fireEvent.click(screen.getByTitle("Expand sidebar ["));
     expect(onExpandSidebar).toHaveBeenCalledOnce();
   });
+
+  it("places a separator between the expand button and history controls", () => {
+    renderHeader(true);
+    const expandButton = screen.getByTitle("Expand sidebar [");
+    const separator = screen.getByRole("separator");
+    const backButton = screen.getByTitle("Back (⌘←)");
+
+    expect(expandButton.compareDocumentPosition(separator)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(separator.compareDocumentPosition(backButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
 });
 
 describe("WorktreeListHeader history controls", () => {

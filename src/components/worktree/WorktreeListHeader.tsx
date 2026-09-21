@@ -52,6 +52,23 @@ export function WorktreeListHeader({
         data-drag-region
       >
         <div className="flex items-center gap-3 min-w-0 flex-wrap">
+          {sidebarCollapsed && (
+            <>
+              <button
+                type="button"
+                onClick={onExpandSidebar}
+                className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
+                title="Expand sidebar ["
+              >
+                <SidebarIcon size={14} />
+              </button>
+              <span
+                role="separator"
+                aria-orientation="vertical"
+                className="self-stretch -my-2 w-px bg-border"
+              />
+            </>
+          )}
           <div className="flex items-center gap-0.5">
             <HistoryButton title="Back (⌘←)" disabled={!canGoBack} onClick={onGoBack}>
               <ChevronLeftIcon size={14} />
@@ -60,16 +77,6 @@ export function WorktreeListHeader({
               <ChevronRightIcon size={14} />
             </HistoryButton>
           </div>
-          {sidebarCollapsed && (
-            <button
-              type="button"
-              onClick={onExpandSidebar}
-              className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-              title="Expand sidebar ["
-            >
-              <SidebarIcon size={14} />
-            </button>
-          )}
           <h2 className="text-sm font-semibold text-text-primary">{workspaceName}</h2>
           <span className="text-xs text-text-muted">
             {taskCount} task{taskCount !== 1 ? "s" : ""}
