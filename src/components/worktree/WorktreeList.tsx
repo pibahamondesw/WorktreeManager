@@ -17,10 +17,11 @@ import { Task, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types"
 import { TaskView } from "../task/TaskView";
 import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
 import { CreateTaskInput, DeleteOptions, OperationResult } from "../../services/operations";
-import { useAgentSessions } from "../../hooks/useAgentSessions";
+import { TerminalStatus } from "../../services/terminal";
 
 interface WorktreeListProps {
   tasks: Task[];
+  agentSessions?: Record<string, TerminalStatus>;
   workspace: Workspace | undefined;
   vault: VaultConfig;
   onTaskCreated: (input: CreateTaskInput, progress?: (message: string) => void) => Promise<OperationResult<Task>>;
@@ -69,6 +70,7 @@ const SELECTED_CARD_SCROLL_ATTEMPTS = 60;
 
 export function WorktreeList({
   tasks,
+  agentSessions = {},
   workspace,
   vault,
   onTaskCreated,
@@ -170,8 +172,6 @@ export function WorktreeList({
     }
     onCloseTask();
   };
-
-  const agentSessions = useAgentSessions(openTask !== null);
 
   useWorktreeListKeyboardShortcuts({
     workspace,

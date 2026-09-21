@@ -61,6 +61,7 @@ export function PaletteResults({
 
 function itemHeader(item: PaletteItem): string {
   if (item.kind === "task") {
+    if (item.result.activeSession) return "Active sessions";
     return item.result.inCurrentWorkspace ? "This workspace" : "Other workspaces";
   }
   switch (item.command.group) {
@@ -101,6 +102,12 @@ function TaskRow({
       )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
+          {result.activeSession && (
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-success animate-pulse"
+              title="Agent session running"
+            />
+          )}
           {result.task.linearIssueIdentifier && (
             <span className="text-xs font-mono text-text-muted flex-shrink-0">
               {result.task.linearIssueIdentifier}

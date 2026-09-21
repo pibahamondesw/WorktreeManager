@@ -81,6 +81,32 @@ describe("searchTasks", () => {
     expect(ids("search", "ws-api")).toEqual(["api-fix", "quick-search"]);
   });
 
+  it("puts active sessions ahead of tasks in the current workspace", () => {
+    const results = searchTasks({
+      tasks: [quickSearch, apiFix],
+      workspaces,
+      selectedWorkspaceId: "ws-web",
+      query: "",
+      agentSessions: { "api-fix": { kind: "running" } },
+    });
+    expect(results.map((result) => result.task.id)).toEqual(["api-fix", "quick-search"]);
+    expect(results[0].activeSession).toBe(true);
+  });
+
+  it("filters tasks to active sessions", () => {
+    const results = searchTasks({
+      tasks: [quickSearch, apiFix],
+      workspaces,
+      selectedWorkspaceId: "ws-web",
+      query: "session:active",
+      agentSessions: {
+        "quick-search": { kind: "exited", code: 0 },
+        "api-fix": { kind: "running" },
+      },
+    });
+    expect(results.map((result) => result.task.id)).toEqual(["api-fix"]);
+  });
+
   it("ranks an exact identifier above a title hit within the same workspace", () => {
     const results = searchTasks({
       tasks: [

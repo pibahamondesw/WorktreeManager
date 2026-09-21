@@ -155,6 +155,45 @@ describe("QuickSearchModal ordering", () => {
     expect(names[0]).toContain("feature/old");
     expect(names[1]).toContain("feature/new");
   });
+
+  it("lists an active session from another workspace first", () => {
+    const currentTask: Task = {
+      ...otherTask,
+      id: "t-current",
+      workspaceId: "ws-1",
+      branchName: "feature/current",
+    };
+    renderModal({
+      initialQuery: "",
+      tasks: [currentTask, otherTask],
+      agentSessions: { "t-2": { kind: "running" } },
+    });
+    const names = screen
+      .getAllByRole("button", { name: /feature\// })
+      .map((button) => button.textContent);
+    expect(names[0]).toContain("feature/ledger-sync");
+    expect(screen.getByTitle("Agent session running")).toBeInTheDocument();
+  });
+
+  it("filters to active sessions from the filter tab", () => {
+    const currentTask: Task = {
+      ...otherTask,
+      id: "t-current",
+      workspaceId: "ws-1",
+      branchName: "feature/current",
+    };
+    renderModal({
+      initialQuery: "",
+      tasks: [currentTask, otherTask],
+      agentSessions: { "t-2": { kind: "running" } },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Active sessions" }));
+
+    expect(screen.getByRole("textbox")).toHaveValue("session:active ");
+    expect(screen.getByRole("button", { name: /feature\/ledger-sync/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /feature\/current/ })).not.toBeInTheDocument();
+  });
 });
 
 describe("QuickSearchModal commands", () => {

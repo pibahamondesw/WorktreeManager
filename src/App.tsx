@@ -23,6 +23,7 @@ import { Task } from "./types";
 import { listen } from "@tauri-apps/api/event";
 import { useAutomation } from "./hooks/useAutomation";
 import { editorPresentation } from "./services/codeEditor";
+import { useAgentSessions } from "./hooks/useAgentSessions";
 
 function App() {
   const {
@@ -133,6 +134,7 @@ function App() {
     recordTaskVisit,
     showTask,
   });
+  const agentSessions = useAgentSessions(openedTask !== null);
 
   useEffect(() => {
     const unlisten = listen<string>("editor-navigate", ({ payload }) => {
@@ -317,6 +319,7 @@ function App() {
             <WorkspaceList
               workspaces={state.workspaces}
               tasks={state.tasks}
+              agentSessions={agentSessions}
               selectedWorkspaceId={state.selectedWorkspaceId}
               onSelect={handleSelectWorkspace}
               onAdd={addWorkspace}
@@ -343,6 +346,7 @@ function App() {
         <ErrorBoundary fallbackClassName="flex-1">
           <WorktreeList
             tasks={selectedTasks}
+            agentSessions={agentSessions}
             workspace={selectedWorkspace}
             vault={state.vault}
             onTaskCreated={createTask}
@@ -377,6 +381,7 @@ function App() {
         workspaces={state.workspaces}
         selectedWorkspaceId={state.selectedWorkspaceId}
         historyEntries={history.entries}
+        agentSessions={agentSessions}
         themeId={themeId}
         editorApp={editorApp}
         onReveal={handleReveal}
