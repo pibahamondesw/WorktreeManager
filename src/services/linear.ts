@@ -250,6 +250,11 @@ export class LinearService {
     return nodes.map(mapIssueNode);
   }
 
+  async getIssue(id: string): Promise<{ id: string; identifier: string; title: string }> {
+    const issue = await this.client.issue(id);
+    return { id: issue.id, identifier: issue.identifier, title: issue.title };
+  }
+
   async startIssue(issueId: string): Promise<void> {
     const issue = await this.client.issue(issueId);
     const currentState = await issue.state;

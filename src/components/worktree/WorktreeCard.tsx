@@ -39,6 +39,7 @@ interface WorktreeCardProps {
   onOpenError?: (msg: string) => void;
   onToast?: (msg: string) => void;
   onOpen?: () => void;
+  onLinkIssue?: () => void;
   sessionStatus?: TerminalStatus;
   repoSlugs: Record<string, string> | null;
   requestDelete?: boolean;
@@ -60,6 +61,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   onOpenError,
   onToast,
   onOpen,
+  onLinkIssue,
   sessionStatus,
   repoSlugs,
   requestDelete,
@@ -253,6 +255,16 @@ export const WorktreeCard = memo(function WorktreeCard({
                   <CopyIcon size={12} />
                 </button>
               </div>
+            ) : onLinkIssue ? (
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onLinkIssue();
+                }}
+                className="text-xs text-text-muted hover:text-accent cursor-pointer"
+              >
+                Link Linear issue
+              </button>
             ) : (
               <span className="text-xs font-mono text-text-muted flex-shrink-0">No issue</span>
             )}

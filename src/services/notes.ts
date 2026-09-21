@@ -36,6 +36,7 @@ function yamlString(value: string): string {
  * the scripts, and the `/task-log` skill all resolve the same file.
  */
 export function taskNoteFileName(task: Task): string {
+  if (task.noteFileName) return task.noteFileName;
   const branchSlug = slugify(task.branchName.split("/").pop() ?? task.branchName);
   const issueId = task.linearIssueIdentifier?.trim().toUpperCase();
   if (!issueId) return `${branchSlug || "task"}.md`;

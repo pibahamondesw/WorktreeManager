@@ -351,6 +351,7 @@ function App() {
             vault={state.vault}
             onTaskCreated={createTask}
             onTaskDeleted={removeTask}
+            onTaskIssueLinked={(id, issue) => operations.linkTaskIssue(id, issue)}
             editorApp={editorApp}
             onEditorChange={updateEditorApp}
             workspaceSwitching={workspaceSwitching}

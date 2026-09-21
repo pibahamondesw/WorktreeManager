@@ -22,6 +22,7 @@ workspace delete <id> [--keep-worktrees|--delete-worktrees] [--force]
 task list [--workspace <id>]
 task get <id> [--git]
 task create --input <file|->
+task link-issue <id> --issue <identifier>
 task delete <id> <--keep-worktrees|--delete-worktrees> [--force]
 
 Workspace input: {"name":"Payments","repos":[{"localPath":"/repos/api"}]}
@@ -38,6 +39,7 @@ Examples:
   wtm
   wtm workspace list
   wtm task create --input task.json
+  wtm task link-issue TASK_ID --issue WOR-123
   wtm task get TASK_ID --git
   wtm task delete TASK_ID --delete-worktrees
 
@@ -75,6 +77,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     json!(args.next().ok_or("--workspace requires an ID")?),
                 );
             }
+            "--issue" if !params.contains_key("issue") => {
+                params.insert(
+                    "issue".into(),
+                    json!(args.next().ok_or("--issue requires an identifier")?),
+                );
+            }
             "--git" if !params.contains_key("git") => {
                 params.insert("git".into(), json!(true));
             }
@@ -103,6 +111,7 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "workspace.update" => (true, true, &[]),
         "workspace.delete" | "task.delete" => (true, false, &["deleteWorktrees", "force"]),
         "task.list" => (false, false, &["workspaceId"]),
+        "task.link-issue" => (true, false, &["issue"]),
         "task.get" => (true, false, &["git"]),
         _ => return Err("Unknown operation; see --help".into()),
     };
@@ -114,6 +123,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
     }
     if needs_id {
         params.insert("id".into(), json!(words[2]));
+    }
+    if method == "task.link-issue" && !params.contains_key("issue") {
+        return Err("Provide --issue with a Linear issue identifier".into());
     }
     if method == "task.delete" && !params.contains_key("deleteWorktrees") {
         return Err("Choose --keep-worktrees or --delete-worktrees".into());
@@ -369,6 +381,25 @@ mod tests {
             ["-a", "/Custom Apps/WorktreeManager.app"]
         );
     }
+    #[test]
+    fn parses_link_issue_and_requires_the_issue() {
+        let parsed = parse(&args("--local task link-issue t1 --issue WOR-123")).unwrap();
+        assert!(parsed.local);
+        assert_eq!(parsed.method, "task.link-issue");
+        assert_eq!(parsed.params["id"], "t1");
+        assert_eq!(parsed.params["issue"], "WOR-123");
+        for invalid in [
+            "task link-issue t1",
+            "task link-issue --issue WOR-123",
+            "task link-issue t1 --issue",
+            "task get t1 --issue WOR-123",
+            "task link-issue t1 --issue A --issue B",
+            "task link-issue t1 --issue A --input -",
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "{invalid}");
+        }
+    }
+
     #[test]
     fn parses_supported_commands_and_rejects_ambiguous_deletion() {
         assert_eq!(
