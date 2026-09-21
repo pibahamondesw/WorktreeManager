@@ -28,15 +28,7 @@ On first launch, configure Linear with a [personal API key](https://linear.app/s
 
 Homebrew installs `wtm` alongside the app. Run `wtm` to open it and `wtm --help` for commands, JSON inputs, and examples. Commands operate on the running app after it finishes loading. Manage Linear credentials in the UI; the CLI never accepts or returns them.
 
-To split an issue across tasks:
-
-1. Create the issues with Linear's MCP.
-2. Use `wtm task create` with each issue's metadata and branch name.
-3. Use Git to move commits or selected changes into the returned `data.members[].path` directories.
-
-Task setup copies configured editor/environment files from the **source repository**, runs Doppler and dependency installation, and creates notes when enabled. It does not clone another task's environment, transfer code, or reuse editor sessions. These setup steps can need network access even though CLI control is local.
-
-Creation and deletion failures can leave partial results: inspect error details before retrying. Failed disk deletions retain task records; auxiliary setup failures keep the task and return warnings. Updating a workspace affects future tasks; existing tasks keep their member paths.
+Task setup copies configured editor/environment files from the source repository and runs its dependency setup; it can require network access. It does not transfer another task's code or sessions. If creation or deletion fails, inspect the reported partial results before retrying.
 
 ## Editors and notes
 
@@ -46,28 +38,13 @@ For embedded VS Code, select **VS Code embedded** and click **Install editor** w
 
 Enable **Obsidian vault** from the sidebar to create task notes in `~/Documents/worktreemanager-vault`. Removing a task archives its notes; disabling the vault leaves files untouched. For agent setup and vault customization, see the [vault guide](vault-kit/README.md).
 
-## Keyboard shortcuts
+## Navigation
 
-| Key                    | Action                           |
-| ---------------------- | -------------------------------- |
-| `↑` / `↓` or `j` / `k` | Navigate tasks                   |
-| `0`–`9`                | Jump to task                     |
-| `⌘0`–`⌘9`              | Jump to workspace                |
-| `Enter`                | Open selected task               |
-| `⌘[`                   | Return to task list              |
-| `⌘K` / `⌘F`            | Command palette / this workspace |
-| `⌘⌥P`                  | Search (in embedded editor)      |
-| `N` / `P`              | New task / workspace             |
-| `R`                    | Refresh Linear info              |
-| `L` / `O`              | Open issue / notes               |
-| `⌘B` / `⌘⇧C`           | Copy branch / worktree path      |
-| `⌘D`                   | Delete selected task             |
-| `⌘+` / `⌘−`            | Zoom in / out                    |
-| `Esc`                  | Clear selection                  |
+Use `↑` / `↓` or `j` / `k` to select tasks, `Enter` to open one, and `⌘[` to return. `⌘K` opens the command palette; `⌘F` searches the current workspace. In the embedded editor, use `⌘⌥P` for search. `L` opens the selected issue and `O` its notes.
 
 ## Development
 
-Requires Rust, Node.js, the pnpm version pinned in [package.json](package.json), and Xcode Command Line Tools (`xcode-select --install`).
+Requires Rust, Node.js 22+, the pnpm version pinned in [package.json](package.json), and Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 git clone https://github.com/pibahamondesw/WorktreeManager.git
@@ -76,7 +53,7 @@ pnpm install
 pnpm run tauri:dev:local
 ```
 
-Development starts Vite on `localhost:5173` and opens the native app with hot reload.
+Development starts Vite on `localhost:5173` and opens the native app with hot reload. See [AGENTS.md](AGENTS.md) for contribution conventions; track features and planned work in Linear.
 
 | Command                     | Data and credentials             | Signing                                           |
 | --------------------------- | -------------------------------- | ------------------------------------------------- |
