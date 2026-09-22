@@ -5,11 +5,14 @@ import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
 import { Workspace, WorkspaceRepo } from "../../types";
 import { WorkspaceRepoEditor } from "./WorkspaceRepoEditor";
+import { SavedLinearKeySelect } from "./SavedLinearKeySelect";
 import { LinearKeyField } from "./LinearKeyField";
 import { useLinearKeyValidation } from "../../hooks/useLinearKeyValidation";
 
 interface EditWorkspaceModalProps {
   open: boolean;
+  workspaces?: Workspace[];
+  defaultLinearApiKey?: string | null;
   onClose: () => void;
   workspace: Workspace;
   onSave: (
@@ -21,6 +24,8 @@ interface EditWorkspaceModalProps {
 
 export function EditWorkspaceModal({
   open,
+  workspaces = [],
+  defaultLinearApiKey,
   onClose,
   workspace,
   onSave,
@@ -73,7 +78,15 @@ export function EditWorkspaceModal({
         return;
       }
     }
-    const newLinearKey = linear.linearValid ? linear.linearKey.trim() : null;
+    if (
+      linear.linearKey.trim() &&
+      !linear.linearValid &&
+      linear.linearKey.trim() !== workspace.linearApiKey?.trim()
+    ) {
+      setError("Validate the Linear API key before saving");
+      return;
+    }
+    const newLinearKey = linear.linearKey.trim() || null;
     try {
       await onSave(workspace.id, {
         name: name.trim(),
@@ -83,7 +96,11 @@ export function EditWorkspaceModal({
           worktreeBasePath: r.worktreeBasePath.trim(),
         })),
         linearApiKey: newLinearKey,
-        linearOrgUrlKey: newLinearKey ? linear.linearOrgUrlKey : null,
+        linearOrgUrlKey: newLinearKey
+          ? linear.linearValid
+            ? linear.linearOrgUrlKey
+            : workspace.linearOrgUrlKey
+          : null,
       });
       onClose();
     } catch (error) {
@@ -97,6 +114,16 @@ export function EditWorkspaceModal({
         <Input label="Workspace name" value={name} onChange={(e) => setName(e.target.value)} />
 
         <WorkspaceRepoEditor repos={repos} onChange={setRepos} home={home} />
+
+        <SavedLinearKeySelect
+          workspaces={workspaces}
+          defaultLinearApiKey={defaultLinearApiKey}
+          value={linear.linearKey}
+          onChange={(key) => {
+            linear.setLinearKey(key);
+            if (key) void linear.runValidation(key);
+          }}
+        />
 
         <LinearKeyField
           label="Linear API key"

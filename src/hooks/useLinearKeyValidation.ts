@@ -37,6 +37,7 @@ export function useLinearKeyValidation() {
 
   const setLinearKey = useCallback((key: string) => {
     setLinearKeyState(key);
+    setLinearValidating(false);
     setLinearValid(false);
     setLinearUser(null);
     setLinearOrgUrlKey(null);
