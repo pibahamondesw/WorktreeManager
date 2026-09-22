@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Task } from "../../types";
+import { LinearIssue, Task } from "../../types";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
+import { LinearIssuePicker } from "./LinearIssuePicker";
+import { Badge } from "../ui/Badge";
 
 export function LinkIssueModal({
   task,
@@ -14,7 +16,7 @@ export function LinkIssueModal({
   onLink: (taskId: string, issue: string) => Promise<Task>;
   onClose: () => void;
 }) {
-  const [issue, setIssue] = useState("");
+  const [selected, setSelected] = useState<LinearIssue | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,55 +24,72 @@ export function LinkIssueModal({
     if (!saving) onClose();
   };
 
+  const link = async () => {
+    if (saving || !selected) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onLink(task.id, selected.identifier);
+      onClose();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not link the issue.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <Modal open onClose={close} title="Link Linear issue">
-      <form
-        className="p-6 space-y-4"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (saving || !configured || !issue.trim()) return;
-          setSaving(true);
-          setError(null);
-          try {
-            await onLink(task.id, issue.trim());
-            onClose();
-          } catch (error) {
-            setError(error instanceof Error ? error.message : "Could not link the issue.");
-          } finally {
-            setSaving(false);
-          }
-        }}
-      >
-        <p className="text-sm text-text-secondary select-text">{task.branchName}</p>
-        {configured ? (
-          <label className="flex flex-col gap-2 text-sm text-text-secondary">
-            Linear issue ID
-            <input
-              autoFocus
-              value={issue}
-              onChange={(event) => setIssue(event.target.value)}
-              placeholder="WOR-123"
-              disabled={saving}
-              className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-text-primary outline-none focus:border-accent"
-            />
-          </label>
-        ) : (
-          <p className="text-sm text-text-secondary">Configure Linear in this workspace first.</p>
-        )}
-        {error && (
-          <p role="alert" className="text-sm text-danger select-text">
-            {error}
-          </p>
-        )}
-        <div className="flex justify-end gap-3">
-          <Button type="button" variant="ghost" onClick={close} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="submit" loading={saving} disabled={!configured || !issue.trim()}>
-            Link issue
-          </Button>
+    <Modal open onClose={close} title="Link Linear issue" wide={configured}>
+      {configured ? (
+        <div className="flex flex-col h-[60vh]">
+          <LinearIssuePicker
+            onSelect={(issue) => {
+              setSelected(issue);
+              setError(null);
+            }}
+          >
+            {selected ? (
+              <div className="p-6 space-y-4">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setSelected(null);
+                    setError(null);
+                  }}
+                  className="text-sm text-text-muted hover:text-text-primary cursor-pointer disabled:opacity-50"
+                >
+                  Back to results
+                </button>
+                <div className="bg-bg-tertiary rounded-lg p-4 space-y-3">
+                  <p className="text-xs text-text-muted font-mono">{selected.identifier}</p>
+                  <h3 className="text-sm font-medium text-text-primary">{selected.title}</h3>
+                  {selected.stateName && <Badge>{selected.stateName}</Badge>}
+                  {selected.projectName && (
+                    <p className="text-xs text-text-secondary">Project: {selected.projectName}</p>
+                  )}
+                </div>
+                <p className="text-sm text-text-secondary select-text">Task: {task.branchName}</p>
+                {error && (
+                  <p role="alert" className="text-sm text-danger select-text">
+                    {error}
+                  </p>
+                )}
+                <div className="flex justify-end gap-3">
+                  <Button variant="ghost" onClick={close} disabled={saving}>
+                    Cancel
+                  </Button>
+                  <Button onClick={link} loading={saving}>
+                    Link issue
+                  </Button>
+                </div>
+              </div>
+            ) : undefined}
+          </LinearIssuePicker>
         </div>
-      </form>
+      ) : (
+        <p className="p-6 text-sm text-text-secondary">Configure Linear in this workspace first.</p>
+      )}
     </Modal>
   );
 }
