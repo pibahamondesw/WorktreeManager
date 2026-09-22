@@ -2,7 +2,7 @@ use tauri::webview::{Cookie, NewWindowResponse, WebviewBuilder};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl};
 use tauri_plugin_opener::OpenerExt;
 
-use super::Bounds;
+use super::{trust, Bounds};
 
 pub fn create(
     app: &AppHandle,
@@ -10,6 +10,7 @@ pub fn create(
     task_id: &str,
     url: &str,
     workspace: &std::path::Path,
+    folders: &[std::path::PathBuf],
     cookie: &str,
 ) -> Result<Webview, String> {
     let origin = url
@@ -23,12 +24,18 @@ pub fn create(
     let navigation_app = app.clone();
     let popup_app = app.clone();
     let browser_store = md5::compute(format!("{}:{task_id}", app.config().identifier)).0;
+    let trust = trust::Bridge::new(&origin, task_id, label)?;
+    let trust_script = trust.script(workspace, folders);
     let builder = WebviewBuilder::new(label, WebviewUrl::External("about:blank".parse().unwrap()))
         .focused(false)
         .disable_drag_drop_handler()
         .data_store_identifier(browser_store)
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
+        .initialization_script(&trust_script)
         .on_navigation(move |target| {
+            if trust.handle(&navigation_app, target) {
+                return false;
+            }
             if target.as_str() == "about:blank" {
                 return true;
             }

@@ -1,6 +1,7 @@
 mod process;
 mod profile;
 pub mod runtime;
+mod trust;
 mod view;
 
 use std::collections::HashMap;
@@ -269,6 +270,7 @@ pub async fn vscode_open(
             &slot.info.lock().unwrap().task_id,
             &url,
             &workspace,
+            &slot.folders,
             &cookie,
         ),
         Ok(_) => Err("The editor was closed during startup".into()),
