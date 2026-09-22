@@ -732,17 +732,16 @@ fn branch_exists(repo_path: &str, branch: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Resolve a distinct, namespaced branch + worktree path for a manual (non-Linear) worktree.
-/// Namespaces under the git username and appends `-2`, `-3`, … until neither the target
-/// directory nor a local branch of that name exists, guaranteeing a distinct workspace.
+/// Resolve a namespaced destination, reusing matching unowned worktrees.
 #[tauri::command]
 pub async fn resolve_manual_worktree(
     repo_path: String,
     worktree_base_path: String,
     raw_name: String,
+    owned_paths: Vec<String>,
 ) -> Result<ResolvedWorktree, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        resolve_manual_worktree_blocking(repo_path, worktree_base_path, raw_name)
+        resolve_manual_worktree_blocking(repo_path, worktree_base_path, raw_name, owned_paths)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -752,6 +751,7 @@ fn resolve_manual_worktree_blocking(
     repo_path: String,
     worktree_base_path: String,
     raw_name: String,
+    owned_paths: Vec<String>,
 ) -> Result<ResolvedWorktree, String> {
     let sanitized = sanitize_branch_input(&raw_name);
     if sanitized.is_empty() {
@@ -760,6 +760,10 @@ fn resolve_manual_worktree_blocking(
     let slug = git_user_slug_internal(&repo_path);
     let base_branch = format!("{slug}/{sanitized}");
 
+    let owned = owned_paths
+        .iter()
+        .map(|path| super::validation::resolved_path(Path::new(path)))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut n: u32 = 1;
     loop {
         let candidate = if n == 1 {
@@ -768,7 +772,11 @@ fn resolve_manual_worktree_blocking(
             format!("{base_branch}-{n}")
         };
         let path = format!("{worktree_base_path}/{candidate}");
-        if !std::path::Path::new(&path).exists() && !branch_exists(&repo_path, &candidate) {
+        let unowned = !owned.contains(&super::validation::resolved_path(Path::new(&path))?);
+        if unowned
+            && ((!Path::new(&path).exists() && !branch_exists(&repo_path, &candidate))
+                || matching_worktree(&repo_path, &path, &candidate)?)
+        {
             return Ok(ResolvedWorktree {
                 branch_name: candidate,
                 path,
@@ -837,6 +845,46 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn manual_creation_reuses_unowned_worktrees_and_preserves_changes() {
+        let repo = TestRepo::new();
+        let root = repo.0.to_string_lossy().into_owned();
+        let base = repo.0.join("worktrees").to_string_lossy().into_owned();
+        let first =
+            resolve_manual_worktree_blocking(root.clone(), base.clone(), "feature".into(), vec![])
+                .unwrap();
+        repo.git(&["worktree", "add", "-b", &first.branch_name, &first.path]);
+        let local = Path::new(&first.path).join("local-file");
+        std::fs::write(&local, "keep").unwrap();
+        let reused =
+            resolve_manual_worktree_blocking(root.clone(), base.clone(), "feature".into(), vec![])
+                .unwrap();
+        assert_eq!(reused.path, first.path);
+        worktree_add_blocking(root.clone(), reused.path, reused.branch_name).unwrap();
+        assert_eq!(std::fs::read_to_string(local).unwrap(), "keep");
+        let owned =
+            resolve_manual_worktree_blocking(root, base, "feature".into(), vec![first.path])
+                .unwrap();
+        assert_eq!(owned.branch_name, format!("{}-2", first.branch_name));
+    }
+
+    #[test]
+    fn manual_creation_skips_mismatched_destinations() {
+        let repo = TestRepo::new();
+        let root = repo.0.to_string_lossy().into_owned();
+        let base = repo.0.join("worktrees").to_string_lossy().into_owned();
+        let first =
+            resolve_manual_worktree_blocking(root.clone(), base.clone(), "feature".into(), vec![])
+                .unwrap();
+        repo.git(&["worktree", "add", "-b", "unrelated", &first.path]);
+        assert!(
+            worktree_add_blocking(root.clone(), first.path.clone(), first.branch_name.clone())
+                .is_err()
+        );
+        let next = resolve_manual_worktree_blocking(root, base, "feature".into(), vec![]).unwrap();
+        assert_eq!(next.branch_name, format!("{}-2", first.branch_name));
     }
 
     #[test]
