@@ -8,6 +8,7 @@ pub mod git;
 pub mod keychain;
 pub mod node_deps;
 pub mod notes;
+pub mod python_deps;
 pub mod shell_env;
 pub mod terminal;
 pub mod vault;

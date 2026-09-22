@@ -30,6 +30,8 @@ Homebrew installs `wtm` alongside the app. Run `wtm` to open it and `wtm --help`
 
 Task setup copies configured editor/environment files from the source repository and runs its dependency setup; it can require network access. It does not transfer another task's code or sessions. If creation or deletion fails, inspect the reported partial results before retrying.
 
+Python setup runs `uv sync --locked` when the repository root contains both `pyproject.toml` and `uv.lock`. Otherwise, a standalone `requirements.txt` uses `python3 -m venv .venv` and installs into that environment with pip. Setup preserves existing `.venv` paths and skips other Python managers or ambiguous configurations. It requires uv or Python 3 to be installed; failures produce a warning without removing the task. This applies to newly created tasks; existing worktrees need their repository's setup run manually.
+
 ## Editors and notes
 
 For embedded Codex, install Codex CLI (`brew install --cask codex`), select **Codex**, and open a task. Sign in from the terminal if needed. It resumes the latest conversation in that worktree, or starts a new one when none exists. Claude and Codex keep separate sessions when you switch agents.
