@@ -17,7 +17,7 @@ export interface TaskSetupState {
   repos: {
     repoId: string;
     repoName: string;
-    steps: { stage: SetupStage; status: SetupStatus }[];
+    steps: { stage: SetupStage; status: SetupStatus; message?: string }[];
   }[];
   warnings: OperationWarning[];
 }
@@ -60,7 +60,8 @@ export function updateSetupStep(
   repoId: string,
   stage: SetupStage,
   status: SetupStatus,
-  warnings: OperationWarning[]
+  warnings: OperationWarning[],
+  message?: string
 ) {
   const state = states.get(taskId)!;
   updateTaskSetup(taskId, {
@@ -70,7 +71,9 @@ export function updateSetupStep(
         ? repo
         : {
             ...repo,
-            steps: repo.steps.map((step) => (step.stage === stage ? { stage, status } : step)),
+            steps: repo.steps.map((step) =>
+              step.stage === stage ? { stage, status, ...(message ? { message } : {}) } : step
+            ),
           }
     ),
     warnings: [...warnings],

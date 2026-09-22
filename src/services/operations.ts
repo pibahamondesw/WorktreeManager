@@ -365,10 +365,16 @@ export class Operations {
             progress(`${member.repoName} · ${SETUP_STAGES[stage]}…`);
             updateSetupStep(task.id, member.repoId, stage, "running", warnings);
             let status = "error";
+            let message: string | undefined;
             await this.optional(warnings, stage, member.repoId, async () => {
-              const result = await invoke<{ status: string }>(stage, { worktreePath: member.path });
+              const result = await invoke<{ status: string; message?: string }>(stage, {
+                worktreePath: member.path,
+              });
               status = result.status;
-              if (status === "error" || status === "skipped_no_cli") throw new Error();
+              if (status === "error" || status === "skipped_no_cli") {
+                message = result.message;
+                throw new Error();
+              }
             });
             setup[index].steps.push({ stage, status });
             updateSetupStep(
@@ -380,7 +386,8 @@ export class Operations {
                 : status.startsWith("skipped_")
                   ? "skipped"
                   : "completed",
-              warnings
+              warnings,
+              message
             );
           }
         })
