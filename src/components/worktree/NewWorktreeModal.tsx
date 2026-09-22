@@ -1,14 +1,17 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 import { ChevronLeftIcon } from "../ui/Icons";
 import { LinearIssuePicker } from "./LinearIssuePicker";
 import { useLinear } from "../../contexts/useLinear";
-import { EditorApp, LinearIssue, Task, Workspace } from "../../types";
-import { openEditorForWorktree } from "../../services/openEditor";
-import { CreateTaskInput, OperationResult } from "../../services/operations";
-import { isEmbedded, taskSurfaceFor } from "../../embedded/taskSurface";
+import { EditorApp, LinearIssue, Task, TaskMember, Workspace } from "../../types";
+import {
+  CreateTaskInput,
+  OperationResult,
+  OperationError,
+  TaskReady,
+} from "../../services/operations";
 import { OpenTaskOptions } from "../../hooks/useOpenTask";
 
 interface NewWorktreeModalProps {
@@ -17,7 +20,8 @@ interface NewWorktreeModalProps {
   workspace: Workspace;
   onCreated: (
     input: CreateTaskInput,
-    progress?: (message: string) => void
+    progress?: (message: string) => void,
+    onReady?: TaskReady
   ) => Promise<OperationResult<Task>>;
   onOpenTask?: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
   editorApp: EditorApp;
@@ -34,12 +38,12 @@ export function NewWorktreeModal({
   workspace,
   onCreated,
   onOpenTask,
-  editorApp,
   onOpenHint,
 }: NewWorktreeModalProps) {
   const linear = useLinear();
   const [selected, setSelected] = useState<LinearIssue | null>(null);
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
   const [creatingStatus, setCreatingStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [manualMode, setManualMode] = useState(false);
@@ -70,18 +74,21 @@ export function NewWorktreeModal({
     setRepoSel((prev) => ({ ...prev, [repoId]: { ...prev[repoId], included } }));
 
   const handleCreate = async () => {
+    if (creatingRef.current) return;
     const branchInput = (selected?.branchName ?? manualBranch).trim();
     if (!branchInput) return;
     if (includedRepos.length === 0) {
       setError("Select at least one repository");
       return;
     }
+    creatingRef.current = true;
     setCreating(true);
     setCreatingStatus("Preparing worktrees...");
     setError(null);
 
+    let ready = false;
     try {
-      const { data: task, warnings } = await onCreated(
+      await onCreated(
         {
           workspaceId: workspace.id,
           branchName: branchInput,
@@ -96,33 +103,53 @@ export function NewWorktreeModal({
               }
             : {}),
         },
-        setCreatingStatus
-      );
-      for (const warning of warnings) onOpenHint?.(warning.message);
-      if (selected && linear) {
-        void linear
-          .startIssue(selected.id)
-          .catch(() => onOpenHint?.("Could not update Linear issue status"));
-      }
-      if (isEmbedded(taskSurfaceFor(editorApp))) {
-        void onOpenTask?.(task);
-      } else {
-        await openEditorForWorktree(
-          editorApp,
-          task.members.map((member) => member.path),
-          task.branchName,
-          workspace.name,
-          {
-            onMessage: onOpenHint,
-            onError: onOpenHint,
+        (message) => {
+          if (!ready) setCreatingStatus(message);
+        },
+        async (task) => {
+          ready = true;
+          if (selected && linear) {
+            void linear
+              .startIssue(selected.id)
+              .catch(() => onOpenHint?.("Could not update Linear issue status"));
           }
-        );
-      }
-      onClose();
+          try {
+            return (
+              (await onOpenTask?.(task, { onMessage: onOpenHint, onError: onOpenHint })) ?? false
+            );
+          } finally {
+            creatingRef.current = false;
+            setCreating(false);
+            onClose();
+          }
+        }
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!ready) {
+        let message = e instanceof Error ? e.message : String(e);
+        if (e instanceof OperationError && e.code === "create_failed") {
+          const details = e.details as {
+            completedMembers: TaskMember[];
+            failedMembers: TaskMember[];
+          };
+          message +=
+            "\n" +
+            [
+              ...details.completedMembers.map(
+                (member) => `Created: ${member.repoName} · ${member.path}`
+              ),
+              ...details.failedMembers.map(
+                (member) => `Failed: ${member.repoName} · ${member.path}`
+              ),
+            ].join("\n");
+        }
+        setError(message);
+      }
     } finally {
-      setCreating(false);
+      if (!ready) {
+        creatingRef.current = false;
+        setCreating(false);
+      }
     }
   };
 
@@ -140,6 +167,7 @@ export function NewWorktreeModal({
               <label key={r.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer">
                 <input
                   type="checkbox"
+                  disabled={creating}
                   checked={included}
                   onChange={(e) => setIncluded(r.id, e.target.checked)}
                   className="accent-accent"
@@ -157,7 +185,14 @@ export function NewWorktreeModal({
     ) : null;
 
   return (
-    <Modal open={open} onClose={onClose} title="New Task" wide={!showManualForm || !!selected}>
+    <Modal
+      open={open}
+      onClose={() => {
+        if (!creatingRef.current) onClose();
+      }}
+      title="New Task"
+      wide={!showManualForm || !!selected}
+    >
       {showManualForm && !selected ? (
         /* Manual branch mode */
         <div className="p-6 space-y-4">
@@ -176,11 +211,12 @@ export function NewWorktreeModal({
             <input
               className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors font-mono"
               placeholder="feature/my-branch"
+              disabled={creating}
               value={manualBranch}
               onChange={(e) => setManualBranch(e.target.value)}
               autoFocus
               onKeyDown={(e) => {
-                if (e.key === "Enter" && manualBranch.trim()) handleCreate();
+                if (e.key === "Enter" && !creating && manualBranch.trim()) handleCreate();
               }}
             />
           </div>
@@ -189,7 +225,9 @@ export function NewWorktreeModal({
 
           {error && (
             <div className="rounded-lg bg-danger/10 border border-danger/20 px-3 py-2">
-              <p className="text-sm text-danger select-text cursor-text">{error}</p>
+              <p className="text-sm text-danger select-text cursor-text whitespace-pre-wrap wrap-break-word">
+                {error}
+              </p>
             </div>
           )}
 
@@ -254,7 +292,9 @@ export function NewWorktreeModal({
 
                   {error && (
                     <div className="rounded-lg bg-danger/10 border border-danger/20 px-3 py-2">
-                      <p className="text-sm text-danger select-text cursor-text">{error}</p>
+                      <p className="text-sm text-danger select-text cursor-text whitespace-pre-wrap wrap-break-word">
+                        {error}
+                      </p>
                     </div>
                   )}
 

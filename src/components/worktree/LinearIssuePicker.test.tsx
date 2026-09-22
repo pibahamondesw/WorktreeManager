@@ -4,7 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import "@testing-library/jest-dom/vitest";
 import { LinearIssuePicker } from "./LinearIssuePicker";
 import { NewWorktreeModal } from "./NewWorktreeModal";
-import { LinearIssue, Workspace } from "../../types";
+import { LinearIssue, Workspace, Task } from "../../types";
+import { CreateTaskInput, TaskReady } from "../../services/operations";
 
 const { fetchAssignedIssues, startIssue } = vi.hoisted(() => ({
   fetchAssignedIssues: vi.fn(),
@@ -95,12 +96,21 @@ describe("shared Linear issue picker", () => {
   });
 
   it("still creates a task from the issue selected in New task", async () => {
-    const onCreated = vi
-      .fn()
-      .mockResolvedValue({
-        data: { id: "task", members: [], branchName: assigned.branchName },
-        warnings: [],
-      });
+    const onCreated = vi.fn(
+      async (
+        _input: CreateTaskInput,
+        _progress?: (message: string) => void,
+        onReady?: TaskReady
+      ) => {
+        const task = {
+          id: "task",
+          members: [],
+          branchName: assigned.branchName,
+        } as unknown as Task;
+        await onReady?.(task);
+        return { data: task, warnings: [] };
+      }
+    );
     const onClose = vi.fn();
     const workspace: Workspace = {
       id: "workspace",
@@ -128,6 +138,7 @@ describe("shared Linear issue picker", () => {
         repoIds: ["repo"],
         linearIssue: { id: assigned.id, identifier: assigned.identifier, title: assigned.title },
       },
+      expect.any(Function),
       expect.any(Function)
     );
   });

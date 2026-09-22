@@ -25,6 +25,7 @@ import { openCreatePr } from "../../services/pullRequest";
 import { linearIssueUrl, timeAgo } from "../../utils";
 import { TerminalStatus } from "../../services/terminal";
 import { DeleteOptions, OperationResult } from "../../services/operations";
+import { TaskSetupProgress } from "../task/TaskSetupProgress";
 import { stateVariant } from "./cardStyles";
 
 interface WorktreeCardProps {
@@ -477,6 +478,7 @@ export const WorktreeCard = memo(function WorktreeCard({
         </div>
       </div>
 
+      <TaskSetupProgress taskId={task.id} />
       {/* Inline delete confirmation */}
       {confirmDelete && (
         <div
