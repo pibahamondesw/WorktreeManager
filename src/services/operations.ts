@@ -294,7 +294,7 @@ export class Operations {
           })
         );
         steps.push({ stage: "config", status: copied ? "completed" : "error" });
-        for (const command of ["doppler_setup", "install_node_deps"]) {
+        for (const command of ["doppler_setup", "install_node_deps", "install_python_deps"]) {
           let status = "error";
           await this.optional(warnings, command, member.repoId, async () => {
             const result = await invoke<{ status: string }>(command, { worktreePath: member.path });

@@ -83,6 +83,7 @@ async function native(command: string, args?: Record<string, unknown>) {
   if (command === "git_worktree_add") return { warning: null };
   if (command === "doppler_setup") return { status: "skipped_no_config" };
   if (command === "install_node_deps") return { status: "installed" };
+  if (command === "install_python_deps") return { status: "skipped_no_config" };
   if (command === "prepare_task_workspace") return "/generated/workspace.code-workspace";
   return undefined;
 }
@@ -101,7 +102,7 @@ describe("shared operations", () => {
       command: string,
       args?: Record<string, unknown>
     ) => {
-      if (command === "install_node_deps") {
+      if (command === "install_python_deps") {
         await setup.promise;
         return { status: "installed" };
       }
@@ -113,7 +114,7 @@ describe("shared operations", () => {
       return result;
     });
     await vi.waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("install_node_deps", {
+      expect(invoke).toHaveBeenCalledWith("install_python_deps", {
         worktreePath: "/wt/api/pedro/wor-80",
       })
     );
@@ -125,6 +126,13 @@ describe("shared operations", () => {
     expect(result.data.linearIssueId).toBe("issue-id");
     expect(result.data.workspaceFilePath).toBe("/generated/workspace.code-workspace");
     expect(result.setup).toHaveLength(2);
+    for (const member of result.data.members) {
+      expect(invoke).toHaveBeenCalledWith("install_python_deps", { worktreePath: member.path });
+      expect(result.setup?.find((entry) => entry.repoId === member.repoId)?.steps).toContainEqual({
+        stage: "install_python_deps",
+        status: "installed",
+      });
+    }
     expect(result.warnings).toEqual([]);
     const commands = vi.mocked(invoke).mock.calls.map(([command]) => command);
     expect(commands.indexOf("validate_task_worktrees")).toBeLessThan(
@@ -189,14 +197,18 @@ describe("shared operations", () => {
     ).toBe(false);
   });
 
-  it("retains a task when optional setup fails and reports the affected repo", async () => {
+  it.each([
+    ["install_node_deps", "error"],
+    ["install_python_deps", "error"],
+    ["install_python_deps", "skipped_no_cli"],
+  ])("retains a task when %s returns %s and reports the affected repo", async (stage, status) => {
     const { operations } = fixture();
     vi.mocked(invoke).mockImplementation((async (
       command: string,
       args?: Record<string, unknown>
     ) =>
-      command === "install_node_deps"
-        ? { status: "error", message: "secret-token" }
+      command === stage
+        ? { status, message: "secret-token" }
         : native(command, args)) as typeof invoke);
     const result = await operations.createTask(input);
     expect(result.warnings.map((warning) => warning.repoId)).toEqual(["api", "web"]);
