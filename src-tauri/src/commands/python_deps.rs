@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn requirements_creates_a_usable_isolated_environment_without_network() {
         let root = temp_root("real-venv", &["requirements.txt"]);
-        let result = Command::new("/bin/zsh")
+        let result = Command::new("/bin/sh")
             .args(["-c", PythonSetup::Requirements.command()])
             .current_dir(&root)
             .env("PATH", "/usr/bin:/bin")

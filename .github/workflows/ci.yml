@@ -60,6 +60,7 @@ jobs:
             patchelf \
             libxdo-dev \
             libssl-dev \
+            python3-venv \
             build-essential
 
       - name: Install Rust toolchain
