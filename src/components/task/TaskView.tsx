@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { TaskSetupProgress } from "./TaskSetupProgress";
 import { TaskHeader } from "./TaskHeader";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { EditorPane } from "../editor/EditorPane";
@@ -62,6 +63,7 @@ export function TaskView({
         onCloseEditor={surface.kind === "editor" ? () => void closeEditor() : undefined}
         closingEditor={closing}
       />
+      <TaskSetupProgress taskId={task.id} />
       {closeError && (
         <p role="alert" className="px-4 py-2 text-sm text-danger">
           {closeError}

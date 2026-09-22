@@ -17,7 +17,12 @@ import { NewWorktreeModal } from "./NewWorktreeModal";
 import { Task, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
 import { TaskView } from "../task/TaskView";
 import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
-import { CreateTaskInput, DeleteOptions, OperationResult } from "../../services/operations";
+import {
+  CreateTaskInput,
+  DeleteOptions,
+  OperationResult,
+  TaskReady,
+} from "../../services/operations";
 import { TerminalStatus } from "../../services/terminal";
 
 interface WorktreeListProps {
@@ -27,7 +32,8 @@ interface WorktreeListProps {
   vault: VaultConfig;
   onTaskCreated: (
     input: CreateTaskInput,
-    progress?: (message: string) => void
+    progress?: (message: string) => void,
+    onReady?: TaskReady
   ) => Promise<OperationResult<Task>>;
   onTaskIssueLinked: (taskId: string, issue: string) => Promise<Task>;
   onTaskDeleted: (

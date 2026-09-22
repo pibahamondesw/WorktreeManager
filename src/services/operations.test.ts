@@ -2,11 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_STATE, AppState, Task, Workspace } from "../types";
 import { Operations, CreateTaskInput } from "./operations";
-import { archiveTaskNote } from "./notes";
+import { archiveTaskNote, ensureTaskNote } from "./notes";
 import { LinearService } from "./linear";
 import { normalizeTasks } from "../utils";
 import { taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
+import { dismissTaskSetup, getTaskSetup } from "./taskSetup";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("./store", () => ({ persist: vi.fn() }));
@@ -139,6 +140,142 @@ describe("shared operations", () => {
       commands.indexOf("git_worktree_add")
     );
     expect(commands).not.toContain("open_editor");
+  });
+
+  it("starts every worktree before waiting and reports failures only after all settle", async () => {
+    const { operations } = fixture();
+    const second = deferred();
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      if (command === "git_worktree_add") {
+        if (args?.repoPath === "/repos/api") throw new Error("private details");
+        await second.promise;
+      }
+      return native(command, args);
+    }) as typeof invoke);
+    let finished = false;
+    const creating = operations.createTask(input).catch((error) => {
+      finished = true;
+      return error;
+    });
+    await vi.waitFor(() =>
+      expect(
+        vi.mocked(invoke).mock.calls.filter(([command]) => command === "git_worktree_add")
+      ).toHaveLength(2)
+    );
+    expect(finished).toBe(false);
+    expect(operations.getState().tasks).toEqual([]);
+    second.resolve();
+    expect(await creating).toMatchObject({
+      code: "create_failed",
+      details: {
+        completedMembers: [expect.objectContaining({ repoId: "web" })],
+        failedMembers: [expect.objectContaining({ repoId: "api" })],
+      },
+    });
+  });
+
+  it("opens after basic preparation, runs repo setups concurrently and releases the mutation queue", async () => {
+    const { operations } = fixture();
+    const installing = deferred();
+    const opening = deferred();
+    const ready = vi.fn(async (created: Task) => {
+      expect(operations.task(created.id)).toEqual(created);
+      expect(created.workspaceFilePath).toBe("/generated/workspace.code-workspace");
+      expect(
+        vi.mocked(invoke).mock.calls.filter(([command]) => command === "copy_local_configs")
+      ).toHaveLength(2);
+      await opening.promise;
+      return true;
+    });
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      if (command === "install_node_deps") await installing.promise;
+      return native(command, args);
+    }) as typeof invoke);
+    const creating = operations.createTask(input, undefined, ready);
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "doppler_setup")).toBe(
+      false
+    );
+    opening.resolve();
+    await vi.waitFor(() =>
+      expect(
+        vi.mocked(invoke).mock.calls.filter(([command]) => command === "install_node_deps")
+      ).toHaveLength(2)
+    );
+    expect(
+      vi.mocked(invoke).mock.calls.some(([command]) => command === "install_python_deps")
+    ).toBe(false);
+    const created = operations.getState().tasks[0];
+    expect(getTaskSetup(created.id)).toMatchObject({ active: true, opened: true });
+    dismissTaskSetup(created.id);
+    await operations.change(() => ({ selectedWorkspaceId: null }));
+    await expect(
+      operations.deleteTask(created.id, { deleteWorktrees: true })
+    ).rejects.toMatchObject({ code: "setup_active" });
+    await expect(
+      operations.deleteWorkspace("w1", { deleteWorktrees: false })
+    ).rejects.toMatchObject({ code: "setup_active" });
+    expect(closeTaskSessions).not.toHaveBeenCalled();
+    installing.resolve();
+    await creating;
+    expect(getTaskSetup(created.id)?.active).toBe(false);
+    await operations.deleteTask(created.id, { deleteWorktrees: false });
+    expect(getTaskSetup(created.id)).toBeUndefined();
+  });
+
+  it("waits for configuration and note creation before announcing readiness", async () => {
+    const { operations } = fixture();
+    await operations.change(() => ({ vault: { enabled: true, path: "/vault" } }));
+    const copying = deferred();
+    const note = deferred();
+    vi.mocked(ensureTaskNote).mockImplementationOnce(async () => {
+      await note.promise;
+      return "/note";
+    });
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      if (command === "copy_local_configs") await copying.promise;
+      return native(command, args);
+    }) as typeof invoke);
+    const ready = vi.fn().mockResolvedValue(true);
+    const creating = operations.createTask(input, undefined, ready);
+    await vi.waitFor(() => expect(ensureTaskNote).toHaveBeenCalled());
+    expect(ready).not.toHaveBeenCalled();
+    copying.resolve();
+    await vi.waitFor(() =>
+      expect(
+        getTaskSetup(operations.getState().tasks[0].id)?.repos.every(
+          (repo) => repo.steps[0].status === "completed"
+        )
+      ).toBe(true)
+    );
+    expect(ready).not.toHaveBeenCalled();
+    note.resolve();
+    await creating;
+    expect(ready).toHaveBeenCalledOnce();
+  });
+
+  it("continues setup when opening fails and reports warnings instead of success", async () => {
+    const { operations } = fixture();
+    const progress = vi.fn();
+    const result = await operations.createTask(input, progress, async () => {
+      throw new Error("private");
+    });
+    expect(result.warnings).toContainEqual(expect.objectContaining({ stage: "open" }));
+    expect(
+      result.setup?.every((repo) => repo.steps.some((step) => step.stage === "install_python_deps"))
+    ).toBe(true);
+    expect(progress).toHaveBeenLastCalledWith("Setup completed with warnings");
+    expect(getTaskSetup(result.data.id)).toMatchObject({ active: false, opened: false });
+    expect(JSON.stringify(result)).not.toContain("private");
   });
 
   it("selects repositories and preserves manual branch resolution", async () => {

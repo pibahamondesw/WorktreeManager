@@ -10,7 +10,7 @@ import {
   persist,
 } from "../services/store";
 import { AppState, DEFAULT_STATE, EditorApp, VaultConfig, Workspace } from "../types";
-import { Operations, CreateTaskInput, DeleteOptions } from "../services/operations";
+import { Operations, CreateTaskInput, DeleteOptions, TaskReady } from "../services/operations";
 import { applyTheme, themes, CUSTOM_THEME_ID } from "../themes";
 
 export function useStore() {
@@ -182,8 +182,8 @@ export function useStore() {
   }, []);
 
   const createTask = useCallback(
-    (input: CreateTaskInput, progress?: (message: string) => void) =>
-      report(operations.createTask(input, progress)),
+    (input: CreateTaskInput, progress?: (message: string) => void, onReady?: TaskReady) =>
+      report(operations.createTask(input, progress, onReady)),
     [operations, report]
   );
 

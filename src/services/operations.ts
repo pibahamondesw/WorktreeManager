@@ -13,6 +13,17 @@ import { LinearService } from "./linear";
 import { persist } from "./store";
 import { archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
+import {
+  SETUP_STAGES,
+  SetupStage,
+  initializeTaskSetup,
+  getTaskSetup,
+  updateTaskSetup,
+  updateSetupStep,
+  clearTaskSetup,
+} from "./taskSetup";
+
+export type TaskReady = (task: Task) => Promise<boolean>;
 
 export class OperationError extends Error {
   code: string;
@@ -164,8 +175,12 @@ export class Operations {
     });
   }
 
-  createTask(input: CreateTaskInput, progress: (message: string) => void = () => {}) {
-    return this.enqueue(async (): Promise<OperationResult<Task>> => {
+  async createTask(
+    input: CreateTaskInput,
+    progress: (message: string) => void = () => {},
+    onReady?: TaskReady
+  ): Promise<OperationResult<Task>> {
+    const { task, workspace, editor, warnings, vault } = await this.enqueue(async () => {
       const workspace = this.workspace(input.workspaceId);
       const editor = this.getEditor();
       const repos = input.repoIds
@@ -182,26 +197,31 @@ export class Operations {
         );
       }
       await this.validateWorkspace({ ...workspace, repos });
-      const members: TaskMember[] = [];
-      for (const repo of repos) {
-        const resolved = input.linearIssue
-          ? {
-              branchName: input.branchName.trim(),
-              path: `${repo.worktreeBasePath}/${input.branchName.trim()}`,
-            }
-          : await invoke<{ branchName: string; path: string }>("resolve_manual_worktree", {
-              repoPath: repo.localPath,
-              worktreeBasePath: repo.worktreeBasePath,
-              rawName: input.branchName,
-            });
-        members.push({
-          repoId: repo.id,
-          repoName: repo.name,
-          localPath: repo.localPath,
-          path: resolved.path,
-          branchName: resolved.branchName,
-        });
-      }
+      const ownedPaths = this.getState().tasks.flatMap((task) =>
+        task.members.map((member) => member.path)
+      );
+      const members: TaskMember[] = await Promise.all(
+        repos.map(async (repo) => {
+          const resolved = input.linearIssue
+            ? {
+                branchName: input.branchName.trim(),
+                path: `${repo.worktreeBasePath}/${input.branchName.trim()}`,
+              }
+            : await invoke<{ branchName: string; path: string }>("resolve_manual_worktree", {
+                repoPath: repo.localPath,
+                worktreeBasePath: repo.worktreeBasePath,
+                rawName: input.branchName,
+                ownedPaths,
+              });
+          return {
+            repoId: repo.id,
+            repoName: repo.name,
+            localPath: repo.localPath,
+            path: resolved.path,
+            branchName: resolved.branchName,
+          };
+        })
+      );
       if (
         this.getState().tasks.some((task) =>
           task.members.some((member) => members.some((next) => next.path === member.path))
@@ -221,31 +241,41 @@ export class Operations {
           "Check branch names, destination paths, and existing worktree ownership."
         );
       });
-      const created: TaskMember[] = [];
       const warnings: OperationWarning[] = [];
-      for (const member of members) {
-        progress(`Creating worktree for ${member.repoName}`);
-        try {
+      let completed = 0;
+      progress(`Creating worktrees… 0/${members.length} completed`);
+      const results = await Promise.allSettled(
+        members.map(async (member) => {
           const added = await invoke<{ warning: string | null }>("git_worktree_add", {
             repoPath: member.localPath,
             worktreePath: member.path,
             branchName: member.branchName,
           });
-          created.push(member);
-          if (added.warning)
-            warnings.push({
-              stage: "git",
-              repoId: member.repoId,
-              message: "Worktree created using local refs; origin may be unavailable or stale.",
-            });
-        } catch {
-          throw new OperationError(
-            "create_failed",
-            "Worktree creation failed; inspect the reported destinations before retrying.",
-            { completedMembers: created, attemptedMember: member }
-          );
-        }
+          completed += 1;
+          progress(`Creating worktrees… ${completed}/${members.length} completed`);
+          return added;
+        })
+      );
+      const failedMembers = members.filter((_, index) => results[index].status === "rejected");
+      if (failedMembers.length) {
+        throw new OperationError(
+          "create_failed",
+          "Some worktrees could not be created. Existing worktrees were retained.",
+          {
+            completedMembers: members.filter((_, index) => results[index].status === "fulfilled"),
+            failedMembers,
+            attemptedMember: failedMembers[0],
+          }
+        );
       }
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled" && result.value.warning)
+          warnings.push({
+            stage: "git",
+            repoId: members[index].repoId,
+            message: "Worktree created using local refs; origin may be unavailable or stale.",
+          });
+      });
       const taskId = uuid();
       const task: Task = {
         id: taskId,
@@ -263,15 +293,6 @@ export class Operations {
             }
           : {}),
       };
-      if (members.length > 1 && ["cursor", "vscode"].includes(editor)) {
-        await this.optional(warnings, "workspace_file", undefined, async () => {
-          task.workspaceFilePath = await invoke<string>("prepare_task_workspace", {
-            workspaceName: workspace.name,
-            branchName: task.branchName,
-            folders: members.map((member) => member.path),
-          });
-        });
-      }
       try {
         await this.write({ tasks: [...this.getState().tasks, task] });
       } catch {
@@ -281,37 +302,103 @@ export class Operations {
           { task }
         );
       }
-      const setup: NonNullable<OperationResult<Task>["setup"]> = [];
-      for (const member of members) {
-        const steps: { stage: string; status: string }[] = [];
-        setup.push({ repoId: member.repoId, steps });
-        progress(`Preparing ${member.repoName}`);
-        const copied = await this.optional(warnings, "config", member.repoId, () =>
-          invoke("copy_local_configs", {
-            sourceRepo: member.localPath,
-            worktreePath: member.path,
-            paths: [...EDITOR_CONFIG_PATHS[editor], ...ALWAYS_COPIED_CONFIG_PATHS],
-          })
-        );
-        steps.push({ stage: "config", status: copied ? "completed" : "error" });
-        for (const command of ["doppler_setup", "install_node_deps", "install_python_deps"]) {
-          let status = "error";
-          await this.optional(warnings, command, member.repoId, async () => {
-            const result = await invoke<{ status: string }>(command, { worktreePath: member.path });
-            status = result.status;
-            if (result.status === "error" || result.status === "skipped_no_cli") throw new Error();
-          });
-          steps.push({ stage: command, status });
-        }
-      }
-      const vault = this.getState().vault;
-      await this.optional(warnings, "note", undefined, async () => {
-        if (vault.enabled && vault.path && !(await ensureTaskNote(vault, workspace, task)))
-          throw new Error();
-      });
-      progress("Task created and setup completed");
-      return { data: task, warnings, setup };
+      initializeTaskSetup(task, warnings);
+      return { task, workspace, editor, warnings, vault: this.getState().vault };
     });
+    const setup: NonNullable<OperationResult<Task>["setup"]> = task.members.map((member) => ({
+      repoId: member.repoId,
+      steps: [],
+    }));
+    try {
+      progress("Copying local configuration…");
+      await Promise.all([
+        ...task.members.map(async (member, index) => {
+          updateSetupStep(task.id, member.repoId, "config", "running", warnings);
+          const copied = await this.optional(warnings, "config", member.repoId, () =>
+            invoke("copy_local_configs", {
+              sourceRepo: member.localPath,
+              worktreePath: member.path,
+              paths: [...EDITOR_CONFIG_PATHS[editor], ...ALWAYS_COPIED_CONFIG_PATHS],
+            })
+          );
+          setup[index].steps.push({ stage: "config", status: copied ? "completed" : "error" });
+          updateSetupStep(
+            task.id,
+            member.repoId,
+            "config",
+            copied ? "completed" : "error",
+            warnings
+          );
+        }),
+        this.optional(warnings, "note", undefined, async () => {
+          if (vault.enabled && vault.path && !(await ensureTaskNote(vault, workspace, task)))
+            throw new Error();
+        }),
+        this.optional(warnings, "workspace_file", undefined, async () => {
+          if (task.members.length <= 1 || !["cursor", "vscode"].includes(editor)) return;
+          const workspaceFilePath = await invoke<string>("prepare_task_workspace", {
+            workspaceName: workspace.name,
+            branchName: task.branchName,
+            folders: task.members.map((member) => member.path),
+          });
+          await this.change((state) => ({
+            tasks: state.tasks.map((item) =>
+              item.id === task.id ? { ...item, workspaceFilePath } : item
+            ),
+          }));
+        }),
+      ]);
+      if (onReady) {
+        progress("Opening workspace…");
+        await this.optional(warnings, "open", undefined, async () => {
+          if (!(await onReady(this.task(task.id)))) throw new Error();
+          updateTaskSetup(task.id, { ...getTaskSetup(task.id)!, opened: true });
+        });
+      }
+      await Promise.all(
+        task.members.map(async (member, index) => {
+          for (const stage of [
+            "doppler_setup",
+            "install_node_deps",
+            "install_python_deps",
+          ] as SetupStage[]) {
+            progress(`${member.repoName} · ${SETUP_STAGES[stage]}…`);
+            updateSetupStep(task.id, member.repoId, stage, "running", warnings);
+            let status = "error";
+            await this.optional(warnings, stage, member.repoId, async () => {
+              const result = await invoke<{ status: string }>(stage, { worktreePath: member.path });
+              status = result.status;
+              if (status === "error" || status === "skipped_no_cli") throw new Error();
+            });
+            setup[index].steps.push({ stage, status });
+            updateSetupStep(
+              task.id,
+              member.repoId,
+              stage,
+              status === "error" || status === "skipped_no_cli"
+                ? "error"
+                : status.startsWith("skipped_")
+                  ? "skipped"
+                  : "completed",
+              warnings
+            );
+          }
+        })
+      );
+      warnings.sort(
+        (a, b) =>
+          task.members.findIndex((m) => m.repoId === a.repoId) -
+          task.members.findIndex((m) => m.repoId === b.repoId)
+      );
+      progress(warnings.length ? "Setup completed with warnings" : "Setup completed");
+      return { data: this.task(task.id), warnings, setup };
+    } finally {
+      updateTaskSetup(task.id, {
+        ...getTaskSetup(task.id)!,
+        active: false,
+        warnings: [...warnings],
+      });
+    }
   }
 
   linkTaskIssue(id: string, identifier: string) {
@@ -380,6 +467,12 @@ export class Operations {
     options: DeleteOptions,
     warnings: OperationWarning[]
   ) {
+    if (tasks.some((task) => getTaskSetup(task.id)?.active)) {
+      throw new OperationError(
+        "setup_active",
+        "Setup is still running. Wait for it to finish before deleting this task or workspace."
+      );
+    }
     try {
       await Promise.all(tasks.map((task) => closeTaskSessions(task.id)));
     } catch {
@@ -436,6 +529,7 @@ export class Operations {
       const warnings: OperationWarning[] = [];
       await this.removeResources([task], options, warnings);
       await this.write({ tasks: this.getState().tasks.filter((item) => item.id !== id) });
+      clearTaskSetup(id);
       await this.archiveNotes([task], warnings);
       return { data: { id }, warnings };
     });
@@ -462,6 +556,7 @@ export class Operations {
             ? (workspaces[0]?.id ?? null)
             : state.selectedWorkspaceId,
       });
+      tasks.forEach((task) => clearTaskSetup(task.id));
       await this.archiveNotes(tasks, warnings);
       return { data: { id }, warnings };
     });
