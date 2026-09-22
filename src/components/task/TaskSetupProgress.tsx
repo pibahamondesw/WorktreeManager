@@ -31,11 +31,13 @@ export function TaskSetupProgress({ taskId }: { taskId: string }) {
         </summary>
         <ul className="mt-2 space-y-1">
           {setup.repos.flatMap((repo) =>
-            repo.steps.map((step) => (
-              <li key={`${repo.repoId}:${step.stage}`}>
-                {repo.repoName} · {SETUP_STAGES[step.stage]} · {step.status}
-              </li>
-            ))
+            repo.steps
+              .filter((step) => step.status !== "skipped" && step.status !== "pending")
+              .map((step) => (
+                <li key={`${repo.repoId}:${step.stage}`}>
+                  {repo.repoName} · {SETUP_STAGES[step.stage]} · {step.status}
+                </li>
+              ))
           )}
           {setup.warnings.map((warning, index) => (
             <li key={index} className="text-danger">

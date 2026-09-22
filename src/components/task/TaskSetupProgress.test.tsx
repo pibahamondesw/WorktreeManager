@@ -17,7 +17,7 @@ afterEach(() => {
   clearTaskSetup("progress-test");
 });
 
-it("keeps setup progress across navigation and distinguishes warnings and skipped steps", () => {
+it("keeps applicable setup progress across navigation and hides skipped steps", () => {
   const view = render(<TaskSetupProgress taskId="progress-test" />);
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   act(() =>
@@ -30,9 +30,12 @@ it("keeps setup progress across navigation and distinguishes warnings and skippe
   act(() => {
     updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, opened: true });
     updateSetupStep("progress-test", "api", "install_python_deps", "skipped", []);
+    updateSetupStep("progress-test", "api", "install_node_deps", "running", []);
   });
   expect(screen.getByRole("status")).toHaveTextContent("Workspace opened · Setup running");
-  expect(screen.getByText("API · Installing Python dependencies · skipped")).toBeInTheDocument();
+  expect(screen.queryByText(/API · Installing Python dependencies/)).not.toBeInTheDocument();
+  expect(screen.getByText("API · Installing Node dependencies · running")).toBeInTheDocument();
+  expect(screen.queryByText(/pending/)).not.toBeInTheDocument();
   view.unmount();
   render(<TaskSetupProgress taskId="progress-test" />);
   expect(screen.getByRole("status")).toHaveTextContent("Setup running");
