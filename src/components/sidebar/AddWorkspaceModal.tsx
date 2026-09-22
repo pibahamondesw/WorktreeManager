@@ -6,11 +6,13 @@ import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
 import { Workspace, WorkspaceRepo } from "../../types";
 import { WorkspaceRepoEditor } from "./WorkspaceRepoEditor";
+import { SavedLinearKeySelect } from "./SavedLinearKeySelect";
 import { LinearKeyField } from "./LinearKeyField";
 import { useLinearKeyValidation } from "../../hooks/useLinearKeyValidation";
 
 interface AddWorkspaceModalProps {
   open: boolean;
+  workspaces?: Workspace[];
   onClose: () => void;
   onAdd: (workspace: Workspace) => void | Promise<unknown>;
   defaultLinearApiKey?: string | null;
@@ -18,6 +20,7 @@ interface AddWorkspaceModalProps {
 
 export function AddWorkspaceModal({
   open,
+  workspaces = [],
   onClose,
   onAdd,
   defaultLinearApiKey,
@@ -70,6 +73,10 @@ export function AddWorkspaceModal({
         return;
       }
     }
+    if (linear.linearKey.trim() && !linear.linearValid) {
+      setError("Validate the Linear API key before saving");
+      return;
+    }
     try {
       await onAdd({
         id: uuid(),
@@ -98,6 +105,16 @@ export function AddWorkspaceModal({
         />
 
         <WorkspaceRepoEditor repos={repos} onChange={setRepos} home={home} />
+
+        <SavedLinearKeySelect
+          workspaces={workspaces}
+          defaultLinearApiKey={defaultLinearApiKey}
+          value={linear.linearKey}
+          onChange={(key) => {
+            linear.setLinearKey(key);
+            if (key) void linear.runValidation(key);
+          }}
+        />
 
         <LinearKeyField
           linearKey={linear.linearKey}

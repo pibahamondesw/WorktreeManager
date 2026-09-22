@@ -357,6 +357,7 @@ export function WorkspaceList({
           await onAdd(workspace);
           closeAdd();
         }}
+        workspaces={workspaces}
         defaultLinearApiKey={defaultLinearApiKey}
       />
 
@@ -365,6 +366,8 @@ export function WorkspaceList({
           open={!!editWorkspace}
           onClose={() => setEditWorkspace(null)}
           workspace={editWorkspace}
+          workspaces={workspaces}
+          defaultLinearApiKey={defaultLinearApiKey}
           onSave={onUpdate}
           onRequestDelete={() => {
             setRemoveWorkspace(editWorkspace);
