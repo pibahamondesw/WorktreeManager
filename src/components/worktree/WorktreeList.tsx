@@ -12,6 +12,7 @@ import { WorktreeEmptyWorktrees, WorktreeNoRepoPlaceholder } from "./WorktreeLis
 import { WorktreeListHeader } from "./WorktreeListHeader";
 import { WorktreeListKeyboardHints } from "./WorktreeListKeyboardHints";
 import { WorktreeListToast } from "./WorktreeListToast";
+import { LinkIssueModal } from "./LinkIssueModal";
 import { NewWorktreeModal } from "./NewWorktreeModal";
 import { Task, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
 import { TaskView } from "../task/TaskView";
@@ -24,8 +25,15 @@ interface WorktreeListProps {
   agentSessions?: Record<string, TerminalStatus>;
   workspace: Workspace | undefined;
   vault: VaultConfig;
-  onTaskCreated: (input: CreateTaskInput, progress?: (message: string) => void) => Promise<OperationResult<Task>>;
-  onTaskDeleted: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
+  onTaskCreated: (
+    input: CreateTaskInput,
+    progress?: (message: string) => void
+  ) => Promise<OperationResult<Task>>;
+  onTaskIssueLinked: (taskId: string, issue: string) => Promise<Task>;
+  onTaskDeleted: (
+    taskId: string,
+    options: DeleteOptions
+  ) => Promise<OperationResult<{ id: string }>>;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
   workspaceSwitching: boolean;
@@ -75,6 +83,7 @@ export function WorktreeList({
   vault,
   onTaskCreated,
   onTaskDeleted,
+  onTaskIssueLinked,
   editorApp,
   onEditorChange,
   workspaceSwitching,
@@ -95,6 +104,8 @@ export function WorktreeList({
   requestNewTask,
   onRequestNewTaskHandled,
 }: WorktreeListProps) {
+  const [linkTaskId, setLinkTaskId] = useState<string | null>(null);
+  const linkTask = tasks.find((task) => task.id === linkTaskId && !task.linearIssueId);
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
@@ -179,7 +190,7 @@ export function WorktreeList({
     tasks,
     selectedTask,
     showNew,
-    searchOpen,
+    searchOpen: searchOpen || !!linkTask,
     setShowNew,
     setSelectedIndex,
     setDeleteRequested,
@@ -211,64 +222,76 @@ export function WorktreeList({
         {/* The grid stays mounted while a task is open so returning is instant (no re-probing of
             editors, no card remounts). */}
         <div className="contents" hidden={taskOpen}>
-        <WorktreeListHeader
-          workspaceName={workspace.name}
-          taskCount={tasks.length}
-          repoCount={workspace.repos.length}
-          editorApp={editorApp}
-          onEditorChange={onEditorChange}
-          onRefresh={handleRefresh}
-          refreshing={refreshing}
-          onNewTask={() => setShowNew(true)}
-          onOpenSearch={onOpenSearch}
-          sidebarCollapsed={sidebarCollapsed}
-          onExpandSidebar={onExpandSidebar}
-          canGoBack={canGoBack}
-          canGoForward={canGoForward}
-          onGoBack={onGoBack}
-          onGoForward={onGoForward}
-        />
+          <WorktreeListHeader
+            workspaceName={workspace.name}
+            taskCount={tasks.length}
+            repoCount={workspace.repos.length}
+            editorApp={editorApp}
+            onEditorChange={onEditorChange}
+            onRefresh={handleRefresh}
+            refreshing={refreshing}
+            onNewTask={() => setShowNew(true)}
+            onOpenSearch={onOpenSearch}
+            sidebarCollapsed={sidebarCollapsed}
+            onExpandSidebar={onExpandSidebar}
+            canGoBack={canGoBack}
+            canGoForward={canGoForward}
+            onGoBack={onGoBack}
+            onGoForward={onGoForward}
+          />
 
-        <div ref={listRef} className="flex-1 overflow-y-auto p-6">
-          {workspaceSwitching ? (
-            <div className="grid gap-3">
-              {Array.from({ length: Math.max(tasks.length, 3) }).map((_, i) => (
-                <WorktreeCardSkeleton key={i} index={i} />
-              ))}
-            </div>
-          ) : tasks.length === 0 ? (
-            <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />
-          ) : (
-            <div className="grid gap-3">
-              {tasks.map((task, i) => (
-                <WorktreeCard
-                  key={task.id}
-                  task={task}
-                  workspace={workspace}
-                  vault={vault}
-                  onDelete={onTaskDeleted}
-                  linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
-                  gitStatus={aggregateTaskStatus(task, gitStatuses)}
-                  selected={i === selectedIndex}
-                  index={i}
-                  sessionStatus={agentSessions[task.id]}
-                  onOpenError={showToast}
-                  onToast={showToast}
-                  onOpen={() => void onOpenTask(task, { onMessage: showToast, onError: showToast })}
-                  repoSlugs={repoSlugs}
-                  requestDelete={i === selectedIndex && deleteRequested}
-                  onRequestDeleteHandled={() => setDeleteRequested(false)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+          <div ref={listRef} className="flex-1 overflow-y-auto p-6">
+            {workspaceSwitching ? (
+              <div className="grid gap-3">
+                {Array.from({ length: Math.max(tasks.length, 3) }).map((_, i) => (
+                  <WorktreeCardSkeleton key={i} index={i} />
+                ))}
+              </div>
+            ) : tasks.length === 0 ? (
+              <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />
+            ) : (
+              <div className="grid gap-3">
+                {tasks.map((task, i) => (
+                  <WorktreeCard
+                    key={task.id}
+                    task={task}
+                    workspace={workspace}
+                    vault={vault}
+                    onDelete={onTaskDeleted}
+                    onLinkIssue={() => setLinkTaskId(task.id)}
+                    linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
+                    gitStatus={aggregateTaskStatus(task, gitStatuses)}
+                    selected={i === selectedIndex}
+                    index={i}
+                    sessionStatus={agentSessions[task.id]}
+                    onOpenError={showToast}
+                    onToast={showToast}
+                    onOpen={() =>
+                      void onOpenTask(task, { onMessage: showToast, onError: showToast })
+                    }
+                    repoSlugs={repoSlugs}
+                    requestDelete={i === selectedIndex && deleteRequested}
+                    onRequestDeleteHandled={() => setDeleteRequested(false)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
 
-        {tasks.length > 0 && <WorktreeListKeyboardHints showNotes={vault.enabled} />}
+          {tasks.length > 0 && <WorktreeListKeyboardHints showNotes={vault.enabled} />}
         </div>
 
         {toast && <WorktreeListToast message={toast} />}
 
+        {linkTask && (
+          <LinkIssueModal
+            key={linkTask.id}
+            task={linkTask}
+            configured={!!workspace.linearApiKey}
+            onLink={onTaskIssueLinked}
+            onClose={() => setLinkTaskId(null)}
+          />
+        )}
         <NewWorktreeModal
           open={showNew}
           onClose={() => setShowNew(false)}

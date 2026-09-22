@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -20,7 +20,9 @@ const task = {
   id: "t1",
   workspaceId: "ws1",
   branchName: "feat/x",
-  members: [{ repoId: "r1", repoName: "api", localPath: "/repo", path: "/wt", branchName: "feat/x" }],
+  members: [
+    { repoId: "r1", repoName: "api", localPath: "/repo", path: "/wt", branchName: "feat/x" },
+  ],
   createdAt: "2026-01-01T00:00:00Z",
 } as unknown as Task;
 
@@ -42,13 +44,32 @@ describe("WorktreeCard session indicator", () => {
   });
 
   it("shows nothing without a session", () => {
-    render(<WorktreeCard
+    render(
+      <WorktreeCard
         task={task}
         workspace={workspace}
         vault={vault}
         onDelete={vi.fn()}
         repoSlugs={{}}
-      />);
+      />
+    );
     expect(screen.queryByTitle(/Agent session/)).not.toBeInTheDocument();
   });
+});
+
+it("offers linking only for an unlinked task without opening its editor", () => {
+  const onLinkIssue = vi.fn();
+  const onOpen = vi.fn();
+  const props = { task, workspace, vault, onDelete: vi.fn(), repoSlugs: {}, onLinkIssue, onOpen };
+  const { rerender } = render(<WorktreeCard {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Link Linear issue" }));
+  expect(onLinkIssue).toHaveBeenCalledOnce();
+  expect(onOpen).not.toHaveBeenCalled();
+  rerender(
+    <WorktreeCard
+      {...props}
+      task={{ ...task, linearIssueId: "issue", linearIssueIdentifier: "WOR-123" }}
+    />
+  );
+  expect(screen.queryByRole("button", { name: "Link Linear issue" })).not.toBeInTheDocument();
 });

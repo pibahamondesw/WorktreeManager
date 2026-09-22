@@ -9,8 +9,9 @@ import {
   EDITOR_CONFIG_PATHS,
   ALWAYS_COPIED_CONFIG_PATHS,
 } from "../types";
+import { LinearService } from "./linear";
 import { persist } from "./store";
-import { archiveTaskNote, ensureTaskNote } from "./notes";
+import { archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
 
 export class OperationError extends Error {
@@ -310,6 +311,48 @@ export class Operations {
       });
       progress("Task created and setup completed");
       return { data: task, warnings, setup };
+    });
+  }
+
+  linkTaskIssue(id: string, identifier: string) {
+    return this.enqueue(async () => {
+      const task = this.task(id);
+      if (!identifier.trim())
+        throw new OperationError("invalid_params", "Provide a Linear issue ID.");
+      if (task.linearIssueId) {
+        if (
+          [task.linearIssueId, task.linearIssueIdentifier?.toLowerCase()].includes(
+            identifier.trim().toLowerCase()
+          )
+        )
+          return task;
+        throw new OperationError("conflict", "This task already has a Linear issue.");
+      }
+      const workspace = this.workspace(task.workspaceId);
+      if (!workspace.linearApiKey)
+        throw new OperationError(
+          "linear_not_configured",
+          "Configure Linear in this workspace first."
+        );
+      const issue = await new LinearService(workspace.linearApiKey)
+        .getIssue(identifier.trim())
+        .catch(() => {
+          throw new OperationError(
+            "linear_issue_unavailable",
+            "Could not load the Linear issue. Check the issue ID, workspace credentials, and connection."
+          );
+        });
+      const updated = {
+        ...task,
+        noteFileName: taskNoteFileName(task),
+        linearIssueId: issue.id,
+        linearIssueIdentifier: issue.identifier,
+        linearIssueTitle: issue.title,
+      };
+      await this.write({
+        tasks: this.getState().tasks.map((item) => (item.id === id ? updated : item)),
+      });
+      return updated;
     });
   }
 

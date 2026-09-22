@@ -3,11 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_STATE, AppState, Task, Workspace } from "../types";
 import { Operations, CreateTaskInput } from "./operations";
 import { archiveTaskNote } from "./notes";
+import { LinearService } from "./linear";
+import { normalizeTasks } from "../utils";
+import { taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("./store", () => ({ persist: vi.fn() }));
-vi.mock("./notes", () => ({
+vi.mock("./notes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./notes")>()),
   ensureTaskNote: vi.fn().mockResolvedValue("/note"),
   archiveTaskNote: vi.fn().mockResolvedValue(undefined),
 }));
@@ -280,5 +284,91 @@ describe("shared operations", () => {
     await expect(fixture().operations.deleteWorkspace("w1")).resolves.toMatchObject({
       data: { id: "w1" },
     });
+  });
+});
+
+describe("linkTaskIssue", () => {
+  beforeEach(() => {
+    vi.spyOn(LinearService.prototype, "getIssue").mockResolvedValue(input.linearIssue!);
+  });
+
+  async function configured(tasks = [task]) {
+    const result = fixture(tasks);
+    await result.operations.change((state) => ({
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        linearApiKey: "workspace-key",
+      })),
+    }));
+    result.save.mockClear();
+    result.publish.mockClear();
+    return result;
+  }
+
+  it("persists the association and preserves all repositories and the note filename after reload", async () => {
+    const { operations, save } = await configured();
+    const updated = await operations.linkTaskIssue("t1", " WOR-80 ");
+    expect(LinearService.prototype.getIssue).toHaveBeenCalledWith("WOR-80");
+    expect(updated).toEqual({
+      ...task,
+      noteFileName: "feature.md",
+      linearIssueId: "issue-id",
+      linearIssueIdentifier: "WOR-80",
+      linearIssueTitle: "Local CLI",
+    });
+    expect(save).toHaveBeenCalledOnce();
+    expect(taskNoteFileName(normalizeTasks([updated])[0])).toBe("feature.md");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("retries the same link without writing and rejects a different issue", async () => {
+    const { operations, save } = await configured();
+    await operations.linkTaskIssue("t1", "WOR-80");
+    await operations.linkTaskIssue("t1", "wor-80");
+    await operations.linkTaskIssue("t1", "issue-id");
+    await expect(operations.linkTaskIssue("t1", "WOR-99")).rejects.toMatchObject({
+      code: "conflict",
+    });
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("rejects missing tasks, empty identifiers, and missing credentials", async () => {
+    const { operations } = fixture([task]);
+    await expect(operations.linkTaskIssue("missing", "WOR-80")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    await expect(operations.linkTaskIssue("t1", " ")).rejects.toMatchObject({
+      code: "invalid_params",
+    });
+    await expect(operations.linkTaskIssue("t1", "WOR-80")).rejects.toMatchObject({
+      code: "linear_not_configured",
+    });
+    expect(LinearService.prototype.getIssue).not.toHaveBeenCalled();
+  });
+
+  it("retains the original task on lookup or persistence failure without exposing credentials", async () => {
+    const { operations, save, publish } = await configured();
+    vi.mocked(LinearService.prototype.getIssue).mockRejectedValueOnce(new Error("workspace-key"));
+    await expect(operations.linkTaskIssue("t1", "WOR-80")).rejects.toMatchObject({
+      code: "linear_issue_unavailable",
+      message: expect.not.stringContaining("workspace-key"),
+    });
+    expect(save).not.toHaveBeenCalled();
+    save.mockRejectedValueOnce(new Error("disk full"));
+    await expect(operations.linkTaskIssue("t1", "WOR-80")).rejects.toMatchObject({
+      code: "persist_failed",
+    });
+    expect(operations.task("t1")).toBe(task);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("serializes competing links so only the first succeeds", async () => {
+    const { operations } = await configured();
+    const results = await Promise.allSettled([
+      operations.linkTaskIssue("t1", "WOR-80"),
+      operations.linkTaskIssue("t1", "WOR-99"),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
+    expect(LinearService.prototype.getIssue).toHaveBeenCalledOnce();
   });
 });

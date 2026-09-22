@@ -42,6 +42,7 @@ export interface Task {
   /** Generated .code-workspace file (Cursor/VS Code), when applicable. */
   workspaceFilePath?: string | null;
   noteFolder?: string;
+  noteFileName?: string;
   createdAt: string;
 }
 

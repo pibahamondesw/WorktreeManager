@@ -161,6 +161,7 @@ export async function dispatchAutomation(
       "task.list": ["workspaceId"],
       "task.get": ["id", "git"],
       "task.create": ["input"],
+      "task.link-issue": ["id", "issue"],
       "task.delete": ["id", "deleteWorktrees", "force"],
     };
     if (!Object.hasOwn(allowed, request.method))
@@ -223,6 +224,9 @@ export async function dispatchAutomation(
         result = { ...task, git };
         break;
       }
+      case "task.link-issue":
+        result = await operations.linkTaskIssue(text(params.id), text(params.issue));
+        break;
       case "task.create":
         return { ok: true, ...(await operations.createTask(taskInput(params.input), progress)) };
       case "task.delete": {

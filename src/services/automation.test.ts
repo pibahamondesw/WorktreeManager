@@ -97,3 +97,26 @@ describe("automation contract", () => {
     });
   });
 });
+
+it("routes issue linking through the shared operation and validates its parameters", async () => {
+  const link = vi
+    .spyOn(operations, "linkTaskIssue")
+    .mockResolvedValue({ id: "t1", linearIssueIdentifier: "WOR-123" } as never);
+  expect(await call("task.link-issue", { id: "t1", issue: " WOR-123 " })).toMatchObject({
+    ok: true,
+    data: { id: "t1", linearIssueIdentifier: "WOR-123" },
+  });
+  expect(link).toHaveBeenCalledWith("t1", "WOR-123");
+  for (const params of [
+    { id: "t1" },
+    { id: "t1", issue: " " },
+    { id: "t1", issue: 123 },
+    { id: "t1", issue: "WOR-123", force: true },
+  ]) {
+    expect(await call("task.link-issue", params)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+  }
+  expect(link).toHaveBeenCalledOnce();
+});
