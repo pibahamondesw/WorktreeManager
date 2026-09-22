@@ -13,6 +13,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+
+static DOPPLER_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 use crate::commands::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
 
@@ -98,6 +101,9 @@ fn doppler_setup_blocking(worktree_path: String) -> Result<DopplerSetupResult, S
         ));
     }
 
+    let _guard = DOPPLER_CONFIG_LOCK
+        .lock()
+        .map_err(|_| "Doppler configuration lock unavailable")?;
     let shell_cmd = format!(
         "{}; cd {} && doppler setup --no-interactive",
         claude_env_prelude(),
@@ -156,6 +162,9 @@ pub async fn doppler_cleanup(paths: Vec<String>) -> Result<Vec<String>, String> 
 }
 
 fn doppler_cleanup_blocking(paths: Vec<String>) -> Result<Vec<String>, String> {
+    let _guard = DOPPLER_CONFIG_LOCK
+        .lock()
+        .map_err(|_| "Doppler configuration lock unavailable")?;
     let Ok(contents) = fs::read_to_string(doppler_yaml_path()) else {
         return Ok(Vec::new());
     };

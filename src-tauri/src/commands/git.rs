@@ -1,6 +1,53 @@
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+
+static WORKTREE_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+fn worktree_lock(repo_path: &str) -> Result<Arc<Mutex<()>>, String> {
+    let output = git_command()
+        .args([
+            "-C",
+            repo_path,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("Cannot resolve Git common directory".into());
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let mut locks = WORKTREE_LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| "Worktree lock unavailable")?;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&path).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(path, Arc::downgrade(&lock));
+    Ok(lock)
+}
+
+fn matching_worktree(repo_path: &str, path: &str, branch: &str) -> Result<bool, String> {
+    let destination = super::validation::resolved_path(Path::new(path))?;
+    Ok(Path::new(path).join(".git").exists()
+        && git_worktree_list(repo_path.into())?.iter().any(|tree| {
+            !tree.bare
+                && tree.branch == branch
+                && super::validation::resolved_path(Path::new(&tree.path))
+                    .ok()
+                    .as_ref()
+                    == Some(&destination)
+        }))
+}
 
 pub(crate) const GIT_ENV_SCRUB: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -188,6 +235,8 @@ fn worktree_add_blocking(
     worktree_path: String,
     branch_name: String,
 ) -> Result<WorktreeAddResult, String> {
+    let lock = worktree_lock(&repo_path)?;
+    let _guard = lock.lock().map_err(|_| "Worktree lock unavailable")?;
     // Ensure the worktree parent directory exists
     let worktree = std::path::Path::new(&worktree_path);
     if let Some(parent) = worktree.parent() {
@@ -197,7 +246,10 @@ fn worktree_add_blocking(
 
     // If the worktree already exists from a previous attempt, reuse it
     let wt_path = std::path::Path::new(&worktree_path);
-    if wt_path.exists() && wt_path.join(".git").exists() {
+    if wt_path.exists() {
+        if !matching_worktree(&repo_path, &worktree_path, &branch_name)? {
+            return Err("Destination already exists and does not match this worktree".into());
+        }
         exclude_generated_files(&worktree_path)?;
         return Ok(WorktreeAddResult {
             output: format!("Worktree already exists at {}", worktree_path),
@@ -307,26 +359,33 @@ fn worktree_add_blocking(
     }
 }
 
-/// Recursively copy a file or directory from `src` to `dst`.
-fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+fn copy_missing_configs(src: &Path, dst: &Path) -> std::io::Result<bool> {
+    if dst
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        || (dst.exists() && !(src.is_dir() && dst.is_dir()))
+    {
+        return Ok(false);
+    }
     if src.is_dir() {
+        let mut copied = !dst.exists();
         std::fs::create_dir_all(dst)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
-            copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
+            copied |= copy_missing_configs(&entry.path(), &dst.join(entry.file_name()))?;
         }
+        Ok(copied)
     } else {
         if let Some(parent) = dst.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::copy(src, dst)?;
+        Ok(true)
     }
-    Ok(())
 }
 
 /// Copy gitignored local config (repo-relative `paths`) from the base repo into a
-/// new worktree, skipping any path that's missing in the source or already present
-/// in the worktree. Returns the paths actually copied.
+/// new worktree, preserving existing files and filling missing directory entries. Returns the paths actually copied.
 #[tauri::command]
 pub async fn copy_local_configs(
     source_repo: String,
@@ -358,9 +417,10 @@ fn copy_local_configs_blocking(
         let src = src_root.join(&rel);
         let dst = dst_root.join(&rel);
 
-        // Only copy what exists in the base repo and is missing in the worktree.
-        if src.exists() && !dst.exists() {
-            copy_recursive(&src, &dst).map_err(|e| format!("Failed to copy {}: {}", rel, e))?;
+        if src.exists()
+            && copy_missing_configs(&src, &dst)
+                .map_err(|e| format!("Failed to copy {}: {}", rel, e))?
+        {
             copied.push(rel);
         }
     }
@@ -777,6 +837,54 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn linked_repositories_share_creation_lock_but_independent_repos_do_not() {
+        let repo = TestRepo::new();
+        let other = TestRepo::new();
+        let linked = repo.0.join("linked");
+        repo.git(&["worktree", "add", "-b", "linked", linked.to_str().unwrap()]);
+        let root_lock = worktree_lock(repo.0.to_str().unwrap()).unwrap();
+        let linked_lock = worktree_lock(linked.to_str().unwrap()).unwrap();
+        let other_lock = worktree_lock(other.0.to_str().unwrap()).unwrap();
+        let _guard = root_lock.lock().unwrap();
+        assert!(linked_lock.try_lock().is_err());
+        assert!(other_lock.try_lock().is_ok());
+    }
+
+    #[test]
+    fn config_copy_fills_partial_directories_without_overwriting_files() {
+        let repo = TestRepo::new();
+        let source = repo.0.join("source");
+        let target = repo.0.join("target");
+        std::fs::create_dir_all(source.join(".config")).unwrap();
+        std::fs::create_dir_all(target.join(".config")).unwrap();
+        std::fs::write(source.join(".config/existing"), "source").unwrap();
+        std::fs::write(source.join(".config/missing"), "fill").unwrap();
+        std::fs::write(target.join(".config/existing"), "user").unwrap();
+        let copy = || {
+            copy_local_configs_blocking(
+                source.to_string_lossy().into_owned(),
+                target.to_string_lossy().into_owned(),
+                vec![".config".into()],
+            )
+            .unwrap()
+        };
+        assert_eq!(copy(), vec![".config"]);
+        assert_eq!(
+            std::fs::read_to_string(target.join(".config/existing")).unwrap(),
+            "user"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target.join(".config/missing")).unwrap(),
+            "fill"
+        );
+        assert!(copy().is_empty());
+        std::fs::remove_file(target.join(".config/missing")).unwrap();
+        std::os::unix::fs::symlink(source.join("absent"), target.join(".config/missing")).unwrap();
+        assert!(copy().is_empty());
+        assert!(!source.join("absent").exists());
     }
 
     #[test]

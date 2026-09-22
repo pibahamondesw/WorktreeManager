@@ -20,7 +20,7 @@ pub struct Member {
     branch_name: String,
 }
 
-fn resolved_path(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn resolved_path(path: &Path) -> Result<PathBuf, String> {
     if !path.is_absolute()
         || path
             .components()
