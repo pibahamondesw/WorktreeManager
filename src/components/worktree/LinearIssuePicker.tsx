@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, ReactNode, KeyboardEvent } from "react";
 import { LinearIssue } from "../../types";
 import { useLinear } from "../../contexts/useLinear";
 import { useDebounce } from "../../hooks/useDebounce";
@@ -34,6 +34,8 @@ export function LinearIssuePicker({
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
   const debouncedQuery = useDebounce(query, 300);
 
   useEffect(() => {
@@ -96,6 +98,44 @@ export function LinearIssuePicker({
     return [...local, ...remoteResults.filter((issue) => !localIds.has(issue.id))];
   }, [query, cachedIssues, remoteResults]);
 
+  useEffect(() => setActiveIndex(0), [query]);
+
+  useEffect(() => {
+    setActiveIndex((i) => Math.min(i, Math.max(issues.length - 1, 0)));
+  }, [issues.length]);
+
+  useEffect(() => {
+    listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, issues]);
+
+  const resultsVisible = !children && !loading;
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (!resultsVisible || issues.length === 0) return;
+    if (e.key === "ArrowDown" || (e.key === "n" && e.ctrlKey)) {
+      e.preventDefault();
+      setActiveIndex((i) => Math.min(i + 1, issues.length - 1));
+      return;
+    }
+    if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
+      e.preventDefault();
+      setActiveIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (/^[0-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey && !query.trim()) {
+      const index = Number(e.key);
+      if (index < issues.length) {
+        e.preventDefault();
+        setActiveIndex(index);
+      }
+      return;
+    }
+    if (e.key === "Enter" && issues[activeIndex]) {
+      e.preventDefault();
+      onSelect(issues[activeIndex]);
+    }
+  };
+
   return (
     <>
       <div className="px-6 py-3 border-b border-border">
@@ -107,12 +147,13 @@ export function LinearIssuePicker({
             placeholder="Search by issue ID, title, project, or description..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
             autoFocus
           />
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div ref={listRef} className="flex-1 overflow-y-auto">
         {children ?? (
           <>
             {loading && (
@@ -136,12 +177,21 @@ export function LinearIssuePicker({
             )}
 
             {!loading &&
-              issues.map((issue) => (
+              issues.map((issue, index) => (
                 <button
                   key={issue.id}
+                  data-active={index === activeIndex ? "true" : undefined}
+                  onMouseMove={() => setActiveIndex(index)}
                   onClick={() => onSelect(issue)}
-                  className="w-full flex items-center gap-3 px-6 py-3 hover:bg-bg-hover transition-colors text-left cursor-pointer border-b border-border/50 last:border-0"
+                  className={`w-full flex items-center gap-3 px-6 py-3 transition-colors text-left cursor-pointer border-b border-border/50 last:border-0 ${
+                    index === activeIndex ? "bg-bg-hover" : "hover:bg-bg-hover/50"
+                  }`}
                 >
+                  {index <= 9 && (
+                    <span className="text-xs font-mono text-text-muted/40 flex-shrink-0 w-4 text-right">
+                      {index}
+                    </span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono text-text-muted flex-shrink-0">
