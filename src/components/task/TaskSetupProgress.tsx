@@ -11,13 +11,18 @@ import { CloseIcon } from "../ui/Icons";
 export function TaskSetupProgress({ taskId }: { taskId: string }) {
   const setup = useSyncExternalStore(subscribeTaskSetup, () => getTaskSetup(taskId));
   if (!setup || setup.dismissed) return null;
-  const summary = setup.active
-    ? setup.opened
-      ? "Workspace opened · Setup running"
-      : "Setup running"
-    : setup.warnings.length
-      ? "Setup completed with warnings"
-      : "Setup completed";
+  const hasErrors = setup.repos.some((repo) => repo.steps.some((step) => step.status === "error"));
+  const summary = hasErrors
+    ? setup.active
+      ? "Setup running · Errors detected"
+      : "Setup completed with errors"
+    : setup.active
+      ? setup.opened
+        ? "Workspace opened · Setup running"
+        : "Setup running"
+      : setup.warnings.length
+        ? "Setup completed with warnings"
+        : "Setup completed";
 
   return (
     <div
@@ -27,15 +32,23 @@ export function TaskSetupProgress({ taskId }: { taskId: string }) {
     >
       <details className="min-w-0 flex-1">
         <summary className="cursor-pointer">
-          <span role="status">{summary}</span>
+          <span role="status" className={hasErrors ? "text-danger" : undefined}>
+            {summary}
+          </span>
         </summary>
         <ul className="mt-2 space-y-1">
           {setup.repos.flatMap((repo) =>
             repo.steps
               .filter((step) => step.status !== "skipped" && step.status !== "pending")
               .map((step) => (
-                <li key={`${repo.repoId}:${step.stage}`}>
+                <li
+                  key={`${repo.repoId}:${step.stage}`}
+                  className={step.status === "error" ? "text-danger" : undefined}
+                >
                   {repo.repoName} · {SETUP_STAGES[step.stage]} · {step.status}
+                  {step.message && (
+                    <p className="whitespace-pre-wrap break-words">{step.message}</p>
+                  )}
                 </li>
               ))
           )}

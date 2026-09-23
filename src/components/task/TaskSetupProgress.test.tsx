@@ -50,6 +50,35 @@ it("keeps applicable setup progress across navigation and hides skipped steps", 
   expect(screen.getByText("API · Configuration could not be copied.")).toBeInTheDocument();
 });
 
+it("shows errors immediately and retains their details after setup and navigation", () => {
+  initializeTaskSetup(
+    { id: "progress-test", members: [{ repoId: "api", repoName: "API" }] } as Task,
+    []
+  );
+  const view = render(<TaskSetupProgress taskId="progress-test" />);
+  act(() => {
+    updateSetupStep(
+      "progress-test",
+      "api",
+      "install_node_deps",
+      "error",
+      [],
+      "pnpm install failed: registry unavailable"
+    );
+    updateSetupStep("progress-test", "api", "install_python_deps", "running", []);
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("Setup running · Errors detected");
+  expect(screen.getByRole("status")).toHaveClass("text-danger");
+  expect(screen.getByText("pnpm install failed: registry unavailable")).toBeInTheDocument();
+  act(() => {
+    updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, active: false });
+  });
+  view.unmount();
+  render(<TaskSetupProgress taskId="progress-test" />);
+  expect(screen.getByRole("status")).toHaveTextContent("Setup completed with errors");
+  expect(screen.getByText("pnpm install failed: registry unavailable")).toBeInTheDocument();
+});
+
 it.each([true, false])(
   "dismisses progress while active=%s without losing setup state or resurfacing on navigation",
   (active) => {

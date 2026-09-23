@@ -278,6 +278,62 @@ describe("shared operations", () => {
     expect(JSON.stringify(result)).not.toContain("private");
   });
 
+  it.each(["error", "skipped_no_cli", "rejected"])(
+    "reports %s during setup and continues other steps and repositories",
+    async (status) => {
+      const { operations } = fixture();
+      const remainingSetup = deferred();
+      const message = "pnpm CLI not found on PATH";
+      vi.mocked(invoke).mockImplementation((async (
+        command: string,
+        args?: Record<string, unknown>
+      ) => {
+        if (command === "install_node_deps" && args?.worktreePath === "/wt/api/pedro/wor-80") {
+          if (status === "rejected") throw new Error("private");
+          return { status, message };
+        }
+        if (command === "install_python_deps") await remainingSetup.promise;
+        return native(command, args);
+      }) as typeof invoke);
+      const creating = operations.createTask(input);
+      await vi.waitFor(() => {
+        const created = operations.getState().tasks[0];
+        expect(created).toBeDefined();
+        expect(getTaskSetup(created.id)).toMatchObject({
+          active: true,
+          repos: [
+            {
+              steps: expect.arrayContaining([
+                expect.objectContaining({ stage: "install_node_deps", status: "error" }),
+              ]),
+            },
+            {
+              steps: expect.arrayContaining([
+                expect.objectContaining({ stage: "install_node_deps", status: "completed" }),
+              ]),
+            },
+          ],
+        });
+      });
+      remainingSetup.resolve();
+      const result = await creating;
+      const setup = getTaskSetup(result.data.id)!;
+      expect(setup.active).toBe(false);
+      expect(setup.repos[0].steps.find((step) => step.stage === "install_node_deps")?.message).toBe(
+        status === "rejected" ? undefined : message
+      );
+      expect(setup.warnings).toContainEqual(
+        expect.objectContaining({
+          repoId: "api",
+          stage: "install_node_deps",
+        })
+      );
+      expect(JSON.stringify(result)).not.toContain(message);
+      expect(JSON.stringify(setup)).not.toContain("private");
+      expect(result.data).toEqual(operations.getState().tasks[0]);
+    }
+  );
+
   it("selects repositories and preserves manual branch resolution", async () => {
     const { operations } = fixture();
     const result = await operations.createTask({
