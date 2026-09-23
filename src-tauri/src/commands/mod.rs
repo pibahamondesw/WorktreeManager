@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod chat;
 pub mod claude_config;
 pub mod code_server;
 pub mod doctor;
