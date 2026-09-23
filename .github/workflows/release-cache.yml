@@ -1,0 +1,53 @@
+name: Release cache
+
+# Release runs on tags, whose caches later tags can't read. Building the same
+# release on main saves a dependency cache every tag can restore.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/Cargo.lock"
+      - "src-tauri/Cargo.toml"
+      - ".github/workflows/release-cache.yml"
+      - ".github/workflows/release.yml"
+  # GitHub evicts caches unused for 7 days and stable Rust changes every 6 weeks.
+  schedule:
+    - cron: "17 6 * * 1,4"
+  workflow_dispatch:
+
+concurrency:
+  group: release-cache
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    name: Warm macOS release cache
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: macos-release
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release binaries
+        run: pnpm tauri build --target universal-apple-darwin --no-bundle
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
