@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { onTerminalExit, terminalList, TerminalInfo, TerminalStatus } from "../services/terminal";
 import { editorList, onEditorSession, EditorSession } from "../services/codeEditor";
+import { chatList, ChatInfo, ChatStatus, isLive, onChatStatus } from "../services/chat";
+
+const chatSessionStatus = (status: ChatStatus): TerminalStatus =>
+  isLive(status)
+    ? { kind: "running" }
+    : { kind: "exited", code: status.kind === "exited" ? status.code : null };
 
 /**
  * Live agent sessions by task id. Sessions are only created from the task view, so the map is
@@ -9,6 +15,7 @@ import { editorList, onEditorSession, EditorSession } from "../services/codeEdit
 export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStatus> {
   const [sessions, setSessions] = useState<TerminalInfo[]>([]);
   const [editors, setEditors] = useState<Record<string, EditorSession>>({});
+  const [chats, setChats] = useState<ChatInfo[]>([]);
 
   useEffect(() => {
     let stale = false;
@@ -62,8 +69,38 @@ export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStat
     };
   }, []);
 
+  useEffect(() => {
+    let stale = false;
+    let unlisten: (() => void) | undefined;
+    const upsert = (info: ChatInfo) =>
+      setChats((previous) => [
+        ...previous.filter((chat) => chat.taskId !== info.taskId || chat.agent !== info.agent),
+        info,
+      ]);
+    void (async () => {
+      const stop = await onChatStatus((info) => {
+        if (!stale) upsert(info);
+      });
+      if (stale) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+      const list = await chatList();
+      if (!stale) setChats(list);
+    })().catch(() => undefined);
+    return () => {
+      stale = true;
+      unlisten?.();
+    };
+  }, [taskOpen]);
+
   const combined: Record<string, TerminalStatus> = {};
-  for (const session of sessions) {
+  const agentSessions = [
+    ...sessions,
+    ...chats.map((chat) => ({ ...chat, status: chatSessionStatus(chat.status) })),
+  ];
+  for (const session of agentSessions) {
     if (combined[session.taskId]?.kind !== "running") combined[session.taskId] = session.status;
   }
   for (const editor of Object.values(editors)) {

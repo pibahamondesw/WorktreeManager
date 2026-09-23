@@ -2,6 +2,8 @@ import { useState } from "react";
 import { TaskSetupProgress } from "./TaskSetupProgress";
 import { TaskHeader } from "./TaskHeader";
 import { TerminalPane } from "../terminal/TerminalPane";
+import { ChatPane } from "../chat/ChatPane";
+import { AgentSurfaceSwitcher } from "./AgentSurfaceSwitcher";
 import { EditorPane } from "../editor/EditorPane";
 import { editorClose } from "../../services/codeEditor";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
@@ -21,13 +23,15 @@ interface TaskViewProps {
 /** A task opened inside the app: compact header on top, the task's surface filling the rest. */
 export function TaskView({
   task,
-  surface,
+  surface: openedSurface,
   linearInfo,
   gitStatus,
   sidebarCollapsed,
   onExpandSidebar,
   onBack,
 }: TaskViewProps) {
+  const [picked, setPicked] = useState<{ from: TaskSurface; to: TaskSurface } | null>(null);
+  const surface = picked?.from === openedSurface ? picked.to : openedSurface;
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({ kind: "connecting" });
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
@@ -62,6 +66,12 @@ export function TaskView({
         onBack={onBack}
         onCloseEditor={surface.kind === "editor" ? () => void closeEditor() : undefined}
         closingEditor={closing}
+        surfaceSwitcher={
+          <AgentSurfaceSwitcher
+            surface={surface}
+            onChange={(to) => setPicked({ from: openedSurface, to })}
+          />
+        }
       />
       <TaskSetupProgress taskId={task.id} />
       {closeError && (
@@ -99,6 +109,16 @@ function TaskSurfaceView({
           agent={surface.agent}
           folders={task.members.map((m) => m.path)}
           branchName={task.branchName}
+          onStatusChange={onStatusChange}
+        />
+      );
+    case "chat":
+      return (
+        <ChatPane
+          key={surface.agent}
+          taskId={task.id}
+          agent={surface.agent}
+          folders={task.members.map((m) => m.path)}
           onStatusChange={onStatusChange}
         />
       );

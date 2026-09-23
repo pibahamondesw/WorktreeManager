@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -100,6 +100,42 @@ describe("TaskView", () => {
     expect(mocks.invoke.mock.calls.some(([command]) => command === "terminal_close")).toBe(false);
     view.unmount();
     expect(mocks.invoke).toHaveBeenCalledWith("terminal_detach", { taskId: "t1", agent: "codex" });
+  });
+
+  it("switches a terminal to the same agent's chat and back without closing sessions", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open")
+        return Promise.resolve({ generation: 1, status: { kind: "idle" }, items: [], pending: [] });
+      return Promise.resolve({ created: true, status: { kind: "running" }, replay: "" });
+    });
+    renderView();
+    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    const view = screen.getByRole("group", { name: "View" });
+    fireEvent.click(within(view).getByRole("button", { name: "Chat" }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "chat_open",
+        expect.objectContaining({ taskId: "t1", agent: "claude", folders: ["/wt/a", "/wt/b"] })
+      )
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("terminal_detach", { taskId: "t1", agent: "claude" });
+    expect(screen.queryByRole("group", { name: "Agent" })).not.toBeInTheDocument();
+
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "View" })).getByRole("button", { name: "Terminal" })
+    );
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_detach", {
+        taskId: "t1",
+        agent: "claude",
+        generation: 1,
+      })
+    );
+    expect(
+      mocks.invoke.mock.calls.some(
+        ([command]) => command === "chat_close" || command === "terminal_close"
+      )
+    ).toBe(false);
   });
 
   it("closes an embedded editor before returning to the task list", async () => {

@@ -111,16 +111,19 @@ export type EditorApp =
   | "vscode-web"
   | "claude-code"
   | "codex"
+  | "claude-chat"
+  | "codex-chat"
   | "opencode"
   | "zed";
 
-/** CLI agents that can run inside an embedded terminal. */
+/** CLI agents that can run inside an embedded terminal or chat. */
 export type AgentId = "claude" | "codex";
 
 /** Where a task opens: an external editor process, or a surface rendered inside the app. */
 export type TaskSurface =
   | { kind: "external" }
   | { kind: "terminal"; agent: AgentId }
+  | { kind: "chat"; agent: AgentId }
   | { kind: "editor" };
 
 /**
@@ -134,6 +137,8 @@ export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
   "vscode-web": [".vscode", ".claude"],
   "claude-code": [".claude"],
   codex: [".codex", ".agents"],
+  "claude-chat": [".claude"],
+  "codex-chat": [".codex", ".agents"],
   opencode: [".opencode"],
   zed: [".zed", ".claude"],
 };
@@ -155,6 +160,8 @@ export const EDITOR_REQUIREMENTS: Record<
   "vscode-web": { apps: [], clis: [], optionalClis: [] },
   "claude-code": { apps: [], clis: ["claude"], optionalClis: [] },
   codex: { apps: [], clis: ["codex"], optionalClis: [] },
+  "claude-chat": { apps: [], clis: ["claude"], optionalClis: [] },
+  "codex-chat": { apps: [], clis: ["codex"], optionalClis: [] },
   opencode: { apps: ["OpenCode"], clis: [], optionalClis: [] },
   zed: { apps: ["Zed"], clis: [], optionalClis: ["zed"] },
 };
@@ -166,6 +173,8 @@ export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "opencode", label: "OpenCode", isCli: false },
   { id: "claude-code", label: "Claude Code", isCli: true },
   { id: "codex", label: "Codex", isCli: true },
+  { id: "claude-chat", label: "Claude chat", isCli: true },
+  { id: "codex-chat", label: "Codex chat", isCli: true },
   { id: "zed", label: "Zed", isCli: false },
 ];
 

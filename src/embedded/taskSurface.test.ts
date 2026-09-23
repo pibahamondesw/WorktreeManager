@@ -12,6 +12,12 @@ describe("taskSurfaceFor", () => {
     expect(isEmbedded(taskSurfaceFor("codex"))).toBe(true);
   });
 
+  it("embeds a chat for the agent chat editors", () => {
+    expect(taskSurfaceFor("claude-chat")).toEqual({ kind: "chat", agent: "claude" });
+    expect(taskSurfaceFor("codex-chat")).toEqual({ kind: "chat", agent: "codex" });
+    expect(isEmbedded(taskSurfaceFor("codex-chat"))).toBe(true);
+  });
+
   it("keeps every other editor external", () => {
     for (const editor of ["cursor", "vscode", "zed", "opencode"] as const) {
       expect(taskSurfaceFor(editor)).toEqual({ kind: "external" });
