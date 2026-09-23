@@ -11,8 +11,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      rust: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.vault_kit == 'true' || steps.filter.outputs.workflow == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          # "every": a file counts for a filter only if it matches all of its patterns,
+          # which lets `frontend` mean "anything outside src-tauri".
+          predicate-quantifier: every
+          filters: |
+            frontend:
+              - '**'
+              - '!src-tauri/**'
+            rust:
+              - 'src-tauri/**'
+            vault_kit:
+              - 'vault-kit/**'
+            workflow:
+              - '.github/workflows/ci.yml'
+
   frontend:
     name: Frontend (lint, typecheck, test)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +77,8 @@ jobs:
 
   rust:
     name: Rust (clippy, fmt, test)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
