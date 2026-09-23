@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 const STORE = "store.json";
 const SIDECAR = "store.backup-preMultiRepo.json";
@@ -80,13 +80,20 @@ const workspace = {
   repos: [{ id: "r1", name: "api", localPath: "/a", worktreeBasePath: "/wt/a" }],
 };
 
+let loggedErrors: MockInstance<typeof console.error>;
+
 beforeEach(() => {
+  loggedErrors = vi.spyOn(console, "error").mockImplementation(() => {});
   disk.failNextSave = false;
   files.clear();
   savedPaths.clear();
   keychain.value = null;
   keychain.readable = true;
   keychain.writable = true;
+});
+
+afterEach(() => {
+  loggedErrors.mockRestore();
 });
 
 describe("loadState v2 → v4 migration", () => {
@@ -272,6 +279,11 @@ describe("persist when the keychain could not be read", () => {
     await store.loadState();
 
     await expect(store.persist([["workspaces", []]])).rejects.toThrow(/refusing to overwrite/);
+    expect(loggedErrors).toHaveBeenCalledWith(
+      "[persist] failed for keys",
+      ["workspaces"],
+      expect.any(Error)
+    );
   });
 
   it("leaves the stored bundle intact for the next authorized launch", async () => {
