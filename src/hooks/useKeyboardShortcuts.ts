@@ -33,6 +33,17 @@ export function keyMatches(eventKey: string, shortcutKey: string): boolean {
     : eventKey === shortcutKey;
 }
 
+// Symbols like "[" need shift on some layouts (Latin American), and e.key already
+// reflects the produced character, so shift only disambiguates letters and named keys.
+export function shiftMatches(
+  eventShift: boolean,
+  shortcut: { key: string; shift: boolean }
+): boolean {
+  const isSymbol =
+    shortcut.key.length === 1 && shortcut.key.toLowerCase() === shortcut.key.toUpperCase();
+  return (isSymbol && !shortcut.shift) || shortcut.shift === eventShift;
+}
+
 function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
@@ -66,7 +77,7 @@ export function useKeyboardShortcuts(
         if (inTextField && !(s.meta && s.def.inTextFields)) continue;
         if (!keyMatches(e.key, s.key)) continue;
         if (s.meta !== isMeta) continue;
-        if (s.shift !== e.shiftKey) continue;
+        if (!shiftMatches(e.shiftKey, s)) continue;
 
         e.preventDefault();
         s.def.handler();

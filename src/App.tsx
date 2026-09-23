@@ -213,6 +213,10 @@ function App() {
       handler: toggleSidebarCollapsed,
       enabled: state.setup.isComplete && !search.open,
     },
+    "{": {
+      handler: toggleSidebarCollapsed,
+      enabled: state.setup.isComplete && !search.open,
+    },
     "meta+k": {
       handler: () => openSearch(false),
       enabled: state.setup.isComplete,
