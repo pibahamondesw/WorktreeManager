@@ -6,6 +6,7 @@ import { LinkIssueModal } from "./LinkIssueModal";
 import { LinearIssue, Task } from "../../types";
 
 vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
+Element.prototype.scrollIntoView = vi.fn();
 const { fetchAssignedIssues } = vi.hoisted(() => ({ fetchAssignedIssues: vi.fn() }));
 vi.mock("../../contexts/useLinear", () => {
   const service = { fetchAssignedIssues };

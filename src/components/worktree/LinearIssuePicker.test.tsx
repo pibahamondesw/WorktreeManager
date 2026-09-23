@@ -17,6 +17,7 @@ vi.mock("../../contexts/useLinear", () => {
 });
 vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
 vi.mock("../../services/openEditor", () => ({ openEditorForWorktree: vi.fn() }));
+Element.prototype.scrollIntoView = vi.fn();
 
 const assigned: LinearIssue = {
   id: "assigned",
@@ -41,10 +42,22 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+const third: LinearIssue = { ...assigned, id: "third", identifier: "WOR-125", title: "Third" };
+
+function searchInput() {
+  return screen.getByRole("textbox", { name: "Search Linear issues" });
+}
+
 function search(value: string) {
-  fireEvent.change(screen.getByRole("textbox", { name: "Search Linear issues" }), {
-    target: { value },
-  });
+  fireEvent.change(searchInput(), { target: { value } });
+}
+
+function press(key: string, init: Partial<KeyboardEventInit> = {}) {
+  fireEvent.keyDown(searchInput(), { key, ...init });
+}
+
+function activeIssue() {
+  return document.querySelector('[data-active="true"]');
 }
 
 describe("shared Linear issue picker", () => {
@@ -60,6 +73,54 @@ describe("shared Linear issue picker", () => {
     expect(screen.getAllByRole("button", { name: /WOR-123/ })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: /WOR-124/ }));
     expect(onSelect).toHaveBeenCalledWith(remote);
+  });
+
+  it("navigates results with arrows, ctrl+n/p and digits, and selects with Enter", async () => {
+    fetchAssignedIssues.mockResolvedValue([assigned, remote, third]);
+    const onSelect = vi.fn();
+    render(<LinearIssuePicker onSelect={onSelect} />);
+    await screen.findByRole("button", { name: /WOR-125/ });
+    expect(activeIssue()).toHaveTextContent("WOR-123");
+    press("ArrowDown");
+    press("ArrowDown");
+    press("ArrowDown");
+    expect(activeIssue()).toHaveTextContent("WOR-125");
+    press("p", { ctrlKey: true });
+    expect(activeIssue()).toHaveTextContent("WOR-124");
+    press("ArrowUp");
+    press("ArrowUp");
+    expect(activeIssue()).toHaveTextContent("WOR-123");
+    press("n", { ctrlKey: true });
+    expect(activeIssue()).toHaveTextContent("WOR-124");
+    press("2");
+    expect(activeIssue()).toHaveTextContent("WOR-125");
+    press("7");
+    expect(activeIssue()).toHaveTextContent("WOR-125");
+    press("Enter");
+    expect(onSelect).toHaveBeenCalledWith(third);
+  });
+
+  it("keeps digits for typing once a query is entered", async () => {
+    fetchAssignedIssues.mockResolvedValue([assigned, remote, third]);
+    render(<LinearIssuePicker onSelect={vi.fn()} />);
+    await screen.findByRole("button", { name: /WOR-125/ });
+    search("WOR");
+    const event = new KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true });
+    searchInput().dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(activeIssue()).toHaveTextContent("WOR-123");
+  });
+
+  it("ignores navigation keys while a selection is shown", async () => {
+    const onSelect = vi.fn();
+    render(
+      <LinearIssuePicker onSelect={onSelect}>
+        <p>Selected</p>
+      </LinearIssuePicker>
+    );
+    press("Enter");
+    press("ArrowDown");
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it("ignores a late response after the query changes", async () => {
