@@ -33,6 +33,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Tag-scoped caches are invisible to later tags; release-cache.yml warms
+          # this key on main, which tags can restore.
+          shared-key: macos-release
+          save-if: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
