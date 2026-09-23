@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { keyMatches, parseKey } from "./useKeyboardShortcuts";
+import { keyMatches, parseKey, shiftMatches } from "./useKeyboardShortcuts";
 
 describe("parseKey", () => {
   it("parses a plain key", () => {
@@ -48,5 +48,20 @@ describe("keyMatches", () => {
   it("matches named keys exactly", () => {
     expect(keyMatches("ArrowDown", "ArrowDown")).toBe(true);
     expect(keyMatches("arrowdown", "ArrowDown")).toBe(false);
+  });
+});
+
+describe("shiftMatches", () => {
+  it("ignores shift for symbols produced with shift on some layouts", () => {
+    expect(shiftMatches(true, parseKey("["))).toBe(true);
+    expect(shiftMatches(true, parseKey("meta+["))).toBe(true);
+    expect(shiftMatches(false, parseKey("["))).toBe(true);
+  });
+
+  it("requires shift to match for letters and named keys", () => {
+    expect(shiftMatches(true, parseKey("meta+c"))).toBe(false);
+    expect(shiftMatches(false, parseKey("meta+shift+c"))).toBe(false);
+    expect(shiftMatches(true, parseKey("meta+shift+c"))).toBe(true);
+    expect(shiftMatches(true, parseKey("Enter"))).toBe(false);
   });
 });
