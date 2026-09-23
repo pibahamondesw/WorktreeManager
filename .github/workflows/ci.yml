@@ -105,6 +105,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # PRs reuse main's cache instead of saving ~1 GB each and evicting it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Clippy
         run: cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml
