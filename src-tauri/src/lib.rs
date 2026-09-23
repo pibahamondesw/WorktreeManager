@@ -57,6 +57,7 @@ pub fn run() {
                 commands::doppler::doppler_setup,
                 commands::doppler::doppler_cleanup,
                 commands::node_deps::install_node_deps,
+                commands::python_deps::prepare_python_env,
                 commands::python_deps::install_python_deps,
                 commands::editor::open_editor,
                 commands::editor::check_app_installed,

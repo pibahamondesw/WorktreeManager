@@ -263,6 +263,36 @@ describe("shared operations", () => {
     expect(ready).toHaveBeenCalledOnce();
   });
 
+  it("prepares Python environments before opening and tolerates preparation failures", async () => {
+    const { operations } = fixture();
+    const preparing = deferred();
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      if (command === "prepare_python_env") {
+        await preparing.promise;
+        throw new Error("private");
+      }
+      return native(command, args);
+    }) as typeof invoke);
+    const ready = vi.fn().mockResolvedValue(true);
+    const creating = operations.createTask(input, undefined, ready);
+    await vi.waitFor(() =>
+      expect(
+        vi.mocked(invoke).mock.calls.filter(([command]) => command === "prepare_python_env")
+      ).toHaveLength(2)
+    );
+    expect(ready).not.toHaveBeenCalled();
+    preparing.resolve();
+    const result = await creating;
+    expect(ready).toHaveBeenCalledOnce();
+    expect(result.warnings).toEqual([]);
+    expect(
+      vi.mocked(invoke).mock.calls.filter(([command]) => command === "install_python_deps")
+    ).toHaveLength(2);
+  });
+
   it("continues setup when opening fails and reports warnings instead of success", async () => {
     const { operations } = fixture();
     const progress = vi.fn();

@@ -330,6 +330,9 @@ export class Operations {
             warnings
           );
         }),
+        ...task.members.map((member) =>
+          invoke("prepare_python_env", { worktreePath: member.path }).catch(() => undefined)
+        ),
         this.optional(warnings, "note", undefined, async () => {
           if (vault.enabled && vault.path && !(await ensureTaskNote(vault, workspace, task)))
             throw new Error();
