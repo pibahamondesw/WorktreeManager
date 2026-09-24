@@ -14,7 +14,7 @@ import { WorktreeListKeyboardHints } from "./WorktreeListKeyboardHints";
 import { WorktreeListToast } from "./WorktreeListToast";
 import { LinkIssueModal } from "./LinkIssueModal";
 import { NewWorktreeModal } from "./NewWorktreeModal";
-import { Task, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
+import { Task, TaskSurface, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
 import { TaskView } from "../task/TaskView";
 import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
 import {
@@ -55,6 +55,7 @@ interface WorktreeListProps {
   openedTask: OpenedTask | null;
   onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
   onCloseTask: () => void;
+  onSwitchSurface: (taskId: string, surface: TaskSurface) => void;
   canGoBack: boolean;
   canGoForward: boolean;
   onGoBack: () => void;
@@ -103,6 +104,7 @@ export function WorktreeList({
   openedTask,
   onOpenTask,
   onCloseTask,
+  onSwitchSurface,
   canGoBack,
   canGoForward,
   onGoBack,
@@ -223,6 +225,7 @@ export function WorktreeList({
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={onExpandSidebar}
             onBack={handleCloseTask}
+            onSwitchSurface={(surface) => onSwitchSurface(openTask.id, surface)}
           />
         )}
         {/* The grid stays mounted while a task is open so returning is instant (no re-probing of

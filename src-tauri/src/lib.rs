@@ -16,6 +16,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .manage(commands::terminal::TerminalRegistry::default())
+        .manage(commands::chat::ChatRegistry::default())
         .manage(commands::code_server::EditorRegistry::default())
         .setup(|app| {
             #[cfg(unix)]
@@ -77,6 +78,18 @@ pub fn run() {
                 commands::terminal::terminal_detach,
                 commands::terminal::terminal_close,
                 commands::terminal::terminal_list,
+                commands::terminal::terminal_stop,
+                commands::chat::chat_stop,
+                commands::chat::chat_open,
+                commands::chat::chat_send,
+                commands::chat::chat_interrupt,
+                commands::chat::chat_configure,
+                commands::chat::chat_compact,
+                commands::chat::chat_file_search,
+                commands::chat::chat_respond,
+                commands::chat::chat_detach,
+                commands::chat::chat_close,
+                commands::chat::chat_list,
                 commands::code_server::vscode_probe,
                 commands::code_server::vscode_install,
                 commands::code_server::vscode_install_status,
@@ -104,6 +117,7 @@ pub fn run() {
                     .shutdown_all();
                 app.state::<commands::terminal::TerminalRegistry>()
                     .shutdown_all();
+                app.state::<commands::chat::ChatRegistry>().shutdown_all();
             }
         });
 }

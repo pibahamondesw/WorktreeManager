@@ -1,4 +1,3 @@
-mod process;
 mod profile;
 pub mod runtime;
 mod trust;
@@ -17,7 +16,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, Webview};
 
-use process::OwnedProcess;
+use super::process::OwnedProcess;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub struct Bounds {

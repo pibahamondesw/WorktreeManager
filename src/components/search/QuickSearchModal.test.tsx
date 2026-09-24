@@ -214,7 +214,7 @@ describe("QuickSearchModal commands", () => {
     fireEvent.click(screen.getByRole("button", { name: /Open in Claude Code/ }));
     expect(onOpenTask).toHaveBeenCalledWith(
       otherTask,
-      expect.objectContaining({ surface: { kind: "terminal", agent: "claude" } })
+      expect.objectContaining({ agent: "claude" })
     );
   });
 

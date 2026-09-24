@@ -449,3 +449,20 @@ describe("failed store writes", () => {
     );
   });
 });
+
+describe("loadAgentViews", () => {
+  it("defaults every agent to chat and keeps only valid remembered views", async () => {
+    seed(STORE, { agentViews: { claude: "terminal", codex: "bogus" } });
+    expect(await (await loadModule()).loadAgentViews()).toEqual({
+      claude: "terminal",
+      codex: "chat",
+    });
+    seed(STORE, {});
+    expect(await (await loadModule()).loadAgentViews()).toEqual({ claude: "chat", codex: "chat" });
+  });
+
+  it("maps the retired chat editor ids back to their agents", async () => {
+    seed(STORE, { editorApp: "codex-chat" });
+    expect(await (await loadModule()).loadEditorApp()).toBe("codex");
+  });
+});

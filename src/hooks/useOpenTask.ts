@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { EditorApp, Task, TaskSurface, Workspace } from "../types";
+import {
+  AgentId,
+  AgentViews,
+  DEFAULT_AGENT_VIEWS,
+  EditorApp,
+  Task,
+  TaskSurface,
+  Workspace,
+} from "../types";
 import { openEditorForWorktree } from "../services/openEditor";
-import { taskSurfaceFor, isEmbedded } from "../embedded/taskSurface";
+import { agentSurface, taskSurfaceFor, isEmbedded } from "../embedded/taskSurface";
 
 export interface OpenTaskOptions {
-  /** Override the editor-derived surface (e.g. the "Open in Claude Code" menu action). */
-  surface?: TaskSurface;
+  /** Open this agent in its remembered view instead of the editor choice ("Open in Codex"). */
+  agent?: AgentId;
   onMessage?: (message: string) => void;
   onError?: (message: string) => void;
 }
@@ -17,6 +25,7 @@ export interface OpenedTask {
 
 interface UseOpenTaskArgs {
   editorApp: EditorApp;
+  agentViews?: AgentViews;
   workspaces: Workspace[];
   tasks: Task[];
   recordTaskVisit: (task: Task) => void;
@@ -29,6 +38,7 @@ interface UseOpenTaskArgs {
  */
 export function useOpenTask({
   editorApp,
+  agentViews = DEFAULT_AGENT_VIEWS,
   workspaces,
   tasks,
   recordTaskVisit,
@@ -45,7 +55,9 @@ export function useOpenTask({
     async (task: Task, options: OpenTaskOptions = {}): Promise<boolean> => {
       showTask(task);
       recordTaskVisit(task);
-      const surface = options.surface ?? taskSurfaceFor(editorApp);
+      const surface = options.agent
+        ? agentSurface(options.agent, agentViews)
+        : taskSurfaceFor(editorApp, agentViews);
       if (isEmbedded(surface)) {
         setOpenedTask({ taskId: task.id, surface });
         return true;
@@ -60,18 +72,24 @@ export function useOpenTask({
       );
       return result !== null;
     },
-    [editorApp, workspaces, recordTaskVisit, showTask]
+    [editorApp, agentViews, workspaces, recordTaskVisit, showTask]
   );
 
   const closeTask = useCallback(() => setOpenedTask(null), []);
   const restoreTask = useCallback(
     (task: Task) => {
       showTask(task);
-      const surface = taskSurfaceFor(editorApp);
+      const surface = taskSurfaceFor(editorApp, agentViews);
       setOpenedTask(isEmbedded(surface) ? { taskId: task.id, surface } : null);
     },
-    [editorApp, showTask]
+    [editorApp, agentViews, showTask]
   );
 
-  return { openedTask, openTask, closeTask, restoreTask };
+  const switchSurface = useCallback(
+    (taskId: string, surface: TaskSurface) =>
+      setOpenedTask((current) => (current?.taskId === taskId ? { taskId, surface } : current)),
+    []
+  );
+
+  return { openedTask, openTask, closeTask, restoreTask, switchSurface };
 }

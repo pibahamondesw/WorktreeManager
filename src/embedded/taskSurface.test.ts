@@ -2,14 +2,13 @@ import { describe, expect, it } from "vitest";
 import { isEmbedded, taskSurfaceFor } from "./taskSurface";
 
 describe("taskSurfaceFor", () => {
-  it("embeds a Claude terminal for the claude-code editor", () => {
-    expect(taskSurfaceFor("claude-code")).toEqual({ kind: "terminal", agent: "claude" });
-    expect(isEmbedded(taskSurfaceFor("claude-code"))).toBe(true);
-  });
-
-  it("embeds a Codex terminal for the codex editor", () => {
-    expect(taskSurfaceFor("codex")).toEqual({ kind: "terminal", agent: "codex" });
+  it("opens agents in chat by default and honours a remembered terminal view", () => {
+    expect(taskSurfaceFor("claude-code")).toEqual({ kind: "chat", agent: "claude" });
+    expect(taskSurfaceFor("codex")).toEqual({ kind: "chat", agent: "codex" });
     expect(isEmbedded(taskSurfaceFor("codex"))).toBe(true);
+    const views = { claude: "terminal", codex: "chat" } as const;
+    expect(taskSurfaceFor("claude-code", views)).toEqual({ kind: "terminal", agent: "claude" });
+    expect(taskSurfaceFor("codex", views)).toEqual({ kind: "chat", agent: "codex" });
   });
 
   it("keeps every other editor external", () => {

@@ -185,7 +185,7 @@ pub fn verify_archive(path: &Path, expected: &str) -> Result<(), String> {
 pub struct Installation {
     cancelled: AtomicBool,
     progress: Mutex<InstallProgress>,
-    process: Mutex<Option<super::process::OwnedProcess>>,
+    process: Mutex<Option<crate::commands::process::OwnedProcess>>,
 }
 
 impl Installation {
@@ -263,7 +263,7 @@ fn run_checked(
     {
         let mut process = installation.process.lock().unwrap();
         installation.check()?;
-        *process = Some(super::process::OwnedProcess::spawn(
+        *process = Some(crate::commands::process::OwnedProcess::spawn(
             command
                 .stdout(output.try_clone().map_err(|error| error.to_string())?)
                 .stderr(output)

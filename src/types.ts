@@ -114,14 +114,20 @@ export type EditorApp =
   | "opencode"
   | "zed";
 
-/** CLI agents that can run inside an embedded terminal. */
+/** CLI agents that can run inside an embedded terminal or chat. */
 export type AgentId = "claude" | "codex";
 
 /** Where a task opens: an external editor process, or a surface rendered inside the app. */
 export type TaskSurface =
   | { kind: "external" }
   | { kind: "terminal"; agent: AgentId }
+  | { kind: "chat"; agent: AgentId }
   | { kind: "editor" };
+
+/** How an agent opens inside a task; remembered per agent, chat unless the user picks terminal. */
+export type AgentView = "chat" | "terminal";
+export type AgentViews = Record<AgentId, AgentView>;
+export const DEFAULT_AGENT_VIEWS: AgentViews = { claude: "chat", codex: "chat" };
 
 /**
  * Editor-specific local config directories carried into a new worktree.

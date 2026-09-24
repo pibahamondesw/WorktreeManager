@@ -1,3 +1,4 @@
+import { ReactNode } from "react";
 import { BranchIcon, ChevronLeftIcon, SidebarIcon } from "../ui/Icons";
 import { GitStatus, IssueLinearInfo, Task } from "../../types";
 import { Badge } from "../ui/Badge";
@@ -14,6 +15,7 @@ interface TaskHeaderProps {
   onBack: () => void;
   onCloseEditor?: () => void;
   closingEditor?: boolean;
+  surfaceSwitcher?: ReactNode;
 }
 
 const statusLabel: Record<SessionStatus["kind"], { text: string; dot: string }> = {
@@ -32,6 +34,7 @@ export function TaskHeader({
   onBack,
   onCloseEditor,
   closingEditor,
+  surfaceSwitcher,
 }: TaskHeaderProps) {
   const status = statusLabel[sessionStatus.kind];
   const issueStatus = linearInfo?.status ?? null;
@@ -95,6 +98,7 @@ export function TaskHeader({
         )}
       </span>
       <span className="ml-auto flex items-center gap-1.5 text-xs text-text-muted flex-shrink-0">
+        {surfaceSwitcher}
         {onCloseEditor && (
           <button
             type="button"

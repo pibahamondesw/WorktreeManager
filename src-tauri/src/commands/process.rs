@@ -22,6 +22,10 @@ impl OwnedProcess {
         self.child.id()
     }
 
+    pub fn child_mut(&mut self) -> &mut Child {
+        &mut self.child
+    }
+
     pub fn poll(&mut self) -> Result<Option<Option<i32>>, String> {
         self.child
             .try_wait()
