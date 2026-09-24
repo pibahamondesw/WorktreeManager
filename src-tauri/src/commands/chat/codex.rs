@@ -48,9 +48,14 @@ enum Call {
 }
 
 enum ServerRequest {
-    Command { amendment: Option<Value> },
+    Command {
+        amendment: Option<Value>,
+    },
     FileChange,
     Question,
+    /// `request_user_input_async`: the question arrives as an agent message and is answered with
+    /// a user message in the reply envelope, not a JSON-RPC response. Holds (id, title) per question.
+    AsyncQuestion(Vec<(String, String)>),
     Unsupported,
 }
 
@@ -435,6 +440,9 @@ impl CodexProvider {
                 if let Some(item) = map_item(&params["item"]) {
                     out.upsert(item);
                 }
+                if method == "item/completed" {
+                    self.register_async_questions(&params["item"], out);
+                }
             }
             "item/agentMessage/delta" => {
                 delta(params, ItemKind::Assistant, DeltaField::Text, snapshot, out)
@@ -589,6 +597,55 @@ impl CodexProvider {
     }
 }
 
+impl CodexProvider {
+    fn register_async_questions(&mut self, item: &Value, out: &mut ProviderOutput) {
+        let (Some(message_id), Some(asked)) = (item["id"].as_str(), item["questions"].as_array())
+        else {
+            return;
+        };
+        let key = format!("async:{message_id}");
+        if item["type"] != "agentMessage" || asked.is_empty() || self.requests.contains_key(&key) {
+            return;
+        }
+        let questions: Vec<Question> = asked
+            .iter()
+            .enumerate()
+            .map(|(index, question)| map_async_question(message_id, index, question))
+            .collect();
+        let identities = questions
+            .iter()
+            .map(|question| (question.id.clone(), question.question.clone()))
+            .collect();
+        self.requests.insert(
+            key.clone(),
+            (Value::Null, ServerRequest::AsyncQuestion(identities)),
+        );
+        out.event(ChatEvent::Pending {
+            request: PendingRequest {
+                id: key,
+                title: "Codex has a question".into(),
+                detail: None,
+                format: DetailFormat::Text,
+                kind: PendingKind::Question { questions },
+            },
+        });
+    }
+
+    /// A new turn supersedes unanswered async questions, as in the Codex TUI.
+    fn drop_async_questions(&mut self, out: &mut ProviderOutput) {
+        let keys: Vec<String> = self
+            .requests
+            .iter()
+            .filter(|(_, (_, kind))| matches!(kind, ServerRequest::AsyncQuestion(_)))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for id in keys {
+            self.requests.remove(&id);
+            out.event(ChatEvent::Resolved { id });
+        }
+    }
+}
+
 impl ChatProvider for CodexProvider {
     fn start(&mut self, out: &mut ProviderOutput) {
         self.call(
@@ -627,6 +684,7 @@ impl ChatProvider for CodexProvider {
             .clone()
             .ok_or("Codex conversation is not ready yet")?;
         let input = self.user_input(text);
+        self.drop_async_questions(out);
         if self.busy {
             let turn_id = self
                 .turn_id
@@ -727,6 +785,15 @@ impl ChatProvider for CodexProvider {
                     .collect();
                 json!({ "id": id, "result": { "answers": answers } })
             }
+            ServerRequest::AsyncQuestion(questions) => {
+                out.event(ChatEvent::Resolved {
+                    id: request_id.to_string(),
+                });
+                return match async_question_reply(&questions, &response.answers) {
+                    Some(reply) => self.send(&reply, out),
+                    None => Ok(()),
+                };
+            }
             ServerRequest::Unsupported => json!({
                 "id": id,
                 "error": { "code": UNSUPPORTED, "message": "Not supported by WorktreeManager chat" },
@@ -815,6 +882,79 @@ fn map_question(question: &Value) -> Question {
     }
 }
 
+const REPLY_OPEN: &str = "<send_user_message_question_reply>";
+const REPLY_CLOSE: &str = "</send_user_message_question_reply>";
+
+/// Mirrors the Codex TUI: the question id is `["request_user_input_async", item id, index]` and
+/// every option is a plain string; free text is always allowed.
+fn map_async_question(message_id: &str, index: usize, question: &Value) -> Question {
+    let title: String = question["title"]
+        .as_str()
+        .unwrap_or_default()
+        .chars()
+        .take(512)
+        .collect();
+    Question {
+        id: json!(["request_user_input_async", message_id, index]).to_string(),
+        header: String::new(),
+        question: title.replace(['\n', '\r'], " "),
+        options: question["options"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .take(32)
+            .map(|label| QuestionOption {
+                label: label.to_string(),
+                description: None,
+            })
+            .collect(),
+        allow_other: true,
+        multi_select: false,
+        secret: false,
+    }
+}
+
+fn async_question_reply(
+    questions: &[(String, String)],
+    answers: &HashMap<String, Vec<String>>,
+) -> Option<String> {
+    let replies: Vec<Value> = questions
+        .iter()
+        .filter_map(|(id, question)| {
+            let answer = answers.get(id)?.join(", ");
+            let answer = answer.trim();
+            (!answer.is_empty())
+                .then(|| json!({ "answer": answer, "question": question, "questionItemId": id }))
+        })
+        .collect();
+    (!replies.is_empty()).then(|| format!("{REPLY_OPEN}\n{}\n{REPLY_CLOSE}", Value::from(replies)))
+}
+
+/// Shows a reply envelope the way the Codex TUI does: the quoted question, then the answer.
+fn reply_display_text(text: &str) -> Option<String> {
+    let json = text
+        .trim()
+        .strip_prefix(REPLY_OPEN)?
+        .strip_suffix(REPLY_CLOSE)?;
+    let replies = match serde_json::from_str::<Value>(json).ok()? {
+        Value::Array(replies) => replies,
+        reply => vec![reply],
+    };
+    let text = replies
+        .iter()
+        .map(|reply| {
+            format!(
+                "> {}\n\n{}",
+                reply["question"].as_str().unwrap_or_default(),
+                reply["answer"].as_str().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (!replies.is_empty()).then_some(text)
+}
+
 fn status_of(item: &Value) -> String {
     item["status"].as_str().unwrap_or("completed").to_string()
 }
@@ -835,6 +975,7 @@ pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
                 .filter_map(|part| part["text"].as_str())
                 .collect::<Vec<_>>()
                 .join("\n");
+            let text = reply_display_text(&text).unwrap_or(text);
             ChatItem::new(id, ItemKind::User, text)
         }
         "agentMessage" => ChatItem::new(id, ItemKind::Assistant, text("text")),
@@ -1139,6 +1280,77 @@ mod tests {
         assert!(provider
             .respond("0", &response, &snapshot, &mut ProviderOutput::default())
             .is_err());
+    }
+
+    #[test]
+    fn async_questions_become_pending_and_are_answered_with_the_reply_envelope() {
+        let (mut provider, mut snapshot) = resumed();
+        let question = json!({ "method": "item/completed", "params": { "threadId": "th1", "item": {
+            "type": "agentMessage", "id": "call_1", "text": "Qué prefieres?\n- Café\n- Té",
+            "delivery": "async", "questions": [{ "title": "Qué prefieres?", "options": ["Café", "Té"] }],
+        } } });
+        feed(&mut provider, &mut snapshot, question.clone());
+        feed(&mut provider, &mut snapshot, question);
+        assert_eq!(snapshot.pending.len(), 1);
+        let PendingKind::Question { questions } = &snapshot.pending[0].kind else {
+            panic!("expected a question");
+        };
+        let labels: Vec<_> = questions[0]
+            .options
+            .iter()
+            .map(|o| o.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Café", "Té"]);
+        assert!(questions[0].allow_other);
+        let question_id = questions[0].id.clone();
+        assert_eq!(question_id, r#"["request_user_input_async","call_1",0]"#);
+
+        let mut out = ProviderOutput::default();
+        let answers = ChatResponse {
+            decision: None,
+            answers: HashMap::from([(question_id.clone(), vec!["Té".to_string()])]),
+        };
+        provider
+            .respond("async:call_1", &answers, &snapshot, &mut out)
+            .unwrap();
+        let writes = written(&out);
+        assert_eq!(writes[0]["method"], "turn/start");
+        let reply = writes[0]["params"]["input"][0]["text"].as_str().unwrap();
+        let body = reply
+            .strip_prefix("<send_user_message_question_reply>\n")
+            .and_then(|rest| rest.strip_suffix("\n</send_user_message_question_reply>"))
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(body).unwrap(),
+            json!([{ "answer": "Té", "question": "Qué prefieres?", "questionItemId": question_id }])
+        );
+        assert!(out
+            .events
+            .iter()
+            .any(|e| matches!(e, ChatEvent::Resolved { id } if id == "async:call_1")));
+        assert_eq!(
+            reply_display_text(reply).as_deref(),
+            Some("> Qué prefieres?\n\nTé")
+        );
+    }
+
+    #[test]
+    fn a_new_message_supersedes_unanswered_async_questions() {
+        let (mut provider, mut snapshot) = resumed();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "item/completed", "params": { "threadId": "th1", "item": {
+                "type": "agentMessage", "id": "call_2", "text": "?", "questions": [{ "title": "Name?", "options": null }],
+            } } }),
+        );
+        assert_eq!(snapshot.pending.len(), 1);
+        let mut out = ProviderOutput::default();
+        provider.send("never mind", &mut out).unwrap();
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        assert!(snapshot.pending.is_empty());
     }
 
     #[test]
