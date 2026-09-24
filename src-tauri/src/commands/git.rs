@@ -72,6 +72,10 @@ pub(crate) fn git_command() -> Command {
     for variable in GIT_ENV_SCRUB {
         command.env_remove(variable);
     }
+    #[cfg(test)]
+    command
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
     command
 }
 
