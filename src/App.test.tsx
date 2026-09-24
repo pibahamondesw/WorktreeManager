@@ -3,12 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import App from "./App";
 import { ZoomControls } from "./components/ui/ZoomControls";
-import { DEFAULT_STATE } from "./types";
+import { DEFAULT_STATE, Task, Workspace } from "./types";
 
 const mocks = vi.hoisted(() => ({
   selectWorkspace: vi.fn(),
   historyBack: vi.fn(),
   historyForward: vi.fn(),
+  recordWorkspaceVisit: vi.fn(),
   historyParams: { onNavigate: (() => undefined) as (entry: unknown) => void },
   useStore: vi.fn(),
   useDoctor: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock("./hooks/useNavigationHistory", () => ({
     canGoForward: true,
     back: mocks.historyBack,
     forward: mocks.historyForward,
-    recordWorkspaceVisit: vi.fn(),
+    recordWorkspaceVisit: mocks.recordWorkspaceVisit,
     recordTaskVisit: vi.fn(),
   }),
 }));
@@ -54,11 +55,41 @@ vi.mock("./hooks/useDoctor", () => ({
 }));
 vi.mock("./components/setup/SetupWizard", () => ({ SetupWizard: () => null }));
 vi.mock("./components/sidebar/WorkspaceList", () => ({
-  WorkspaceList: ({ onOpenDoctor }: { onOpenDoctor: () => void }) => (
-    <button onClick={onOpenDoctor}>Dependencies</button>
+  WorkspaceList: ({
+    workspaces,
+    onSelect,
+    onOpenDoctor,
+  }: {
+    workspaces: Workspace[];
+    onSelect: (workspaceId: string) => void;
+    onOpenDoctor: () => void;
+  }) => (
+    <>
+      {workspaces.map((workspace) => (
+        <button key={workspace.id} onClick={() => onSelect(workspace.id)}>
+          Workspace {workspace.name}
+        </button>
+      ))}
+      <button onClick={onOpenDoctor}>Dependencies</button>
+    </>
   ),
 }));
-vi.mock("./components/worktree/WorktreeList", () => ({ WorktreeList: () => null }));
+vi.mock("./components/worktree/WorktreeList", () => ({
+  WorktreeList: ({
+    tasks,
+    openedTask,
+    onOpenTask,
+  }: {
+    tasks: Task[];
+    openedTask: { taskId: string } | null;
+    onOpenTask: (task: Task) => Promise<boolean>;
+  }) => (
+    <>
+      <div>{openedTask ? "Task surface" : "Tasks"}</div>
+      {tasks[0] && <button onClick={() => void onOpenTask(tasks[0])}>Open task</button>}
+    </>
+  ),
+}));
 vi.mock("./components/search/QuickSearchModal", () => ({
   QuickSearchModal: ({ open }: { open: boolean }) =>
     open ? <div role="dialog">Task search</div> : null,
@@ -74,6 +105,7 @@ beforeEach(() => {
   mocks.selectWorkspace.mockClear();
   mocks.historyBack.mockClear();
   mocks.historyForward.mockClear();
+  mocks.recordWorkspaceVisit.mockClear();
   mocks.listen.mockReset().mockResolvedValue(mocks.unlisten);
   mocks.unlisten.mockReset();
   mocks.invoke.mockReset().mockResolvedValue(undefined);
@@ -168,6 +200,43 @@ describe("workspace keyboard navigation with zoom mounted", () => {
     fireEvent.keyDown(window, { key: "9", code: "Digit9", metaKey: true });
     expect(mocks.selectWorkspace).not.toHaveBeenCalled();
   });
+});
+
+describe("workspace task-surface navigation", () => {
+  const task: Task = {
+    id: "task",
+    workspaceId: "second",
+    branchName: "feature/task",
+    members: [],
+    createdAt: "2026-09-24T00:00:00Z",
+  };
+
+  it.each(["click", "keyboard command"])(
+    "returns to tasks and records history on current-workspace %s",
+    (source) => {
+      const store = mocks.useStore();
+      mocks.useStore.mockReturnValue({
+        ...store,
+        state: { ...store.state, tasks: [task] },
+        selectedTasks: [task],
+        editorApp: "vscode-web",
+      });
+      const view = render(<App />);
+      fireEvent.click(view.getByRole("button", { name: "Open task" }));
+      expect(view.getByText("Task surface")).toBeTruthy();
+      mocks.recordWorkspaceVisit.mockClear();
+
+      if (source === "click") {
+        fireEvent.click(view.getByRole("button", { name: "Workspace Second" }));
+      } else {
+        fireEvent.keyDown(window, { key: "1", code: "Digit1", metaKey: true });
+      }
+
+      expect(view.getByText("Tasks")).toBeTruthy();
+      expect(mocks.selectWorkspace).not.toHaveBeenCalled();
+      expect(mocks.recordWorkspaceVisit).toHaveBeenCalledExactlyOnceWith("second");
+    }
+  );
 });
 
 describe("doctor alerts", () => {

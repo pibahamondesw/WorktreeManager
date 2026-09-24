@@ -34,6 +34,19 @@ export function pushEntry(history: NavigationHistory, entry: NavigationEntry): N
     entries[history.cursor] = entry;
     return { entries, cursor: history.cursor };
   }
+  const previous = history.entries[history.cursor - 1];
+  if (
+    entry.kind === "workspace" &&
+    current?.kind === "task" &&
+    current.workspaceId === entry.workspaceId &&
+    previous &&
+    sameTarget(previous, entry)
+  ) {
+    const entries = [...history.entries.slice(0, history.cursor - 1), current, entry].slice(
+      -MAX_HISTORY_ENTRIES
+    );
+    return { entries, cursor: entries.length - 1 };
+  }
   const entries = [...history.entries.slice(0, history.cursor + 1), entry].slice(
     -MAX_HISTORY_ENTRIES
   );
