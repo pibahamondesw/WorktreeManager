@@ -75,19 +75,34 @@ describe("useOpenTask", () => {
     expect(openEditorForWorktree).not.toHaveBeenCalled();
     expect(result.current.openedTask).toEqual({
       taskId: "t1",
-      surface: { kind: "terminal", agent },
+      surface: { kind: "chat", agent },
     });
     act(() => result.current.closeTask());
     expect(result.current.openedTask).toBeNull();
   });
 
-  it("lets an explicit surface override the editor choice", async () => {
-    const { result } = setup("cursor");
-    await act(() =>
-      result.current.openTask(task, { surface: { kind: "terminal", agent: "claude" } })
+  it("opens an explicit agent in its remembered view and switches it in place", async () => {
+    const recordTaskVisit = vi.fn();
+    const { result } = renderHook(() =>
+      useOpenTask({
+        editorApp: "cursor",
+        agentViews: { claude: "terminal", codex: "chat" },
+        workspaces: [workspace],
+        tasks: [task],
+        recordTaskVisit,
+        showTask: vi.fn(),
+      })
     );
+    await act(() => result.current.openTask(task, { agent: "claude" }));
     expect(openEditorForWorktree).not.toHaveBeenCalled();
-    expect(result.current.openedTask?.taskId).toBe("t1");
+    expect(result.current.openedTask).toEqual({
+      taskId: "t1",
+      surface: { kind: "terminal", agent: "claude" },
+    });
+    act(() => result.current.switchSurface("t1", { kind: "chat", agent: "claude" }));
+    expect(result.current.openedTask?.surface).toEqual({ kind: "chat", agent: "claude" });
+    act(() => result.current.switchSurface("other", { kind: "terminal", agent: "claude" }));
+    expect(result.current.openedTask?.surface).toEqual({ kind: "chat", agent: "claude" });
   });
 
   it("closes the view when the task disappears", async () => {

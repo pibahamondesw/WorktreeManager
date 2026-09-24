@@ -61,7 +61,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-function renderView(onBack = vi.fn()) {
+function renderView(onBack = vi.fn(), onSwitchSurface = vi.fn()) {
   render(
     <TaskView
       task={task}
@@ -69,6 +69,7 @@ function renderView(onBack = vi.fn()) {
       sidebarCollapsed={false}
       onExpandSidebar={vi.fn()}
       onBack={onBack}
+      onSwitchSurface={onSwitchSurface}
     />
   );
   return onBack;
@@ -82,6 +83,7 @@ describe("TaskView", () => {
       sidebarCollapsed: false,
       onExpandSidebar: vi.fn(),
       onBack: vi.fn(),
+      onSwitchSurface: vi.fn(),
     };
     const view = render(<TaskView {...props} surface={{ kind: "terminal", agent: "claude" }} />);
     await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
@@ -102,40 +104,78 @@ describe("TaskView", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("terminal_detach", { taskId: "t1", agent: "codex" });
   });
 
-  it("switches a terminal to the same agent's chat and back without closing sessions", async () => {
+  it("stops the terminal before switching the agent to its chat", async () => {
+    let finishStop: (() => void) | undefined;
     mocks.invoke.mockImplementation((command: string) => {
-      if (command === "chat_open")
-        return Promise.resolve({ generation: 1, status: { kind: "idle" }, items: [], pending: [] });
+      if (command === "terminal_stop")
+        return new Promise<void>((resolve) => (finishStop = resolve));
       return Promise.resolve({ created: true, status: { kind: "running" }, replay: "" });
     });
-    renderView();
+    const onSwitchSurface = vi.fn();
+    renderView(vi.fn(), onSwitchSurface);
     await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
     const view = screen.getByRole("group", { name: "View" });
     fireEvent.click(within(view).getByRole("button", { name: "Chat" }));
+    expect(mocks.invoke).toHaveBeenCalledWith("terminal_stop", { taskId: "t1", agent: "claude" });
+    expect(within(view).getByRole("button", { name: "Terminal" })).toBeDisabled();
+    expect(onSwitchSurface).not.toHaveBeenCalled();
+    finishStop?.();
     await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith(
-        "chat_open",
-        expect.objectContaining({ taskId: "t1", agent: "claude", folders: ["/wt/a", "/wt/b"] })
-      )
+      expect(onSwitchSurface).toHaveBeenCalledWith({ kind: "chat", agent: "claude" })
     );
-    expect(mocks.invoke).toHaveBeenCalledWith("terminal_detach", { taskId: "t1", agent: "claude" });
-    expect(screen.queryByRole("group", { name: "Agent" })).not.toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "terminal_close")).toBe(false);
+  });
 
-    fireEvent.click(
-      within(screen.getByRole("group", { name: "View" })).getByRole("button", { name: "Terminal" })
+  it("keeps the current view and shows the error when stopping fails", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "terminal_stop"
+        ? Promise.reject("could not stop")
+        : Promise.resolve({ created: true, status: { kind: "running" }, replay: "" })
     );
-    await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith("chat_detach", {
-        taskId: "t1",
-        agent: "claude",
-        generation: 1,
-      })
+    const onSwitchSurface = vi.fn();
+    renderView(vi.fn(), onSwitchSurface);
+    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not stop");
+    expect(onSwitchSurface).not.toHaveBeenCalled();
+  });
+
+  it("ends the agent's chat process before returning to the task list", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open"
+        ? Promise.resolve({
+            generation: 1,
+            status: { kind: "idle" },
+            items: [],
+            pending: [],
+            controls: {
+              models: [],
+              model: null,
+              effort: null,
+              modes: [],
+              mode: null,
+              commands: [],
+              todos: [],
+              context: null,
+            },
+          })
+        : Promise.resolve()
     );
-    expect(
-      mocks.invoke.mock.calls.some(
-        ([command]) => command === "chat_close" || command === "terminal_close"
-      )
-    ).toBe(false);
+    const onBack = vi.fn();
+    render(
+      <TaskView
+        task={task}
+        surface={{ kind: "chat", agent: "codex" }}
+        sidebarCollapsed={false}
+        onExpandSidebar={vi.fn()}
+        onBack={onBack}
+        onSwitchSurface={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", { taskId: "t1", agent: "codex" });
+    await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "chat_close")).toBe(false);
   });
 
   it("closes an embedded editor before returning to the task list", async () => {
@@ -156,6 +196,7 @@ describe("TaskView", () => {
         sidebarCollapsed={false}
         onExpandSidebar={vi.fn()}
         onBack={onBack}
+        onSwitchSurface={vi.fn()}
       />
     );
     fireEvent.click(screen.getByRole("button", { name: "Close editor" }));

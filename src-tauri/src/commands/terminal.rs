@@ -454,6 +454,23 @@ pub fn terminal_detach(registry: State<'_, TerminalRegistry>, task_id: String, a
     }
 }
 
+/// Stop one agent's terminal without forgetting its session, so the chat/terminal switch can
+/// hand the task over and a later terminal still resumes the conversation.
+#[tauri::command]
+pub async fn terminal_stop(
+    registry: State<'_, TerminalRegistry>,
+    task_id: String,
+    agent: String,
+) -> Result<(), String> {
+    let removed = registry.0.lock().unwrap().remove(&(task_id, agent));
+    if let Some(mut session) = removed {
+        tauri::async_runtime::spawn_blocking(move || session.terminate())
+            .await
+            .map_err(|e| format!("Task failed: {e}"))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn terminal_close(
     app: AppHandle,

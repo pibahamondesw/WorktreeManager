@@ -129,21 +129,6 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
           <path d="M5 7l-1.5 1.5L5 10M11 7l1.5 1.5L11 10M8 6.5v4" />
         </svg>
       );
-    case "claude-chat":
-    case "codex-chat":
-      return (
-        <svg
-          width={s}
-          height={s}
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.2"
-          className="flex-shrink-0"
-        >
-          <path d="M2 3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5v6a1.5 1.5 0 01-1.5 1.5H7l-3 3v-3h-.5A1.5 1.5 0 012 9.5v-6z" />
-        </svg>
-      );
     case "zed":
       return (
         <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0">

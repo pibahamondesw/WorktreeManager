@@ -78,6 +78,7 @@ pub fn run() {
                 commands::terminal::terminal_detach,
                 commands::terminal::terminal_close,
                 commands::terminal::terminal_list,
+                commands::terminal::terminal_stop,
                 commands::chat::chat_stop,
                 commands::chat::chat_open,
                 commands::chat::chat_send,

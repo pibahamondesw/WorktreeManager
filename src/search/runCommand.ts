@@ -1,5 +1,4 @@
 import { OpenTaskOptions } from "../hooks/useOpenTask";
-import { CLAUDE_TERMINAL, CODEX_TERMINAL } from "../embedded/taskSurface";
 import { openPrForMember } from "../services/pullRequest";
 import { CommandAction, WorkspaceAction } from "./commands";
 import { PaletteItem } from "./searchPalette";
@@ -81,7 +80,7 @@ export async function runPaletteCommand(
         return;
       }
       const opened = await deps.onOpenTask(task, {
-        surface: action.type === "open-codex" ? CODEX_TERMINAL : CLAUDE_TERMINAL,
+        agent: action.type === "open-codex" ? "codex" : "claude",
         onMessage: deps.showToast,
         onError: deps.showToast,
       });

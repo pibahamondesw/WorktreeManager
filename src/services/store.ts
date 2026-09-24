@@ -1,5 +1,14 @@
 import { load, Store } from "@tauri-apps/plugin-store";
-import { AppState, DEFAULT_STATE, EDITOR_APPS, EditorApp, VaultConfig, Workspace } from "../types";
+import {
+  AgentView,
+  AgentViews,
+  AppState,
+  DEFAULT_STATE,
+  EDITOR_APPS,
+  EditorApp,
+  VaultConfig,
+  Workspace,
+} from "../types";
 import {
   EMPTY_SECRETS,
   SecretBundle,
@@ -331,6 +340,8 @@ const RETIRED_EDITOR_IDS: Record<string, EditorApp> = {
   "cursor-claude": "cursor",
   "vscode-claude": "vscode",
   "zed-claude": "zed",
+  "claude-chat": "claude-code",
+  "codex-chat": "codex",
 };
 
 export async function loadEditorApp(): Promise<EditorApp> {
@@ -339,6 +350,13 @@ export async function loadEditorApp(): Promise<EditorApp> {
   const editor = (stored && RETIRED_EDITOR_IDS[stored]) ?? stored;
   // Guard against stale values persisted by older builds whose editor ids no longer exist.
   return EDITOR_APPS.some((e) => e.id === editor) ? (editor as EditorApp) : "cursor";
+}
+
+export async function loadAgentViews(): Promise<AgentViews> {
+  const s = await getStore();
+  const stored = (await s.get<Partial<Record<string, unknown>>>("agentViews")) ?? {};
+  const view = (value: unknown): AgentView => (value === "terminal" ? "terminal" : "chat");
+  return { claude: view(stored.claude), codex: view(stored.codex) };
 }
 
 export async function loadSidebarCollapsed(): Promise<boolean> {

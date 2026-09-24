@@ -52,6 +52,8 @@ function App() {
     operations,
     removeTask,
     updateEditorApp,
+    agentViews,
+    updateAgentView,
     sidebarCollapsed,
     toggleSidebarCollapsed,
     updateThemeId,
@@ -127,8 +129,9 @@ function App() {
     [showTask, recordTaskVisit]
   );
 
-  const { openedTask, openTask, closeTask, restoreTask } = useOpenTask({
+  const { openedTask, openTask, closeTask, restoreTask, switchSurface } = useOpenTask({
     editorApp,
+    agentViews,
     workspaces: state.workspaces,
     tasks: state.tasks,
     recordTaskVisit,
@@ -367,6 +370,11 @@ function App() {
             openedTask={openedTask}
             onOpenTask={openTask}
             onCloseTask={closeTask}
+            onSwitchSurface={(taskId, surface) => {
+              switchSurface(taskId, surface);
+              if (surface.kind === "chat" || surface.kind === "terminal")
+                void updateAgentView(surface.agent, surface.kind);
+            }}
             canGoBack={history.canGoBack}
             canGoForward={history.canGoForward}
             onGoBack={history.back}

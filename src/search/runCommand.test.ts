@@ -59,7 +59,7 @@ describe("runPaletteCommand", () => {
     const d = deps();
     await runPaletteCommand({ type, taskId: task.id }, d);
     expect(d.onOpenTask).toHaveBeenCalledWith(task, {
-      surface: { kind: "terminal", agent },
+      agent,
       onMessage: d.showToast,
       onError: d.showToast,
     });

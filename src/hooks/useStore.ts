@@ -4,12 +4,23 @@ import {
   loadState,
   restoreKeychainSecrets,
   loadEditorApp,
+  loadAgentViews,
   loadThemeId,
   loadCustomColors,
   loadSidebarCollapsed,
   persist,
 } from "../services/store";
-import { AppState, DEFAULT_STATE, EditorApp, VaultConfig, Workspace } from "../types";
+import {
+  AgentId,
+  AgentView,
+  AgentViews,
+  AppState,
+  DEFAULT_AGENT_VIEWS,
+  DEFAULT_STATE,
+  EditorApp,
+  VaultConfig,
+  Workspace,
+} from "../types";
 import { Operations, CreateTaskInput, DeleteOptions, TaskReady } from "../services/operations";
 import { applyTheme, themes, CUSTOM_THEME_ID } from "../themes";
 
@@ -17,6 +28,8 @@ export function useStore() {
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [loading, setLoading] = useState(true);
   const [editorApp, setEditorAppState] = useState<EditorApp>("cursor");
+  const [agentViews, setAgentViews] = useState<AgentViews>(DEFAULT_AGENT_VIEWS);
+  const agentViewsRef = useRef(agentViews);
   const [themeId, setThemeIdState] = useState("default");
   const [customColors, setCustomColors] = useState<Record<string, string> | null>(null);
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(false);
@@ -67,8 +80,11 @@ export function useStore() {
       loadThemeId(),
       loadCustomColors(),
       loadSidebarCollapsed(),
+      loadAgentViews(),
     ])
-      .then(([s, editor, theme, custom, collapsed]) => {
+      .then(([s, editor, theme, custom, collapsed, views]) => {
+        agentViewsRef.current = views;
+        setAgentViews(views);
         commit(s);
         commitEditorApp(editor);
         setThemeIdState(theme);
@@ -206,6 +222,20 @@ export function useStore() {
     [commitEditorApp]
   );
 
+  const updateAgentView = useCallback(async (agent: AgentId, view: AgentView) => {
+    const previous = agentViewsRef.current;
+    const next = { ...previous, [agent]: view };
+    agentViewsRef.current = next;
+    setAgentViews(next);
+    try {
+      await persist([["agentViews", next]]);
+    } catch {
+      agentViewsRef.current = previous;
+      setAgentViews(previous);
+      setPersistError("Failed to save the agent view preference");
+    }
+  }, []);
+
   const toggleSidebarCollapsed = useCallback(() => {
     setSidebarCollapsedState((prev) => {
       const next = !prev;
@@ -281,6 +311,7 @@ export function useStore() {
     state,
     loading,
     editorApp,
+    agentViews,
     themeId,
     customColors,
     selectedWorkspace,
@@ -303,6 +334,7 @@ export function useStore() {
     operations,
     removeTask,
     updateEditorApp,
+    updateAgentView,
     sidebarCollapsed,
     toggleSidebarCollapsed,
     updateThemeId,

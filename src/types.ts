@@ -111,8 +111,6 @@ export type EditorApp =
   | "vscode-web"
   | "claude-code"
   | "codex"
-  | "claude-chat"
-  | "codex-chat"
   | "opencode"
   | "zed";
 
@@ -126,6 +124,11 @@ export type TaskSurface =
   | { kind: "chat"; agent: AgentId }
   | { kind: "editor" };
 
+/** How an agent opens inside a task; remembered per agent, chat unless the user picks terminal. */
+export type AgentView = "chat" | "terminal";
+export type AgentViews = Record<AgentId, AgentView>;
+export const DEFAULT_AGENT_VIEWS: AgentViews = { claude: "chat", codex: "chat" };
+
 /**
  * Editor-specific local config directories carried into a new worktree.
  * `git worktree add` only checks out tracked files, so gitignored editor config
@@ -137,8 +140,6 @@ export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
   "vscode-web": [".vscode", ".claude"],
   "claude-code": [".claude"],
   codex: [".codex", ".agents"],
-  "claude-chat": [".claude"],
-  "codex-chat": [".codex", ".agents"],
   opencode: [".opencode"],
   zed: [".zed", ".claude"],
 };
@@ -160,8 +161,6 @@ export const EDITOR_REQUIREMENTS: Record<
   "vscode-web": { apps: [], clis: [], optionalClis: [] },
   "claude-code": { apps: [], clis: ["claude"], optionalClis: [] },
   codex: { apps: [], clis: ["codex"], optionalClis: [] },
-  "claude-chat": { apps: [], clis: ["claude"], optionalClis: [] },
-  "codex-chat": { apps: [], clis: ["codex"], optionalClis: [] },
   opencode: { apps: ["OpenCode"], clis: [], optionalClis: [] },
   zed: { apps: ["Zed"], clis: [], optionalClis: ["zed"] },
 };
@@ -173,8 +172,6 @@ export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
   { id: "opencode", label: "OpenCode", isCli: false },
   { id: "claude-code", label: "Claude Code", isCli: true },
   { id: "codex", label: "Codex", isCli: true },
-  { id: "claude-chat", label: "Claude chat", isCli: true },
-  { id: "codex-chat", label: "Codex chat", isCli: true },
   { id: "zed", label: "Zed", isCli: false },
 ];
 

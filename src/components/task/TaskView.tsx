@@ -6,6 +6,8 @@ import { ChatPane } from "../chat/ChatPane";
 import { AgentSurfaceSwitcher } from "./AgentSurfaceSwitcher";
 import { EditorPane } from "../editor/EditorPane";
 import { editorClose } from "../../services/codeEditor";
+import { chatStop } from "../../services/chat";
+import { terminalStop } from "../../services/terminal";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { GitStatus, IssueLinearInfo, Task, TaskSurface } from "../../types";
@@ -18,29 +20,52 @@ interface TaskViewProps {
   sidebarCollapsed: boolean;
   onExpandSidebar: () => void;
   onBack: () => void;
+  onSwitchSurface: (surface: TaskSurface) => void;
 }
 
 /** A task opened inside the app: compact header on top, the task's surface filling the rest. */
 export function TaskView({
   task,
-  surface: openedSurface,
+  surface,
   linearInfo,
   gitStatus,
   sidebarCollapsed,
   onExpandSidebar,
   onBack,
+  onSwitchSurface,
 }: TaskViewProps) {
-  const [picked, setPicked] = useState<{ from: TaskSurface; to: TaskSurface } | null>(null);
-  const surface = picked?.from === openedSurface ? picked.to : openedSurface;
+  const [switching, setSwitching] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({ kind: "connecting" });
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+
+  /** Ends the running surface's process; agent sessions keep their conversation for resuming. */
+  const stopSurface = () => {
+    if (surface.kind === "editor") return editorClose(task.id);
+    if (surface.kind === "chat") return chatStop(task.id, surface.agent);
+    if (surface.kind === "terminal") return terminalStop(task.id, surface.agent);
+    return Promise.resolve();
+  };
+
+  /** Chat and terminal are exclusive: stop the running one before the other takes over. */
+  const switchSurface = async (to: TaskSurface) => {
+    setSwitching(true);
+    setCloseError(null);
+    try {
+      await stopSurface();
+      onSwitchSurface(to);
+    } catch (error) {
+      setCloseError(String(error));
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   const closeEditor = async () => {
     setClosing(true);
     setCloseError(null);
     try {
-      await editorClose(task.id);
+      await stopSurface();
       onBack();
     } catch (error) {
       setCloseError(String(error));
@@ -64,12 +89,13 @@ export function TaskView({
         sidebarCollapsed={sidebarCollapsed}
         onExpandSidebar={onExpandSidebar}
         onBack={onBack}
-        onCloseEditor={surface.kind === "editor" ? () => void closeEditor() : undefined}
+        onCloseEditor={surface.kind !== "external" ? () => void closeEditor() : undefined}
         closingEditor={closing}
         surfaceSwitcher={
           <AgentSurfaceSwitcher
             surface={surface}
-            onChange={(to) => setPicked({ from: openedSurface, to })}
+            disabled={switching}
+            onChange={(to) => void switchSurface(to)}
           />
         }
       />

@@ -44,6 +44,9 @@ export const terminalDetach = (taskId: string, agent: AgentId) =>
   invoke<void>("terminal_detach", { taskId, agent }).catch(() => undefined);
 
 /** Best-effort: delete flows must not fail because no session existed. */
+export const terminalStop = (taskId: string, agent: AgentId) =>
+  invoke<void>("terminal_stop", { taskId, agent });
+
 export const terminalClose = (taskId: string) =>
   invoke<void>("terminal_close", { taskId }).catch(() => undefined);
 
