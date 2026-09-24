@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { ChatItemView } from "./ChatItemView";
+import { Composer } from "./Composer";
 import { PendingRequestCard } from "./PendingRequestCard";
+import { TodoPanel } from "./TodoPanel";
 import { useChatSession } from "../../hooks/useChatSession";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { ChatStatus, isLive } from "../../services/chat";
@@ -24,16 +26,12 @@ function sessionStatus(status: ChatStatus): SessionStatus {
 }
 
 export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPaneProps) {
-  const { snapshot, error, restart, send, interrupt, respond } = useChatSession(
-    taskId,
-    agent,
-    folders
-  );
-  const [draft, setDraft] = useState("");
+  const session = useChatSession(taskId, agent, folders);
+  const { snapshot, error, restart, respond } = session;
   const [actionError, setActionError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
-  const { status, items, pending } = snapshot;
+  const { status, items, pending, controls } = snapshot;
   const busy = status.kind === "busy";
   const live = isLive(status);
 
@@ -53,17 +51,9 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
     }
   };
 
-  const submit = async () => {
-    const text = draft.trim();
-    if (!text || busy || status.kind !== "idle") return;
+  const send = async (text: string) => {
     stickRef.current = true;
-    setActionError(null);
-    try {
-      await send(text);
-      setDraft("");
-    } catch (e) {
-      setActionError(String(e));
-    }
+    await session.send(text);
   };
 
   return (
@@ -87,10 +77,11 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
           {items.map((item) => (
             <ChatItemView key={item.id} item={item} />
           ))}
-          {pending.map((request) => (
+          {pending.map((request, index) => (
             <PendingRequestCard
               key={request.id}
               request={request}
+              focused={index === 0}
               onRespond={(response) => run(() => respond(request.id, response))}
             />
           ))}
@@ -114,57 +105,30 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
           )}
         </div>
       </div>
-      <form
-        className="border-t border-border px-4 py-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
-        <div className="max-w-3xl mx-auto flex flex-col gap-2">
-          {actionError && (
-            <p role="alert" className="text-xs text-danger select-text">
-              {actionError}
-            </p>
-          )}
-          <div className="flex items-end gap-2">
-            <textarea
-              aria-label={`Message ${AGENT_LABEL[agent]}`}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  void submit();
-                }
-              }}
-              disabled={!live}
-              rows={Math.min(8, Math.max(2, draft.split("\n").length))}
-              placeholder={`Message ${AGENT_LABEL[agent]} (⏎ to send, ⇧⏎ for a new line)`}
-              className="flex-1 resize-none rounded-lg bg-bg-secondary border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent disabled:opacity-50"
-              autoFocus
-            />
-            {busy ? (
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-9 text-xs"
-                onClick={() => void run(interrupt)}
-              >
-                Stop
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                className="h-9 text-xs"
-                disabled={!draft.trim() || status.kind !== "idle"}
-              >
-                Send
-              </Button>
-            )}
-          </div>
-        </div>
-      </form>
+      <div className="border-t border-border px-4 py-3">
+        <TodoPanel todos={controls.todos} />
+        {actionError && (
+          <p role="alert" className="max-w-3xl mx-auto mb-1.5 text-xs text-danger select-text">
+            {actionError}
+          </p>
+        )}
+        <Composer
+          key={`${taskId}:${agent}`}
+          memoryKey={`${taskId}:${agent}`}
+          agentLabel={AGENT_LABEL[agent]}
+          status={status}
+          controls={controls}
+          folders={folders}
+          actions={{
+            send,
+            interrupt: session.interrupt,
+            configure: session.configure,
+            compact: session.compact,
+            startFresh: session.startFresh,
+          }}
+          onError={setActionError}
+        />
+      </div>
     </div>
   );
 }

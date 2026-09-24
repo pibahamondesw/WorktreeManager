@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { applyChatEvent, ChatSnapshot } from "./chat";
+import { applyChatEvent, ChatSnapshot, EMPTY_CONTROLS } from "./chat";
 
-const base: ChatSnapshot = { generation: 1, status: { kind: "idle" }, items: [], pending: [] };
+const base: ChatSnapshot = {
+  generation: 1,
+  status: { kind: "idle" },
+  items: [],
+  pending: [],
+  controls: EMPTY_CONTROLS,
+};
 
 describe("applyChatEvent", () => {
   it("streams deltas into an upserted item and lets the final item replace it", () => {
@@ -19,7 +25,12 @@ describe("applyChatEvent", () => {
   });
 
   it("dedupes pending requests and drops them when the session ends", () => {
-    const request = { id: "r", title: "Run", kind: "unsupported" as const };
+    const request = {
+      id: "r",
+      title: "Run",
+      format: "text" as const,
+      kind: "unsupported" as const,
+    };
     let s = applyChatEvent(base, { type: "pending", request });
     s = applyChatEvent(s, { type: "pending", request });
     expect(s.pending).toHaveLength(1);

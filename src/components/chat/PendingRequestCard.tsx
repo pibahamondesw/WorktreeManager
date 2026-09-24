@@ -1,17 +1,42 @@
-import { useState } from "react";
+import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
-import { DiffText } from "./ChatItemView";
+import { DiffText, MarkdownText } from "./ChatItemView";
 import { ChatQuestion, ChatResponse, PendingRequest } from "../../services/chat";
 
 interface PendingRequestCardProps {
   request: PendingRequest;
+  focused?: boolean;
   onRespond: (response: ChatResponse) => Promise<void>;
 }
 
-const looksLikeDiff = (text: string) => /^[+-]/m.test(text);
-
-export function PendingRequestCard({ request, onRespond }: PendingRequestCardProps) {
+/**
+ * The oldest pending request takes focus so it can be answered from the keyboard: number keys
+ * pick a decision, Enter approves and Escape rejects.
+ */
+export function PendingRequestCard({ request, focused, onRespond }: PendingRequestCardProps) {
   const [sending, setSending] = useState(false);
+  const cardRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (focused && request.kind === "approval") cardRef.current?.focus();
+  }, [focused, request.kind]);
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (request.kind !== "approval" || sending || e.target !== e.currentTarget) return;
+    const decisions = request.decisions;
+    const reject = decisions.find((d) => d.id === "decline" || d.id === "deny");
+    const choice = /^[1-9]$/.test(e.key)
+      ? decisions[Number(e.key) - 1]
+      : e.key === "Enter"
+        ? decisions[0]
+        : e.key === "Escape"
+          ? reject
+          : undefined;
+    if (!choice) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void respond({ decision: choice.id });
+  };
   const respond = async (response: ChatResponse) => {
     setSending(true);
     try {
@@ -23,13 +48,20 @@ export function PendingRequestCard({ request, onRespond }: PendingRequestCardPro
 
   return (
     <section
+      ref={cardRef}
       aria-label={request.title}
-      className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 flex flex-col gap-2"
+      tabIndex={request.kind === "approval" ? 0 : undefined}
+      onKeyDown={onKeyDown}
+      className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 flex flex-col gap-2 focus:outline-none focus:border-warning"
     >
       <h4 className="text-sm font-medium text-text-primary select-text">{request.title}</h4>
       {request.detail &&
-        (looksLikeDiff(request.detail) ? (
+        (request.format === "diff" ? (
           <DiffText text={request.detail} />
+        ) : request.format === "markdown" ? (
+          <div className="max-h-96 overflow-y-auto">
+            <MarkdownText text={request.detail} />
+          </div>
         ) : (
           <pre className="text-xs font-mono text-text-secondary whitespace-pre-wrap select-text max-h-60 overflow-y-auto">
             {request.detail}
@@ -45,6 +77,7 @@ export function PendingRequestCard({ request, onRespond }: PendingRequestCardPro
               disabled={sending}
               onClick={() => void respond({ decision: decision.id })}
             >
+              {i < 9 && <kbd className="mr-1 font-mono opacity-50">{i + 1}</kbd>}
               {decision.label}
             </Button>
           ))}

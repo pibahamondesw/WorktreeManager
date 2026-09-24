@@ -6,6 +6,7 @@
 mod claude;
 mod codex;
 mod conversations;
+mod files;
 mod model;
 
 use std::collections::HashMap;
@@ -25,7 +26,9 @@ use super::git::GIT_ENV_SCRUB;
 use super::process::OwnedProcess;
 use super::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
 use conversations::{Conversation, ConversationStore};
-use model::{ChatEvent, ChatProvider, ChatResponse, ChatSnapshot, ChatStatus, ProviderOutput};
+use model::{
+    ChatEvent, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus, ProviderOutput,
+};
 
 const STATUS_EVENT: &str = "chat-status";
 const EXIT_WAIT: Duration = Duration::from_secs(5);
@@ -229,6 +232,12 @@ impl ChatSession {
         self.shared.lock().unwrap().snapshot.status.clone()
     }
 
+    /// Terminate and tell listeners it ended; the conversation mapping is kept for resuming.
+    fn stop(&self) {
+        self.terminate();
+        (self.notify)(ChatStatus::Exited { code: None });
+    }
+
     fn terminate(&self) {
         {
             let mut state = self.shared.lock().unwrap();
@@ -255,10 +264,14 @@ fn wait_for_exit(process: &Mutex<Option<OwnedProcess>>) -> Option<i32> {
     }
 }
 
+type SessionKey = (String, String);
+type OpenLock = Arc<tokio::sync::Mutex<()>>;
+
 #[derive(Default)]
 pub struct ChatRegistry {
     sessions: Mutex<HashMap<(String, String), ChatSession>>,
     generation: AtomicU64,
+    opening: Mutex<HashMap<SessionKey, OpenLock>>,
 }
 
 impl ChatRegistry {
@@ -273,6 +286,25 @@ impl ChatRegistry {
         for session in sessions {
             session.terminate();
         }
+    }
+
+    /// One open at a time per task agent: a session is registered only after it spawns, so a
+    /// second open racing the first (e.g. a pane remounting) would otherwise spawn a duplicate
+    /// and leave the pane bound to the one that gets replaced.
+    fn open_lock(&self, key: &SessionKey) -> OpenLock {
+        self.opening
+            .lock()
+            .unwrap()
+            .entry(key.clone())
+            .or_default()
+            .clone()
+    }
+
+    fn remove(&self, task_id: &str, agent: &str) -> Option<ChatSession> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .remove(&(task_id.to_string(), agent.to_string()))
     }
 
     fn remove_task(&self, task_id: &str) -> Vec<ChatSession> {
@@ -385,6 +417,15 @@ fn launch(
     }
 }
 
+/// Attach to the running session, restart it on the same conversation, or start a fresh one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OpenMode {
+    Attach,
+    Restart,
+    Fresh,
+}
+
 #[tauri::command]
 pub async fn chat_open(
     app: AppHandle,
@@ -392,14 +433,16 @@ pub async fn chat_open(
     task_id: String,
     agent: String,
     folders: Vec<String>,
-    restart: bool,
+    mode: OpenMode,
     on_event: Channel<LiveEvent>,
 ) -> Result<ChatSnapshot, String> {
     let key = (task_id.clone(), agent.clone());
+    let open_lock = registry.open_lock(&key);
+    let _opening = open_lock.lock().await;
     let stale = {
         let mut sessions = registry.sessions.lock().unwrap();
         match sessions.get(&key) {
-            Some(session) if !restart && session.status().is_live() => {
+            Some(session) if mode == OpenMode::Attach && session.status().is_live() => {
                 return Ok(session.attach(on_event));
             }
             Some(_) => sessions.remove(&key),
@@ -416,7 +459,11 @@ pub async fn chat_open(
     let cwd = canonical_folders.next().ok_or("No folders for this task")?;
     let extra_dirs: Vec<String> = canonical_folders.collect();
     let store = Arc::new(conversation_store(&app)?);
-    let resume = store.get(&task_id, &agent, &cwd);
+    let resume = if mode == OpenMode::Fresh {
+        None
+    } else {
+        store.get(&task_id, &agent, &cwd)
+    };
     let generation = registry.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
     let (launch_cwd, launch_agent) = (cwd.clone(), agent.clone());
@@ -485,6 +532,39 @@ pub fn chat_send(
 }
 
 #[tauri::command]
+pub fn chat_configure(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+    setting: ChatSetting,
+) -> Result<(), String> {
+    registry.with_session(&task_id, &agent, |session| {
+        session.with_provider(|provider, _, out| provider.configure(&setting, out))
+    })
+}
+
+#[tauri::command]
+pub fn chat_compact(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+) -> Result<(), String> {
+    registry.with_session(&task_id, &agent, |session| {
+        session.with_provider(|provider, _, out| provider.compact(out))
+    })
+}
+
+#[tauri::command]
+pub async fn chat_file_search(
+    folders: Vec<String>,
+    query: String,
+) -> Result<Vec<files::FileMatch>, String> {
+    tauri::async_runtime::spawn_blocking(move || files::search(&folders, &query))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))
+}
+
+#[tauri::command]
 pub fn chat_interrupt(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -524,6 +604,21 @@ pub fn chat_detach(
         session.detach(generation);
         Ok(())
     });
+}
+
+/// Stop one agent's chat but keep its conversation mapping, for the chat/terminal switch.
+#[tauri::command]
+pub async fn chat_stop(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+) -> Result<(), String> {
+    let Some(session) = registry.remove(&task_id, &agent) else {
+        return Ok(());
+    };
+    tauri::async_runtime::spawn_blocking(move || session.stop())
+        .await
+        .map_err(|e| format!("Task failed: {e}"))
 }
 
 #[tauri::command]
@@ -582,6 +677,12 @@ mod tests {
             Ok(())
         }
         fn interrupt(&mut self, _: &mut ProviderOutput) {}
+        fn configure(&mut self, _: &ChatSetting, _: &mut ProviderOutput) -> Result<(), String> {
+            Ok(())
+        }
+        fn compact(&mut self, _: &mut ProviderOutput) -> Result<(), String> {
+            Ok(())
+        }
         fn respond(
             &mut self,
             _: &str,
@@ -705,6 +806,43 @@ mod tests {
             .unwrap());
         registry.shutdown_all();
         assert!(registry.sessions.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stopping_one_agent_keeps_the_others_and_reports_the_exit() {
+        let registry = ChatRegistry::default();
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        for agent in ["codex", "claude"] {
+            registry.sessions.lock().unwrap().insert(
+                ("t1".into(), agent.into()),
+                spawn("sleep 60", Arc::default(), statuses.clone()),
+            );
+        }
+        registry.remove("t1", "codex").unwrap().stop();
+        assert!(registry.remove("t1", "codex").is_none());
+        assert_eq!(
+            statuses.lock().unwrap().last(),
+            Some(&ChatStatus::Exited { code: None })
+        );
+        assert!(registry
+            .with_session("t1", "claude", |s| Ok(s.status().is_live()))
+            .unwrap());
+        registry.shutdown_all();
+    }
+
+    #[test]
+    fn opens_are_serialized_per_task_agent_only() {
+        let registry = ChatRegistry::default();
+        let key = ("t1".to_string(), "claude".to_string());
+        let first = registry.open_lock(&key);
+        let held = first.try_lock().unwrap();
+        assert!(registry.open_lock(&key).try_lock().is_err());
+        assert!(registry
+            .open_lock(&("t1".to_string(), "codex".to_string()))
+            .try_lock()
+            .is_ok());
+        drop(held);
+        assert!(registry.open_lock(&key).try_lock().is_ok());
     }
 
     #[test]

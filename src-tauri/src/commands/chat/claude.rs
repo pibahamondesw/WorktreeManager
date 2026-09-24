@@ -13,13 +13,27 @@ use serde_json::{json, Value};
 use super::model::*;
 
 const ASK_USER_TOOL: &str = "AskUserQuestion";
+const TODO_TOOL: &str = "TodoWrite";
+const EXIT_PLAN_TOOL: &str = "ExitPlanMode";
+
+enum Control {
+    Initialize,
+    Settings,
+    ContextUsage,
+    Ignore,
+}
 
 pub struct ClaudeProvider {
     session_id: String,
-    busy: bool,
+    turns: u32,
+    controls: ChatControls,
+    calls: HashMap<String, Control>,
     blocks: HashMap<u64, String>,
     block_counts: BlockCounts,
     requests: HashMap<String, Value>,
+    resolved_models: Vec<(String, String)>,
+    command_list: Value,
+    terminal_commands: Value,
     user_messages: u64,
     errors: u64,
     control_ids: u64,
@@ -53,13 +67,155 @@ impl ClaudeProvider {
     pub fn new(session_id: String) -> Self {
         Self {
             session_id,
-            busy: false,
+            turns: 0,
+            controls: ChatControls::default(),
+            calls: HashMap::new(),
             blocks: HashMap::new(),
             block_counts: BlockCounts::default(),
             requests: HashMap::new(),
+            resolved_models: Vec::new(),
+            command_list: Value::Null,
+            terminal_commands: Value::Null,
             user_messages: 0,
             errors: 0,
             control_ids: 0,
+        }
+    }
+
+    fn control(&mut self, out: &mut ProviderOutput, call: Control, request: Value) {
+        self.control_ids += 1;
+        let id = format!("wm-{}", self.control_ids);
+        self.calls.insert(id.clone(), call);
+        out.write(json!({ "type": "control_request", "request_id": id, "request": request }));
+    }
+
+    fn handle_control_response(&mut self, response: &Value, out: &mut ProviderOutput) {
+        let Some(call) = response["request_id"]
+            .as_str()
+            .and_then(|id| self.calls.remove(id))
+        else {
+            return;
+        };
+        if response["subtype"] != "success" {
+            return;
+        }
+        let body = &response["response"];
+        match call {
+            Control::Initialize => {
+                self.controls.models = body["models"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|model| {
+                        Some(ModelOption {
+                            id: model["value"].as_str()?.to_string(),
+                            label: model["displayName"]
+                                .as_str()
+                                .or(model["value"].as_str())?
+                                .to_string(),
+                            description: model["description"].as_str().map(String::from),
+                            efforts: model["supportedEffortLevels"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|e| e.as_str().map(String::from))
+                                .collect(),
+                        })
+                    })
+                    .collect();
+                self.resolved_models = body["models"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|m| {
+                        Some((
+                            m["value"].as_str()?.to_string(),
+                            m["resolvedModel"].as_str()?.to_string(),
+                        ))
+                    })
+                    .collect();
+                let auto = body["models"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|m| m["supportsAutoMode"] == true);
+                self.controls.modes = permission_modes(auto);
+                if let Some(mode) = body["current_permission_mode"].as_str() {
+                    self.select_mode(mode);
+                }
+                self.command_list = body["commands"].clone();
+                self.controls.commands = commands(&self.command_list, &self.terminal_commands);
+                out.controls(&self.controls);
+            }
+            Control::Settings => {
+                let applied = &body["applied"];
+                if let Some(model) = body["effective"]["model"]
+                    .as_str()
+                    .or(applied["model"].as_str())
+                {
+                    self.controls.model = Some(self.model_option(model));
+                }
+                if let Some(effort) = applied["effort"].as_str() {
+                    self.controls.effort = Some(effort.to_string());
+                }
+                out.controls(&self.controls);
+            }
+            Control::ContextUsage => {
+                if let (Some(used), Some(max)) =
+                    (body["totalTokens"].as_u64(), body["maxTokens"].as_u64())
+                {
+                    self.controls.context = Some(ContextUsage { used, max });
+                    out.controls(&self.controls);
+                }
+            }
+            Control::Ignore => {}
+        }
+    }
+
+    /// Settings report the configured alias or the resolved id; the picker lists aliases.
+    fn model_option(&self, model: &str) -> String {
+        if self.controls.models.iter().any(|m| m.id == model) {
+            return model.to_string();
+        }
+        self.resolved_models
+            .iter()
+            .find(|(alias, resolved)| resolved == model && alias != "default")
+            .map(|(alias, _)| alias.clone())
+            .unwrap_or_else(|| model.to_string())
+    }
+
+    fn select_mode(&mut self, mode: &str) {
+        if !self.controls.modes.iter().any(|m| m.id == mode) {
+            self.controls
+                .modes
+                .push(ModeOption::new(mode, mode, "From your Claude settings"));
+        }
+        self.controls.mode = Some(mode.to_string());
+    }
+
+    fn track_todos(&mut self, message: &Value, out: &mut ProviderOutput) {
+        let todos = message["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .rev()
+            .find(|block| block["type"] == "tool_use" && block["name"] == TODO_TOOL);
+        if let Some(block) = todos {
+            self.controls.todos = block["input"]["todos"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|todo| TodoItem {
+                    text: todo["content"].as_str().unwrap_or_default().to_string(),
+                    status: match todo["status"].as_str() {
+                        Some("in_progress") => "inProgress",
+                        Some("completed") => "completed",
+                        _ => "pending",
+                    }
+                    .to_string(),
+                })
+                .collect();
+            out.controls(&self.controls);
         }
     }
 
@@ -134,11 +290,25 @@ impl ClaudeProvider {
         }
         let tool = request["tool_name"].as_str().unwrap_or("tool");
         let input = &request["input"];
-        let pending = if tool == ASK_USER_TOOL {
+        let pending = if tool == EXIT_PLAN_TOOL {
+            PendingRequest {
+                id: id.to_string(),
+                title: "Claude's plan is ready".into(),
+                detail: input["plan"].as_str().map(String::from),
+                format: DetailFormat::Markdown,
+                kind: PendingKind::Approval {
+                    decisions: vec![
+                        Decision::new("allow", "Approve plan"),
+                        Decision::new("deny", "Keep planning"),
+                    ],
+                },
+            }
+        } else if tool == ASK_USER_TOOL {
             PendingRequest {
                 id: id.to_string(),
                 title: "Claude has a question".into(),
                 detail: None,
+                format: DetailFormat::Text,
                 kind: PendingKind::Question {
                     questions: input["questions"]
                         .as_array()
@@ -166,6 +336,11 @@ impl ClaudeProvider {
                     .unwrap_or_else(|| format!("Allow {tool}?")),
                 detail: tool_summary(tool, input)
                     .or_else(|| request["description"].as_str().map(String::from)),
+                format: if tool == "Edit" {
+                    DetailFormat::Diff
+                } else {
+                    DetailFormat::Text
+                },
                 kind: PendingKind::Approval { decisions },
             }
         };
@@ -177,6 +352,13 @@ impl ClaudeProvider {
 impl ChatProvider for ClaudeProvider {
     fn start(&mut self, out: &mut ProviderOutput) {
         out.conversation = Some(self.session_id.clone());
+        self.control(out, Control::Initialize, json!({ "subtype": "initialize" }));
+        self.control(out, Control::Settings, json!({ "subtype": "get_settings" }));
+        self.control(
+            out,
+            Control::ContextUsage,
+            json!({ "subtype": "get_context_usage", "detail": "summary" }),
+        );
         out.status(ChatStatus::Idle);
     }
 
@@ -187,10 +369,20 @@ impl ChatProvider for ClaudeProvider {
         match message["type"].as_str() {
             Some("stream_event") => self.handle_stream_event(&message["event"], snapshot, out),
             Some("assistant") => {
+                self.track_todos(&message["message"], out);
                 for item in self.block_counts.items(&message["message"]) {
                     out.upsert(item);
                 }
             }
+            Some("system") if message["subtype"] == "init" => {
+                self.terminal_commands = message["terminal_slash_commands"].clone();
+                self.controls.commands = commands(&self.command_list, &self.terminal_commands);
+                if let Some(mode) = message["permissionMode"].as_str() {
+                    self.select_mode(mode);
+                }
+                out.controls(&self.controls);
+            }
+            Some("control_response") => self.handle_control_response(&message["response"], out),
             Some("user") => {
                 for block in message["message"]["content"]
                     .as_array()
@@ -212,7 +404,7 @@ impl ChatProvider for ClaudeProvider {
                 }
             }
             Some("result") => {
-                self.busy = false;
+                self.turns = self.turns.saturating_sub(1);
                 if message["is_error"] == true {
                     let text = message["result"]
                         .as_str()
@@ -231,16 +423,21 @@ impl ChatProvider for ClaudeProvider {
                     let item = self.error_item(text);
                     out.upsert(item);
                 }
-                out.status(ChatStatus::Idle);
+                self.control(
+                    out,
+                    Control::ContextUsage,
+                    json!({ "subtype": "get_context_usage", "detail": "summary" }),
+                );
+                if self.turns == 0 {
+                    out.status(ChatStatus::Idle);
+                }
             }
             _ => {}
         }
     }
 
+    /// Messages sent mid-turn are queued by the CLI and run after the current turn.
     fn send(&mut self, text: &str, out: &mut ProviderOutput) -> Result<(), String> {
-        if self.busy {
-            return Err("Claude is still working; stop it or wait for the turn to finish".into());
-        }
         self.user_messages += 1;
         out.upsert(ChatItem::new(
             format!("local-user-{}", self.user_messages),
@@ -253,20 +450,53 @@ impl ChatProvider for ClaudeProvider {
             "parent_tool_use_id": null,
             "session_id": self.session_id,
         }));
-        self.busy = true;
+        self.turns += 1;
         out.status(ChatStatus::Busy);
         Ok(())
     }
 
     fn interrupt(&mut self, out: &mut ProviderOutput) {
-        if self.busy {
-            self.control_ids += 1;
-            out.write(json!({
-                "type": "control_request",
-                "request_id": format!("wm-interrupt-{}", self.control_ids),
-                "request": { "subtype": "interrupt" },
-            }));
+        if self.turns > 0 {
+            self.control(out, Control::Ignore, json!({ "subtype": "interrupt" }));
         }
+    }
+
+    fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String> {
+        match setting {
+            ChatSetting::Model(model) => {
+                self.control(
+                    out,
+                    Control::Ignore,
+                    json!({ "subtype": "set_model", "model": model }),
+                );
+                self.controls.model = Some(model.clone());
+            }
+            ChatSetting::Effort(effort) => {
+                self.control(
+                    out,
+                    Control::Ignore,
+                    json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": effort } }),
+                );
+                self.controls.effort = Some(effort.clone());
+            }
+            ChatSetting::Mode(mode) => {
+                if !self.controls.modes.iter().any(|m| &m.id == mode) {
+                    return Err(format!("Unknown mode: {mode}"));
+                }
+                self.control(
+                    out,
+                    Control::Ignore,
+                    json!({ "subtype": "set_permission_mode", "mode": mode }),
+                );
+                self.controls.mode = Some(mode.clone());
+            }
+        }
+        out.controls(&self.controls);
+        Ok(())
+    }
+
+    fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String> {
+        self.send("/compact", out)
     }
 
     fn respond(
@@ -296,6 +526,12 @@ impl ChatProvider for ClaudeProvider {
             updated["answers"] = Value::Object(answers);
             json!({ "behavior": "allow", "updatedInput": updated })
         } else {
+            if request["tool_name"] == EXIT_PLAN_TOOL
+                && response.decision.as_deref() == Some("allow")
+            {
+                self.controls.mode = Some("default".into());
+                out.controls(&self.controls);
+            }
             match response.decision.as_deref() {
                 Some("allow") => json!({ "behavior": "allow", "updatedInput": input }),
                 Some("allowAlways") => json!({
@@ -320,6 +556,81 @@ impl ChatProvider for ClaudeProvider {
         });
         Ok(())
     }
+}
+
+fn permission_modes(auto: bool) -> Vec<ModeOption> {
+    let mut modes = vec![
+        ModeOption::new(
+            "default",
+            "Ask before edits",
+            "Claude asks before editing files or running commands",
+        ),
+        ModeOption::new(
+            "acceptEdits",
+            "Accept edits",
+            "Claude edits files without asking; commands still ask",
+        ),
+        ModeOption::new(
+            "plan",
+            "Plan",
+            "Claude explores and proposes a plan without changing files",
+        ),
+    ];
+    if auto {
+        modes.push(ModeOption::new(
+            "auto",
+            "Auto",
+            "Claude decides which actions are safe to run",
+        ));
+    }
+    modes
+}
+
+/// The CLI's command list, with the commands the chat handles itself mapped to their UI and the
+/// terminal-only ones (`system/init.terminal_slash_commands`) left out.
+fn commands(list: &Value, terminal_only: &Value) -> Vec<CommandOption> {
+    let hidden: Vec<&str> = terminal_only
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|name| name.trim_start_matches('/'))
+        .collect();
+    let mut commands = vec![CommandOption::new(
+        "plan",
+        "Switch to plan mode",
+        CommandAction::Mode {
+            mode: "plan".into(),
+        },
+    )];
+    for command in list.as_array().into_iter().flatten() {
+        let Some(name) = command["name"].as_str() else {
+            continue;
+        };
+        if hidden.contains(&name) || commands.iter().any(|c| c.name == name) {
+            continue;
+        }
+        let action = match name {
+            "model" => CommandAction::Model,
+            "effort" => CommandAction::Effort,
+            "compact" => CommandAction::Compact,
+            "clear" => CommandAction::Clear,
+            _ => CommandAction::Insert {
+                text: format!("/{name} "),
+            },
+        };
+        let mut option = CommandOption::new(
+            name,
+            command["description"].as_str().unwrap_or_default(),
+            action,
+        );
+        option.argument_hint = command["argumentHint"]
+            .as_str()
+            .filter(|hint| !hint.is_empty())
+            .map(String::from);
+        commands.push(option);
+    }
+    commands
 }
 
 fn map_question(question: &Value) -> Question {
@@ -413,6 +724,7 @@ fn assistant_block(message_id: &str, index: usize, block: &Value) -> Option<Chat
             ItemKind::Reasoning,
             block["thinking"].as_str().unwrap_or_default(),
         ),
+        "tool_use" if block["name"] == TODO_TOOL => return None,
         "tool_use" => {
             let tool = block["name"].as_str().unwrap_or("tool");
             let input = &block["input"];
@@ -621,9 +933,9 @@ mod tests {
         for event in &out.events {
             snapshot.apply(event);
         }
-        assert!(provider
-            .send("again", &mut ProviderOutput::default())
-            .is_err());
+        let mut queued = ProviderOutput::default();
+        provider.send("again", &mut queued).unwrap();
+        assert_eq!(written(&queued)[0]["message"]["content"], "again");
 
         let events = [
             json!({ "type": "stream_event", "event": { "type": "message_start", "message": { "id": "m1" } } }),
@@ -651,7 +963,14 @@ mod tests {
         );
         let texts: Vec<_> = snapshot.items.iter().map(|i| i.text.as_str()).collect();
         assert_eq!(texts, ["hi", "hmm.", "Hello."]);
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "result", "is_error": false }),
+        );
         assert_eq!(snapshot.status, ChatStatus::Idle);
+        assert!(out.writes[0].contains("get_context_usage"));
     }
 
     #[test]
@@ -819,5 +1138,184 @@ mod tests {
         assert!(session_file(&home, "/elsewhere", "s1").is_some());
         assert!(session_file(&home, "/tmp/my.repo", "s2").is_none());
         let _ = fs::remove_dir_all(home);
+    }
+
+    fn initialized() -> (ClaudeProvider, ChatSnapshot) {
+        let (mut provider, mut snapshot) = started();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": { "subtype": "success", "request_id": "wm-1", "response": {
+                "current_permission_mode": "default",
+                "models": [
+                    { "value": "default", "resolvedModel": "claude-opus-5-5[1m]", "displayName": "Default", "supportedEffortLevels": ["low", "high"], "supportsAutoMode": true },
+                    { "value": "opus[1m]", "resolvedModel": "claude-opus-5-5[1m]", "displayName": "Opus", "supportedEffortLevels": ["low", "high"] },
+                    { "value": "haiku", "resolvedModel": "claude-haiku-4-5", "displayName": "Haiku", "supportedEffortLevels": [] },
+                ],
+                "commands": [
+                    { "name": "model", "description": "Set the AI model", "argumentHint": "[model]" },
+                    { "name": "compact", "description": "Free up context", "argumentHint": "" },
+                    { "name": "color", "description": "Prompt bar color", "argumentHint": "" },
+                    { "name": "review", "description": "Review changes", "argumentHint": "[pr]" },
+                ],
+            } } }),
+        );
+        (provider, snapshot)
+    }
+
+    #[test]
+    fn initialize_fills_models_modes_and_ui_commands() {
+        let (mut provider, mut snapshot) = initialized();
+        let controls = &snapshot.controls;
+        assert_eq!(controls.models.len(), 3);
+        assert_eq!(controls.mode.as_deref(), Some("default"));
+        assert!(controls.modes.iter().any(|m| m.id == "auto"));
+        let action = |name: &str| {
+            controls
+                .commands
+                .iter()
+                .find(|c| c.name == name)
+                .map(|c| c.action.clone())
+        };
+        assert_eq!(action("model"), Some(CommandAction::Model));
+        assert_eq!(action("compact"), Some(CommandAction::Compact));
+        assert_eq!(
+            action("plan"),
+            Some(CommandAction::Mode {
+                mode: "plan".into()
+            })
+        );
+        assert_eq!(
+            action("review"),
+            Some(CommandAction::Insert {
+                text: "/review ".into()
+            })
+        );
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "system", "subtype": "init", "permissionMode": "acceptEdits", "terminal_slash_commands": ["color"] }),
+        );
+        assert!(snapshot.controls.commands.iter().all(|c| c.name != "color"));
+        assert_eq!(snapshot.controls.mode.as_deref(), Some("acceptEdits"));
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": { "subtype": "success", "request_id": "wm-2", "response": {
+                "effective": {}, "applied": { "model": "claude-opus-5-5[1m]", "effort": "high" },
+            } } }),
+        );
+        assert_eq!(snapshot.controls.model.as_deref(), Some("opus[1m]"));
+        assert_eq!(snapshot.controls.effort.as_deref(), Some("high"));
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": { "subtype": "success", "request_id": "wm-3", "response": {
+                "totalTokens": 87134, "maxTokens": 200000,
+            } } }),
+        );
+        assert_eq!(
+            snapshot.controls.context,
+            Some(ContextUsage {
+                used: 87134,
+                max: 200000
+            })
+        );
+    }
+
+    #[test]
+    fn configure_sends_the_matching_control_requests() {
+        let (mut provider, _) = initialized();
+        let mut out = ProviderOutput::default();
+        provider
+            .configure(&ChatSetting::Model("haiku".into()), &mut out)
+            .unwrap();
+        provider
+            .configure(&ChatSetting::Effort("low".into()), &mut out)
+            .unwrap();
+        provider
+            .configure(&ChatSetting::Mode("plan".into()), &mut out)
+            .unwrap();
+        assert!(provider
+            .configure(&ChatSetting::Mode("bypassPermissions".into()), &mut out)
+            .is_err());
+        let requests: Vec<_> = written(&out)
+            .into_iter()
+            .map(|w| w["request"].clone())
+            .collect();
+        assert_eq!(
+            requests[0],
+            json!({ "subtype": "set_model", "model": "haiku" })
+        );
+        assert_eq!(
+            requests[1],
+            json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": "low" } })
+        );
+        assert_eq!(
+            requests[2],
+            json!({ "subtype": "set_permission_mode", "mode": "plan" })
+        );
+        let mut out = ProviderOutput::default();
+        provider.compact(&mut out).unwrap();
+        assert_eq!(written(&out)[0]["message"]["content"], "/compact");
+    }
+
+    #[test]
+    fn todo_writes_update_the_pinned_list_instead_of_the_transcript() {
+        let (mut provider, mut snapshot) = started();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [
+                { "type": "tool_use", "id": "t1", "name": "TodoWrite", "input": { "todos": [
+                    { "content": "Read", "status": "completed", "activeForm": "Reading" },
+                    { "content": "Edit", "status": "in_progress", "activeForm": "Editing" },
+                ] } },
+            ] } }),
+        );
+        assert!(snapshot.items.is_empty());
+        let statuses: Vec<_> = snapshot
+            .controls
+            .todos
+            .iter()
+            .map(|t| t.status.as_str())
+            .collect();
+        assert_eq!(statuses, ["completed", "inProgress"]);
+    }
+
+    #[test]
+    fn approving_a_plan_leaves_plan_mode() {
+        let (mut provider, mut snapshot) = initialized();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_request", "request_id": "p1", "request": {
+                "subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": { "plan": "1. Add CHANGELOG.md" },
+            } }),
+        );
+        assert_eq!(snapshot.pending[0].title, "Claude's plan is ready");
+        assert_eq!(
+            snapshot.pending[0].detail.as_deref(),
+            Some("1. Add CHANGELOG.md")
+        );
+        let mut out = ProviderOutput::default();
+        let approve = ChatResponse {
+            decision: Some("allow".into()),
+            ..Default::default()
+        };
+        provider
+            .respond("p1", &approve, &snapshot, &mut out)
+            .unwrap();
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        assert_eq!(snapshot.controls.mode.as_deref(), Some("default"));
+        assert_eq!(
+            written(&out)[0]["response"]["response"]["behavior"],
+            "allow"
+        );
     }
 }

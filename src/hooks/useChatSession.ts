@@ -2,20 +2,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentId } from "../types";
 import {
   applyChatEvent,
+  chatCompact,
+  chatConfigure,
   chatDetach,
   chatInterrupt,
   chatOpen,
   chatRespond,
   chatSend,
   ChatResponse,
+  ChatSetting,
   ChatSnapshot,
+  EMPTY_CONTROLS,
 } from "../services/chat";
+
+type OpenMode = "attach" | "restart" | "fresh";
 
 const CONNECTING: ChatSnapshot = {
   generation: 0,
   status: { kind: "starting" },
   items: [],
   pending: [],
+  controls: EMPTY_CONTROLS,
 };
 
 /**
@@ -26,14 +33,14 @@ const CONNECTING: ChatSnapshot = {
 export function useChatSession(taskId: string, agent: AgentId, folders: string[]) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>(CONNECTING);
   const [error, setError] = useState<string | null>(null);
-  const openRef = useRef<(restart: boolean) => Promise<void>>(async () => undefined);
+  const openRef = useRef<(mode: OpenMode) => Promise<void>>(async () => undefined);
   const foldersKey = folders.join("\n");
 
   useEffect(() => {
     let disposed = false;
     let generation = 0;
 
-    const open = async (restart: boolean) => {
+    const open = async (mode: OpenMode) => {
       const early: { generation: number; apply: (s: ChatSnapshot) => ChatSnapshot }[] = [];
       let ready = false;
       setError(null);
@@ -43,7 +50,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
           taskId,
           agent,
           folders: foldersKey.split("\n"),
-          restart,
+          mode,
           onEvent: (eventGeneration, event) => {
             if (disposed) return;
             const apply = (s: ChatSnapshot) => applyChatEvent(s, event);
@@ -66,7 +73,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
       }
     };
     openRef.current = open;
-    void open(false);
+    void open("attach");
 
     return () => {
       disposed = true;
@@ -74,7 +81,13 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     };
   }, [taskId, agent, foldersKey]);
 
-  const restart = useCallback(() => openRef.current(true), []);
+  const restart = useCallback(() => openRef.current("restart"), []);
+  const startFresh = useCallback(() => openRef.current("fresh"), []);
+  const configure = useCallback(
+    (setting: ChatSetting) => chatConfigure(taskId, agent, setting),
+    [taskId, agent]
+  );
+  const compact = useCallback(() => chatCompact(taskId, agent), [taskId, agent]);
   const send = useCallback((text: string) => chatSend(taskId, agent, text), [taskId, agent]);
   const interrupt = useCallback(() => chatInterrupt(taskId, agent), [taskId, agent]);
   const respond = useCallback(
@@ -82,5 +95,15 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     [taskId, agent]
   );
 
-  return { snapshot, error, restart, send, interrupt, respond };
+  return {
+    snapshot,
+    error,
+    restart,
+    startFresh,
+    send,
+    interrupt,
+    respond,
+    configure,
+    compact,
+  };
 }

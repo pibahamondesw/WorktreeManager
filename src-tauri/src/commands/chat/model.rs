@@ -128,8 +128,126 @@ pub struct PendingRequest {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    pub format: DetailFormat,
     #[serde(flatten)]
     pub kind: PendingKind,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DetailFormat {
+    #[default]
+    Text,
+    Diff,
+    Markdown,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelOption {
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub efforts: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModeOption {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+}
+
+impl ModeOption {
+    pub fn new(id: &str, label: &str, description: &str) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            description: description.into(),
+        }
+    }
+}
+
+/// What picking a slash command does. Commands the app understands open UI or call the
+/// provider; everything else is sent to the agent as text.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CommandAction {
+    Insert { text: String },
+    Model,
+    Effort,
+    Mode { mode: String },
+    Compact,
+    Clear,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandOption {
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub argument_hint: Option<String>,
+    pub action: CommandAction,
+}
+
+impl CommandOption {
+    pub fn new(name: &str, description: &str, action: CommandAction) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            argument_hint: None,
+            action,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoItem {
+    pub text: String,
+    pub status: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextUsage {
+    pub used: u64,
+    pub max: u64,
+}
+
+/// Composer state the agent owns: what can be picked, what is picked, and live side panels.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatControls {
+    pub models: Vec<ModelOption>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub modes: Vec<ModeOption>,
+    pub mode: Option<String>,
+    pub commands: Vec<CommandOption>,
+    pub todos: Vec<TodoItem>,
+    pub context: Option<ContextUsage>,
+}
+
+impl ChatControls {
+    pub fn efforts(&self) -> &[String] {
+        self.model
+            .as_deref()
+            .and_then(|model| self.models.iter().find(|m| m.id == model))
+            .map(|m| m.efforts.as_slice())
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum ChatSetting {
+    Model(String),
+    Effort(String),
+    Mode(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -162,6 +280,9 @@ pub enum ChatEvent {
     Status {
         status: ChatStatus,
     },
+    Controls {
+        controls: ChatControls,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -171,6 +292,7 @@ pub struct ChatSnapshot {
     pub status: ChatStatus,
     pub items: Vec<ChatItem>,
     pub pending: Vec<PendingRequest>,
+    pub controls: ChatControls,
 }
 
 impl ChatSnapshot {
@@ -180,6 +302,7 @@ impl ChatSnapshot {
             status: ChatStatus::Starting,
             items: Vec::new(),
             pending: Vec::new(),
+            controls: ChatControls::default(),
         }
     }
 
@@ -212,6 +335,7 @@ impl ChatSnapshot {
                 }
                 self.status = status.clone();
             }
+            ChatEvent::Controls { controls } => self.controls = controls.clone(),
         }
     }
 
@@ -252,18 +376,27 @@ impl ProviderOutput {
         self.events.push(ChatEvent::Status { status });
     }
 
+    pub fn controls(&mut self, controls: &ChatControls) {
+        self.events.push(ChatEvent::Controls {
+            controls: controls.clone(),
+        });
+    }
+
     pub fn write(&mut self, value: serde_json::Value) {
         self.writes.push(value.to_string());
     }
 }
 
-/// Translates one agent's stdio protocol. The session owns the process and threading; the
+/// Translates one agent's stdio protocol. `send` may be called while a turn runs: providers
+/// steer or queue the message rather than refusing it. The session owns the process and threading; the
 /// provider only sees lines and user actions. `snapshot` is the state before this input.
 pub trait ChatProvider: Send {
     fn start(&mut self, out: &mut ProviderOutput);
     fn handle_line(&mut self, line: &str, snapshot: &ChatSnapshot, out: &mut ProviderOutput);
     fn send(&mut self, text: &str, out: &mut ProviderOutput) -> Result<(), String>;
     fn interrupt(&mut self, out: &mut ProviderOutput);
+    fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String>;
+    fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
     fn respond(
         &mut self,
         request_id: &str,
@@ -307,6 +440,7 @@ mod tests {
             id: "1".into(),
             title: "Run".into(),
             detail: None,
+            format: DetailFormat::Text,
             kind: PendingKind::Unsupported,
         };
         snapshot.apply(&ChatEvent::Pending {

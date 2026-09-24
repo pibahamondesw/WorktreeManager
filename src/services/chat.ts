@@ -38,11 +38,85 @@ export interface ChatQuestion {
   secret: boolean;
 }
 
-export type PendingRequest = { id: string; title: string; detail?: string } & (
+export type PendingRequest = {
+  id: string;
+  title: string;
+  detail?: string;
+  format: "text" | "diff" | "markdown";
+} & (
   | { kind: "approval"; decisions: { id: string; label: string }[] }
   | { kind: "question"; questions: ChatQuestion[] }
   | { kind: "unsupported" }
 );
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  description?: string;
+  efforts: string[];
+}
+
+export interface ModeOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export type CommandAction =
+  | { kind: "insert"; text: string }
+  | { kind: "model" }
+  | { kind: "effort" }
+  | { kind: "mode"; mode: string }
+  | { kind: "compact" }
+  | { kind: "clear" };
+
+export interface CommandOption {
+  name: string;
+  description: string;
+  argumentHint?: string;
+  action: CommandAction;
+}
+
+export interface TodoItem {
+  text: string;
+  status: "pending" | "inProgress" | "completed";
+}
+
+export interface ChatControls {
+  models: ModelOption[];
+  model: string | null;
+  effort: string | null;
+  modes: ModeOption[];
+  mode: string | null;
+  commands: CommandOption[];
+  todos: TodoItem[];
+  context: { used: number; max: number } | null;
+}
+
+export type ChatSetting =
+  | { kind: "model"; value: string }
+  | { kind: "effort"; value: string }
+  | { kind: "mode"; value: string };
+
+export interface FileMatch {
+  path: string;
+  name: string;
+}
+
+export const EMPTY_CONTROLS: ChatControls = {
+  models: [],
+  model: null,
+  effort: null,
+  modes: [],
+  mode: null,
+  commands: [],
+  todos: [],
+  context: null,
+};
+
+export function effortsFor(controls: ChatControls): string[] {
+  return controls.models.find((model) => model.id === controls.model)?.efforts ?? [];
+}
 
 export type ChatEvent =
   | { type: "items"; items: ChatItem[] }
@@ -50,13 +124,15 @@ export type ChatEvent =
   | { type: "delta"; id: string; field: "text" | "detail"; delta: string }
   | { type: "pending"; request: PendingRequest }
   | { type: "resolved"; id: string }
-  | { type: "status"; status: ChatStatus };
+  | { type: "status"; status: ChatStatus }
+  | { type: "controls"; controls: ChatControls };
 
 export interface ChatSnapshot {
   generation: number;
   status: ChatStatus;
   items: ChatItem[];
   pending: PendingRequest[];
+  controls: ChatControls;
 }
 
 export interface ChatResponse {
@@ -109,6 +185,8 @@ export function applyChatEvent(snapshot: ChatSnapshot, event: ChatEvent): ChatSn
         status: event.status,
         pending: isLive(event.status) ? snapshot.pending : [],
       };
+    case "controls":
+      return { ...snapshot, controls: event.controls };
   }
 }
 
@@ -116,7 +194,7 @@ interface ChatOpenArgs {
   taskId: string;
   agent: AgentId;
   folders: string[];
-  restart: boolean;
+  mode: "attach" | "restart" | "fresh";
   onEvent: (generation: number, event: ChatEvent) => void;
 }
 
@@ -128,6 +206,15 @@ export function chatOpen({ onEvent, ...args }: ChatOpenArgs): Promise<ChatSnapsh
 
 export const chatSend = (taskId: string, agent: AgentId, text: string) =>
   invoke<void>("chat_send", { taskId, agent, text });
+
+export const chatConfigure = (taskId: string, agent: AgentId, setting: ChatSetting) =>
+  invoke<void>("chat_configure", { taskId, agent, setting });
+
+export const chatCompact = (taskId: string, agent: AgentId) =>
+  invoke<void>("chat_compact", { taskId, agent });
+
+export const chatFileSearch = (folders: string[], query: string) =>
+  invoke<FileMatch[]>("chat_file_search", { folders, query });
 
 export const chatInterrupt = (taskId: string, agent: AgentId) =>
   invoke<void>("chat_interrupt", { taskId, agent });
@@ -141,6 +228,9 @@ export const chatRespond = (
 
 export const chatDetach = (taskId: string, agent: AgentId, generation: number) =>
   invoke<void>("chat_detach", { taskId, agent, generation }).catch(() => undefined);
+
+export const chatStop = (taskId: string, agent: AgentId) =>
+  invoke<void>("chat_stop", { taskId, agent });
 
 export const chatClose = (taskId: string) => invoke<void>("chat_close", { taskId });
 
