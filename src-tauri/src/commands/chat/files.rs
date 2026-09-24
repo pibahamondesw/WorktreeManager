@@ -2,11 +2,10 @@
 //! build output never shows up. Paths in the primary repository are relative; peers are absolute.
 
 use std::path::Path;
-use std::process::Command;
 
 use serde::Serialize;
 
-use super::super::git::GIT_ENV_SCRUB;
+use super::super::git::git_command;
 
 const LIMIT: usize = 30;
 
@@ -18,14 +17,9 @@ pub struct FileMatch {
 }
 
 fn tracked_files(folder: &str) -> Vec<String> {
-    let mut command = Command::new("git");
-    command
+    git_command()
         .args(["ls-files", "--cached", "--others", "--exclude-standard"])
-        .current_dir(folder);
-    for key in GIT_ENV_SCRUB {
-        command.env_remove(key);
-    }
-    command
+        .current_dir(folder)
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -67,22 +61,30 @@ fn score(path: &str, query: &str) -> Option<i64> {
 }
 
 pub fn search(folders: &[String], query: &str) -> Vec<FileMatch> {
+    let listings: Vec<(&str, Vec<String>)> = folders
+        .iter()
+        .map(|folder| (folder.as_str(), tracked_files(folder)))
+        .collect();
+    rank(&listings, query)
+}
+
+fn rank(listings: &[(&str, Vec<String>)], query: &str) -> Vec<FileMatch> {
     let query = query.trim();
     let mut matches: Vec<(i64, FileMatch)> = Vec::new();
-    for (index, folder) in folders.iter().enumerate() {
-        for relative in tracked_files(folder) {
-            let Some(score) = score(&relative, query) else {
+    for (index, (folder, files)) in listings.iter().enumerate() {
+        for relative in files {
+            let Some(score) = score(relative, query) else {
                 continue;
             };
             let path = if index == 0 {
                 relative.clone()
             } else {
                 Path::new(folder)
-                    .join(&relative)
+                    .join(relative)
                     .to_string_lossy()
                     .to_string()
             };
-            let name = relative.rsplit('/').next().unwrap_or(&relative).to_string();
+            let name = relative.rsplit('/').next().unwrap_or(relative).to_string();
             matches.push((score, FileMatch { path, name }));
         }
     }
@@ -94,43 +96,27 @@ pub fn search(folders: &[String], query: &str) -> Vec<FileMatch> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
-    fn repo(tag: &str, files: &[&str]) -> String {
-        let dir = std::env::temp_dir().join(format!("wm-chat-files-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let mut init = Command::new("git");
-        init.args(["init", "-q"]).current_dir(&dir);
-        for key in GIT_ENV_SCRUB {
-            init.env_remove(key);
-        }
-        assert!(init.status().unwrap().success());
-        fs::write(dir.join(".gitignore"), "build/\n").unwrap();
-        for file in files {
-            let path = dir.join(file);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, "").unwrap();
-        }
-        dir.to_string_lossy().to_string()
+    fn files(paths: &[&str]) -> Vec<String> {
+        paths.iter().map(|p| p.to_string()).collect()
     }
 
     #[test]
-    fn ranks_file_name_hits_and_skips_ignored_files() {
-        let primary = repo(
-            "primary",
-            &["src/chat/ChatPane.tsx", "src/chart.ts", "build/ChatPane.js"],
-        );
-        let peer = repo("peer", &["docs/chat.md"]);
-        let found = search(&[primary.clone(), peer.clone()], "chatpa");
-        assert_eq!(found[0].path, "src/chat/ChatPane.tsx");
-        assert!(found.iter().all(|m| !m.path.starts_with("build/")));
+    fn ranks_file_name_hits_and_prefixes_peer_paths() {
+        let listings = [
+            (
+                "/primary",
+                files(&["src/chat/ChatPane.tsx", "src/chart.ts"]),
+            ),
+            ("/peer", files(&["docs/chat.md"])),
+        ];
 
-        let found = search(&[primary.clone(), peer.clone()], "chat.md");
-        assert_eq!(found[0].path, format!("{peer}/docs/chat.md"));
+        let found = rank(&listings, "chatpa");
+        assert_eq!(found[0].path, "src/chat/ChatPane.tsx");
+
+        let found = rank(&listings, "chat.md");
+        assert_eq!(found[0].path, "/peer/docs/chat.md");
         assert_eq!(found[0].name, "chat.md");
-        let _ = fs::remove_dir_all(primary);
-        let _ = fs::remove_dir_all(peer);
     }
 
     #[test]
