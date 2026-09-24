@@ -100,11 +100,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wm-chat-files-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&dir)
-            .status()
-            .unwrap();
+        let mut init = Command::new("git");
+        init.args(["init", "-q"]).current_dir(&dir);
+        for key in GIT_ENV_SCRUB {
+            init.env_remove(key);
+        }
+        assert!(init.status().unwrap().success());
         fs::write(dir.join(".gitignore"), "build/\n").unwrap();
         for file in files {
             let path = dir.join(file);
