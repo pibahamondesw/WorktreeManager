@@ -130,3 +130,12 @@ body,
   padding-left: 0.75rem;
   color: var(--color-text-secondary);
 }
+
+@keyframes setup-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}

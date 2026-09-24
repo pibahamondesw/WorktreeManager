@@ -27,7 +27,6 @@ import { TerminalStatus } from "../../services/terminal";
 import { AgentActivity, taskIndicator } from "../../services/agentActivity";
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
 import { DeleteOptions, OperationResult } from "../../services/operations";
-import { TaskSetupProgress } from "../task/TaskSetupProgress";
 import { stateVariant } from "./cardStyles";
 
 interface WorktreeCardProps {
@@ -488,7 +487,6 @@ export const WorktreeCard = memo(function WorktreeCard({
         </div>
       </div>
 
-      <TaskSetupProgress taskId={task.id} />
       {/* Inline delete confirmation */}
       {confirmDelete && (
         <div

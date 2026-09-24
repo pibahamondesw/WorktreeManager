@@ -11,6 +11,12 @@ vi.mock("../../services/notes", () => ({
   taskNoteUri: vi.fn(),
 }));
 
+import {
+  clearTaskSetup,
+  initializeTaskSetup,
+  getTaskSetup,
+  updateTaskSetup,
+} from "../../services/taskSetup";
 import { WorktreeCard } from "./WorktreeCard";
 import { Task, VaultConfig, Workspace } from "../../types";
 
@@ -26,7 +32,10 @@ const task = {
   createdAt: "2026-01-01T00:00:00Z",
 } as unknown as Task;
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  clearTaskSetup(task.id);
+});
 
 describe("WorktreeCard session indicator", () => {
   it("shows a running dot when the task has a live agent session", () => {
@@ -104,3 +113,24 @@ it("offers linking only for an unlinked task without opening its editor", () => 
   );
   expect(screen.queryByRole("button", { name: "Link Linear issue" })).not.toBeInTheDocument();
 });
+
+it.each([true, false])(
+  "omits setup logs and dismissal controls from the card while active=%s",
+  (active) => {
+    initializeTaskSetup(task, []);
+    updateTaskSetup(task.id, { ...getTaskSetup(task.id)!, active });
+    render(
+      <WorktreeCard
+        task={task}
+        workspace={workspace}
+        vault={vault}
+        onDelete={vi.fn()}
+        repoSlugs={{}}
+      />
+    );
+    expect(screen.queryByText(/Setup running|Setup completed/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Dismiss setup progress" })
+    ).not.toBeInTheDocument();
+  }
+);
