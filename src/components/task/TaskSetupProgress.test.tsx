@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { TaskSetupProgress } from "./TaskSetupProgress";
@@ -14,6 +14,7 @@ import { Task } from "../../types";
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   clearTaskSetup("progress-test");
 });
 
@@ -105,3 +106,90 @@ it.each([true, false])(
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   }
 );
+
+function startSetup() {
+  vi.useFakeTimers();
+  initializeTaskSetup(
+    { id: "progress-test", members: [{ repoId: "api", repoName: "API" }] } as Task,
+    []
+  );
+  return render(<TaskSetupProgress taskId="progress-test" />);
+}
+
+function completeSetup() {
+  act(() => {
+    updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, active: false });
+  });
+}
+
+it("starts the countdown only after success and stays dismissed across navigation", () => {
+  const view = startSetup();
+  act(() => vi.advanceTimersByTime(10000));
+  expect(screen.getByRole("status")).toHaveTextContent("Setup running");
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  completeSetup();
+  expect(screen.getByRole("status")).toHaveTextContent("Setup completed");
+  expect(screen.getByRole("status").querySelector("svg")).toBeInTheDocument();
+  expect(screen.getByRole("progressbar")).toHaveClass("bg-accent");
+  act(() => vi.advanceTimersByTime(4999));
+  expect(screen.getByRole("status")).toBeInTheDocument();
+  act(() => vi.advanceTimersByTime(1));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  view.unmount();
+  render(<TaskSetupProgress taskId="progress-test" />);
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it.each(["before", "during"])(
+  "opening details %s the countdown requires manual dismissal",
+  (when) => {
+    const view = startSetup();
+    if (when === "during") {
+      completeSetup();
+      act(() => vi.advanceTimersByTime(2000));
+    }
+    const summary = screen.getByRole("status").closest("summary")!;
+    fireEvent.click(summary);
+    fireEvent.click(summary);
+    if (when === "before") completeSetup();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(10000));
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    view.unmount();
+    render(<TaskSetupProgress taskId="progress-test" />);
+    act(() => vi.advanceTimersByTime(10000));
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss setup progress" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  }
+);
+
+it.each(["error", "warning"])("keeps logs with a setup %s visible", (failure) => {
+  startSetup();
+  act(() => {
+    if (failure === "error") {
+      updateSetupStep("progress-test", "api", "install_node_deps", "error", [], "Install failed");
+    } else {
+      updateTaskSetup("progress-test", {
+        ...getTaskSetup("progress-test")!,
+        warnings: [{ stage: "config", message: "Configuration could not be copied." }],
+      });
+    }
+  });
+  completeSetup();
+  act(() => vi.advanceTimersByTime(10000));
+  expect(screen.getByRole("status")).toBeInTheDocument();
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+});
+
+it("cancels an active countdown if an error arrives", () => {
+  startSetup();
+  completeSetup();
+  act(() => vi.advanceTimersByTime(2000));
+  act(() => {
+    updateSetupStep("progress-test", "api", "install_node_deps", "error", [], "Install failed");
+  });
+  act(() => vi.advanceTimersByTime(10000));
+  expect(screen.getByRole("status")).toHaveTextContent("Setup completed with errors");
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+});

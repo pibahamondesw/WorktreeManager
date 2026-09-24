@@ -14,6 +14,7 @@ export interface TaskSetupState {
   active: boolean;
   opened: boolean;
   dismissed: boolean;
+  detailsViewed: boolean;
   repos: {
     repoId: string;
     repoName: string;
@@ -43,6 +44,7 @@ export function initializeTaskSetup(task: Task, warnings: OperationWarning[]) {
     active: true,
     opened: false,
     dismissed: false,
+    detailsViewed: false,
     repos: task.members.map((member) => ({
       repoId: member.repoId,
       repoName: member.repoName,
@@ -88,4 +90,9 @@ export function clearTaskSetup(taskId: string) {
 export function dismissTaskSetup(taskId: string) {
   const state = states.get(taskId);
   if (state) updateTaskSetup(taskId, { ...state, dismissed: true });
+}
+
+export function markTaskSetupDetailsViewed(taskId: string) {
+  const state = states.get(taskId);
+  if (state && !state.detailsViewed) updateTaskSetup(taskId, { ...state, detailsViewed: true });
 }
