@@ -24,6 +24,8 @@ import { ensureTaskNote, taskNoteUri } from "../../services/notes";
 import { openCreatePr } from "../../services/pullRequest";
 import { linearIssueUrl, timeAgo } from "../../utils";
 import { TerminalStatus } from "../../services/terminal";
+import { AgentActivity, taskIndicator } from "../../services/agentActivity";
+import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
 import { DeleteOptions, OperationResult } from "../../services/operations";
 import { TaskSetupProgress } from "../task/TaskSetupProgress";
 import { stateVariant } from "./cardStyles";
@@ -42,6 +44,7 @@ interface WorktreeCardProps {
   onOpen?: () => void;
   onLinkIssue?: () => void;
   sessionStatus?: TerminalStatus;
+  agentActivity?: AgentActivity;
   repoSlugs: Record<string, string> | null;
   requestDelete?: boolean;
   onRequestDeleteHandled?: () => void;
@@ -64,6 +67,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   onOpen,
   onLinkIssue,
   sessionStatus,
+  agentActivity,
   repoSlugs,
   requestDelete,
   onRequestDeleteHandled,
@@ -217,12 +221,14 @@ export const WorktreeCard = memo(function WorktreeCard({
   };
 
   const age = gitStatus ? timeAgo(gitStatus.last_commit_epoch) : null;
+  const indicator = taskIndicator(agentActivity, sessionStatus);
 
   return (
     <div
       onClick={handleOpen}
       tabIndex={-1}
       data-selected={selected ? "true" : undefined}
+      data-attention={agentActivity?.state === "waiting" ? "" : undefined}
       className={`group bg-bg-secondary border rounded-xl p-4 hover:border-border-light hover:bg-bg-tertiary/50 transition-all cursor-pointer outline-none ${
         selected ? "border-accent/50 bg-bg-tertiary/30" : "border-border"
       }`}
@@ -272,7 +278,11 @@ export const WorktreeCard = memo(function WorktreeCard({
             {status && (
               <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
             )}
-            {sessionStatus && <SessionDot status={sessionStatus} />}
+            {indicator && <TaskIndicatorDot indicator={indicator} />}
+            {agentActivity?.state === "waiting" && <Badge variant="warning">Needs input</Badge>}
+            {agentActivity?.state === "done" && agentActivity.unread && (
+              <Badge variant="success">Done</Badge>
+            )}
             {age && age.label && (
               <span
                 className={`text-xs ml-auto flex-shrink-0 ${
@@ -568,15 +578,5 @@ function MenuButton({
       <span>{children}</span>
       {label && <span className="text-text-muted font-mono text-[0.625rem]">{label}</span>}
     </button>
-  );
-}
-
-function SessionDot({ status }: { status: TerminalStatus }) {
-  const running = status.kind === "running";
-  return (
-    <span
-      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${running ? "bg-success animate-pulse" : "bg-text-muted"}`}
-      title={running ? "Agent session running" : "Agent session ended"}
-    />
   );
 }

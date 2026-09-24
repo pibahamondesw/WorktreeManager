@@ -40,6 +40,14 @@ vi.mock("./hooks/useNavigationHistory", () => ({
 vi.mock("./hooks/useWindowDrag", () => ({ useWindowDrag: vi.fn() }));
 vi.mock("./hooks/useLinearOrgKeyBackfill", () => ({ useLinearOrgKeyBackfill: vi.fn() }));
 vi.mock("./hooks/useAgentSessions", () => ({ useAgentSessions: () => ({}) }));
+vi.mock("./hooks/useAgentActivity", () => ({
+  useAgentActivity: () => ({
+    activities: {},
+    handleAgentEvent: vi.fn(),
+    alerts: { sounds: {}, notifications: {} },
+    updateAlerts: vi.fn(),
+  }),
+}));
 // Shells out and calls Linear; keep it out of a render test.
 vi.mock("./hooks/useDoctor", () => ({
   useDoctor: mocks.useDoctor,

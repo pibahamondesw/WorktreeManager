@@ -40,7 +40,7 @@ describe("frontend automation bridge", () => {
     )![1];
     const request = { id: "r1", version: 1, method: "workspace.list", params: {} };
     await act(async () => registration.channel.onmessage({ token: "token1", request }));
-    expect(dispatch).toHaveBeenCalledWith(operations, request, expect.any(Function));
+    expect(dispatch).toHaveBeenCalledWith(operations, request, expect.any(Function), undefined);
     expect(invoke).toHaveBeenCalledWith("automation_complete", {
       session: registration.session,
       token: "token1",

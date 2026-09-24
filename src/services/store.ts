@@ -27,6 +27,7 @@ import {
 } from "../utils";
 import { loadSecrets, saveAndVerifySecrets, saveSecrets } from "./keychain";
 import { NavigationEntry, isNavigationEntry } from "../navigation/history";
+import { AgentAlertSettings, normalizeAgentAlerts } from "./agentActivity";
 
 let store: Store | null = null;
 
@@ -362,6 +363,11 @@ export async function loadAgentViews(): Promise<AgentViews> {
 export async function loadSidebarCollapsed(): Promise<boolean> {
   const s = await getStore();
   return (await s.get<boolean>("sidebarCollapsed")) ?? false;
+}
+
+export async function loadAgentAlerts(): Promise<AgentAlertSettings> {
+  const s = await getStore();
+  return normalizeAgentAlerts(await s.get<unknown>("agentAlerts"));
 }
 
 export async function loadNavigationHistory(): Promise<NavigationEntry[]> {

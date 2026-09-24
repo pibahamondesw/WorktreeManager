@@ -1,5 +1,11 @@
 import { Task, Workspace } from "../types";
 import { TerminalStatus } from "../services/terminal";
+import {
+  AgentActivities,
+  INDICATOR_RANK,
+  TaskIndicator,
+  taskIndicator,
+} from "../services/agentActivity";
 import { Filter, ParsedQuery, parseQuery } from "./query";
 
 export interface TaskSearchResult {
@@ -8,6 +14,7 @@ export interface TaskSearchResult {
   score: number;
   inCurrentWorkspace: boolean;
   activeSession: boolean;
+  indicator: TaskIndicator | null;
 }
 
 interface SearchArgs {
@@ -17,6 +24,7 @@ interface SearchArgs {
   query: string;
   lastVisitAt?: Map<string, string>;
   agentSessions?: Record<string, TerminalStatus>;
+  agentActivities?: AgentActivities;
 }
 
 /** Ranked so an exact Linear identifier always beats an incidental title hit. */
@@ -34,7 +42,8 @@ const SCORES = {
 
 /** Outranks any achievable text score, so the current workspace always sorts first. */
 const CURRENT_WORKSPACE_BOOST = 1_000_000;
-const ACTIVE_SESSION_BOOST = 2_000_000;
+/** Per indicator rank: needs input, then idle sessions waiting on you, then working agents. */
+const AGENT_BOOST = 2_000_000;
 
 interface TaskFields {
   identifier: string;
@@ -121,8 +130,9 @@ function scoreTask(f: TaskFields, parsed: ParsedQuery): number | null {
 }
 
 /**
- * Rank every task against the palette query. Active sessions come first, followed by tasks in
- * the current workspace, then by text score and most recent visit.
+ * Rank every task against the palette query. Agents needing input come first, then idle live
+ * sessions, then working agents, followed by tasks in the current workspace, then by text score
+ * and most recent visit.
  */
 export function searchTasks({
   tasks,
@@ -131,6 +141,7 @@ export function searchTasks({
   query,
   lastVisitAt,
   agentSessions = {},
+  agentActivities = {},
 }: SearchArgs): TaskSearchResult[] {
   const recencyOf = (task: Task) => lastVisitAt?.get(task.id) ?? task.createdAt;
   const parsed = parseQuery(query);
@@ -148,18 +159,17 @@ export function searchTasks({
       score,
       inCurrentWorkspace: task.workspaceId === selectedWorkspaceId,
       activeSession,
+      indicator: taskIndicator(agentActivities[task.id], agentSessions[task.id]),
     });
   }
 
+  const rank = (result: TaskSearchResult) =>
+    result.score +
+    (result.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0) +
+    (result.indicator ? INDICATOR_RANK[result.indicator] * AGENT_BOOST : 0);
   return results.sort((a, b) => {
-    const rankA =
-      a.score +
-      (a.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0) +
-      (a.activeSession ? ACTIVE_SESSION_BOOST : 0);
-    const rankB =
-      b.score +
-      (b.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0) +
-      (b.activeSession ? ACTIVE_SESSION_BOOST : 0);
+    const rankA = rank(a);
+    const rankB = rank(b);
     if (rankA !== rankB) return rankB - rankA;
     return recencyOf(b.task).localeCompare(recencyOf(a.task));
   });

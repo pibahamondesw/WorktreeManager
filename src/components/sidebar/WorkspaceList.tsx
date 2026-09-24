@@ -13,16 +13,36 @@ import {
   NotebookIcon,
   SidebarIcon,
   WrenchIcon,
+  BellIcon,
 } from "../ui/Icons";
 import { DeleteOptions, OperationResult } from "../../services/operations";
 import { CheckSeverity } from "../../services/doctor";
 import { WorkspaceAction } from "../../search/commands";
 import { TerminalStatus } from "../../services/terminal";
+import {
+  AgentActivities,
+  AgentAlertSettings,
+  TaskIndicator,
+  strongestIndicator,
+  taskIndicator,
+} from "../../services/agentActivity";
+import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
+
+const WORKSPACE_INDICATOR_LABELS: Record<TaskIndicator, string> = {
+  input: "An agent in this workspace needs your input",
+  idle: "Active agent session in this workspace",
+  working: "An agent in this workspace is working",
+  ended: "",
+};
+import { AgentAlertsModal } from "./AgentAlertsModal";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
   tasks: Task[];
   agentSessions?: Record<string, TerminalStatus>;
+  agentActivities?: AgentActivities;
+  agentAlerts: AgentAlertSettings;
+  onAgentAlertsChange: (alerts: AgentAlertSettings) => void;
   selectedWorkspaceId: string | null;
   onSelect: (workspaceId: string) => void;
   onAdd: (workspace: Workspace) => Promise<Workspace>;
@@ -57,6 +77,9 @@ export function WorkspaceList({
   workspaces,
   tasks,
   agentSessions = {},
+  agentActivities = {},
+  agentAlerts,
+  onAgentAlertsChange,
   selectedWorkspaceId,
   onSelect,
   onAdd,
@@ -84,6 +107,7 @@ export function WorkspaceList({
   const [removeWorkspace, setRemoveWorkspace] = useState<Workspace | null>(null);
   const [showThemes, setShowThemes] = useState(false);
   const [showVault, setShowVault] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // Source index lives in a ref so drop logic never depends on async state having flushed.
@@ -131,15 +155,18 @@ export function WorkspaceList({
     return m;
   }, [tasks]);
 
-  const activeSessionWorkspaceIds = useMemo(
-    () =>
-      new Set(
-        tasks
-          .filter((task) => agentSessions[task.id]?.kind === "running")
-          .map((task) => task.workspaceId)
-      ),
-    [tasks, agentSessions]
-  );
+  const indicatorByWorkspaceId = useMemo(() => {
+    const byWorkspace = new Map<string, TaskIndicator | null>();
+    for (const task of tasks) {
+      const indicator = taskIndicator(agentActivities[task.id], agentSessions[task.id]);
+      if (indicator === "ended") continue;
+      byWorkspace.set(
+        task.workspaceId,
+        strongestIndicator([byWorkspace.get(task.workspaceId) ?? null, indicator])
+      );
+    }
+    return byWorkspace;
+  }, [tasks, agentActivities, agentSessions]);
 
   useEffect(() => {
     if (!workspaceAction) return;
@@ -261,10 +288,10 @@ export function WorkspaceList({
               <div className="flex flex-col min-w-0 flex-1">
                 <div className="flex items-center gap-2 min-w-0">
                   <p className="text-sm font-medium truncate">{workspace.name}</p>
-                  {activeSessionWorkspaceIds.has(workspace.id) && (
-                    <span
-                      className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-success animate-pulse"
-                      title="Active agent session in this workspace"
+                  {indicatorByWorkspaceId.get(workspace.id) && (
+                    <TaskIndicatorDot
+                      indicator={indicatorByWorkspaceId.get(workspace.id)!}
+                      title={WORKSPACE_INDICATOR_LABELS[indicatorByWorkspaceId.get(workspace.id)!]}
                     />
                   )}
                 </div>
@@ -334,6 +361,14 @@ export function WorkspaceList({
           )}
         </button>
         <button
+          onClick={() => setShowAlerts(true)}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
+          title="Agent hooks, sounds and notifications"
+        >
+          <BellIcon />
+          Agent alerts
+        </button>
+        <button
           onClick={() => setShowThemes(true)}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
           title="Change theme"
@@ -343,6 +378,12 @@ export function WorkspaceList({
         </button>
       </div>
 
+      <AgentAlertsModal
+        open={showAlerts}
+        onClose={() => setShowAlerts(false)}
+        alerts={agentAlerts}
+        onAlertsChange={onAgentAlertsChange}
+      />
       <VaultSettingsModal
         open={showVault}
         onClose={() => setShowVault(false)}

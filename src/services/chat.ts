@@ -144,6 +144,8 @@ export interface ChatInfo {
   taskId: string;
   agent: AgentId;
   status: ChatStatus;
+  /** An approval or question is waiting for an answer. */
+  waiting: boolean;
 }
 
 export const isLive = (status: ChatStatus) => status.kind !== "exited" && status.kind !== "failed";

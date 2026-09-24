@@ -23,8 +23,10 @@ import { linearIssueUrl } from "../../utils";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 import { PaletteResults } from "./PaletteResults";
 import { TerminalStatus } from "../../services/terminal";
+import { AgentActivities } from "../../services/agentActivity";
 
 const EMPTY_ENTRIES: NavigationEntry[] = [];
+const EMPTY_ACTIVITIES: AgentActivities = {};
 
 interface QuickSearchModalProps {
   open: boolean;
@@ -35,6 +37,7 @@ interface QuickSearchModalProps {
   selectedWorkspaceId: string | null;
   historyEntries?: NavigationEntry[];
   agentSessions?: Record<string, TerminalStatus>;
+  agentActivities?: AgentActivities;
   themeId: string;
   editorApp: EditorApp;
   /** Switch to the task's workspace and select it in the list. */
@@ -57,6 +60,7 @@ export function QuickSearchModal({
   selectedWorkspaceId,
   historyEntries = EMPTY_ENTRIES,
   agentSessions = {},
+  agentActivities = EMPTY_ACTIVITIES,
   themeId,
   editorApp,
   onReveal,
@@ -68,6 +72,8 @@ export function QuickSearchModal({
   onNewTask,
 }: QuickSearchModalProps) {
   useEditorOcclusion(open);
+  const [openedWith, setOpenedWith] = useState({ open, activities: agentActivities });
+  if (openedWith.open !== open) setOpenedWith({ open, activities: agentActivities });
   const [query, setQuery] = useState(initialQuery);
   const [activeIndex, setActiveIndex] = useState(0);
   const { toast, showToast } = useEphemeralToast();
@@ -110,10 +116,21 @@ export function QuickSearchModal({
             query,
             lastVisitAt,
             agentSessions,
+            agentActivities: openedWith.activities,
             commands,
           })
         : ([] as PaletteItem[]),
-    [open, tasks, workspaces, selectedWorkspaceId, query, lastVisitAt, agentSessions, commands]
+    [
+      open,
+      tasks,
+      workspaces,
+      selectedWorkspaceId,
+      query,
+      lastVisitAt,
+      agentSessions,
+      openedWith.activities,
+      commands,
+    ]
   );
 
   useEffect(() => {

@@ -172,7 +172,7 @@ describe("QuickSearchModal ordering", () => {
       .getAllByRole("button", { name: /feature\// })
       .map((button) => button.textContent);
     expect(names[0]).toContain("feature/ledger-sync");
-    expect(screen.getByTitle("Agent session running")).toBeInTheDocument();
+    expect(screen.getByTitle("Agent session active")).toBeInTheDocument();
   });
 
   it("filters to active sessions from the filter tab", () => {

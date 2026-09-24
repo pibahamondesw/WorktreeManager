@@ -75,6 +75,16 @@ export function useOpenTask({
     [editorApp, agentViews, workspaces, recordTaskVisit, showTask]
   );
 
+  /** Open an embedded surface directly, e.g. the chat an agent notification came from. */
+  const openTaskSurface = useCallback(
+    (task: Task, surface: TaskSurface) => {
+      showTask(task);
+      recordTaskVisit(task);
+      setOpenedTask({ taskId: task.id, surface });
+    },
+    [recordTaskVisit, showTask]
+  );
+
   const closeTask = useCallback(() => setOpenedTask(null), []);
   const restoreTask = useCallback(
     (task: Task) => {
@@ -91,5 +101,5 @@ export function useOpenTask({
     []
   );
 
-  return { openedTask, openTask, closeTask, restoreTask, switchSurface };
+  return { openedTask, openTask, openTaskSurface, closeTask, restoreTask, switchSurface };
 }
