@@ -9,6 +9,7 @@ import {
   EDITOR_CONFIG_PATHS,
   ALWAYS_COPIED_CONFIG_PATHS,
 } from "../types";
+import { compareTaskPins } from "../utils";
 import { LinearService } from "./linear";
 import { persist } from "./store";
 import { archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
@@ -127,6 +128,47 @@ export class Operations {
     const task = this.getState().tasks.find((item) => item.id === id);
     if (!task) throw new OperationError("not_found", "Task not found.");
     return task;
+  }
+
+  setTaskPinned(id: string, pinned: boolean) {
+    return this.change((state) => {
+      const task = this.task(id);
+      if ((task.pinOrder !== undefined) === pinned) return {};
+      const pins = state.tasks.filter(
+        (item) => item.workspaceId === task.workspaceId && item.pinOrder !== undefined
+      );
+      const pinOrder = pinned ? Math.max(-1, ...pins.map((item) => item.pinOrder!)) + 1 : undefined;
+      return { tasks: state.tasks.map((item) => (item.id === id ? { ...item, pinOrder } : item)) };
+    });
+  }
+
+  reorderPinnedTasks(id: string, targetId: string) {
+    return this.change((state) => {
+      const task = this.task(id);
+      const target = this.task(targetId);
+      if (
+        task.workspaceId !== target.workspaceId ||
+        task.pinOrder === undefined ||
+        target.pinOrder === undefined
+      ) {
+        throw new OperationError(
+          "invalid_params",
+          "Only pinned tasks in the same workspace can be reordered."
+        );
+      }
+      const pins = state.tasks
+        .filter((item) => item.workspaceId === task.workspaceId && item.pinOrder !== undefined)
+        .sort(compareTaskPins);
+      const from = pins.findIndex((item) => item.id === id);
+      const to = pins.findIndex((item) => item.id === targetId);
+      pins.splice(to, 0, ...pins.splice(from, 1));
+      const positions = new Map(pins.map((item, index) => [item.id, index]));
+      return {
+        tasks: state.tasks.map((item) =>
+          positions.has(item.id) ? { ...item, pinOrder: positions.get(item.id)! } : item
+        ),
+      };
+    });
   }
 
   private async validateWorkspace(workspace: Workspace) {

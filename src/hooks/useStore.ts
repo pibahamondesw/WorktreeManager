@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { compareTaskPins } from "../utils";
 import { invoke } from "@tauri-apps/api/core";
 import {
   loadState,
@@ -301,7 +302,8 @@ export function useStore() {
     [state.workspaces, state.selectedWorkspaceId]
   );
   const selectedTasks = useMemo(
-    () => state.tasks.filter((t) => t.workspaceId === state.selectedWorkspaceId),
+    () =>
+      state.tasks.filter((t) => t.workspaceId === state.selectedWorkspaceId).sort(compareTaskPins),
     [state.tasks, state.selectedWorkspaceId]
   );
 

@@ -352,3 +352,17 @@ describe("secret split and merge", () => {
     expect(merged.setup).toBe("lin_old");
   });
 });
+
+it("normalizes valid pin positions and ignores malformed or legacy values", () => {
+  expect(
+    normalizeTasks([
+      {},
+      { pinOrder: 0 },
+      { pinOrder: 3 },
+      { pinOrder: -1 },
+      { pinOrder: "1" },
+      { pinOrder: null },
+      { pinOrder: 1.5 },
+    ]).map((task) => task.pinOrder)
+  ).toEqual([undefined, 0, 3, undefined, undefined, undefined, undefined]);
+});

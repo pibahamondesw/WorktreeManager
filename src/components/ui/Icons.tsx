@@ -427,3 +427,22 @@ export function BellIcon({ size = 14, className = "" }: IconProps) {
     </svg>
   );
 }
+
+export function PinIcon({ size = 16, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M16 3 21 8 17 9 14 12 14 16 8 10 12 10 15 7 Z M11 13 4 20" />
+    </svg>
+  );
+}

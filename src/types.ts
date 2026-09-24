@@ -43,6 +43,7 @@ export interface Task {
   workspaceFilePath?: string | null;
   noteFolder?: string;
   noteFileName?: string;
+  pinOrder?: number;
   createdAt: string;
 }
 
