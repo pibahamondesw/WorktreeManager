@@ -217,3 +217,35 @@ describe("searchTasks", () => {
     expect(first.inCurrentWorkspace).toBe(false);
   });
 });
+
+describe("pinned task ranking", () => {
+  it.each(["", "feature"])("uses pin order before text score and recency for %j", (query) => {
+    const tasks = [
+      task({ id: "recent", createdAt: "2026-09-01", linearIssueTitle: "feature" }),
+      task({ id: "second", pinOrder: 1 }),
+      task({ id: "first", pinOrder: 0 }),
+      task({ id: "excluded", pinOrder: 2, branchName: "other", members: [] }),
+    ];
+    const results = searchTasks({ tasks, workspaces, selectedWorkspaceId: "ws-web", query });
+    expect(results.map((result) => result.task.id)).toEqual(
+      query ? ["first", "second", "recent"] : ["first", "second", "excluded", "recent"]
+    );
+  });
+
+  it("preserves agent and current-workspace priority", () => {
+    const tasks = [
+      task({ id: "pin", pinOrder: 0, workspaceId: "ws-api" }),
+      task({ id: "current" }),
+      task({ id: "agent", workspaceId: "ws-api" }),
+    ];
+    expect(
+      searchTasks({
+        tasks,
+        workspaces,
+        selectedWorkspaceId: "ws-web",
+        query: "",
+        agentSessions: { agent: { kind: "running" } },
+      }).map((result) => result.task.id)
+    ).toEqual(["agent", "current", "pin"]);
+  });
+});

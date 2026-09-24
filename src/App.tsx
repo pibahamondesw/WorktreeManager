@@ -378,6 +378,8 @@ function App() {
             vault={state.vault}
             onTaskCreated={createTask}
             onTaskDeleted={removeTask}
+            onTaskPinned={(id, pinned) => operations.setTaskPinned(id, pinned)}
+            onPinnedTasksReordered={(id, targetId) => operations.reorderPinnedTasks(id, targetId)}
             onTaskIssueLinked={(id, issue) => operations.linkTaskIssue(id, issue)}
             editorApp={editorApp}
             onEditorChange={updateEditorApp}

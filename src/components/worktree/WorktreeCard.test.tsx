@@ -134,3 +134,18 @@ it.each([true, false])(
     ).not.toBeInTheDocument();
   }
 );
+
+it("toggles the pin without opening the task and exposes its saved state", () => {
+  const onTogglePin = vi.fn();
+  const onOpen = vi.fn();
+  const props = { task, workspace, vault, onDelete: vi.fn(), repoSlugs: {}, onTogglePin, onOpen };
+  const view = render(<WorktreeCard {...props} />);
+  fireEvent.click(screen.getByTitle("Pin task"));
+  expect(onTogglePin).toHaveBeenCalledOnce();
+  expect(onOpen).not.toHaveBeenCalled();
+  view.rerender(<WorktreeCard {...props} task={{ ...task, pinOrder: 0 }} />);
+  expect(screen.getByTitle("Unpin task")).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByTitle("Drag to reorder pinned tasks")).toBeInTheDocument();
+  fireEvent.click(screen.getByTitle("Unpin task"));
+  expect(onTogglePin).toHaveBeenCalledTimes(2);
+});

@@ -10,6 +10,8 @@ import {
   PullRequestIcon,
   MoreVerticalIcon,
   TrashIcon,
+  PinIcon,
+  GripIcon,
 } from "../ui/Icons";
 import {
   Task,
@@ -41,6 +43,7 @@ interface WorktreeCardProps {
   onOpenError?: (msg: string) => void;
   onToast?: (msg: string) => void;
   onOpen?: () => void;
+  onTogglePin?: () => void;
   onLinkIssue?: () => void;
   sessionStatus?: TerminalStatus;
   agentActivity?: AgentActivity;
@@ -65,6 +68,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   onToast,
   onOpen,
   onLinkIssue,
+  onTogglePin,
   sessionStatus,
   agentActivity,
   repoSlugs,
@@ -233,6 +237,11 @@ export const WorktreeCard = memo(function WorktreeCard({
       }`}
     >
       <div className="flex items-start justify-between gap-3">
+        {task.pinOrder !== undefined && (
+          <span className="text-text-muted cursor-grab pt-0.5" title="Drag to reorder pinned tasks">
+            <GripIcon size={12} />
+          </span>
+        )}
         {/* Index number */}
         {index !== undefined && index <= 9 && (
           <span className="text-xs font-mono text-text-muted/40 flex-shrink-0 w-4 pt-0.5 text-right">
@@ -445,6 +454,19 @@ export const WorktreeCard = memo(function WorktreeCard({
 
         {/* Right side: action buttons */}
         <div className="flex flex-col items-center gap-1 flex-shrink-0">
+          {onTogglePin && (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onTogglePin();
+              }}
+              aria-pressed={task.pinOrder !== undefined}
+              title={task.pinOrder !== undefined ? "Unpin task" : "Pin task"}
+              className={`w-8 h-8 flex items-center justify-center rounded-lg hover:bg-bg-hover cursor-pointer ${task.pinOrder !== undefined ? "text-accent" : "text-text-muted opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+            >
+              <PinIcon />
+            </button>
+          )}
           {/* Context menu */}
           <div className="relative" ref={menuRef}>
             <button

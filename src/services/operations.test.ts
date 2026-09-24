@@ -607,3 +607,55 @@ describe("linkTaskIssue", () => {
     expect(LinearService.prototype.getIssue).toHaveBeenCalledOnce();
   });
 });
+
+describe("pinned tasks", () => {
+  it("persists pins, reorders within a workspace, and restores the original unpinned order", async () => {
+    const other = { ...task, id: "other", workspaceId: "w2", pinOrder: 0 };
+    const { operations, save } = fixture([task, { ...task, id: "t2" }, other]);
+    await Promise.all([operations.setTaskPinned("t2", true), operations.setTaskPinned("t1", true)]);
+    expect(operations.task("t2").pinOrder).toBe(0);
+    expect(operations.task("t1").pinOrder).toBe(1);
+    await operations.setTaskPinned("t1", true);
+    expect(operations.task("t1").pinOrder).toBe(1);
+    await operations.reorderPinnedTasks("t1", "t2");
+    const restored = normalizeTasks(operations.getState().tasks);
+    expect(restored.map((item) => item.pinOrder)).toEqual([0, 1, 0]);
+    expect(operations.task("other")).toBe(other);
+    await operations.setTaskPinned("t1", false);
+    await operations.setTaskPinned("t2", false);
+    expect(operations.getState().tasks.map((item) => item.id)).toEqual(["t1", "t2", "other"]);
+    expect(operations.task("t1").pinOrder).toBeUndefined();
+    expect(save).toHaveBeenCalled();
+  });
+
+  it("rejects cross-workspace and unpinned drops", async () => {
+    const { operations, save } = fixture([
+      { ...task, pinOrder: 0 },
+      { ...task, id: "other", workspaceId: "w2", pinOrder: 0 },
+      { ...task, id: "unpinned" },
+    ]);
+    await expect(operations.reorderPinnedTasks("t1", "other")).rejects.toMatchObject({
+      code: "invalid_params",
+    });
+    await expect(operations.reorderPinnedTasks("t1", "unpinned")).rejects.toMatchObject({
+      code: "invalid_params",
+    });
+    await expect(operations.setTaskPinned("missing", true)).rejects.toMatchObject({
+      code: "not_found",
+    });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("retains pin state when persistence fails", async () => {
+    const { operations, save } = fixture([task, { ...task, id: "t2", pinOrder: 0 }]);
+    save.mockRejectedValue(new Error("disk full"));
+    await expect(operations.setTaskPinned("t1", true)).rejects.toMatchObject({
+      code: "persist_failed",
+    });
+    await expect(operations.setTaskPinned("t2", false)).rejects.toMatchObject({
+      code: "persist_failed",
+    });
+    expect(operations.task("t1").pinOrder).toBeUndefined();
+    expect(operations.task("t2").pinOrder).toBe(0);
+  });
+});

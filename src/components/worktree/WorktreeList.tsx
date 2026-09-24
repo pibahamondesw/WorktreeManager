@@ -37,6 +37,8 @@ interface WorktreeListProps {
     progress?: (message: string) => void,
     onReady?: TaskReady
   ) => Promise<OperationResult<Task>>;
+  onTaskPinned: (id: string, pinned: boolean) => Promise<void>;
+  onPinnedTasksReordered: (id: string, targetId: string) => Promise<void>;
   onTaskIssueLinked: (taskId: string, issue: string) => Promise<Task>;
   onTaskDeleted: (
     taskId: string,
@@ -94,6 +96,8 @@ export function WorktreeList({
   onTaskCreated,
   onTaskDeleted,
   onTaskIssueLinked,
+  onTaskPinned,
+  onPinnedTasksReordered,
   editorApp,
   onEditorChange,
   workspaceSwitching,
@@ -122,6 +126,8 @@ export function WorktreeList({
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [revealNonce, setRevealNonce] = useState(0);
   const { toast, showToast } = useEphemeralToast();
+  const draggedTaskId = useRef<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const linearApiKey = workspace?.linearApiKey;
@@ -265,28 +271,67 @@ export function WorktreeList({
             ) : (
               <div className="grid gap-3">
                 {tasks.map((task, i) => (
-                  <WorktreeCard
+                  <div
                     key={task.id}
-                    task={task}
-                    workspace={workspace}
-                    vault={vault}
-                    onDelete={onTaskDeleted}
-                    onLinkIssue={() => setLinkTaskId(task.id)}
-                    linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
-                    gitStatus={aggregateTaskStatus(task, gitStatuses)}
-                    selected={i === selectedIndex}
-                    index={i}
-                    sessionStatus={agentSessions[task.id]}
-                    agentActivity={agentActivities[task.id]}
-                    onOpenError={showToast}
-                    onToast={showToast}
-                    onOpen={() =>
-                      void onOpenTask(task, { onMessage: showToast, onError: showToast })
+                    draggable={task.pinOrder !== undefined}
+                    onDragStart={(event) => {
+                      draggedTaskId.current = task.id;
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", task.id);
+                    }}
+                    onDragOver={(event) => {
+                      if (!draggedTaskId.current || task.pinOrder === undefined) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDragOverId(task.id);
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const source = draggedTaskId.current;
+                      draggedTaskId.current = null;
+                      setDragOverId(null);
+                      if (!source || source === task.id || task.pinOrder === undefined) return;
+                      void onPinnedTasksReordered(source, task.id)
+                        .then(() => setSelectedIndex(-1))
+                        .catch((error) => showToast(String(error)));
+                    }}
+                    onDragEnd={() => {
+                      draggedTaskId.current = null;
+                      setDragOverId(null);
+                    }}
+                    className={
+                      dragOverId === task.id && draggedTaskId.current !== task.id
+                        ? "rounded-xl outline outline-2 outline-accent"
+                        : undefined
                     }
-                    repoSlugs={repoSlugs}
-                    requestDelete={i === selectedIndex && deleteRequested}
-                    onRequestDeleteHandled={() => setDeleteRequested(false)}
-                  />
+                  >
+                    <WorktreeCard
+                      onTogglePin={() => {
+                        void onTaskPinned(task.id, task.pinOrder === undefined)
+                          .then(() => setSelectedIndex(-1))
+                          .catch((error) => showToast(String(error)));
+                      }}
+                      task={task}
+                      workspace={workspace}
+                      vault={vault}
+                      onDelete={onTaskDeleted}
+                      onLinkIssue={() => setLinkTaskId(task.id)}
+                      linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
+                      gitStatus={aggregateTaskStatus(task, gitStatuses)}
+                      selected={i === selectedIndex}
+                      index={i}
+                      sessionStatus={agentSessions[task.id]}
+                      agentActivity={agentActivities[task.id]}
+                      onOpenError={showToast}
+                      onToast={showToast}
+                      onOpen={() =>
+                        void onOpenTask(task, { onMessage: showToast, onError: showToast })
+                      }
+                      repoSlugs={repoSlugs}
+                      requestDelete={i === selectedIndex && deleteRequested}
+                      onRequestDeleteHandled={() => setDeleteRequested(false)}
+                    />
+                  </div>
                 ))}
               </div>
             )}

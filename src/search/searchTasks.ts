@@ -1,3 +1,4 @@
+import { compareTaskPins } from "../utils";
 import { Task, Workspace } from "../types";
 import { TerminalStatus } from "../services/terminal";
 import {
@@ -131,7 +132,7 @@ function scoreTask(f: TaskFields, parsed: ParsedQuery): number | null {
 
 /**
  * Rank every task against the palette query. Agents needing input come first, then idle live
- * sessions, then working agents, followed by tasks in the current workspace, then by text score
+ * sessions, then working agents, followed by tasks in the current workspace, then by pinned order, text score
  * and most recent visit.
  */
 export function searchTasks({
@@ -164,13 +165,15 @@ export function searchTasks({
   }
 
   const rank = (result: TaskSearchResult) =>
-    result.score +
     (result.inCurrentWorkspace ? CURRENT_WORKSPACE_BOOST : 0) +
     (result.indicator ? INDICATOR_RANK[result.indicator] * AGENT_BOOST : 0);
   return results.sort((a, b) => {
     const rankA = rank(a);
     const rankB = rank(b);
     if (rankA !== rankB) return rankB - rankA;
+    const pins = compareTaskPins(a.task, b.task);
+    if (pins !== 0) return pins;
+    if (a.score !== b.score) return b.score - a.score;
     return recencyOf(b.task).localeCompare(recencyOf(a.task));
   });
 }

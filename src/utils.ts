@@ -176,6 +176,7 @@ export function normalizeTasks(raw: any[] | undefined | null): Task[] {
     workspaceFilePath: t.workspaceFilePath ?? null,
     noteFolder: t.noteFolder,
     noteFileName: t.noteFileName,
+    pinOrder: Number.isSafeInteger(t.pinOrder) && t.pinOrder >= 0 ? t.pinOrder : undefined,
     createdAt: t.createdAt ?? new Date().toISOString(),
     members: (t.members ?? []).map((m: any) => ({
       repoId: m.repoId,
@@ -242,4 +243,10 @@ export function migrateLegacyToWorkspaces(
   });
 
   return { workspaces, tasks };
+}
+
+export function compareTaskPins(a: Task, b: Task): number {
+  if (a.pinOrder === undefined) return b.pinOrder === undefined ? 0 : 1;
+  if (b.pinOrder === undefined) return -1;
+  return a.pinOrder - b.pinOrder;
 }
