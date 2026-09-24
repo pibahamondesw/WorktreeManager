@@ -320,6 +320,9 @@ fn start_server(
         .stderr(output)
         .stdin(Stdio::null());
     runtime::scrub_environment(&mut command);
+    command
+        .env(super::agent_alerts::TASK_ENV, task_id)
+        .env(super::agent_alerts::SURFACE_ENV, "editor");
     {
         let mut process = slot.process.lock().unwrap();
         if slot.closed.load(Ordering::SeqCst) {

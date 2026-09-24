@@ -1,4 +1,5 @@
 use crate::automation::{failure, read_message, socket_path, Request, MAX_MESSAGE, VERSION};
+use crate::commands::agent_alerts;
 use serde_json::{json, Map, Value};
 use std::{
     fs,
@@ -12,6 +13,7 @@ const HELP: &str = r#"wtm — control the running WorktreeManager app (JSON outp
 
 Usage: wtm                         Open the app
        wtm [--local] <workspace|task> <operation> [id] [options]
+       wtm [--local] agent event <working|waiting|done> --agent <claude|codex>
        worktree-manager --cli [--local] ...
 
 workspace list
@@ -24,6 +26,8 @@ task get <id> [--git]
 task create --input <file|->
 task link-issue <id> --issue <identifier>
 task delete <id> <--keep-worktrees|--delete-worktrees> [--force]
+agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
+                                     prints nothing and always exits 0.
 
 Workspace input: {"name":"Payments","repos":[{"localPath":"/repos/api"}]}
 Repo fields: id (existing members only), name, localPath, worktreeBasePath.
@@ -83,6 +87,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     json!(args.next().ok_or("--issue requires an identifier")?),
                 );
             }
+            "--agent" if !params.contains_key("agent") => {
+                params.insert(
+                    "agent".into(),
+                    json!(args.next().ok_or("--agent requires claude or codex")?),
+                );
+            }
             "--git" if !params.contains_key("git") => {
                 params.insert("git".into(), json!(true));
             }
@@ -113,6 +123,7 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "task.list" => (false, false, &["workspaceId"]),
         "task.link-issue" => (true, false, &["issue"]),
         "task.get" => (true, false, &["git"]),
+        "agent.event" => (true, false, &["agent"]),
         _ => return Err("Unknown operation; see --help".into()),
     };
     if words.len() != if needs_id { 3 } else { 2 }
@@ -123,6 +134,20 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
     }
     if needs_id {
         params.insert("id".into(), json!(words[2]));
+    }
+    if method == "agent.event" {
+        let state = params.remove("id").unwrap_or_default();
+        if !["working", "waiting", "done"].contains(&state.as_str().unwrap_or_default())
+            || !["claude", "codex"].contains(
+                &params
+                    .get("agent")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+        {
+            return Err("Provide working, waiting or done and --agent claude or codex".into());
+        }
+        params.insert("state".into(), state);
     }
     if method == "task.link-issue" && !params.contains_key("issue") {
         return Err("Provide --issue with a Linear issue identifier".into());
@@ -290,6 +315,10 @@ fn run_cli(
             return Some(2);
         }
     };
+    if arguments.method == "agent.event" {
+        report_agent_event(arguments, read_hook_payload());
+        return Some(0);
+    }
     match execute(arguments) {
         Ok(response) => {
             let success = response["ok"] == true;
@@ -300,6 +329,83 @@ fn run_cli(
             println!("{}", failure("client_error", &error));
             Some(1)
         }
+    }
+}
+
+fn read_hook_payload() -> Value {
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } == 1 {
+        return Value::Null;
+    }
+    let mut bytes = Vec::new();
+    let _ = io::stdin().take(MAX_MESSAGE).read_to_end(&mut bytes);
+    serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+}
+
+fn agent_event_cwd(payload: &Value) -> Option<String> {
+    if payload["stop_hook_active"] == true {
+        return None;
+    }
+    payload["cwd"].as_str().map(str::to_owned).or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .map(|dir| dir.to_string_lossy().into_owned())
+    })
+}
+
+/// Which hook fired, where it matters: a submitted prompt answers any pending question, and
+/// Codex's `request_user_input_async` asks without blocking, so its turn still ends with `Stop`.
+fn agent_event_kind(payload: &Value) -> Map<String, Value> {
+    let mut kind = Map::new();
+    match payload["hook_event_name"].as_str() {
+        Some("UserPromptSubmit") => {
+            kind.insert("prompt".into(), json!(true));
+        }
+        Some("PreToolUse")
+            if payload["tool_name"]
+                .as_str()
+                .is_some_and(|tool| tool.ends_with("request_user_input_async")) =>
+        {
+            kind.insert("asyncQuestion".into(), json!(true));
+        }
+        _ => {}
+    }
+    kind
+}
+
+/// Embedded sessions export their task and surface; external ones are matched by cwd. `at`
+/// orders events, since asynchronous hooks can be delivered out of order.
+fn agent_event_origin(env: impl Fn(&str) -> Option<String>) -> Map<String, Value> {
+    let mut origin = Map::new();
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    origin.insert("at".into(), json!(at));
+    let task = env(agent_alerts::TASK_ENV).filter(|value| !value.is_empty());
+    let surface = env(agent_alerts::SURFACE_ENV)
+        .filter(|value| ["chat", "terminal", "editor"].contains(&value.as_str()));
+    if let (Some(task), Some(surface)) = (task, surface) {
+        origin.insert("taskId".into(), json!(task));
+        origin.insert("surface".into(), json!(surface));
+    }
+    origin
+}
+
+fn report_agent_event(mut arguments: Arguments, payload: Value) {
+    let origin = agent_event_origin(|key| std::env::var(key).ok());
+    let Some(cwd) = agent_event_cwd(&payload) else {
+        return;
+    };
+    let state = arguments.params["state"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    arguments.params.insert("cwd".into(), json!(cwd));
+    arguments.params.extend(origin);
+    arguments.params.extend(agent_event_kind(&payload));
+    let delivered = execute(arguments).is_ok_and(|response| response["ok"] == true);
+    if let Some(sound) = agent_alerts::default_sound(&state).filter(|_| !delivered) {
+        agent_alerts::play_sound(sound);
     }
 }
 
@@ -398,6 +504,80 @@ mod tests {
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn parses_agent_events_and_rejects_unknown_states() {
+        let parsed = parse(&args("--local agent event done --agent codex")).unwrap();
+        assert_eq!(parsed.method, "agent.event");
+        assert_eq!(parsed.params["state"], "done");
+        assert_eq!(parsed.params["agent"], "codex");
+        assert!(!parsed.params.contains_key("id"));
+        for invalid in [
+            "agent event done",
+            "agent event idle --agent claude",
+            "agent event done --agent cursor",
+            "agent event --agent claude",
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn agent_event_origin_needs_both_task_and_a_known_surface() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        let origin = agent_event_origin(env(&[("WTM_TASK_ID", "t1"), ("WTM_SURFACE", "editor")]));
+        assert_eq!(origin["taskId"], "t1");
+        assert_eq!(origin["surface"], "editor");
+        assert!(origin["at"].as_u64().unwrap() > 0);
+        for pairs in [
+            &[("WTM_TASK_ID", "t1")][..],
+            &[("WTM_TASK_ID", "t1"), ("WTM_SURFACE", "cursor")][..],
+            &[("WTM_TASK_ID", ""), ("WTM_SURFACE", "chat")][..],
+        ] {
+            let origin = agent_event_origin(env(pairs));
+            assert!(!origin.contains_key("taskId") && !origin.contains_key("surface"));
+        }
+    }
+
+    #[test]
+    fn agent_event_kind_flags_prompts_and_async_questions() {
+        assert_eq!(
+            agent_event_kind(&json!({ "hook_event_name": "UserPromptSubmit" }))["prompt"],
+            true
+        );
+        assert_eq!(
+            agent_event_kind(&json!({
+                "hook_event_name": "PreToolUse",
+                "tool_name": "request_user_input_async"
+            }))["asyncQuestion"],
+            true
+        );
+        for payload in [
+            json!({ "hook_event_name": "PreToolUse", "tool_name": "request_user_input" }),
+            json!({ "hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion" }),
+            json!({ "hook_event_name": "Stop" }),
+            Value::Null,
+        ] {
+            assert!(agent_event_kind(&payload).is_empty(), "{payload}");
+        }
+    }
+
+    #[test]
+    fn agent_event_cwd_comes_from_the_hook_payload() {
+        assert_eq!(
+            agent_event_cwd(&json!({ "cwd": "/wt/repo/task" })).as_deref(),
+            Some("/wt/repo/task")
+        );
+        assert!(agent_event_cwd(&json!({ "cwd": "/wt", "stop_hook_active": true })).is_none());
+        assert!(agent_event_cwd(&Value::Null).is_some());
     }
 
     #[test]

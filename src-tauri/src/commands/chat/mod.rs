@@ -22,6 +22,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use super::agent_alerts;
 use super::git::GIT_ENV_SCRUB;
 use super::process::OwnedProcess;
 use super::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
@@ -40,6 +41,8 @@ pub struct ChatInfo {
     task_id: String,
     agent: String,
     status: ChatStatus,
+    /// An approval or question is pending an answer.
+    waiting: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -56,9 +59,13 @@ struct Shared {
     sink: Option<Channel<LiveEvent>>,
 }
 
-type Notify = Arc<dyn Fn(ChatStatus) + Send + Sync>;
+type Notify = Arc<dyn Fn(ChatStatus, bool) + Send + Sync>;
 
 impl Shared {
+    fn waiting(&self) -> bool {
+        !self.snapshot.pending.is_empty()
+    }
+
     fn commit(&mut self, out: ProviderOutput, conversation: &dyn Fn(String), notify: &Notify) {
         for line in out.writes {
             let written = self
@@ -73,11 +80,10 @@ impl Shared {
             conversation(id);
         }
         for event in out.events {
-            let status_changed =
-                matches!(&event, ChatEvent::Status { status } if *status != self.snapshot.status);
+            let before = (self.snapshot.status.clone(), self.waiting());
             self.snapshot.apply(&event);
-            if status_changed {
-                notify(self.snapshot.status.clone());
+            if before != (self.snapshot.status.clone(), self.waiting()) {
+                notify(self.snapshot.status.clone(), self.waiting());
             }
             if let Some(sink) = &self.sink {
                 let _ = sink.send(LiveEvent {
@@ -232,10 +238,14 @@ impl ChatSession {
         self.shared.lock().unwrap().snapshot.status.clone()
     }
 
+    fn waiting(&self) -> bool {
+        self.shared.lock().unwrap().waiting()
+    }
+
     /// Terminate and tell listeners it ended; the conversation mapping is kept for resuming.
     fn stop(&self) {
         self.terminate();
-        (self.notify)(ChatStatus::Exited { code: None });
+        (self.notify)(ChatStatus::Exited { code: None }, false);
     }
 
     fn terminate(&self) {
@@ -468,7 +478,7 @@ pub async fn chat_open(
 
     let (launch_cwd, launch_agent) = (cwd.clone(), agent.clone());
     let Launch {
-        command,
+        mut command,
         provider,
         history,
     } = tauri::async_runtime::spawn_blocking(move || {
@@ -492,18 +502,22 @@ pub async fn chat_open(
     };
     let notify: Notify = {
         let (app, task_id, agent) = (app.clone(), task_id.clone(), agent.clone());
-        Arc::new(move |status| {
+        Arc::new(move |status, waiting| {
             let _ = app.emit(
                 STATUS_EVENT,
                 ChatInfo {
                     task_id: task_id.clone(),
                     agent: agent.clone(),
                     status,
+                    waiting,
                 },
             );
         })
     };
 
+    command
+        .env(agent_alerts::TASK_ENV, &task_id)
+        .env(agent_alerts::SURFACE_ENV, "chat");
     let session = ChatSession::spawn(command, provider, generation, remember, notify)?;
     if !history.is_empty() {
         let mut state = session.shared.lock().unwrap();
@@ -653,6 +667,7 @@ pub fn chat_list(registry: State<'_, ChatRegistry>) -> Vec<ChatInfo> {
             task_id: task_id.clone(),
             agent: agent.clone(),
             status: session.status(),
+            waiting: session.waiting(),
         })
         .collect()
 }
@@ -717,7 +732,7 @@ mod tests {
             Box::new(Echo),
             7,
             Arc::new(move |id| remembered.lock().unwrap().push(id)),
-            Arc::new(move |status| statuses.lock().unwrap().push(status)),
+            Arc::new(move |status, _| statuses.lock().unwrap().push(status)),
         )
         .unwrap()
     }
@@ -747,6 +762,45 @@ mod tests {
         assert!(session
             .with_provider(|p, _, out| p.send("late", out))
             .is_err());
+    }
+
+    #[test]
+    fn notifies_when_a_request_starts_and_stops_waiting() {
+        use model::{DetailFormat, PendingKind, PendingRequest};
+        let notified = Arc::new(Mutex::new(Vec::new()));
+        let notify: Notify = {
+            let notified = notified.clone();
+            Arc::new(move |status, waiting| notified.lock().unwrap().push((status, waiting)))
+        };
+        let mut shared = Shared {
+            provider: Box::new(Echo),
+            snapshot: ChatSnapshot::new(1),
+            stdin: None,
+            sink: None,
+        };
+        let mut out = ProviderOutput::default();
+        out.event(ChatEvent::Status {
+            status: ChatStatus::Busy,
+        });
+        out.event(ChatEvent::Pending {
+            request: PendingRequest {
+                id: "q1".into(),
+                title: "Pick one".into(),
+                detail: None,
+                format: DetailFormat::Text,
+                kind: PendingKind::Unsupported,
+            },
+        });
+        out.event(ChatEvent::Resolved { id: "q1".into() });
+        shared.commit(out, &|_| {}, &notify);
+        assert_eq!(
+            *notified.lock().unwrap(),
+            [
+                (ChatStatus::Busy, false),
+                (ChatStatus::Busy, true),
+                (ChatStatus::Busy, false)
+            ]
+        );
     }
 
     #[test]

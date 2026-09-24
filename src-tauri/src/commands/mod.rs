@@ -1,3 +1,4 @@
+pub mod agent_alerts;
 pub mod agents;
 pub mod chat;
 pub mod claude_config;
