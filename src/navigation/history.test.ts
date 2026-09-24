@@ -60,6 +60,12 @@ describe("pushEntry", () => {
     expect(h.entries).toHaveLength(2);
   });
 
+  it("drops the initial workspace when returning from its task", () => {
+    const h = pushEntry(pushEntry(pushEntry(EMPTY_HISTORY, ws("w1")), task("t1")), ws("w1"));
+    expect(h.entries).toEqual([task("t1"), ws("w1")]);
+    expect(h.cursor).toBe(1);
+  });
+
   it("drops entries ahead of the cursor when pushing after going back", () => {
     const h = { ...pushEntry(pushEntry(EMPTY_HISTORY, ws("a")), ws("b")), cursor: 0 };
     const next = pushEntry(h, ws("c"));

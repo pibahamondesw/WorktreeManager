@@ -167,12 +167,13 @@ function App() {
 
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
-      if (workspaceId === state.selectedWorkspaceId) return;
+      const isCurrentWorkspace = workspaceId === state.selectedWorkspaceId;
+      if (isCurrentWorkspace && !openedTask) return;
       closeTask();
-      selectWorkspace(workspaceId);
+      if (!isCurrentWorkspace) selectWorkspace(workspaceId);
       recordWorkspaceVisit(workspaceId);
     },
-    [state.selectedWorkspaceId, selectWorkspace, recordWorkspaceVisit, closeTask]
+    [state.selectedWorkspaceId, openedTask, selectWorkspace, recordWorkspaceVisit, closeTask]
   );
 
   const defaultLinearApiKey = useMemo(() => {

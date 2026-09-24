@@ -82,6 +82,24 @@ describe("useNavigationHistory", () => {
     expect(persisted.map((e) => e.workspaceId)).toEqual(["w1", "w2", "w3"]);
   });
 
+  it("records returning from a task without retaining a duplicate initial workspace", async () => {
+    const { result, onNavigate } = setup();
+    await waitFor(() => expect(mocks.loadNavigationHistory).toHaveBeenCalled());
+
+    act(() => result.current.recordWorkspaceVisit("w1"));
+    act(() => result.current.recordTaskVisit(task("t1", "w1")));
+    act(() => result.current.recordWorkspaceVisit("w1"));
+
+    expect(result.current.entries.map((entry) => entry.kind)).toEqual(["task", "workspace"]);
+    act(() => result.current.back());
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ kind: "task", taskId: "t1" })
+    );
+    expect(result.current.canGoBack).toBe(false);
+    const persisted = mocks.persist.mock.lastCall?.[0][0][1] as NavigationEntry[];
+    expect(persisted.map((entry) => entry.kind)).toEqual(["workspace", "task", "workspace"]);
+  });
+
   it("seeds the session with the previous session's last visit only", async () => {
     mocks.loadNavigationHistory.mockResolvedValue([
       { kind: "workspace", workspaceId: "w1", at: "2026-09-05T00:00:00.000Z" },
