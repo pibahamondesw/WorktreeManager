@@ -24,6 +24,8 @@ import { listen } from "@tauri-apps/api/event";
 import { useAutomation } from "./hooks/useAutomation";
 import { editorPresentation } from "./services/codeEditor";
 import { useAgentSessions } from "./hooks/useAgentSessions";
+import { useAgentActivity } from "./hooks/useAgentActivity";
+import { NotificationTarget, embeddedSurface } from "./services/agentActivity";
 
 function App() {
   const {
@@ -59,8 +61,6 @@ function App() {
     updateThemeId,
     updateCustomColors,
   } = useStore();
-
-  useAutomation(operations, !loading);
 
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
   const [search, setSearch] = useState<{ open: boolean; query: string }>({
@@ -129,15 +129,31 @@ function App() {
     [showTask, recordTaskVisit]
   );
 
-  const { openedTask, openTask, closeTask, restoreTask, switchSurface } = useOpenTask({
-    editorApp,
-    agentViews,
-    workspaces: state.workspaces,
-    tasks: state.tasks,
-    recordTaskVisit,
-    showTask,
-  });
+  const { openedTask, openTask, openTaskSurface, closeTask, restoreTask, switchSurface } =
+    useOpenTask({
+      editorApp,
+      agentViews,
+      workspaces: state.workspaces,
+      tasks: state.tasks,
+      recordTaskVisit,
+      showTask,
+    });
   const agentSessions = useAgentSessions(openedTask !== null);
+  const openNotificationTarget = useCallback(
+    (task: Task, target: NotificationTarget) => {
+      const surface = embeddedSurface(target);
+      if (surface) openTaskSurface(task, surface);
+      else void openTask(task);
+    },
+    [openTask, openTaskSurface]
+  );
+  const agentActivity = useAgentActivity({
+    tasks: state.tasks,
+    sessions: agentSessions,
+    openedTaskId: openedTask?.taskId ?? null,
+    onOpenTarget: openNotificationTarget,
+  });
+  useAutomation(operations, !loading, agentActivity.handleAgentEvent);
 
   useEffect(() => {
     const unlisten = listen<string>("editor-navigate", ({ payload }) => {
@@ -327,6 +343,9 @@ function App() {
               workspaces={state.workspaces}
               tasks={state.tasks}
               agentSessions={agentSessions}
+              agentActivities={agentActivity.activities}
+              agentAlerts={agentActivity.alerts}
+              onAgentAlertsChange={agentActivity.updateAlerts}
               selectedWorkspaceId={state.selectedWorkspaceId}
               onSelect={handleSelectWorkspace}
               onAdd={addWorkspace}
@@ -354,6 +373,7 @@ function App() {
           <WorktreeList
             tasks={selectedTasks}
             agentSessions={agentSessions}
+            agentActivities={agentActivity.activities}
             workspace={selectedWorkspace}
             vault={state.vault}
             onTaskCreated={createTask}
@@ -395,6 +415,7 @@ function App() {
         selectedWorkspaceId={state.selectedWorkspaceId}
         historyEntries={history.entries}
         agentSessions={agentSessions}
+        agentActivities={agentActivity.activities}
         themeId={themeId}
         editorApp={editorApp}
         onReveal={handleReveal}

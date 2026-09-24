@@ -9,6 +9,13 @@ import {
   DeleteOptions,
   CreateTaskInput,
 } from "./operations";
+import {
+  AGENT_ACTIVITY_STATES,
+  AgentActivityState,
+  AgentEvent,
+  EMBEDDED_SURFACES,
+  AgentSurfaceKind,
+} from "./agentActivity";
 
 export interface AutomationRequest {
   id: string;
@@ -125,6 +132,38 @@ function taskInput(value: unknown): CreateTaskInput {
   return result;
 }
 
+function agentEvent(params: Record<string, unknown>): AgentEvent {
+  const state = text(params.state);
+  const agent = text(params.agent);
+  if (!AGENT_ACTIVITY_STATES.includes(state as AgentActivityState))
+    throw new OperationError("invalid_params", "state must be working, waiting or done.");
+  if (agent !== "claude" && agent !== "codex")
+    throw new OperationError("invalid_params", "agent must be claude or codex.");
+  if (typeof params.at !== "number" || !Number.isFinite(params.at))
+    throw new OperationError("invalid_params", "at must be a timestamp.");
+  const event: AgentEvent = {
+    state: state as AgentActivityState,
+    agent,
+    cwd: text(params.cwd),
+    at: params.at,
+    surface: "external",
+  };
+  for (const flag of ["prompt", "asyncQuestion"] as const) {
+    if (params[flag] === undefined) continue;
+    if (params[flag] !== true)
+      throw new OperationError("invalid_params", `${flag} must be true when present.`);
+    event[flag] = true;
+  }
+  if (params.taskId !== undefined || params.surface !== undefined) {
+    const surface = text(params.surface);
+    if (!EMBEDDED_SURFACES.includes(surface as AgentSurfaceKind))
+      throw new OperationError("invalid_params", "surface must be chat, terminal or editor.");
+    event.taskId = text(params.taskId);
+    event.surface = surface as AgentSurfaceKind;
+  }
+  return event;
+}
+
 function deleteOptions(params: Record<string, unknown>): DeleteOptions | undefined {
   if (params.deleteWorktrees === undefined) {
     if (params.force)
@@ -147,7 +186,8 @@ function deleteOptions(params: Record<string, unknown>): DeleteOptions | undefin
 export async function dispatchAutomation(
   operations: Operations,
   request: AutomationRequest,
-  progress?: (message: string) => void
+  progress?: (message: string) => void,
+  onAgentEvent?: (event: AgentEvent) => { taskId: string | null }
 ) {
   try {
     if (request.version !== 1)
@@ -163,6 +203,16 @@ export async function dispatchAutomation(
       "task.create": ["input"],
       "task.link-issue": ["id", "issue"],
       "task.delete": ["id", "deleteWorktrees", "force"],
+      "agent.event": [
+        "state",
+        "agent",
+        "cwd",
+        "at",
+        "taskId",
+        "surface",
+        "prompt",
+        "asyncQuestion",
+      ],
     };
     if (!Object.hasOwn(allowed, request.method))
       throw new OperationError("method_not_found", "Unknown operation. See wtm --help.");
@@ -237,6 +287,13 @@ export async function dispatchAutomation(
             "Choose --keep-worktrees or --delete-worktrees."
           );
         return { ok: true, ...(await operations.deleteTask(text(params.id), options)) };
+      }
+      case "agent.event": {
+        const event = agentEvent(params);
+        if (!onAgentEvent)
+          throw new OperationError("app_not_ready", "Agent events are not handled yet.");
+        result = onAgentEvent(event);
+        break;
       }
     }
     return { ok: true, data: result, warnings: [] };

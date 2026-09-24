@@ -40,7 +40,7 @@ describe("WorktreeCard session indicator", () => {
         sessionStatus={{ kind: "running" }}
       />
     );
-    expect(screen.getByTitle("Agent session running")).toBeInTheDocument();
+    expect(screen.getByTitle("Agent session active")).toBeInTheDocument();
   });
 
   it("shows nothing without a session", () => {
@@ -54,6 +54,37 @@ describe("WorktreeCard session indicator", () => {
       />
     );
     expect(screen.queryByTitle(/Agent session/)).not.toBeInTheDocument();
+  });
+
+  it("blinks only while working and marks a card waiting for input", () => {
+    const view = render(
+      <WorktreeCard
+        task={task}
+        workspace={workspace}
+        vault={vault}
+        onDelete={vi.fn()}
+        repoSlugs={{}}
+        sessionStatus={{ kind: "running" }}
+        agentActivity={{ state: "working", agent: "claude", surface: "chat", unread: false, at: 1 }}
+      />
+    );
+    expect(screen.getByTitle("Agent working")).toHaveClass("bg-success", "animate-pulse");
+    expect(view.container.querySelector("[data-attention]")).toBeNull();
+
+    view.rerender(
+      <WorktreeCard
+        task={task}
+        workspace={workspace}
+        vault={vault}
+        onDelete={vi.fn()}
+        repoSlugs={{}}
+        sessionStatus={{ kind: "running" }}
+        agentActivity={{ state: "waiting", agent: "claude", surface: "chat", unread: true, at: 2 }}
+      />
+    );
+    expect(screen.getByTitle("Agent needs your input")).toHaveClass("bg-warning");
+    expect(screen.getByTitle("Agent needs your input")).not.toHaveClass("animate-pulse");
+    expect(view.container.querySelector("[data-attention]")).not.toBeNull();
   });
 });
 

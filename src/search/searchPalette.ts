@@ -3,6 +3,7 @@ import { parsePaletteInput, parseQuery } from "./query";
 import { searchTasks, TaskSearchResult } from "./searchTasks";
 import { Task, Workspace } from "../types";
 import { TerminalStatus } from "../services/terminal";
+import { AgentActivities } from "../services/agentActivity";
 
 export type PaletteItem =
   | { kind: "task"; id: string; result: TaskSearchResult }
@@ -15,6 +16,7 @@ interface SearchPaletteArgs {
   query: string;
   lastVisitAt?: Map<string, string>;
   agentSessions?: Record<string, TerminalStatus>;
+  agentActivities?: AgentActivities;
   commands: PaletteCommand[];
 }
 
@@ -73,6 +75,7 @@ export function searchPalette({
   query: rawQuery,
   lastVisitAt,
   agentSessions,
+  agentActivities,
   commands,
 }: SearchPaletteArgs): PaletteItem[] {
   const { commandsOnly, query } = parsePaletteInput(rawQuery);
@@ -97,6 +100,7 @@ export function searchPalette({
     query,
     lastVisitAt,
     agentSessions,
+    agentActivities,
   }).map((result) => ({ kind: "task" as const, id: result.task.id, result }));
 
   return [...taskItems, ...commandItems];

@@ -24,10 +24,12 @@ import {
   TaskReady,
 } from "../../services/operations";
 import { TerminalStatus } from "../../services/terminal";
+import { AgentActivities } from "../../services/agentActivity";
 
 interface WorktreeListProps {
   tasks: Task[];
   agentSessions?: Record<string, TerminalStatus>;
+  agentActivities?: AgentActivities;
   workspace: Workspace | undefined;
   vault: VaultConfig;
   onTaskCreated: (
@@ -86,6 +88,7 @@ const SELECTED_CARD_SCROLL_ATTEMPTS = 60;
 export function WorktreeList({
   tasks,
   agentSessions = {},
+  agentActivities = {},
   workspace,
   vault,
   onTaskCreated,
@@ -226,6 +229,7 @@ export function WorktreeList({
             onExpandSidebar={onExpandSidebar}
             onBack={handleCloseTask}
             onSwitchSurface={(surface) => onSwitchSurface(openTask.id, surface)}
+            agentActivity={agentActivities[openTask.id]}
           />
         )}
         {/* The grid stays mounted while a task is open so returning is instant (no re-probing of
@@ -273,6 +277,7 @@ export function WorktreeList({
                     selected={i === selectedIndex}
                     index={i}
                     sessionStatus={agentSessions[task.id]}
+                    agentActivity={agentActivities[task.id]}
                     onOpenError={showToast}
                     onToast={showToast}
                     onOpen={() =>

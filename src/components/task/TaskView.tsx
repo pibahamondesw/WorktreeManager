@@ -11,6 +11,7 @@ import { terminalStop } from "../../services/terminal";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { GitStatus, IssueLinearInfo, Task, TaskSurface } from "../../types";
+import { AgentActivity } from "../../services/agentActivity";
 
 interface TaskViewProps {
   task: Task;
@@ -21,6 +22,7 @@ interface TaskViewProps {
   onExpandSidebar: () => void;
   onBack: () => void;
   onSwitchSurface: (surface: TaskSurface) => void;
+  agentActivity?: AgentActivity;
 }
 
 /** A task opened inside the app: compact header on top, the task's surface filling the rest. */
@@ -33,6 +35,7 @@ export function TaskView({
   onExpandSidebar,
   onBack,
   onSwitchSurface,
+  agentActivity,
 }: TaskViewProps) {
   const [switching, setSwitching] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({ kind: "connecting" });
@@ -80,7 +83,10 @@ export function TaskView({
   });
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 min-w-0">
+    <div
+      className="flex-1 flex flex-col min-h-0 min-w-0"
+      data-attention={agentActivity?.state === "waiting" ? "" : undefined}
+    >
       <TaskHeader
         task={task}
         linearInfo={linearInfo}

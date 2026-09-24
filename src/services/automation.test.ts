@@ -120,3 +120,56 @@ it("routes issue linking through the shared operation and validates its paramete
   }
   expect(link).toHaveBeenCalledOnce();
 });
+
+it("forwards validated agent events to the app and reports the matched task", async () => {
+  const onAgentEvent = vi.fn(() => ({ taskId: "t1" }));
+  const event = (params: Record<string, unknown>) =>
+    dispatchAutomation(
+      operations,
+      { id: "request1", version: 1, method: "agent.event", params },
+      undefined,
+      onAgentEvent
+    );
+
+  expect(
+    await event({ state: "waiting", agent: "claude", cwd: "/wt/api/t1", at: 5 })
+  ).toMatchObject({ ok: true, data: { taskId: "t1" } });
+  expect(onAgentEvent).toHaveBeenLastCalledWith({
+    state: "waiting",
+    agent: "claude",
+    cwd: "/wt/api/t1",
+    at: 5,
+    surface: "external",
+  });
+  await event({
+    state: "done",
+    agent: "codex",
+    cwd: "/wt",
+    at: 6,
+    taskId: "t1",
+    surface: "editor",
+  });
+  expect(onAgentEvent).toHaveBeenLastCalledWith(
+    expect.objectContaining({ taskId: "t1", surface: "editor" })
+  );
+  await event({ state: "waiting", agent: "codex", cwd: "/wt", at: 7, asyncQuestion: true });
+  expect(onAgentEvent).toHaveBeenLastCalledWith(expect.objectContaining({ asyncQuestion: true }));
+  for (const params of [
+    { state: "idle", agent: "claude", cwd: "/wt", at: 1 },
+    { state: "done", agent: "cursor", cwd: "/wt", at: 1 },
+    { state: "done", agent: "codex", at: 1 },
+    { state: "done", agent: "codex", cwd: "/wt" },
+    { state: "done", agent: "codex", cwd: "/wt", at: 1, extra: true },
+    { state: "done", agent: "codex", cwd: "/wt", at: 1, taskId: "t1" },
+    { state: "done", agent: "codex", cwd: "/wt", at: 1, taskId: "t1", surface: "external" },
+    { state: "working", agent: "codex", cwd: "/wt", at: 1, prompt: false },
+  ])
+    expect(await event(params)).toMatchObject({ ok: false, error: { code: "invalid_params" } });
+  expect(onAgentEvent).toHaveBeenCalledTimes(3);
+  expect(
+    await call("agent.event", { state: "done", agent: "codex", cwd: "/wt", at: 1 })
+  ).toMatchObject({
+    ok: false,
+    error: { code: "app_not_ready" },
+  });
+});

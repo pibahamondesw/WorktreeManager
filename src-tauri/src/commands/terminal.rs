@@ -14,6 +14,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use super::agent_alerts;
 use super::agents::{self, LaunchContext, LaunchSpec};
 use super::git::GIT_ENV_SCRUB;
 
@@ -399,6 +400,11 @@ pub async fn terminal_open(
     .await
     .map_err(|e| format!("Task failed: {e}"))??;
 
+    let mut spec = spec;
+    spec.env
+        .push((agent_alerts::TASK_ENV.into(), task_id.clone()));
+    spec.env
+        .push((agent_alerts::SURFACE_ENV.into(), "terminal".into()));
     let mut session = TerminalSession::spawn(
         &spec,
         &agent,
