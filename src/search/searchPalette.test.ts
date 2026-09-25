@@ -88,3 +88,20 @@ describe("searchPalette", () => {
     expect(commandIds(">theme")).not.toContain("switch-ws:ws-2");
   });
 });
+
+it("keeps project groups contiguous in ranked order and separates identical names by ID", () => {
+  const tasks = [
+    { ...task, id: "a", linearProjectId: "p1", linearProjectName: "API", createdAt: "2026-04-01" },
+    { ...task, id: "b", linearProjectId: "p2", linearProjectName: "API", createdAt: "2026-03-01" },
+    { ...task, id: "c", linearProjectId: "p1", linearProjectName: "API", createdAt: "2026-02-01" },
+    { ...task, id: "d", createdAt: "2026-01-01" },
+  ];
+  const results = searchPalette({
+    tasks,
+    workspaces,
+    selectedWorkspaceId: "ws-1",
+    query: "",
+    commands: [],
+  });
+  expect(results.map((item) => item.id)).toEqual(["a", "c", "b", "d"]);
+});

@@ -1,3 +1,4 @@
+import { taskProjectKey } from "./projects";
 import { PaletteCommand } from "./commands";
 import { parsePaletteInput, parseQuery } from "./query";
 import { searchTasks, TaskSearchResult } from "./searchTasks";
@@ -103,5 +104,13 @@ export function searchPalette({
     agentActivities,
   }).map((result) => ({ kind: "task" as const, id: result.task.id, result }));
 
-  return [...taskItems, ...commandItems];
+  const groups = new Map<string, PaletteItem[]>();
+  for (const item of taskItems) {
+    if (item.kind !== "task") continue;
+    const key = taskProjectKey(item.result.task);
+    const group = groups.get(key) ?? [];
+    group.push(item);
+    groups.set(key, group);
+  }
+  return [...[...groups.values()].flat(), ...commandItems];
 }

@@ -244,3 +244,24 @@ it("keeps the grid for the last card's exit instead of jumping to the empty stat
     delete (Element.prototype as Partial<Element>).animate;
   }
 });
+
+it("filters cards and keyboard targets by project and restores all tasks", () => {
+  const { setTasks } = fixture();
+  setTasks(
+    TASKS.map((task, index) =>
+      index === 1 ? { ...task, linearProjectId: "p1", linearProjectName: "API" } : task
+    )
+  );
+  const filter = screen.getByRole("combobox", { name: "Linear project" });
+  fireEvent.change(filter, { target: { value: "p1" } });
+  expect(screen.queryByText("first")).not.toBeInTheDocument();
+  expect(screen.getByText("second")).toBeInTheDocument();
+  expect(
+    vi.mocked(useWorktreeListKeyboardShortcuts).mock.lastCall?.[0].tasks.map((task) => task.id)
+  ).toEqual(["second"]);
+  fireEvent.change(filter, { target: { value: "__no_project__" } });
+  expect(screen.queryByText("second")).not.toBeInTheDocument();
+  expect(screen.getByText("first")).toBeInTheDocument();
+  fireEvent.change(filter, { target: { value: "" } });
+  expect(screen.getByText("second")).toBeInTheDocument();
+});

@@ -253,3 +253,21 @@ describe("QuickSearchModal commands", () => {
     expect(onSelectWorkspace).toHaveBeenCalledWith("ws-2");
   });
 });
+
+it("filters by project and opens the visible task with keyboard navigation", () => {
+  const projectTask = {
+    ...otherTask,
+    id: "project-task",
+    linearProjectId: "p1",
+    linearProjectName: "Payment API",
+  };
+  const { onOpenTask } = renderModal({ initialQuery: "", tasks: [otherTask, projectTask] });
+  fireEvent.change(screen.getByRole("combobox", { name: "Linear project" }), {
+    target: { value: "p1" },
+  });
+  expect(screen.getByText(/^1 task/)).toBeInTheDocument();
+  expect(screen.getAllByText("Payment API")).toHaveLength(2);
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "0" });
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  expect(onOpenTask).toHaveBeenCalledWith(projectTask, expect.any(Object));
+});
