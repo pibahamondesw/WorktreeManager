@@ -1,3 +1,4 @@
+import { useTaskProjects } from "./hooks/useTaskProjects";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { WorkspaceList } from "./components/sidebar/WorkspaceList";
@@ -62,6 +63,8 @@ function App() {
     updateThemeId,
     updateCustomColors,
   } = useStore();
+
+  useTaskProjects(state.tasks, state.workspaces, operations);
 
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
   const [search, setSearch] = useState<{ open: boolean; query: string }>({

@@ -38,6 +38,8 @@ export interface Task {
   linearIssueId?: string;
   linearIssueTitle?: string;
   linearIssueIdentifier?: string;
+  linearProjectId?: string;
+  linearProjectName?: string;
   members: TaskMember[];
   /** Generated .code-workspace file (Cursor/VS Code), when applicable. */
   workspaceFilePath?: string | null;
@@ -71,6 +73,7 @@ export interface LinearIssue {
   title: string;
   branchName: string;
   description?: string;
+  projectId?: string;
   projectName?: string;
   stateName?: string;
   stateType?: string;
@@ -102,6 +105,7 @@ export interface PullRequestInfo {
 }
 
 export interface IssueLinearInfo {
+  project?: { id: string; name: string } | null;
   status: { name: string; type: string } | null;
   prs: PullRequestInfo[];
 }
