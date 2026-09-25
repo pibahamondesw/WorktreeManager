@@ -77,7 +77,7 @@ describe("WorktreeCard session indicator", () => {
         agentActivity={{ state: "working", agent: "claude", surface: "chat", unread: false, at: 1 }}
       />
     );
-    expect(screen.getByTitle("Agent working")).toHaveClass("bg-success", "animate-pulse");
+    expect(screen.getByTitle("Agent working")).toHaveClass("bg-success", "motion-pulse-steps");
     expect(view.container.querySelector("[data-attention]")).toBeNull();
 
     view.rerender(
@@ -92,7 +92,7 @@ describe("WorktreeCard session indicator", () => {
       />
     );
     expect(screen.getByTitle("Agent needs your input")).toHaveClass("bg-warning");
-    expect(screen.getByTitle("Agent needs your input")).not.toHaveClass("animate-pulse");
+    expect(screen.getByTitle("Agent needs your input")).not.toHaveClass("motion-pulse-steps");
     expect(view.container.querySelector("[data-attention]")).not.toBeNull();
   });
 });

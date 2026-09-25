@@ -17,6 +17,17 @@
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-danger-hover: #dc2626;
+
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+:root {
+  --motion-enter-fast: 180ms;
+  --motion-enter: 200ms;
+  --motion-enter-slow: 240ms;
+  --motion-exit: 180ms;
+  --motion-reveal-ring: 1500ms;
 }
 
 html,
@@ -65,18 +76,145 @@ body,
   cursor: default;
 }
 
-@keyframes fade-in {
+@keyframes motion-fade {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
   }
 }
-.animate-fade-in {
-  animation: fade-in 0.15s ease-out;
+@keyframes motion-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes motion-slide-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+@keyframes motion-reveal-from-left {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes motion-conceal-to-left {
+  from {
+    clip-path: inset(0 0 0 0);
+  }
+  to {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+@keyframes motion-ring-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes motion-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+@keyframes motion-expand {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+@keyframes motion-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.motion-fade {
+  animation: motion-fade var(--motion-enter-fast) var(--ease-enter);
+}
+.motion-rise {
+  animation: motion-rise var(--motion-enter-fast) var(--ease-enter);
+}
+.motion-toast {
+  animation: motion-slide-from-right var(--motion-enter) var(--ease-enter);
+}
+.motion-panel-reveal {
+  animation: motion-reveal-from-left var(--motion-enter-slow) var(--ease-enter);
+}
+.motion-panel-conceal {
+  animation: motion-conceal-to-left var(--motion-exit) var(--ease-exit) forwards;
+}
+.motion-reveal-ring {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px var(--color-accent);
+  opacity: 0;
+  animation: motion-ring-fade var(--motion-reveal-ring) var(--ease-exit);
+}
+.motion-spin-steps {
+  animation: motion-spin 1s steps(12) infinite;
+}
+.motion-pulse-steps {
+  animation: motion-pulse 1s steps(12) infinite;
+}
+
+.motion-expand {
+  display: grid;
+  animation: motion-expand var(--motion-enter) var(--ease-enter);
+}
+.motion-expand > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+::view-transition-group(*) {
+  animation-duration: var(--motion-enter-slow);
+  animation-timing-function: var(--ease-enter);
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--motion-enter-fast);
+}
+::view-transition-old(task-identifier),
+::view-transition-new(task-identifier),
+::view-transition-old(task-status),
+::view-transition-new(task-status),
+::view-transition-old(task-title),
+::view-transition-new(task-title),
+::view-transition-old(task-branch),
+::view-transition-new(task-branch) {
+  width: auto;
+  height: 100%;
+  object-fit: none;
+  object-position: left center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-fade,
+  .motion-rise,
+  .motion-toast,
+  .motion-panel-reveal,
+  .motion-expand {
+    animation: none;
+  }
+  .motion-panel-conceal {
+    animation-duration: 1ms;
+  }
+
+  .motion-spin-steps,
+  .motion-pulse-steps {
+    animation-duration: 2s;
+  }
 }
 
 .chat-markdown > * + * {

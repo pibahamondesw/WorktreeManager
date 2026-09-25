@@ -2,7 +2,7 @@ import { INDICATOR_LABELS, TaskIndicator } from "../../services/agentActivity";
 
 const INDICATOR_CLASSES: Record<TaskIndicator, string> = {
   input: "bg-warning",
-  working: "bg-success animate-pulse",
+  working: "bg-success motion-pulse-steps",
   idle: "bg-success",
   ended: "bg-text-muted",
 };

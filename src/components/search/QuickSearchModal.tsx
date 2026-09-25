@@ -256,12 +256,12 @@ export function QuickSearchModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm pt-[12vh] motion-fade"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-[40rem] max-w-[92vw] bg-bg-secondary border border-border rounded-xl shadow-2xl flex flex-col max-h-[68vh] overflow-hidden">
+      <div className="motion-rise w-[40rem] max-w-[92vw] bg-bg-secondary border border-border rounded-xl shadow-2xl flex flex-col max-h-[68vh] overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
           <div className="relative">
             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />

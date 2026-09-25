@@ -230,6 +230,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     <div
       onClick={handleOpen}
       tabIndex={-1}
+      data-task-card={task.id}
       data-selected={selected ? "true" : undefined}
       data-attention={agentActivity?.state === "waiting" ? "" : undefined}
       className={`group bg-bg-secondary border rounded-xl p-4 hover:border-border-light hover:bg-bg-tertiary/50 transition-all cursor-pointer outline-none ${
@@ -255,6 +256,7 @@ export const WorktreeCard = memo(function WorktreeCard({
             {task.linearIssueIdentifier ? (
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
+                  data-task-part="identifier"
                   onClick={handleOpenLinear}
                   className="text-xs font-mono text-accent hover:text-accent-hover transition-colors cursor-pointer inline-flex items-center gap-1"
                   title="Open on Linear"
@@ -284,7 +286,9 @@ export const WorktreeCard = memo(function WorktreeCard({
               <span className="text-xs font-mono text-text-muted flex-shrink-0">No issue</span>
             )}
             {status && (
-              <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
+              <span data-task-part="status" className="inline-flex">
+                <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
+              </span>
             )}
             {indicator && <TaskIndicatorDot indicator={indicator} />}
             {agentActivity?.state === "waiting" && <Badge variant="warning">Needs input</Badge>}
@@ -306,6 +310,7 @@ export const WorktreeCard = memo(function WorktreeCard({
 
           {/* Row 2: title */}
           <h3
+            data-task-part="title"
             className="text-sm font-medium text-text-primary truncate"
             title={task.linearIssueTitle || task.branchName}
           >
@@ -314,7 +319,7 @@ export const WorktreeCard = memo(function WorktreeCard({
 
           {/* Row 3: branch + git status */}
           <div className="flex items-center gap-3 mt-2">
-            <div className="flex items-center gap-1.5 min-w-0">
+            <div data-task-part="branch" className="flex items-center gap-1.5 min-w-0">
               <BranchIcon size={12} className="text-text-muted flex-shrink-0" />
               <button
                 onClick={handleCopyPath}
@@ -481,7 +486,7 @@ export const WorktreeCard = memo(function WorktreeCard({
             </button>
 
             {menuOpen && (
-              <div className="absolute right-0 top-9 z-50 w-48 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
+              <div className="motion-rise absolute right-0 top-9 z-50 w-48 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
                 <MenuButton label="⌘B" onClick={() => handleMenuAction("copy-branch")}>
                   Copy branch name
                 </MenuButton>
@@ -501,7 +506,10 @@ export const WorktreeCard = memo(function WorktreeCard({
           <button
             onClick={handleDeleteClick}
             disabled={deleting}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
+            data-genie-target
+            className={`w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors cursor-pointer ${
+              deleting ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+            }`}
             title="Delete task (⌘D)"
           >
             {deleting ? <SpinnerIcon size={16} /> : <TrashIcon />}
@@ -511,52 +519,27 @@ export const WorktreeCard = memo(function WorktreeCard({
 
       {/* Inline delete confirmation */}
       {confirmDelete && (
-        <div
-          className="mt-3 flex items-center justify-between gap-3 pt-3 border-t border-border"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="min-w-0">
-            <span className="text-xs text-text-secondary truncate">
-              Delete{" "}
-              <strong className="text-text-primary">
-                {task.linearIssueIdentifier || task.branchName}
-              </strong>
-              {task.members.length > 1
-                ? ` and its ${task.members.length} worktrees from disk?`
-                : " and remove from disk?"}
-            </span>
-            {vault.enabled && (
-              <p className="text-[0.625rem] text-text-muted mt-0.5">
-                Notes are kept, moved to <span className="font-mono">_archive/</span>.
-              </p>
-            )}
-          </div>
-          <div className="flex gap-2 flex-shrink-0">
-            <button
-              onClick={handleDeleteCancel}
-              className="px-3 py-1 text-xs rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover border border-border transition-colors cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleDeleteConfirm}
-              className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Git removal failed — offer force-remove from app */}
-      {deleteError && (
-        <div
-          className="mt-3 pt-3 border-t border-border space-y-2"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <p className="text-xs text-danger leading-relaxed">{deleteError}</p>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-text-secondary">Remove from app anyway?</span>
+        <div className="motion-expand">
+          <div
+            className="mt-3 flex items-center justify-between gap-3 pt-3 border-t border-border"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="min-w-0">
+              <span className="text-xs text-text-secondary truncate">
+                Delete{" "}
+                <strong className="text-text-primary">
+                  {task.linearIssueIdentifier || task.branchName}
+                </strong>
+                {task.members.length > 1
+                  ? ` and its ${task.members.length} worktrees from disk?`
+                  : " and remove from disk?"}
+              </span>
+              {vault.enabled && (
+                <p className="text-[0.625rem] text-text-muted mt-0.5">
+                  Notes are kept, moved to <span className="font-mono">_archive/</span>.
+                </p>
+              )}
+            </div>
             <div className="flex gap-2 flex-shrink-0">
               <button
                 onClick={handleDeleteCancel}
@@ -565,11 +548,40 @@ export const WorktreeCard = memo(function WorktreeCard({
                 Cancel
               </button>
               <button
-                onClick={handleForceRemove}
+                onClick={handleDeleteConfirm}
                 className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
               >
-                Remove
+                Delete
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Git removal failed — offer force-remove from app */}
+      {deleteError && (
+        <div className="motion-expand">
+          <div
+            className="mt-3 pt-3 border-t border-border space-y-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-xs text-danger leading-relaxed">{deleteError}</p>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-text-secondary">Remove from app anyway?</span>
+              <div className="flex gap-2 flex-shrink-0">
+                <button
+                  onClick={handleDeleteCancel}
+                  className="px-3 py-1 text-xs rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover border border-border transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleForceRemove}
+                  className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           </div>
         </div>

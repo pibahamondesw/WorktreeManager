@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { LinearProvider } from "../../contexts/LinearContext";
 import { LinearService } from "../../services/linear";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
+import { useRevealRing } from "../../hooks/useRevealRing";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { useWorktreeData } from "../../hooks/useWorktreeData";
 import { useRepoSlugs } from "../../hooks/useRepoSlugs";
@@ -12,6 +13,7 @@ import { WorktreeEmptyWorktrees, WorktreeNoRepoPlaceholder } from "./WorktreeLis
 import { WorktreeListHeader } from "./WorktreeListHeader";
 import { WorktreeListKeyboardHints } from "./WorktreeListKeyboardHints";
 import { WorktreeListToast } from "./WorktreeListToast";
+import { DepartingCard } from "./DepartingCard";
 import { LinkIssueModal } from "./LinkIssueModal";
 import { NewWorktreeModal } from "./NewWorktreeModal";
 import { Task, TaskSurface, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
@@ -85,6 +87,36 @@ function aggregateTaskStatus(
   };
 }
 
+const CARD_GAP = 12;
+
+interface ExitingTask {
+  task: Task;
+  index: number;
+  phase: "deleting" | "departing";
+}
+
+type Exits = ReadonlyMap<string, ExitingTask>;
+
+function withExits(tasks: Task[], exits: Exits) {
+  const rows = tasks
+    .filter((task) => exits.get(task.id)?.phase !== "departing")
+    .map((task) => ({ task, exit: exits.get(task.id) }));
+  const listed = new Set(rows.map((row) => row.task.id));
+  const vanished = [...exits.values()]
+    .filter((exit) => !listed.has(exit.task.id))
+    .sort((a, b) => a.index - b.index);
+  for (const exit of vanished)
+    rows.splice(Math.min(exit.index, rows.length), 0, { task: exit.task, exit });
+  return rows;
+}
+
+function withExit(exits: Exits, id: string, exit: ExitingTask | undefined): Exits {
+  const next = new Map(exits);
+  if (exit) next.set(id, exit);
+  else next.delete(id);
+  return next;
+}
+
 const SELECTED_CARD_SCROLL_ATTEMPTS = 60;
 
 export function WorktreeList({
@@ -125,7 +157,13 @@ export function WorktreeList({
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [revealNonce, setRevealNonce] = useState(0);
+  const [exits, setExits] = useState<Exits>(new Map());
+  const finishDeparture = useCallback(
+    (taskId: string) => setExits((current) => withExit(current, taskId, undefined)),
+    []
+  );
   const { toast, showToast } = useEphemeralToast();
+  const { ring, ringTask, clearRing } = useRevealRing();
   const draggedTaskId = useRef<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -162,8 +200,9 @@ export function WorktreeList({
     if (index === -1) return;
     setSelectedIndex(index);
     setRevealNonce((n) => n + 1);
+    if (!openedTask) ringTask(revealTaskId);
     onRevealHandled();
-  }, [revealTaskId, tasks, onRevealHandled]);
+  }, [revealTaskId, tasks, onRevealHandled, openedTask, ringTask]);
 
   // The card may not be mounted yet when a reveal lands mid workspace switch (skeletons are
   // rendered instead). Retries on a timer rather than rAF, which is throttled to nothing while
@@ -188,8 +227,29 @@ export function WorktreeList({
     return () => clearTimeout(timer);
   }, [selectedIndex, revealNonce, tasks, workspaceSwitching]);
 
-  const selectedTask =
+  const selectableTask =
     selectedIndex >= 0 && selectedIndex < tasks.length ? tasks[selectedIndex] : null;
+  const selectedTask = selectableTask && !exits.has(selectableTask.id) ? selectableTask : null;
+
+  const deleteTask: typeof onTaskDeleted = async (id, options) => {
+    const index = tasks.findIndex((task) => task.id === id);
+    if (index !== -1)
+      setExits((current) =>
+        withExit(current, id, { task: tasks[index], index, phase: "deleting" })
+      );
+    try {
+      const result = await onTaskDeleted(id, options);
+      setExits((current) => {
+        const exit = current.get(id);
+        return exit ? withExit(current, id, { ...exit, phase: "departing" }) : current;
+      });
+      return result;
+    } catch (error) {
+      setExits((current) => withExit(current, id, undefined));
+      showToast(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  };
 
   const openTask = openedTask ? (tasks.find((t) => t.id === openedTask.taskId) ?? null) : null;
 
@@ -210,6 +270,10 @@ export function WorktreeList({
     searchOpen: searchOpen || !!linkTask,
     setShowNew,
     setSelectedIndex,
+    jumpToIndex: (index) => {
+      setSelectedIndex(index);
+      ringTask(tasks[index].id);
+    },
     setDeleteRequested,
     handleRefresh,
     showToast,
@@ -218,6 +282,33 @@ export function WorktreeList({
   });
 
   if (!workspace) return <WorktreeNoRepoPlaceholder />;
+
+  const renderCard = (task: Task, i: number) => (
+    <WorktreeCard
+      onTogglePin={() => {
+        void onTaskPinned(task.id, task.pinOrder === undefined)
+          .then(() => setSelectedIndex(-1))
+          .catch((error) => showToast(String(error)));
+      }}
+      task={task}
+      workspace={workspace}
+      vault={vault}
+      onDelete={deleteTask}
+      onLinkIssue={() => setLinkTaskId(task.id)}
+      linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
+      gitStatus={aggregateTaskStatus(task, gitStatuses)}
+      selected={i >= 0 && i === selectedIndex}
+      index={i}
+      sessionStatus={agentSessions[task.id]}
+      agentActivity={agentActivities[task.id]}
+      onOpenError={showToast}
+      onToast={showToast}
+      onOpen={() => void onOpenTask(task, { onMessage: showToast, onError: showToast })}
+      repoSlugs={repoSlugs}
+      requestDelete={i >= 0 && i === selectedIndex && deleteRequested}
+      onRequestDeleteHandled={() => setDeleteRequested(false)}
+    />
+  );
 
   const taskOpen = openTask !== null && openedTask !== null;
 
@@ -261,78 +352,76 @@ export function WorktreeList({
 
           <div ref={listRef} className="flex-1 overflow-y-auto p-6">
             {workspaceSwitching ? (
-              <div className="grid gap-3">
+              <div key="skeleton" className="grid gap-3">
                 {Array.from({ length: Math.max(tasks.length, 3) }).map((_, i) => (
                   <WorktreeCardSkeleton key={i} index={i} />
                 ))}
               </div>
-            ) : tasks.length === 0 ? (
+            ) : tasks.length === 0 && exits.size === 0 ? (
               <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />
             ) : (
-              <div className="grid gap-3">
-                {tasks.map((task, i) => (
-                  <div
-                    key={task.id}
-                    draggable={task.pinOrder !== undefined}
-                    onDragStart={(event) => {
-                      draggedTaskId.current = task.id;
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", task.id);
-                    }}
-                    onDragOver={(event) => {
-                      if (!draggedTaskId.current || task.pinOrder === undefined) return;
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                      setDragOverId(task.id);
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const source = draggedTaskId.current;
-                      draggedTaskId.current = null;
-                      setDragOverId(null);
-                      if (!source || source === task.id || task.pinOrder === undefined) return;
-                      void onPinnedTasksReordered(source, task.id)
-                        .then(() => setSelectedIndex(-1))
-                        .catch((error) => showToast(String(error)));
-                    }}
-                    onDragEnd={() => {
-                      draggedTaskId.current = null;
-                      setDragOverId(null);
-                    }}
-                    className={
-                      dragOverId === task.id && draggedTaskId.current !== task.id
-                        ? "rounded-xl outline outline-2 outline-accent"
-                        : undefined
-                    }
-                  >
-                    <WorktreeCard
-                      onTogglePin={() => {
-                        void onTaskPinned(task.id, task.pinOrder === undefined)
+              <div key="tasks" className="grid gap-3 motion-rise">
+                {withExits(tasks, exits).map(({ task, exit }) =>
+                  exit?.phase === "departing" ? (
+                    <DepartingCard
+                      key={task.id}
+                      gap={CARD_GAP}
+                      taskId={task.id}
+                      onDeparted={finishDeparture}
+                    >
+                      {renderCard(task, -1)}
+                    </DepartingCard>
+                  ) : (
+                    <div
+                      key={task.id}
+                      draggable={task.pinOrder !== undefined}
+                      onDragStart={(event) => {
+                        draggedTaskId.current = task.id;
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", task.id);
+                      }}
+                      onDragOver={(event) => {
+                        if (!draggedTaskId.current || task.pinOrder === undefined) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        setDragOverId(task.id);
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const source = draggedTaskId.current;
+                        draggedTaskId.current = null;
+                        setDragOverId(null);
+                        if (!source || source === task.id || task.pinOrder === undefined) return;
+                        void onPinnedTasksReordered(source, task.id)
                           .then(() => setSelectedIndex(-1))
                           .catch((error) => showToast(String(error)));
                       }}
-                      task={task}
-                      workspace={workspace}
-                      vault={vault}
-                      onDelete={onTaskDeleted}
-                      onLinkIssue={() => setLinkTaskId(task.id)}
-                      linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
-                      gitStatus={aggregateTaskStatus(task, gitStatuses)}
-                      selected={i === selectedIndex}
-                      index={i}
-                      sessionStatus={agentSessions[task.id]}
-                      agentActivity={agentActivities[task.id]}
-                      onOpenError={showToast}
-                      onToast={showToast}
-                      onOpen={() =>
-                        void onOpenTask(task, { onMessage: showToast, onError: showToast })
-                      }
-                      repoSlugs={repoSlugs}
-                      requestDelete={i === selectedIndex && deleteRequested}
-                      onRequestDeleteHandled={() => setDeleteRequested(false)}
-                    />
-                  </div>
-                ))}
+                      onDragEnd={() => {
+                        draggedTaskId.current = null;
+                        setDragOverId(null);
+                      }}
+                      inert={!!exit}
+                      className={`relative transition-opacity ${
+                        exit ? "opacity-50 saturate-50" : ""
+                      } ${
+                        dragOverId === task.id && draggedTaskId.current !== task.id
+                          ? "rounded-xl outline outline-2 outline-accent"
+                          : ""
+                      }`}
+                    >
+                      {ring?.taskId === task.id && (
+                        <span
+                          key={ring.nonce}
+                          data-testid="reveal-ring"
+                          aria-hidden="true"
+                          className="motion-reveal-ring rounded-xl z-10"
+                          onAnimationEnd={clearRing}
+                        />
+                      )}
+                      {renderCard(task, tasks.indexOf(task))}
+                    </div>
+                  )
+                )}
               </div>
             )}
           </div>

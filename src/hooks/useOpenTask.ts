@@ -10,6 +10,7 @@ import {
 } from "../types";
 import { openEditorForWorktree } from "../services/openEditor";
 import { agentSurface, taskSurfaceFor, isEmbedded } from "../embedded/taskSurface";
+import { transitionTaskView } from "../services/taskTransition";
 
 export interface OpenTaskOptions {
   /** Open this agent in its remembered view instead of the editor choice ("Open in Codex"). */
@@ -53,15 +54,19 @@ export function useOpenTask({
   /** Resolves to whether the task was opened (embedded, or the external editor launched). */
   const openTask = useCallback(
     async (task: Task, options: OpenTaskOptions = {}): Promise<boolean> => {
-      showTask(task);
-      recordTaskVisit(task);
       const surface = options.agent
         ? agentSurface(options.agent, agentViews)
         : taskSurfaceFor(editorApp, agentViews);
       if (isEmbedded(surface)) {
-        setOpenedTask({ taskId: task.id, surface });
+        transitionTaskView(task.id, () => {
+          showTask(task);
+          recordTaskVisit(task);
+          setOpenedTask({ taskId: task.id, surface });
+        });
         return true;
       }
+      showTask(task);
+      recordTaskVisit(task);
       const workspace = workspaces.find((w) => w.id === task.workspaceId);
       const result = await openEditorForWorktree(
         editorApp,
@@ -77,20 +82,25 @@ export function useOpenTask({
 
   /** Open an embedded surface directly, e.g. the chat an agent notification came from. */
   const openTaskSurface = useCallback(
-    (task: Task, surface: TaskSurface) => {
-      showTask(task);
-      recordTaskVisit(task);
-      setOpenedTask({ taskId: task.id, surface });
-    },
+    (task: Task, surface: TaskSurface) =>
+      transitionTaskView(task.id, () => {
+        showTask(task);
+        recordTaskVisit(task);
+        setOpenedTask({ taskId: task.id, surface });
+      }),
     [recordTaskVisit, showTask]
   );
 
-  const closeTask = useCallback(() => setOpenedTask(null), []);
+  const closeTask = useCallback(() => {
+    if (openedTask) transitionTaskView(openedTask.taskId, () => setOpenedTask(null));
+  }, [openedTask]);
   const restoreTask = useCallback(
     (task: Task) => {
-      showTask(task);
       const surface = taskSurfaceFor(editorApp, agentViews);
-      setOpenedTask(isEmbedded(surface) ? { taskId: task.id, surface } : null);
+      transitionTaskView(task.id, () => {
+        showTask(task);
+        setOpenedTask(isEmbedded(surface) ? { taskId: task.id, surface } : null);
+      });
     },
     [editorApp, agentViews, showTask]
   );

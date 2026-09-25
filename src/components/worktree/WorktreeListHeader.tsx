@@ -99,7 +99,7 @@ export function WorktreeListHeader({
             className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
             title="Refresh Linear info (⌘R)"
           >
-            <RefreshIcon className={refreshing ? "animate-spin" : ""} />
+            <RefreshIcon className={refreshing ? "motion-spin-steps" : ""} />
           </button>
           <Button onClick={onNewTask} className="h-8 text-xs">
             <PlusIcon />

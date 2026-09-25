@@ -15,6 +15,7 @@ interface Params {
   searchOpen: boolean;
   setShowNew: (v: boolean) => void;
   setSelectedIndex: Dispatch<SetStateAction<number>>;
+  jumpToIndex: (index: number) => void;
   setDeleteRequested: (v: boolean) => void;
   handleRefresh: () => void;
   showToast: (msg: string) => void;
@@ -31,6 +32,7 @@ export function useWorktreeListKeyboardShortcuts({
   searchOpen,
   setShowNew,
   setSelectedIndex,
+  jumpToIndex,
   setDeleteRequested,
   handleRefresh,
   showToast,
@@ -112,7 +114,7 @@ export function useWorktreeListKeyboardShortcuts({
       ...Object.fromEntries(
         Array.from({ length: 10 }, (_, i) => [
           String(i),
-          { handler: () => setSelectedIndex(i), enabled: i < tasks.length },
+          { handler: () => jumpToIndex(i), enabled: i < tasks.length },
         ])
       ),
     },
