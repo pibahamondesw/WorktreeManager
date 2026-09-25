@@ -76,7 +76,10 @@ export function useAgentActivity({
     void invoke("agent_attention", {
       sound: alerts.sounds[category],
       notification: alerts.notifications[category]
-        ? notificationFor(task, { ...event, state: category })
+        ? {
+            ...notificationFor(task, { ...event, state: category }),
+            taskOpen: task.id === openedTaskId,
+          }
         : null,
     }).catch(() => undefined);
   }, []);

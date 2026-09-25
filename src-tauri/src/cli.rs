@@ -372,6 +372,21 @@ fn agent_event_kind(payload: &Value) -> Map<String, Value> {
     kind
 }
 
+/// Claude fires `Stop` while background subagents still run, and again once they report back, so
+/// the turn only counts as done when none is left running.
+fn agent_event_state(requested: &str, payload: &Value) -> String {
+    let subagent_running = payload["background_tasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|task| task["type"] == "subagent" && task["status"] == "running");
+    if requested == "done" && subagent_running {
+        "working".into()
+    } else {
+        requested.into()
+    }
+}
+
 /// Embedded sessions export their task and surface; external ones are matched by cwd. `at`
 /// orders events, since asynchronous hooks can be delivered out of order.
 fn agent_event_origin(env: impl Fn(&str) -> Option<String>) -> Map<String, Value> {
@@ -396,10 +411,11 @@ fn report_agent_event(mut arguments: Arguments, payload: Value) {
     let Some(cwd) = agent_event_cwd(&payload) else {
         return;
     };
-    let state = arguments.params["state"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
+    let state = agent_event_state(
+        arguments.params["state"].as_str().unwrap_or_default(),
+        &payload,
+    );
+    arguments.params.insert("state".into(), json!(state));
     arguments.params.insert("cwd".into(), json!(cwd));
     arguments.params.extend(origin);
     arguments.params.extend(agent_event_kind(&payload));
@@ -567,6 +583,23 @@ mod tests {
             Value::Null,
         ] {
             assert!(agent_event_kind(&payload).is_empty(), "{payload}");
+        }
+    }
+
+    #[test]
+    fn stop_with_running_subagents_keeps_the_agent_working() {
+        let running = json!({ "background_tasks": [
+            { "id": "a1", "type": "subagent", "status": "running" }
+        ] });
+        assert_eq!(agent_event_state("done", &running), "working");
+        assert_eq!(agent_event_state("waiting", &running), "waiting");
+        for payload in [
+            json!({ "background_tasks": [] }),
+            json!({ "background_tasks": [{ "type": "subagent", "status": "completed" }] }),
+            json!({ "background_tasks": [{ "type": "shell", "status": "running" }] }),
+            Value::Null,
+        ] {
+            assert_eq!(agent_event_state("done", &payload), "done", "{payload}");
         }
     }
 
