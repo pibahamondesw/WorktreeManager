@@ -4,6 +4,7 @@ import { GitStatus, IssueLinearInfo, Task } from "../../types";
 import { Badge } from "../ui/Badge";
 import { stateVariant } from "../worktree/cardStyles";
 import { SessionStatus } from "../../hooks/useTerminalSession";
+import { taskTransitionName } from "../../services/taskTransition";
 
 interface TaskHeaderProps {
   task: Task;
@@ -41,6 +42,7 @@ export function TaskHeader({
   return (
     <div
       className="flex items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
+      style={{ viewTransitionName: taskTransitionName("shell") }}
       data-drag-region
     >
       {sidebarCollapsed && (
@@ -70,15 +72,28 @@ export function TaskHeader({
         <ChevronLeftIcon size={14} />
       </button>
       {task.linearIssueIdentifier && (
-        <span className="text-xs font-mono text-text-muted">{task.linearIssueIdentifier}</span>
+        <span
+          className="text-xs font-mono text-text-muted"
+          style={{ viewTransitionName: taskTransitionName("identifier") }}
+        >
+          {task.linearIssueIdentifier}
+        </span>
       )}
       {issueStatus && (
-        <Badge variant={stateVariant[issueStatus.type] ?? "default"}>{issueStatus.name}</Badge>
+        <span className="inline-flex" style={{ viewTransitionName: taskTransitionName("status") }}>
+          <Badge variant={stateVariant[issueStatus.type] ?? "default"}>{issueStatus.name}</Badge>
+        </span>
       )}
-      <h3 className="text-sm font-semibold text-text-primary truncate min-w-0">
+      <h3
+        className="text-sm font-semibold text-text-primary truncate min-w-0"
+        style={{ viewTransitionName: taskTransitionName("title") }}
+      >
         {task.linearIssueTitle ?? task.branchName}
       </h3>
-      <span className="flex items-center gap-1 text-xs font-mono text-text-muted truncate">
+      <span
+        className="flex items-center gap-1 text-xs font-mono text-text-muted truncate"
+        style={{ viewTransitionName: taskTransitionName("branch") }}
+      >
         <BranchIcon />
         {task.branchName}
         {gitStatus && gitStatus.ahead > 0 && (

@@ -230,6 +230,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     <div
       onClick={handleOpen}
       tabIndex={-1}
+      data-task-card={task.id}
       data-selected={selected ? "true" : undefined}
       data-attention={agentActivity?.state === "waiting" ? "" : undefined}
       className={`group bg-bg-secondary border rounded-xl p-4 hover:border-border-light hover:bg-bg-tertiary/50 transition-all cursor-pointer outline-none ${
@@ -255,6 +256,7 @@ export const WorktreeCard = memo(function WorktreeCard({
             {task.linearIssueIdentifier ? (
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
+                  data-task-part="identifier"
                   onClick={handleOpenLinear}
                   className="text-xs font-mono text-accent hover:text-accent-hover transition-colors cursor-pointer inline-flex items-center gap-1"
                   title="Open on Linear"
@@ -284,7 +286,9 @@ export const WorktreeCard = memo(function WorktreeCard({
               <span className="text-xs font-mono text-text-muted flex-shrink-0">No issue</span>
             )}
             {status && (
-              <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
+              <span data-task-part="status" className="inline-flex">
+                <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
+              </span>
             )}
             {indicator && <TaskIndicatorDot indicator={indicator} />}
             {agentActivity?.state === "waiting" && <Badge variant="warning">Needs input</Badge>}
@@ -306,6 +310,7 @@ export const WorktreeCard = memo(function WorktreeCard({
 
           {/* Row 2: title */}
           <h3
+            data-task-part="title"
             className="text-sm font-medium text-text-primary truncate"
             title={task.linearIssueTitle || task.branchName}
           >
@@ -314,7 +319,7 @@ export const WorktreeCard = memo(function WorktreeCard({
 
           {/* Row 3: branch + git status */}
           <div className="flex items-center gap-3 mt-2">
-            <div className="flex items-center gap-1.5 min-w-0">
+            <div data-task-part="branch" className="flex items-center gap-1.5 min-w-0">
               <BranchIcon size={12} className="text-text-muted flex-shrink-0" />
               <button
                 onClick={handleCopyPath}

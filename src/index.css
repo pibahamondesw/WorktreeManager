@@ -177,6 +177,28 @@ body,
   overflow: hidden;
 }
 
+::view-transition-group(*) {
+  animation-duration: var(--motion-enter-slow);
+  animation-timing-function: var(--ease-enter);
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--motion-enter-fast);
+}
+::view-transition-old(task-identifier),
+::view-transition-new(task-identifier),
+::view-transition-old(task-status),
+::view-transition-new(task-status),
+::view-transition-old(task-title),
+::view-transition-new(task-title),
+::view-transition-old(task-branch),
+::view-transition-new(task-branch) {
+  width: auto;
+  height: 100%;
+  object-fit: none;
+  object-position: left center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .motion-fade,
   .motion-rise,
