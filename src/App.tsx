@@ -14,6 +14,7 @@ import { useLinearOrgKeyBackfill } from "./hooks/useLinearOrgKeyBackfill";
 import { useDoctor } from "./hooks/useDoctor";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useNavigationHistory } from "./hooks/useNavigationHistory";
+import { usePresence } from "./hooks/usePresence";
 import { useOpenTask } from "./hooks/useOpenTask";
 import { NavigationEntry } from "./navigation/history";
 import { withScope } from "./search/query";
@@ -266,6 +267,8 @@ function App() {
     ),
   });
 
+  const sidebar = usePresence(!sidebarCollapsed);
+
   useUpdater();
   useWindowDrag();
   useLinearOrgKeyBackfill(state.workspaces, updateWorkspace);
@@ -339,7 +342,14 @@ function App() {
       )}
       <div className="flex flex-1 min-h-0">
         <ErrorBoundary fallbackClassName="w-60 h-full bg-bg-secondary border-r border-border">
-          <div className={sidebarCollapsed ? "hidden" : "h-full"}>
+          <div
+            className={
+              !sidebar.rendered
+                ? "hidden"
+                : `h-full ${sidebar.exiting ? "motion-panel-conceal" : "motion-panel-reveal"}`
+            }
+            onAnimationEnd={sidebar.onAnimationEnd}
+          >
             <WorkspaceList
               workspaces={state.workspaces}
               tasks={state.tasks}

@@ -6,7 +6,7 @@ interface IconProps {
 export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
   return (
     <svg
-      className={`animate-spin ${className}`}
+      className={`motion-spin-steps ${className}`}
       width={`${size / 16}rem`}
       height={`${size / 16}rem`}
       viewBox="0 0 24 24"
