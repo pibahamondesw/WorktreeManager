@@ -217,13 +217,29 @@ it("plays the exit even when deletion settles before the task list updates", asy
     fireEvent.click(screen.getByText("delete second"));
     await act(async () => deferred.resolve({ data: { id: "second" }, warnings: [] }));
     setTasks(TASKS.filter((task) => task.id !== "second"));
-    expect(animate).toHaveBeenCalled();
     expect(screen.getByText("second").closest("[inert]")).not.toBeNull();
     expect(screen.getAllByText(/^(first|second|unpinned)$/).map((el) => el.textContent)).toEqual([
       "first",
       "second",
       "unpinned",
     ]);
+  } finally {
+    delete (Element.prototype as Partial<Element>).animate;
+  }
+});
+
+it("keeps the grid for the last card's exit instead of jumping to the empty state", async () => {
+  Element.prototype.animate = vi.fn(
+    () => ({ cancel: vi.fn(), onfinish: null }) as unknown as Animation
+  );
+  try {
+    const { deferred, onTaskDeleted } = deferredDeletion();
+    const { setTasks } = fixture({ onTaskDeleted });
+    setTasks(TASKS.slice(0, 1));
+    fireEvent.click(screen.getByText("delete first"));
+    setTasks([]);
+    await act(async () => deferred.resolve({ data: { id: "first" }, warnings: [] }));
+    expect(screen.getByText("first").closest("[inert]")).not.toBeNull();
   } finally {
     delete (Element.prototype as Partial<Element>).animate;
   }

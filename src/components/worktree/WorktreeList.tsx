@@ -357,7 +357,7 @@ export function WorktreeList({
                   <WorktreeCardSkeleton key={i} index={i} />
                 ))}
               </div>
-            ) : tasks.length === 0 ? (
+            ) : tasks.length === 0 && exits.size === 0 ? (
               <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />
             ) : (
               <div key="tasks" className="grid gap-3 motion-rise">

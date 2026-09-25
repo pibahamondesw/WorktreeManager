@@ -1,64 +1,95 @@
 import { ReactNode, useLayoutEffect, useRef } from "react";
 import { TrashIcon } from "../ui/Icons";
+import { GenieGeometry, Point, genieQuads, rectToQuadMatrix, sliceCount } from "./genie";
 
-const GENIE_MS = 520;
+const GENIE_MS = 560;
 const GULP_MS = 180;
 const COLLAPSE_MS = 200;
+const MAX_SLICES = 60;
+const MIN_SLICE_WIDTH = 8;
+const NECK_INSET = 6;
 const EXIT_EASING = "cubic-bezier(0.4, 0, 1, 1)";
 const SETTLE_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
-
-interface Point {
-  x: number;
-  y: number;
-}
 
 function prefersReducedMotion() {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
-const GENIE_COLUMNS = 16;
-const GENIE_FRAMES = 12;
-const NECK_HALF_HEIGHT = 3;
-
-const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
-const smoothstep = (value: number) => value * value * (3 - 2 * value);
-const lerp = (from: number, to: number, t: number) => from + (to - from) * t;
-
-function genieShape(width: number, height: number, target: Point, progress: number) {
-  const left = lerp(0, target.x, smoothstep(clamp01((progress - 0.45) / 0.55)));
-  const columns = Array.from({ length: GENIE_COLUMNS + 1 }, (_, i) => {
-    const x = lerp(left, width, i / GENIE_COLUMNS);
-    const pinch = smoothstep(clamp01(2 * progress - 1 + x / width));
-    return {
-      x,
-      top: lerp(0, target.y - NECK_HALF_HEIGHT, pinch),
-      bottom: lerp(height, target.y + NECK_HALF_HEIGHT, pinch),
-    };
-  });
-  const points = [
-    ...columns.map(({ x, top }) => `${x}px ${top}px`),
-    ...columns.reverse().map(({ x, bottom }) => `${x}px ${bottom}px`),
-  ];
-  return `polygon(${points.join(", ")})`;
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
-function genieFrames(width: number, height: number, target: Point): Keyframe[] {
-  return Array.from({ length: GENIE_FRAMES + 1 }, (_, i) => {
-    const progress = i / GENIE_FRAMES;
-    return {
-      clipPath: genieShape(width, height, target, progress),
-      opacity: progress < 0.8 ? 1 : lerp(1, 0, (progress - 0.8) / 0.2),
-    };
-  });
-}
-
-function centerWithin(element: HTMLElement, container: HTMLElement): Point {
+function boxWithin(element: HTMLElement, container: HTMLElement): Box {
   const rect = element.getBoundingClientRect();
   const origin = container.getBoundingClientRect();
   return {
-    x: rect.left + rect.width / 2 - origin.left,
-    y: rect.top + rect.height / 2 - origin.top,
+    left: rect.left - origin.left,
+    top: rect.top - origin.top,
+    width: rect.width,
+    height: rect.height,
   };
+}
+
+function centerOf(box: Box): Point {
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+}
+
+function genieGeometry(card: HTMLElement, trash: Box): GenieGeometry {
+  const width = card.offsetWidth;
+  return {
+    width,
+    height: card.offsetHeight,
+    neck: {
+      x: trash.left + NECK_INSET,
+      top: trash.top + NECK_INSET,
+      bottom: trash.top + trash.height - NECK_INSET,
+      depth: trash.width - 2 * NECK_INSET,
+    },
+    sliceWidth: Math.max(MIN_SLICE_WIDTH, Math.ceil(width / MAX_SLICES)),
+  };
+}
+
+function sliceWidthAt(geometry: GenieGeometry, index: number) {
+  return Math.min(geometry.sliceWidth, geometry.width - index * geometry.sliceWidth);
+}
+
+function buildSlices(card: HTMLElement, layer: HTMLElement, geometry: GenieGeometry) {
+  return Array.from({ length: sliceCount(geometry) }, (_, index) => {
+    const slice = document.createElement("div");
+    Object.assign(slice.style, {
+      position: "absolute",
+      left: "0",
+      top: "0",
+      width: `${sliceWidthAt(geometry, index) + 0.5}px`,
+      height: `${geometry.height}px`,
+      overflow: "hidden",
+      transformOrigin: "0 0",
+      backfaceVisibility: "hidden",
+    });
+    const copy = card.cloneNode(true) as HTMLElement;
+    Object.assign(copy.style, {
+      position: "absolute",
+      left: `${-index * geometry.sliceWidth}px`,
+      top: "0",
+      width: `${geometry.width}px`,
+    });
+    slice.append(copy);
+    layer.append(slice);
+    return slice;
+  });
+}
+
+function renderSlices(slices: HTMLElement[], geometry: GenieGeometry, progress: number) {
+  genieQuads(geometry, progress).forEach((quad, index) => {
+    slices[index].style.transform = rectToQuadMatrix(
+      sliceWidthAt(geometry, index),
+      geometry.height,
+      quad
+    );
+  });
 }
 
 export function DepartingCard({
@@ -74,42 +105,46 @@ export function DepartingCard({
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
   const trashRef = useRef<HTMLSpanElement>(null);
 
   useLayoutEffect(() => {
     const row = rowRef.current;
     const card = cardRef.current;
+    const layer = layerRef.current;
     const trash = trashRef.current;
     const target = card?.querySelector<HTMLElement>("[data-genie-target]");
     if (
       !row ||
       !card ||
+      !layer ||
       !trash ||
       !target ||
-      typeof card.animate !== "function" ||
+      typeof row.animate !== "function" ||
       prefersReducedMotion()
     ) {
       onDeparted(taskId);
       return;
     }
-    const center = centerWithin(target, card);
-    trash.style.left = `${center.x}px`;
-    trash.style.top = `${center.y}px`;
+    const trashBox = boxWithin(target, card);
+    const trashCenter = centerOf(trashBox);
+    const geometry = genieGeometry(card, trashBox);
+    const slices = buildSlices(card, layer, geometry);
+    renderSlices(slices, geometry, 0);
+    card.style.visibility = "hidden";
+    Object.assign(trash.style, { left: `${trashCenter.x}px`, top: `${trashCenter.y}px` });
     trash.hidden = false;
 
     const animations: Animation[] = [];
-    const genie = card.animate(genieFrames(card.offsetWidth, card.offsetHeight, center), {
-      duration: GENIE_MS,
-      easing: EXIT_EASING,
-      fill: "forwards",
-    });
-    animations.push(genie);
-    genie.onfinish = () => {
+    let frame = 0;
+    const startedAt = performance.now();
+    const finish = () => {
+      layer.replaceChildren();
       const gulp = trash.animate(
         [
-          { transform: "translate(-50%, -50%) scale(1)", opacity: 1 },
-          { transform: "translate(-50%, -50%) scale(1.25)", opacity: 1, offset: 0.4 },
-          { transform: "translate(-50%, -50%) scale(0.6)", opacity: 0 },
+          { scale: "1", opacity: 1 },
+          { scale: "1.25", opacity: 1, offset: 0.4 },
+          { scale: "0.6", opacity: 0 },
         ],
         { duration: GULP_MS, easing: EXIT_EASING, fill: "forwards" }
       );
@@ -123,7 +158,20 @@ export function DepartingCard({
       animations.push(gulp, collapse);
       collapse.onfinish = () => onDeparted(taskId);
     };
-    return () => animations.forEach((animation) => animation.cancel());
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / GENIE_MS);
+      renderSlices(slices, geometry, progress);
+      if (progress < 1) frame = requestAnimationFrame(tick);
+      else finish();
+    };
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      animations.forEach((animation) => animation.cancel());
+      layer.replaceChildren();
+      card.style.visibility = "";
+    };
   }, [taskId, gap, onDeparted]);
 
   return (
@@ -131,6 +179,7 @@ export function DepartingCard({
       <div ref={cardRef} className="[&_[data-genie-target]]:invisible">
         {children}
       </div>
+      <div ref={layerRef} aria-hidden="true" className="absolute inset-0 pointer-events-none" />
       <span
         ref={trashRef}
         hidden
