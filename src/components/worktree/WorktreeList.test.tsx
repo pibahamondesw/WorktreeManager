@@ -38,6 +38,7 @@ vi.mock("./WorktreeCard", () => ({
     <>
       <button onClick={onTogglePin}>{task.id}</button>
       <button
+        data-genie-target
         onClick={() =>
           void onDelete(task.id, { deleteWorktrees: true, force: true }).catch(() => undefined)
         }
@@ -205,4 +206,25 @@ it("does not animate tasks removed by something other than a card deletion", () 
   const { setTasks } = fixture();
   setTasks(TASKS.filter((task) => task.id !== "second"));
   expect(screen.queryByText("second")).not.toBeInTheDocument();
+});
+
+it("plays the exit even when deletion settles before the task list updates", async () => {
+  const animate = vi.fn(() => ({ cancel: vi.fn(), onfinish: null }) as unknown as Animation);
+  Element.prototype.animate = animate;
+  try {
+    const { deferred, onTaskDeleted } = deferredDeletion();
+    const { setTasks } = fixture({ onTaskDeleted });
+    fireEvent.click(screen.getByText("delete second"));
+    await act(async () => deferred.resolve({ data: { id: "second" }, warnings: [] }));
+    setTasks(TASKS.filter((task) => task.id !== "second"));
+    expect(animate).toHaveBeenCalled();
+    expect(screen.getByText("second").closest("[inert]")).not.toBeNull();
+    expect(screen.getAllByText(/^(first|second|unpinned)$/).map((el) => el.textContent)).toEqual([
+      "first",
+      "second",
+      "unpinned",
+    ]);
+  } finally {
+    delete (Element.prototype as Partial<Element>).animate;
+  }
 });

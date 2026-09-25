@@ -89,27 +89,32 @@ function aggregateTaskStatus(
 
 const CARD_GAP = 12;
 
-interface DepartingTask {
+interface ExitingTask {
   task: Task;
   index: number;
+  phase: "deleting" | "departing";
 }
 
-function departedTasks(
-  previous: Task[],
-  current: Task[],
-  deletingIds: ReadonlySet<string>
-): DepartingTask[] {
-  const remaining = new Set(current.map((task) => task.id));
-  return previous.flatMap((task, index) =>
-    deletingIds.has(task.id) && !remaining.has(task.id) ? [{ task, index }] : []
-  );
-}
+type Exits = ReadonlyMap<string, ExitingTask>;
 
-function withDeparting(tasks: Task[], departing: DepartingTask[]) {
-  const rows = tasks.map((task) => ({ task, departing: false }));
-  for (const item of [...departing].sort((a, b) => a.index - b.index))
-    rows.splice(Math.min(item.index, rows.length), 0, { task: item.task, departing: true });
+function withExits(tasks: Task[], exits: Exits) {
+  const rows = tasks
+    .filter((task) => exits.get(task.id)?.phase !== "departing")
+    .map((task) => ({ task, exit: exits.get(task.id) }));
+  const listed = new Set(rows.map((row) => row.task.id));
+  const vanished = [...exits.values()]
+    .filter((exit) => !listed.has(exit.task.id))
+    .sort((a, b) => a.index - b.index);
+  for (const exit of vanished)
+    rows.splice(Math.min(exit.index, rows.length), 0, { task: exit.task, exit });
   return rows;
+}
+
+function withExit(exits: Exits, id: string, exit: ExitingTask | undefined): Exits {
+  const next = new Map(exits);
+  if (exit) next.set(id, exit);
+  else next.delete(id);
+  return next;
 }
 
 const SELECTED_CARD_SCROLL_ATTEMPTS = 60;
@@ -152,19 +157,11 @@ export function WorktreeList({
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [revealNonce, setRevealNonce] = useState(0);
-  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set());
-  const [departing, setDeparting] = useState<DepartingTask[]>([]);
+  const [exits, setExits] = useState<Exits>(new Map());
   const finishDeparture = useCallback(
-    (taskId: string) =>
-      setDeparting((current) => current.filter((item) => item.task.id !== taskId)),
+    (taskId: string) => setExits((current) => withExit(current, taskId, undefined)),
     []
   );
-  const [previousTasks, setPreviousTasks] = useState(tasks);
-  if (previousTasks !== tasks) {
-    setPreviousTasks(tasks);
-    const deleted = departedTasks(previousTasks, tasks, deletingIds);
-    if (deleted.length) setDeparting((current) => [...current, ...deleted]);
-  }
   const { toast, showToast } = useEphemeralToast();
   const { ring, ringTask, clearRing } = useRevealRing();
   const draggedTaskId = useRef<string | null>(null);
@@ -232,22 +229,25 @@ export function WorktreeList({
 
   const selectableTask =
     selectedIndex >= 0 && selectedIndex < tasks.length ? tasks[selectedIndex] : null;
-  const selectedTask =
-    selectableTask && !deletingIds.has(selectableTask.id) ? selectableTask : null;
+  const selectedTask = selectableTask && !exits.has(selectableTask.id) ? selectableTask : null;
 
   const deleteTask: typeof onTaskDeleted = async (id, options) => {
-    setDeletingIds((ids) => new Set(ids).add(id));
+    const index = tasks.findIndex((task) => task.id === id);
+    if (index !== -1)
+      setExits((current) =>
+        withExit(current, id, { task: tasks[index], index, phase: "deleting" })
+      );
     try {
-      return await onTaskDeleted(id, options);
+      const result = await onTaskDeleted(id, options);
+      setExits((current) => {
+        const exit = current.get(id);
+        return exit ? withExit(current, id, { ...exit, phase: "departing" }) : current;
+      });
+      return result;
     } catch (error) {
+      setExits((current) => withExit(current, id, undefined));
       showToast(error instanceof Error ? error.message : String(error));
       throw error;
-    } finally {
-      setDeletingIds((ids) => {
-        const next = new Set(ids);
-        next.delete(id);
-        return next;
-      });
     }
   };
 
@@ -361,8 +361,8 @@ export function WorktreeList({
               <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />
             ) : (
               <div key="tasks" className="grid gap-3 motion-rise">
-                {withDeparting(tasks, departing).map(({ task, departing: leaving }) =>
-                  leaving ? (
+                {withExits(tasks, exits).map(({ task, exit }) =>
+                  exit?.phase === "departing" ? (
                     <DepartingCard
                       key={task.id}
                       gap={CARD_GAP}
@@ -400,9 +400,9 @@ export function WorktreeList({
                         draggedTaskId.current = null;
                         setDragOverId(null);
                       }}
-                      inert={deletingIds.has(task.id)}
+                      inert={!!exit}
                       className={`relative transition-opacity ${
-                        deletingIds.has(task.id) ? "opacity-50 saturate-50" : ""
+                        exit ? "opacity-50 saturate-50" : ""
                       } ${
                         dragOverId === task.id && draggedTaskId.current !== task.id
                           ? "rounded-xl outline outline-2 outline-accent"
