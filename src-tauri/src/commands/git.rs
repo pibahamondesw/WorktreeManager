@@ -433,9 +433,19 @@ fn copy_local_configs_blocking(
 }
 
 #[tauri::command]
-pub fn git_worktree_remove(
+pub async fn git_worktree_remove(
     repo_path: String,
     worktree_path: String,
+    force: Option<bool>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || remove_worktree(&repo_path, &worktree_path, force))
+        .await
+        .map_err(|e| format!("Failed to remove worktree: {}", e))?
+}
+
+fn remove_worktree(
+    repo_path: &str,
+    worktree_path: &str,
     force: Option<bool>,
 ) -> Result<String, String> {
     let wt_path = std::path::Path::new(&worktree_path);
@@ -443,13 +453,13 @@ pub fn git_worktree_remove(
     if !wt_path.exists() {
         // Directory already gone — prune stale git worktree references
         let _ = git_command()
-            .args(["-C", &repo_path, "worktree", "prune"])
+            .args(["-C", repo_path, "worktree", "prune"])
             .output();
         return Ok("Worktree directory already removed".to_string());
     }
 
     let mut command = git_command();
-    command.args(["-C", &repo_path, "worktree", "remove", &worktree_path]);
+    command.args(["-C", repo_path, "worktree", "remove", worktree_path]);
     if force.unwrap_or(false) {
         command.arg("--force");
     }
@@ -947,12 +957,12 @@ mod tests {
         let path = worktree.to_string_lossy().into_owned();
         worktree_add_blocking(root.clone(), path.clone(), "feature".into()).unwrap();
         std::fs::write(worktree.join("uncommitted"), "keep me").unwrap();
-        assert!(git_worktree_remove(root.clone(), path.clone(), None).is_err());
+        assert!(remove_worktree(&root, &path, None).is_err());
         assert!(worktree.join("uncommitted").exists());
-        git_worktree_remove(root.clone(), path.clone(), Some(true)).unwrap();
+        remove_worktree(&root, &path, Some(true)).unwrap();
         assert!(!worktree.exists());
         assert!(ref_resolves(&root, "refs/heads/feature"));
-        git_worktree_remove(root, path, None).unwrap();
+        remove_worktree(&root, &path, None).unwrap();
     }
 
     #[test]
@@ -960,9 +970,9 @@ mod tests {
         let repo = TestRepo::new();
         let other = repo.0.join("ordinary-folder");
         std::fs::create_dir(&other).unwrap();
-        assert!(git_worktree_remove(
-            repo.0.to_string_lossy().into_owned(),
-            other.to_string_lossy().into_owned(),
+        assert!(remove_worktree(
+            &repo.0.to_string_lossy(),
+            &other.to_string_lossy(),
             Some(true)
         )
         .is_err());
