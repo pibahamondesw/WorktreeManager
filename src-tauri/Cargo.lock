@@ -6260,7 +6260,7 @@ dependencies = [
 
 [[package]]
 name = "worktree-manager"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "keyring",
  "libc",
