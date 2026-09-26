@@ -45,7 +45,7 @@ interface GqlIssueNode {
   priority: number;
   updatedAt: string;
   state: { name: string; type: string } | null;
-  project: { name: string } | null;
+  project: { id: string; name: string } | null;
 }
 
 interface ViewerIdResponse {
@@ -77,6 +77,7 @@ interface IssuesBatchResponse {
     nodes: Array<{
       id: string;
       state: { name: string; type: string } | null;
+      project?: { id: string; name: string } | null;
       attachments: { nodes: GqlAttachmentNode[] };
     }>;
   };
@@ -101,7 +102,7 @@ const ASSIGNED_ISSUES_QUERY = `
           priority
           updatedAt
           state { name type }
-          project { name }
+          project { id name }
         }
       }
     }
@@ -120,7 +121,7 @@ const SEARCH_ISSUES_QUERY = `
         priority
         updatedAt
         state { name type }
-        project { name }
+        project { id name }
         assignee { id }
       }
     }
@@ -133,10 +134,11 @@ const VIEWER_ID_QUERY = `
 
 const ISSUES_BATCH_QUERY = `
   query IssuesBatch($filter: IssueFilter) {
-    issues(filter: $filter) {
+    issues(filter: $filter, first: 50) {
       nodes {
         id
         state { name type }
+        project { id name }
         attachments { nodes { url title subtitle metadata } }
       }
     }
@@ -152,6 +154,7 @@ function mapIssueNode(node: GqlIssueNode): LinearIssue {
     title: node.title,
     branchName: node.branchName,
     description: node.description ?? undefined,
+    projectId: node.project?.id,
     projectName: node.project?.name ?? undefined,
     stateName: node.state?.name ?? undefined,
     stateType: node.state?.type ?? undefined,
@@ -250,9 +253,22 @@ export class LinearService {
     return nodes.map(mapIssueNode);
   }
 
-  async getIssue(id: string): Promise<{ id: string; identifier: string; title: string }> {
+  async getIssue(id: string): Promise<{
+    id: string;
+    identifier: string;
+    title: string;
+    projectId?: string;
+    projectName?: string;
+  }> {
     const issue = await this.client.issue(id);
-    return { id: issue.id, identifier: issue.identifier, title: issue.title };
+    const project = await issue.project;
+    return {
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      projectId: project?.id,
+      projectName: project?.name,
+    };
   }
 
   async startIssue(issueId: string): Promise<void> {
@@ -309,6 +325,16 @@ export class LinearService {
 
   async fetchIssueLinearInfoBatch(issueIds: string[]): Promise<Record<string, IssueLinearInfo>> {
     if (issueIds.length === 0) return {};
+    if (issueIds.length > 50) {
+      const result: Record<string, IssueLinearInfo> = {};
+      for (let offset = 0; offset < issueIds.length; offset += 50) {
+        Object.assign(
+          result,
+          await this.fetchIssueLinearInfoBatch(issueIds.slice(offset, offset + 50))
+        );
+      }
+      return result;
+    }
 
     try {
       const res = await this.gql.rawRequest<IssuesBatchResponse, Record<string, unknown>>(
@@ -323,6 +349,7 @@ export class LinearService {
       const result: Record<string, IssueLinearInfo> = {};
       for (const node of nodes) {
         result[node.id] = {
+          project: node.project,
           status: node.state ? { name: node.state.name, type: node.state.type } : null,
           prs: extractPrsFromAttachments(node.attachments?.nodes ?? []),
         };

@@ -53,6 +53,7 @@ interface TaskFields {
   repos: string[];
   paths: string[];
   workspace: string;
+  project: string;
   activeSession: boolean;
 }
 
@@ -69,6 +70,7 @@ function fieldsOf(
     ),
     repos: task.members.map((m) => m.repoName.toLowerCase()),
     paths: task.members.map((m) => m.path.toLowerCase()),
+    project: (task.linearProjectName ?? "").toLowerCase(),
     workspace: (workspace?.name ?? "").toLowerCase(),
     activeSession,
   };
@@ -92,6 +94,7 @@ function scoreTerm(f: TaskFields, term: string): number {
   if (f.title.includes(term)) return SCORES.titleSubstring;
   if (f.branches.some((b) => b.includes(term))) return SCORES.branchSubstring;
   if (f.repos.some((r) => r.includes(term))) return SCORES.repoSubstring;
+  if (f.project.includes(term)) return SCORES.workspaceSubstring;
   if (f.workspace.includes(term)) return SCORES.workspaceSubstring;
   if (f.paths.some((p) => p.includes(term))) return SCORES.pathSubstring;
   return 0;
@@ -100,6 +103,8 @@ function scoreTerm(f: TaskFields, term: string): number {
 function matchesFilter(f: TaskFields, filter: Filter): boolean {
   return filter.values.some((value) => {
     switch (filter.field) {
+      case "project":
+        return value === "none" ? !f.project : f.project.includes(value);
       case "in":
         return f.workspace.includes(value);
       case "repo":
