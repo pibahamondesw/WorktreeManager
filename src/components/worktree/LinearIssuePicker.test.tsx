@@ -197,7 +197,12 @@ describe("shared Linear issue picker", () => {
         workspaceId: "workspace",
         branchName: assigned.branchName,
         repoIds: ["repo"],
-        linearIssue: { id: assigned.id, identifier: assigned.identifier, title: assigned.title },
+        linearIssue: {
+          id: assigned.id,
+          identifier: assigned.identifier,
+          title: assigned.title,
+          projectName: assigned.projectName,
+        },
       },
       expect.any(Function),
       expect.any(Function)
