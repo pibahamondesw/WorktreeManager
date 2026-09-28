@@ -15,6 +15,7 @@ interface SearchPaletteArgs {
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
   query: string;
+  prNumbersByTask?: Record<string, number[]>;
   lastVisitAt?: Map<string, string>;
   agentSessions?: Record<string, TerminalStatus>;
   agentActivities?: AgentActivities;
@@ -74,6 +75,7 @@ export function searchPalette({
   workspaces,
   selectedWorkspaceId,
   query: rawQuery,
+  prNumbersByTask = {},
   lastVisitAt,
   agentSessions,
   agentActivities,
@@ -99,6 +101,7 @@ export function searchPalette({
     workspaces,
     selectedWorkspaceId,
     query,
+    prNumbersByTask,
     lastVisitAt,
     agentSessions,
     agentActivities,

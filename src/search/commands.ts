@@ -94,7 +94,10 @@ export function buildCommands({
       group: "workspace",
       keywords: `switch workspace change ${workspace.name}`.toLowerCase(),
       emptyVisible: !isCurrent,
-      shortcut: index <= 9 ? { key: String(index), label: `⌘${index}`, meta: true } : undefined,
+      shortcut:
+        index <= 9
+          ? { key: String(index), label: `⌘⇧${index}`, meta: true, shift: true }
+          : undefined,
       action: { type: "select-workspace", workspaceId: workspace.id },
     });
     commands.push({

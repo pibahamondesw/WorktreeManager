@@ -266,3 +266,29 @@ it("filters projects with phrases, alternatives, exclusions and unassigned tasks
   expect(find("project:none")).toEqual(["manual"]);
   expect(find("payment")).toEqual(["payments"]);
 });
+
+describe("PR number matching", () => {
+  const tasks = [task({ id: "linked" }), task({ id: "unlinked" })];
+  const find = (query: string) =>
+    searchTasks({
+      tasks,
+      workspaces,
+      selectedWorkspaceId: null,
+      query,
+      prNumbersByTask: { linked: [1234, 5678] },
+    }).map((result) => result.task.id);
+
+  it.each(["1234", "#1234", "5678", "#5678", "1234 repo:frontend"])(
+    "matches any associated PR for %s",
+    (query) => expect(find(query)).toEqual(["linked"])
+  );
+
+  it.each(["123", "#123", "9999", "#", "1234 repo:backend"])(
+    "does not match an unrelated query %s",
+    (query) => expect(find(query)).toEqual([])
+  );
+
+  it("supports excluding PR numbers", () => {
+    expect(find("-#1234")).toEqual(["unlinked"]);
+  });
+});

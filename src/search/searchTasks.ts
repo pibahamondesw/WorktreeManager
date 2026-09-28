@@ -23,6 +23,7 @@ interface SearchArgs {
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
   query: string;
+  prNumbersByTask?: Record<string, number[]>;
   lastVisitAt?: Map<string, string>;
   agentSessions?: Record<string, TerminalStatus>;
   agentActivities?: AgentActivities;
@@ -48,6 +49,7 @@ const AGENT_BOOST = 2_000_000;
 
 interface TaskFields {
   identifier: string;
+  prNumbers: number[];
   title: string;
   branches: string[];
   repos: string[];
@@ -60,9 +62,11 @@ interface TaskFields {
 function fieldsOf(
   task: Task,
   workspace: Workspace | undefined,
-  activeSession: boolean
+  activeSession: boolean,
+  prNumbers: number[]
 ): TaskFields {
   return {
+    prNumbers,
     identifier: (task.linearIssueIdentifier ?? "").toLowerCase(),
     title: (task.linearIssueTitle ?? "").toLowerCase(),
     branches: [task.branchName, ...task.members.map((m) => m.branchName)].map((b) =>
@@ -87,6 +91,8 @@ function startsWordWith(haystack: string, term: string): boolean {
 
 /** Best score for one free-text term across a task's fields; 0 means no match. */
 function scoreTerm(f: TaskFields, term: string): number {
+  if (/^#?\d+$/.test(term) && f.prNumbers.includes(Number(term.replace(/^#/, ""))))
+    return SCORES.identifierExact;
   if (f.identifier === term) return SCORES.identifierExact;
   if (f.identifier && f.identifier.startsWith(term)) return SCORES.identifierPrefix;
   if (f.title && startsWordWith(f.title, term)) return SCORES.titleWordStart;
@@ -145,6 +151,7 @@ export function searchTasks({
   workspaces,
   selectedWorkspaceId,
   query,
+  prNumbersByTask = {},
   lastVisitAt,
   agentSessions = {},
   agentActivities = {},
@@ -157,7 +164,10 @@ export function searchTasks({
   for (const task of tasks) {
     const workspace = workspaceById.get(task.workspaceId);
     const activeSession = agentSessions[task.id]?.kind === "running";
-    const score = scoreTask(fieldsOf(task, workspace, activeSession), parsed);
+    const score = scoreTask(
+      fieldsOf(task, workspace, activeSession, prNumbersByTask[task.id] ?? []),
+      parsed
+    );
     if (score === null) continue;
     results.push({
       task,

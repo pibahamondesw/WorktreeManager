@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { QuickSearchModal } from "./QuickSearchModal";
 import { Task, Workspace } from "../../types";
+
+const linearMocks = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock("../../services/linear", () => ({
+  LinearService: class {
+    fetchIssueLinearInfoBatch = linearMocks.fetch;
+  },
+}));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("../../services/pullRequest", () => ({
@@ -112,15 +119,60 @@ describe("QuickSearchModal navigation", () => {
     expect(onOpenTask).toHaveBeenCalledWith(secondTask, expect.any(Object));
   });
 
-  it("jumps to a task result by number", () => {
+  it("jumps to a task result with Cmd+number", () => {
     const secondTask = { ...otherTask, id: "t-3", branchName: "feature/second" };
-    const { onOpenTask } = renderModal({ initialQuery: "", tasks: [otherTask, secondTask] });
+    const { onOpenTask, onSelectWorkspace } = renderModal({
+      initialQuery: "",
+      tasks: [otherTask, secondTask],
+    });
     const input = screen.getByRole("textbox");
 
-    fireEvent.keyDown(input, { key: "1" });
+    fireEvent.keyDown(input, { key: "1", metaKey: true });
+    expect(onSelectWorkspace).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onOpenTask).toHaveBeenCalledWith(secondTask, expect.any(Object));
+  });
+
+  it.each(["input", "outside"])("jumps through filtered tasks with focus on %s", (target) => {
+    const secondTask = { ...otherTask, id: "t-3", branchName: "feature/second" };
+    const { onOpenTask, onSelectWorkspace } = renderModal({
+      initialQuery: "feature",
+      tasks: [otherTask, secondTask],
+    });
+    const input = screen.getByRole("textbox");
+    input.focus();
+    if (target === "outside") input.blur();
+
+    expect(
+      fireEvent.keyDown(target === "input" ? input : document.body, {
+        key: "1",
+        metaKey: true,
+      })
+    ).toBe(false);
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("feature");
+    expect(onSelectWorkspace).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenTask).toHaveBeenCalledWith(secondTask, expect.any(Object));
+  });
+
+  it("labels task rows with the Cmd shortcut and rings the jumped row", () => {
+    renderModal({
+      initialQuery: "feature",
+      tasks: [otherTask, { ...otherTask, id: "t-3", branchName: "feature/second" }],
+    });
+    expect(screen.getByText("⌘1")).toBeInTheDocument();
+    expect(document.querySelector(".motion-reveal-ring")).toBeNull();
+
+    fireEvent.keyDown(document.body, { key: "1", metaKey: true });
+
+    expect(document.querySelectorAll(".motion-reveal-ring")).toHaveLength(1);
+  });
+
+  it("does not intercept task shortcuts when closed", () => {
+    renderModal({ open: false });
+    expect(fireEvent.keyDown(document.body, { key: "0", metaKey: true })).toBe(true);
   });
 
   it("keeps number keys available while searching", () => {
@@ -245,10 +297,10 @@ describe("QuickSearchModal commands", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("runs a visible workspace command from its meta shortcut", () => {
+  it("runs a visible workspace command with Cmd+Shift+number", () => {
     const { onSelectWorkspace } = renderModal({ initialQuery: "" });
 
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "1", metaKey: true });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "1", metaKey: true, shiftKey: true });
 
     expect(onSelectWorkspace).toHaveBeenCalledWith("ws-2");
   });
@@ -267,7 +319,37 @@ it("filters by project and opens the visible task with keyboard navigation", () 
   });
   expect(screen.getByText(/^1 task/)).toBeInTheDocument();
   expect(screen.getAllByText("Payment API")).toHaveLength(2);
-  fireEvent.keyDown(screen.getByRole("textbox"), { key: "0" });
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "0", metaKey: true });
   fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
   expect(onOpenTask).toHaveBeenCalledWith(projectTask, expect.any(Object));
+});
+
+it.each(["1234", "#1234"])("finds and opens a task by PR number %s", async (query) => {
+  linearMocks.fetch.mockResolvedValue({
+    "issue-2": { status: null, prs: [{ number: 1234 }, { number: 5678 }] },
+  });
+  const linkedTask = { ...otherTask, linearIssueId: "issue-2" };
+  const { onOpenTask } = renderModal({
+    initialQuery: "",
+    tasks: [linkedTask],
+    workspaces: workspaces.map((workspace) => ({ ...workspace, linearApiKey: "test-key" })),
+  });
+  const input = screen.getByRole("textbox");
+  expect(fireEvent.keyDown(input, { key: "1" })).toBe(true);
+  fireEvent.change(input, { target: { value: query } });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /feature\/ledger-sync/ })).toBeInTheDocument()
+  );
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(onOpenTask).toHaveBeenCalledWith(linkedTask, expect.any(Object));
+});
+
+it("keeps ordinary task search working when fetching PRs fails", async () => {
+  linearMocks.fetch.mockRejectedValue(new Error("Unavailable"));
+  renderModal({
+    tasks: [{ ...otherTask, linearIssueId: "issue-2" }],
+    workspaces: workspaces.map((workspace) => ({ ...workspace, linearApiKey: "test-key" })),
+  });
+  await waitFor(() => expect(linearMocks.fetch).toHaveBeenCalled());
+  expect(screen.getByRole("button", { name: /feature\/ledger-sync/ })).toBeInTheDocument();
 });

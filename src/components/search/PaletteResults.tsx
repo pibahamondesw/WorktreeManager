@@ -13,9 +13,11 @@ export function PaletteResults({
   emptyMessage,
   onHover,
   onActivate,
+  ring,
 }: {
   results: PaletteItem[];
   activeIndex: number;
+  ring?: { index: number; nonce: number };
   emptyMessage: string;
   onHover: (index: number) => void;
   onActivate: (item: PaletteItem) => void;
@@ -43,6 +45,7 @@ export function PaletteResults({
                 item={item}
                 index={taskIndex++}
                 active={i === activeIndex}
+                ringNonce={ring?.index === i ? ring.nonce : undefined}
                 onHover={() => onHover(i)}
                 onClick={() => onActivate(item)}
               />
@@ -85,12 +88,14 @@ function TaskRow({
   item,
   index,
   active,
+  ringNonce,
   onHover,
   onClick,
 }: {
   item: Extract<PaletteItem, { kind: "task" }>;
   index: number;
   active: boolean;
+  ringNonce?: number;
   onHover: () => void;
   onClick: () => void;
 }) {
@@ -100,11 +105,14 @@ function TaskRow({
       data-active={active ? "true" : undefined}
       onMouseMove={onHover}
       onClick={onClick}
-      className={`${ROW_CLASS} ${active ? "bg-bg-hover" : "hover:bg-bg-hover/50"}`}
+      className={`${ROW_CLASS} relative ${active ? "bg-bg-hover" : "hover:bg-bg-hover/50"}`}
     >
+      {ringNonce !== undefined && (
+        <span key={ringNonce} aria-hidden="true" className="motion-reveal-ring" />
+      )}
       {index <= 9 && (
-        <span className="text-xs font-mono text-text-muted/40 flex-shrink-0 w-4 text-right">
-          {index}
+        <span className="text-xs font-mono text-text-muted/40 flex-shrink-0 w-8 text-right">
+          ⌘{index}
         </span>
       )}
       <div className="flex-1 min-w-0">

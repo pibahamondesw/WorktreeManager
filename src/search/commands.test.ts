@@ -114,8 +114,9 @@ describe("buildCommands", () => {
     });
     expect(commands.find((command) => command.id === "switch-ws:ws-2")?.shortcut).toEqual({
       key: "1",
-      label: "⌘1",
+      label: "⌘⇧1",
       meta: true,
+      shift: true,
     });
   });
 });
