@@ -37,7 +37,7 @@ export function useRepoSlugs(workspace: Workspace | undefined): Record<string, s
     }
     let cancelled = false;
     setSlugs(null);
-    Promise.all(repos.map(async (r) => [r.id, await resolveSlug(r.localPath)] as const)).then(
+    void Promise.all(repos.map(async (r) => [r.id, await resolveSlug(r.localPath)] as const)).then(
       (entries) => {
         if (cancelled) return;
         const next: Record<string, string> = {};

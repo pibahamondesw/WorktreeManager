@@ -291,7 +291,7 @@ export function WorktreeList({
       ringTask(tasks[index].id);
     },
     setDeleteRequested,
-    handleRefresh,
+    handleRefresh: () => void handleRefresh(),
     showToast,
     onOpenTask,
     taskOpen: openTask !== null,
@@ -354,7 +354,7 @@ export function WorktreeList({
             repoCount={workspace.repos.length}
             editorApp={editorApp}
             onEditorChange={onEditorChange}
-            onRefresh={handleRefresh}
+            onRefresh={() => void handleRefresh()}
             refreshing={refreshing}
             onNewTask={() => setShowNew(true)}
             onOpenSearch={onOpenSearch}

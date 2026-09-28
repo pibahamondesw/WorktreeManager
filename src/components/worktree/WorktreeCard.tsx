@@ -149,7 +149,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   const handlePrClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (pr) {
-      openUrl(pr.url);
+      await openUrl(pr.url);
     } else if (primaryRepo) {
       await openCreatePr(task.branchName, primaryRepo);
     }
@@ -173,11 +173,11 @@ export const WorktreeCard = memo(function WorktreeCard({
     setMenuOpen(false);
     switch (action) {
       case "copy-branch":
-        navigator.clipboard.writeText(task.branchName);
+        await navigator.clipboard.writeText(task.branchName);
         onToast?.("Branch name copied");
         break;
       case "copy-path":
-        navigator.clipboard.writeText(folders.join("\n"));
+        await navigator.clipboard.writeText(folders.join("\n"));
         onToast?.(folders.length > 1 ? "Folder paths copied" : "Worktree path copied");
         break;
       case "open-notes": {
@@ -197,14 +197,18 @@ export const WorktreeCard = memo(function WorktreeCard({
   const handleOpenLinear = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (task.linearIssueIdentifier) {
-      openUrl(linearIssueUrl(task.linearIssueIdentifier, workspace.linearOrgUrlKey));
+      openUrl(linearIssueUrl(task.linearIssueIdentifier, workspace.linearOrgUrlKey)).catch(() =>
+        onOpenError?.("Could not open Linear")
+      );
     }
   };
 
   const copyToClipboard = (e: React.MouseEvent, text: string, toastMsg: string) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(text);
-    onToast?.(toastMsg);
+    navigator.clipboard
+      .writeText(text)
+      .then(() => onToast?.(toastMsg))
+      .catch(() => onOpenError?.("Could not copy to clipboard"));
   };
 
   const handleCopyPath = (e: React.MouseEvent) =>
@@ -387,7 +391,9 @@ export const WorktreeCard = memo(function WorktreeCard({
                           role="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openUrl(memberPr.url);
+                            openUrl(memberPr.url).catch(() =>
+                              onOpenError?.("Could not open the pull request")
+                            );
                           }}
                           title={memberPr.title}
                           className="pointer-events-auto inline-flex items-center gap-1.5 text-accent hover:text-accent-hover transition-colors cursor-pointer"
@@ -400,7 +406,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                           role="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openCreatePr(task.branchName, m);
+                            void openCreatePr(task.branchName, m);
                           }}
                           className="pointer-events-auto text-text-muted hover:text-accent transition-colors cursor-pointer"
                         >
@@ -423,7 +429,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                     role="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      openUrl(p.url);
+                      openUrl(p.url).catch(() => onOpenError?.("Could not open the pull request"));
                     }}
                     title={p.title}
                     className="pointer-events-auto inline-flex items-center gap-1.5 text-accent hover:text-accent-hover transition-colors cursor-pointer"
@@ -439,7 +445,11 @@ export const WorktreeCard = memo(function WorktreeCard({
               <div className="mt-2 text-left pointer-events-none">
                 <span
                   role="button"
-                  onClick={handlePrClick}
+                  onClick={(event) => {
+                    void handlePrClick(event).catch(() =>
+                      onOpenError?.("Could not open the pull request")
+                    );
+                  }}
                   className="pointer-events-auto inline items-baseline text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer"
                 >
                   <PullRequestIcon size={12} className="inline -mt-0.5 mr-1.5" />
@@ -487,14 +497,35 @@ export const WorktreeCard = memo(function WorktreeCard({
 
             {menuOpen && (
               <div className="motion-rise absolute right-0 top-9 z-50 w-48 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
-                <MenuButton label="⌘B" onClick={() => handleMenuAction("copy-branch")}>
+                <MenuButton
+                  label="⌘B"
+                  onClick={() => {
+                    void handleMenuAction("copy-branch").catch(() =>
+                      onOpenError?.("Could not complete the task action")
+                    );
+                  }}
+                >
                   Copy branch name
                 </MenuButton>
-                <MenuButton label="⌘⇧C" onClick={() => handleMenuAction("copy-path")}>
+                <MenuButton
+                  label="⌘⇧C"
+                  onClick={() => {
+                    void handleMenuAction("copy-path").catch(() =>
+                      onOpenError?.("Could not complete the task action")
+                    );
+                  }}
+                >
                   {folders.length > 1 ? "Copy folder paths" : "Copy worktree path"}
                 </MenuButton>
                 {vault.enabled && (
-                  <MenuButton label="O" onClick={() => handleMenuAction("open-notes")}>
+                  <MenuButton
+                    label="O"
+                    onClick={() => {
+                      void handleMenuAction("open-notes").catch(() =>
+                        onOpenError?.("Could not complete the task action")
+                      );
+                    }}
+                  >
                     Open notes
                   </MenuButton>
                 )}
@@ -548,7 +579,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                 Cancel
               </button>
               <button
-                onClick={handleDeleteConfirm}
+                onClick={(event) => void handleDeleteConfirm(event)}
                 className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
               >
                 Delete
@@ -576,7 +607,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                   Cancel
                 </button>
                 <button
-                  onClick={handleForceRemove}
+                  onClick={(event) => void handleForceRemove(event)}
                   className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
                 >
                   Remove

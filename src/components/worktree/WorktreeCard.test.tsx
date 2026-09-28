@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -148,4 +149,48 @@ it("toggles the pin without opening the task and exposes its saved state", () =>
   expect(screen.getByTitle("Drag to reorder pinned tasks")).toBeInTheDocument();
   fireEvent.click(screen.getByTitle("Unpin task"));
   expect(onTogglePin).toHaveBeenCalledTimes(2);
+});
+
+it("reports link failures without leaving a rejected promise", async () => {
+  vi.mocked(openUrl).mockRejectedValueOnce(new Error("Browser unavailable"));
+  const onOpenError = vi.fn();
+  render(
+    <WorktreeCard
+      task={{ ...task, linearIssueIdentifier: "WOR-129" }}
+      workspace={workspace}
+      vault={vault}
+      onDelete={vi.fn()}
+      onOpenError={onOpenError}
+      repoSlugs={{}}
+    />
+  );
+  fireEvent.click(screen.getByText("WOR-129"));
+  await waitFor(() => expect(onOpenError).toHaveBeenCalledWith("Could not open Linear"));
+});
+
+it("reports clipboard failures without showing a success toast", async () => {
+  const writeText = vi.fn().mockRejectedValue(new Error("Clipboard unavailable"));
+  const previous = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  try {
+    const onOpenError = vi.fn();
+    const onToast = vi.fn();
+    render(
+      <WorktreeCard
+        task={task}
+        workspace={workspace}
+        vault={vault}
+        onDelete={vi.fn()}
+        onOpenError={onOpenError}
+        onToast={onToast}
+        repoSlugs={{}}
+      />
+    );
+    fireEvent.click(screen.getByTitle("Copy folder path(s)"));
+    await waitFor(() => expect(onOpenError).toHaveBeenCalledWith("Could not copy to clipboard"));
+    expect(onToast).not.toHaveBeenCalled();
+  } finally {
+    if (previous) Object.defineProperty(navigator, "clipboard", previous);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  }
 });

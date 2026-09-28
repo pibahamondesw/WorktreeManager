@@ -218,7 +218,7 @@ export function NewWorktreeModal({
               onChange={(e) => setManualBranch(e.target.value)}
               autoFocus
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !creating && manualBranch.trim()) handleCreate();
+                if (e.key === "Enter" && !creating && manualBranch.trim()) void handleCreate();
               }}
             />
           </div>
@@ -243,7 +243,11 @@ export function NewWorktreeModal({
               <Button variant="ghost" onClick={onClose} disabled={creating}>
                 Cancel
               </Button>
-              <Button onClick={handleCreate} loading={creating} disabled={!manualBranch.trim()}>
+              <Button
+                onClick={() => void handleCreate()}
+                loading={creating}
+                disabled={!manualBranch.trim()}
+              >
                 Create Task
               </Button>
             </div>
@@ -310,7 +314,7 @@ export function NewWorktreeModal({
                       <Button variant="ghost" onClick={onClose} disabled={creating}>
                         Cancel
                       </Button>
-                      <Button onClick={handleCreate} loading={creating}>
+                      <Button onClick={() => void handleCreate()} loading={creating}>
                         Create Task
                       </Button>
                     </div>

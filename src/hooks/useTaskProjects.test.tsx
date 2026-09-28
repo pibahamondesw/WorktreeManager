@@ -39,9 +39,9 @@ it("refreshes configured workspaces on mount, issue changes and interval without
   expect(refresh).toHaveBeenCalledTimes(1);
   rerender({ tasks: [{ ...task, linearIssueId: "new-issue" }] });
   expect(refresh).toHaveBeenCalledTimes(2);
-  act(() => vi.advanceTimersByTime(15 * 60 * 1000));
+  void act(() => vi.advanceTimersByTime(15 * 60 * 1000));
   expect(refresh).toHaveBeenCalledTimes(3);
   unmount();
-  act(() => vi.advanceTimersByTime(15 * 60 * 1000));
+  void act(() => vi.advanceTimersByTime(15 * 60 * 1000));
   expect(refresh).toHaveBeenCalledTimes(3);
 });

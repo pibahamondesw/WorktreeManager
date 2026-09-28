@@ -32,7 +32,9 @@ export function AddWorkspaceModal({
   const linear = useLinearKeyValidation();
 
   useEffect(() => {
-    homeDir().then(setHome);
+    homeDir()
+      .then(setHome)
+      .catch(() => setError("Could not find the home directory"));
   }, []);
 
   useEffect(() => {
@@ -45,7 +47,7 @@ export function AddWorkspaceModal({
     }
     if (defaultLinearApiKey) {
       linear.setLinearKey(defaultLinearApiKey);
-      linear.runValidation(defaultLinearApiKey);
+      void linear.runValidation(defaultLinearApiKey);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -123,7 +125,7 @@ export function AddWorkspaceModal({
           linearValidating={linear.linearValidating}
           linearError={linear.linearError}
           onChange={linear.setLinearKey}
-          onValidate={() => linear.runValidation(linear.linearKey)}
+          onValidate={() => void linear.runValidation(linear.linearKey)}
         />
 
         {error && <p className="text-sm text-danger select-text">{error}</p>}
@@ -132,7 +134,7 @@ export function AddWorkspaceModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit}>Add Workspace</Button>
+          <Button onClick={() => void handleSubmit()}>Add Workspace</Button>
         </div>
       </div>
     </Modal>

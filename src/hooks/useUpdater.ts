@@ -18,7 +18,7 @@ export function useUpdater() {
     if (checked.current) return;
     checked.current = true;
 
-    (async () => {
+    void (async () => {
       try {
         const update = await check();
         if (!update) return;

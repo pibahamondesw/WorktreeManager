@@ -34,7 +34,9 @@ export function VaultSettingsModal({
       setTargetPath(vault.path);
       return;
     }
-    homeDir().then((home) => setTargetPath(defaultVaultPath(home)));
+    homeDir()
+      .then((home) => setTargetPath(defaultVaultPath(home)))
+      .catch(() => setError("Could not find the home directory"));
   }, [vault.path]);
 
   const handleEnable = async () => {
@@ -93,7 +95,7 @@ export function VaultSettingsModal({
               <Button variant="ghost" onClick={onClose}>
                 Cancel
               </Button>
-              <Button onClick={handleEnable} disabled={busy}>
+              <Button onClick={() => void handleEnable()} disabled={busy}>
                 {busy ? "Creating…" : "Enable vault"}
               </Button>
             </div>
@@ -130,7 +132,7 @@ export function VaultSettingsModal({
             {error && <p className="text-sm text-danger select-text">{error}</p>}
 
             <div className="flex items-center justify-between gap-3 pt-2">
-              <Button variant="danger" onClick={handleDisable} disabled={busy}>
+              <Button variant="danger" onClick={() => void handleDisable()} disabled={busy}>
                 Disable
               </Button>
               <Button

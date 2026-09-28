@@ -71,7 +71,9 @@ export function useWorktreeListKeyboardShortcuts({
       l: {
         handler: () => {
           if (selectedTask?.linearIssueIdentifier) {
-            openUrl(linearIssueUrl(selectedTask.linearIssueIdentifier, workspace?.linearOrgUrlKey));
+            openUrl(
+              linearIssueUrl(selectedTask.linearIssueIdentifier, workspace?.linearOrgUrlKey)
+            ).catch(() => showToast("Could not open Linear"));
           }
         },
         enabled: !!selectedTask?.linearIssueIdentifier,
@@ -96,8 +98,10 @@ export function useWorktreeListKeyboardShortcuts({
       "meta+b": {
         handler: () => {
           if (selectedTask) {
-            navigator.clipboard.writeText(selectedTask.branchName);
-            showToast("Branch name copied");
+            navigator.clipboard
+              .writeText(selectedTask.branchName)
+              .then(() => showToast("Branch name copied"))
+              .catch(() => showToast("Could not copy to clipboard"));
           }
         },
         enabled: !!selectedTask,
@@ -105,8 +109,10 @@ export function useWorktreeListKeyboardShortcuts({
       "meta+shift+c": {
         handler: () => {
           if (selectedTask) {
-            navigator.clipboard.writeText(selectedTask.members.map((m) => m.path).join("\n"));
-            showToast("Path copied");
+            navigator.clipboard
+              .writeText(selectedTask.members.map((m) => m.path).join("\n"))
+              .then(() => showToast("Path copied"))
+              .catch(() => showToast("Could not copy to clipboard"));
           }
         },
         enabled: !!selectedTask,

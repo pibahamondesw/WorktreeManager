@@ -85,7 +85,7 @@ export function RemoveWorkspaceModal({
           {tasks.length > 0 && (
             <Button
               variant="ghost"
-              onClick={() => handleRemove(true)}
+              onClick={() => void handleRemove(true)}
               loading={removing}
               className="w-full justify-center text-danger hover:bg-danger/10"
             >
@@ -94,7 +94,7 @@ export function RemoveWorkspaceModal({
           )}
           <Button
             variant="ghost"
-            onClick={() => handleRemove(false)}
+            onClick={() => void handleRemove(false)}
             disabled={removing}
             className="w-full justify-center"
           >

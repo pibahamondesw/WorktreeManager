@@ -72,7 +72,7 @@ export function useWorktreeData(
     let stale = false;
     const workspaceId = workspace?.id;
     setRefreshing(true);
-    Promise.all([fetchLinearInfo(), fetchGitStatuses()]).finally(() => {
+    void Promise.all([fetchLinearInfo(), fetchGitStatuses()]).finally(() => {
       if (stale) return;
       lastRefreshRef.current = Date.now();
       setRefreshing(false);
