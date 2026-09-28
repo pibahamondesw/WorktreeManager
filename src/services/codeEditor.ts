@@ -28,8 +28,8 @@ export interface EditorInstallProgress {
   logs: string[];
 }
 export const editorInstallStatus = () => invoke<EditorInstallProgress>("vscode_install_status");
-export const editorOpen = (taskId: string, folders: string[]) =>
-  invoke<EditorSession>("vscode_open", { taskId, folders });
+export const editorOpen = (taskId: string, workspaceId: string, folders: string[]) =>
+  invoke<EditorSession>("vscode_open", { taskId, workspaceId, folders });
 export const editorClose = (taskId: string) => invoke<void>("vscode_close", { taskId });
 export const editorList = () => invoke<EditorSession[]>("vscode_list");
 export const onEditorSession = (callback: (session: EditorSession) => void) =>

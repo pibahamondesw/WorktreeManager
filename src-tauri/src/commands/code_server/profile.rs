@@ -6,7 +6,6 @@ use super::runtime::{random_id, write_new};
 
 pub struct Profile {
     pub directory: PathBuf,
-    pub workspace: PathBuf,
     pub password: String,
 }
 
@@ -31,8 +30,8 @@ pub fn canonical_folders(folders: Vec<String>) -> Result<Vec<PathBuf>, String> {
         .collect()
 }
 
-pub fn prepare(root: &Path, task_id: &str, folders: &[PathBuf]) -> Result<Profile, String> {
-    let directory = root.join("sessions").join(key(task_id));
+pub fn prepare(root: &Path, workspace_id: &str) -> Result<Profile, String> {
+    let directory = root.join("workspaces").join(key(workspace_id));
     let user = directory.join("data/User");
     let preferences = root.join("preferences");
     fs::create_dir_all(&user)
@@ -61,19 +60,6 @@ pub fn prepare(root: &Path, task_id: &str, folders: &[PathBuf]) -> Result<Profil
             ));
         }
     }
-    let workspace = directory.join("task.code-workspace");
-    let document =
-        json!({"folders": folders.iter().map(|path| json!({"path":path})).collect::<Vec<_>>()});
-    if workspace.exists() {
-        let previous: serde_json::Value =
-            serde_json::from_slice(&fs::read(&workspace).map_err(|error| error.to_string())?)
-                .map_err(|error| error.to_string())?;
-        if previous["folders"] != document["folders"] {
-            return Err("This editor profile belongs to different folders. Its workspace cannot be switched while restoring the task.".into());
-        }
-    } else {
-        fs::write(&workspace, document.to_string()).map_err(|error| error.to_string())?;
-    }
     let password = random_id()?;
     let port_path = directory.join("port");
     let port = match fs::read_to_string(&port_path) {
@@ -88,7 +74,7 @@ pub fn prepare(root: &Path, task_id: &str, folders: &[PathBuf]) -> Result<Profil
     };
     let config = json!({
         "bind-addr":format!("127.0.0.1:{port}"), "auth":"password", "password":password,
-        "cert":false, "cookie-suffix":key(task_id), "disable-telemetry":true,
+        "cert":false, "cookie-suffix":format!("workspace-{}", key(workspace_id)), "disable-telemetry":true,
         "disable-update-check":true, "disable-proxy":true
     });
     let config_path = directory.join("config.yaml");
@@ -96,9 +82,27 @@ pub fn prepare(root: &Path, task_id: &str, folders: &[PathBuf]) -> Result<Profil
     fs::write(config_path, config.to_string()).map_err(|error| error.to_string())?;
     Ok(Profile {
         directory,
-        workspace,
         password,
     })
+}
+
+pub fn task_workspace(root: &Path, task_id: &str, folders: &[PathBuf]) -> Result<PathBuf, String> {
+    let directory = root.join("sessions").join(key(task_id));
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let workspace = directory.join("task.code-workspace");
+    let document =
+        json!({"folders": folders.iter().map(|path| json!({"path":path})).collect::<Vec<_>>()});
+    if workspace.exists() {
+        let previous: serde_json::Value =
+            serde_json::from_slice(&fs::read(&workspace).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        if previous["folders"] != document["folders"] {
+            return Err("This editor profile belongs to different folders. Its workspace cannot be switched while restoring the task.".into());
+        }
+    } else {
+        fs::write(&workspace, document.to_string()).map_err(|error| error.to_string())?;
+    }
+    Ok(workspace)
 }
 
 #[cfg(test)]
@@ -106,13 +110,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_profiles_share_preferences_but_keep_workspace_state_separate() {
+    fn workspace_profiles_share_preferences_and_keep_separate_global_state() {
         let root = std::env::temp_dir().join(random_id().unwrap());
-        fs::create_dir_all(&root).unwrap();
-        let first = prepare(&root, "../one", std::slice::from_ref(&root)).unwrap();
-        let second = prepare(&root, "two", std::slice::from_ref(&root)).unwrap();
+        let first = prepare(&root, "../one").unwrap();
+        let second = prepare(&root, "two").unwrap();
         assert_ne!(first.directory, second.directory);
-        assert!(first.directory.starts_with(root.join("sessions")));
+        assert!(first.directory.starts_with(root.join("workspaces")));
         assert_ne!(first.password, second.password);
         fs::write(
             first.directory.join("data/User/settings.json"),
@@ -125,17 +128,38 @@ mod tests {
         );
         fs::write(first.directory.join("data/User/state.db"), "one").unwrap();
         fs::write(first.directory.join("port"), "53172").unwrap();
-        assert!(!second.directory.join("data/User/state.db").exists());
-        let resumed = prepare(&root, "../one", std::slice::from_ref(&root)).unwrap();
+        let resumed = prepare(&root, "../one").unwrap();
         assert_eq!(
             fs::read(resumed.directory.join("data/User/state.db")).unwrap(),
             b"one"
         );
+        assert!(!second.directory.join("data/User/state.db").exists());
         let config: serde_json::Value =
             serde_json::from_slice(&fs::read(resumed.directory.join("config.yaml")).unwrap())
                 .unwrap();
         assert_eq!(config["bind-addr"], "127.0.0.1:53172");
-        assert!(prepare(&root, "../one", &[root.join("other")]).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tasks_keep_stable_workspaces_and_preserve_user_settings() {
+        let root = std::env::temp_dir().join(random_id().unwrap());
+        let first = task_workspace(&root, "a", &["/a".into(), "/b".into()]).unwrap();
+        let second = task_workspace(&root, "b", &["/c".into()]).unwrap();
+        assert_ne!(first, second);
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&fs::read(&first).unwrap()).unwrap();
+        document["settings"] = json!({"editor.fontSize": 18});
+        fs::write(&first, document.to_string()).unwrap();
+        assert_eq!(
+            task_workspace(&root, "a", &["/a".into(), "/b".into()]).unwrap(),
+            first
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&first).unwrap()).unwrap(),
+            document
+        );
+        assert!(task_workspace(&root, "a", &["/other".into()]).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

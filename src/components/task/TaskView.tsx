@@ -129,6 +129,7 @@ function TaskSurfaceView({
     case "editor":
       return (
         <EditorPane
+          workspaceId={task.workspaceId}
           taskId={task.id}
           folders={task.members.map((member) => member.path)}
           onStatusChange={onStatusChange}

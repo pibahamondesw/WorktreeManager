@@ -1,18 +1,49 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
+
 use tauri::webview::{Cookie, NewWindowResponse, WebviewBuilder};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl};
 use tauri_plugin_opener::OpenerExt;
 
-use super::{trust, Bounds};
+use super::{server, trust, Bounds, Slot};
+
+pub struct EditorView {
+    pub webview: Webview,
+    unloaded: Arc<AtomicBool>,
+    shutdown_url: String,
+}
+
+impl EditorView {
+    pub async fn shutdown(&self) {
+        self.unloaded.store(false, Ordering::SeqCst);
+        let _ = self.webview.eval(format!(
+            "Promise.resolve().then(() => globalThis.__wtmShutdown?.()).finally(() => location.replace({}))",
+            serde_json::json!(self.shutdown_url)
+        ));
+        for _ in 0..100 {
+            if self.unloaded.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
 
 pub fn create(
     app: &AppHandle,
-    label: &str,
-    task_id: &str,
-    url: &str,
+    slot: &Slot,
+    connection: &server::Connection,
     workspace: &std::path::Path,
-    folders: &[std::path::PathBuf],
-    cookie: &str,
-) -> Result<Webview, String> {
+) -> Result<EditorView, String> {
+    let label = &slot.label;
+    let info = slot.info.lock().unwrap().clone();
+    let task_id = &info.task_id;
+    let folders = &slot.folders;
+    let url = &connection.url;
+    let cookie = &connection.cookie;
     let origin = url
         .parse::<tauri::Url>()
         .map_err(|error| error.to_string())?;
@@ -23,26 +54,43 @@ pub fn create(
     let folder = workspace.to_string_lossy().to_string();
     let navigation_app = app.clone();
     let popup_app = app.clone();
-    let browser_store = md5::compute(format!("{}:{task_id}", app.config().identifier)).0;
+    let browser_store = md5::compute(format!(
+        "{}:workspace:{}",
+        app.config().identifier,
+        slot.server.workspace_id
+    ))
+    .0;
     let trust = trust::Bridge::new(&origin, task_id, label)?;
     let trust_script = trust.script(workspace, folders);
+    let session_script = format!(
+        "if(window === window.top && location.origin === {}) {{ globalThis.__wtmSessionEnv = {}; }}",
+        serde_json::json!(origin.origin().ascii_serialization()),
+        serde_json::json!({"WTM_TASK_ID":task_id, "WTM_SURFACE":"editor", "WTM_EDITOR_SESSION":info.generation})
+    );
+    let unloaded = Arc::new(AtomicBool::new(false));
+    let navigation_unloaded = unloaded.clone();
+    let shutdown_url = format!("about:blank#wtm-closed-{}", info.generation);
+    let navigation_shutdown_url = shutdown_url.clone();
     let builder = WebviewBuilder::new(label, WebviewUrl::External("about:blank".parse().unwrap()))
         .focused(false)
         .disable_drag_drop_handler()
         .data_store_identifier(browser_store)
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
+        .initialization_script(&session_script)
         .initialization_script(&trust_script)
         .on_navigation(move |target| {
             if trust.handle(&navigation_app, target) {
                 return false;
             }
+            if target.as_str() == navigation_shutdown_url {
+                navigation_unloaded.store(true, Ordering::SeqCst);
+                return true;
+            }
             if target.as_str() == "about:blank" {
                 return true;
             }
             if target.origin() == origin.origin() {
-                return target.query_pairs().all(|(key, value)| {
-                    key != "folder" && (key != "workspace" || value == folder)
-                });
+                return allows_task_navigation(target, &folder);
             }
             open_external(&navigation_app, target);
             false
@@ -72,7 +120,22 @@ pub fn create(
         let _ = view.close();
         return Err(error);
     }
-    Ok(view)
+    Ok(EditorView {
+        webview: view,
+        unloaded,
+        shutdown_url,
+    })
+}
+
+fn allows_task_navigation(target: &tauri::Url, workspace: &str) -> bool {
+    let mut has_workspace = false;
+    for (key, value) in target.query_pairs() {
+        if key == "folder" || (key == "workspace" && value != workspace) {
+            return false;
+        }
+        has_workspace |= key == "workspace";
+    }
+    target.path() != "/" || has_workspace
 }
 
 fn open_external(app: &AppHandle, url: &tauri::Url) {
@@ -92,4 +155,21 @@ pub fn show(view: &Webview, bounds: Bounds, focus: bool) -> Result<(), String> {
         view.set_focus().map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_server_cannot_navigate_to_another_task_or_its_last_opened_workspace() {
+        let allows = |url: &str| allows_task_navigation(&url.parse().unwrap(), "/a.code-workspace");
+        assert!(allows("http://127.0.0.1:3000/?workspace=/a.code-workspace"));
+        assert!(!allows("http://127.0.0.1:3000/"));
+        assert!(!allows(
+            "http://127.0.0.1:3000/?workspace=/b.code-workspace"
+        ));
+        assert!(!allows("http://127.0.0.1:3000/?folder=/a"));
+        assert!(allows("http://127.0.0.1:3000/static/webview/index.html"));
+    }
 }
