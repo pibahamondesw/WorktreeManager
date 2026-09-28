@@ -56,6 +56,16 @@ describe("extractPrsFromAttachments", () => {
     expect(extractPrsFromAttachments(attachments)[0]?.state).toBe("merged");
   });
 
+  it.each(["null", "42", '"merged"', "[]", '{"status": 42}'])(
+    "ignores non-status metadata: %s",
+    (metadata) => {
+      expect(
+        extractPrsFromAttachments([{ url: "https://github.com/org/repo/pull/1", metadata }])[0]
+          ?.state
+      ).toBe("open");
+    }
+  );
+
   it("detects closed state from metadata", () => {
     const attachments: GqlAttachmentNode[] = [
       {

@@ -205,7 +205,7 @@ export async function loadState(
   onKeychainError?: (error: string | null) => void
 ): Promise<AppState> {
   const s = await getStore();
-  const rawSetup = await s.get<any>("setup");
+  const rawSetup = await s.get<unknown>("setup");
   const schemaVersion = (await s.get<number>("schemaVersion")) ?? 0;
   const rawWorkspaces = await s.get<any[]>("workspaces");
   const setup = normalizeSetup(rawSetup);

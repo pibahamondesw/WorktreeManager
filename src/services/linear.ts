@@ -178,8 +178,11 @@ export function extractPrsFromAttachments(attachments: GqlAttachmentNode[]): Pul
     let state = "open";
     const meta = att.metadata;
     if (meta) {
-      const parsed = typeof meta === "string" ? JSON.parse(meta) : meta;
-      const metaState = parsed?.status ?? parsed?.state;
+      const parsed: unknown = typeof meta === "string" ? JSON.parse(meta) : meta;
+      const metadata = parsed && typeof parsed === "object" ? parsed : {};
+      const metaState =
+        ("status" in metadata ? metadata.status : undefined) ??
+        ("state" in metadata ? metadata.state : undefined);
       if (typeof metaState === "string") {
         const s = metaState.toLowerCase();
         if (s.includes("merge")) state = "merged";
