@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import App from "./App";
 import { ZoomControls } from "./components/ui/ZoomControls";
 import { DEFAULT_STATE, Task, Workspace } from "./types";
+import type { useStore } from "./hooks/useStore";
 
 vi.mock("./hooks/useTaskProjects", () => ({ useTaskProjects: vi.fn() }));
 
@@ -13,9 +14,13 @@ const mocks = vi.hoisted(() => ({
   historyForward: vi.fn(),
   recordWorkspaceVisit: vi.fn(),
   historyParams: { onNavigate: (() => undefined) as (entry: unknown) => void },
-  useStore: vi.fn(),
+  useStore:
+    vi.fn<
+      () => Partial<ReturnType<typeof useStore>> & Pick<ReturnType<typeof useStore>, "state">
+    >(),
   useDoctor: vi.fn(),
-  listen: vi.fn(),
+  listen:
+    vi.fn<(event: string, callback: (event: { payload: string }) => void) => Promise<() => void>>(),
   unlisten: vi.fn(),
   invoke: vi.fn(),
 }));

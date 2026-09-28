@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import type { EditorSession } from "../../services/codeEditor";
+import type { onEditorSession, EditorSession } from "../../services/codeEditor";
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   attach: vi.fn(),
   release: vi.fn(),
   update: vi.fn(),
-  onSession: vi.fn(),
+  onSession: vi.fn<typeof onEditorSession>(),
 }));
 vi.mock("../../services/codeEditor", () => ({
   editorOpen: mocks.open,

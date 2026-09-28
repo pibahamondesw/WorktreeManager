@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { useNavigationHistory } from "./useNavigationHistory";
 import { NavigationEntry } from "../navigation/history";
+import type { persist } from "../services/store";
 import { Task } from "../types";
 
 const mocks = vi.hoisted(() => ({
   loadNavigationHistory: vi.fn(),
-  persist: vi.fn(),
+  persist: vi.fn<typeof persist>(),
 }));
 
 vi.mock("../services/store", () => ({

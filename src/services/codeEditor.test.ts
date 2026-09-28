@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { EditorPresentationController } from "./codeEditor";
+import { EditorPresentationController, type EditorPresentation } from "./codeEditor";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -8,7 +8,9 @@ const bounds = { x: 40, y: 80, width: 800, height: 600 };
 
 describe("editor presentation", () => {
   it("ignores late cleanup and resizing from a previous task", () => {
-    const dispatch = vi.fn().mockResolvedValue(undefined);
+    const dispatch = vi
+      .fn<(state: EditorPresentation) => Promise<void>>()
+      .mockResolvedValue(undefined);
     const controller = new EditorPresentationController(dispatch);
     const first = controller.attach("a", bounds, vi.fn());
     controller.attach("b", bounds, vi.fn());
@@ -24,7 +26,9 @@ describe("editor presentation", () => {
   });
 
   it("keeps the editor hidden until every modal has closed, including task switches", () => {
-    const dispatch = vi.fn().mockResolvedValue(undefined);
+    const dispatch = vi
+      .fn<(state: EditorPresentation) => Promise<void>>()
+      .mockResolvedValue(undefined);
     const controller = new EditorPresentationController(dispatch);
     controller.attach("a", bounds, vi.fn());
     const closeFirst = controller.suppress();
@@ -45,7 +49,9 @@ describe("editor presentation", () => {
   });
 
   it("returning to the list only clears presentation", () => {
-    const dispatch = vi.fn().mockResolvedValue(undefined);
+    const dispatch = vi
+      .fn<(state: EditorPresentation) => Promise<void>>()
+      .mockResolvedValue(undefined);
     const controller = new EditorPresentationController(dispatch);
     controller.attach("a", bounds, vi.fn()).release();
     expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: null });

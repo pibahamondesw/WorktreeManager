@@ -129,18 +129,20 @@ describe("extractPrsFromAttachments", () => {
 
 it("loads projects in bounded batches and preserves successful batches on failure", async () => {
   const service = new LinearService("test-key");
-  const request = vi.fn().mockImplementation(async (_query, variables) => ({
-    data: {
-      issues: {
-        nodes: variables.filter.id.in.map((id: string) => ({
-          id,
-          project: { id: "project", name: "API" },
-          state: null,
-          attachments: { nodes: [] },
-        })),
+  const request = vi.fn(
+    async (_query: string, variables: { filter: { id: { in: string[] } } }) => ({
+      data: {
+        issues: {
+          nodes: variables.filter.id.in.map((id: string) => ({
+            id,
+            project: { id: "project", name: "API" },
+            state: null,
+            attachments: { nodes: [] },
+          })),
+        },
       },
-    },
-  }));
+    })
+  );
   Object.defineProperty(service, "gql", { value: { rawRequest: request } });
   const ids = Array.from({ length: 101 }, (_, index) => `issue-${index}`);
   const result = await service.fetchIssueLinearInfoBatch(ids);

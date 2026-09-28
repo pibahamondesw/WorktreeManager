@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { onChatStatus } from "../services/chat";
+import type { onTerminalExit } from "../services/terminal";
 import { useAgentSessions } from "./useAgentSessions";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
-  onExit: vi.fn(),
+  onExit: vi.fn<typeof onTerminalExit>(),
   chatList: vi.fn(),
-  onChatStatus: vi.fn(),
+  onChatStatus: vi.fn<typeof onChatStatus>(),
 }));
 vi.mock("../services/terminal", () => ({
   terminalList: mocks.list,
@@ -37,7 +39,12 @@ it("counts a live chat as a running session and follows its status events", asyn
   await waitFor(() => expect(result.current.t1).toEqual({ kind: "running" }));
   const onStatus = mocks.onChatStatus.mock.calls[0][0];
   void act(() =>
-    onStatus({ taskId: "t1", agent: "codex", status: { kind: "failed", message: "x" } })
+    onStatus({
+      taskId: "t1",
+      agent: "codex",
+      status: { kind: "failed", message: "x" },
+      waiting: false,
+    })
   );
   expect(result.current.t1).toEqual({ kind: "exited", code: null });
 });
