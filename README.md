@@ -86,7 +86,7 @@ Set `WTM_DEV_SIGNING_IDENTITY` to another certificate's name or SHA-1 hash to ov
 
 ### Typed linting
 
-Run `pnpm run lint:ts` to check the frontend, Node scripts and Vite/Vitest configuration. Type-aware rules catch unhandled promises, misused async callbacks and unsafe `any` usage. Temporary exceptions for legacy normalizers and existing test mocks are listed in [eslint.config.js](eslint.config.js).
+Run `pnpm run lint:ts` to check the frontend, Node scripts and Vite/Vitest configuration. Type-aware rules catch unhandled promises, misused async callbacks and unsafe `any` usage.
 
 ### Build and verify
 
