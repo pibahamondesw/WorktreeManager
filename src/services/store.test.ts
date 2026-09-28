@@ -55,10 +55,10 @@ function seed(path: string, contents: Record<string, unknown>): void {
 }
 
 function read(path: string): Record<string, unknown> {
-  return Object.fromEntries(files.get(path) ?? new Map());
+  return Object.fromEntries(files.get(path) ?? new Map<string, unknown>());
 }
 
-function storedSecrets(): { setup: string | null; workspaces: Record<string, string> } {
+function storedSecrets(): unknown {
   return JSON.parse(keychain.value!);
 }
 
@@ -354,7 +354,7 @@ describe("loadState on an already-migrated store", () => {
     expect(restored.workspaces[0].name).toBe("renamed");
     expect(restored.workspaces[0].linearApiKey).toBe("lin_ws");
     await store.persist([["workspaces", restored.workspaces]]);
-    expect(storedSecrets().workspaces.w1).toBe("lin_ws");
+    expect(storedSecrets()).toMatchObject({ workspaces: { w1: "lin_ws" } });
   });
 
   it("comes up without keys, not broken, when the keychain cannot be read", async () => {
@@ -402,7 +402,7 @@ describe("loadState v0 → v4 migration", () => {
     expect(state.workspaces).toHaveLength(1);
     expect(state.workspaces[0].linearApiKey).toBe("lin_live");
     expect(state.setup).toEqual({ linearApiKey: "lin_live", isComplete: true });
-    expect(storedSecrets().workspaces).toEqual({ r1: "lin_live" });
+    expect(storedSecrets()).toEqual({ setup: "lin_live", workspaces: { r1: "lin_live" } });
     expect(JSON.stringify(read(STORE))).not.toContain("lin_live");
   });
 
@@ -441,7 +441,7 @@ describe("failed store writes", () => {
       ])
     ).rejects.toThrow("disk full");
     expect(read(STORE).workspaces).toHaveLength(1);
-    expect(storedSecrets().workspaces.w1).toBe("workspace-secret");
+    expect(storedSecrets()).toMatchObject({ workspaces: { w1: "workspace-secret" } });
     await module.persist([["themeId", "ocean"]]);
     expect(read(STORE).workspaces).toHaveLength(1);
     expect((await module.loadState()).workspaces[0].linearApiKey).toBe(
@@ -465,4 +465,29 @@ describe("loadAgentViews", () => {
     seed(STORE, { editorApp: "codex-chat" });
     expect(await (await loadModule()).loadEditorApp()).toBe("codex");
   });
+});
+
+describe("invalid persisted data", () => {
+  it.each([
+    { schemaVersion: 2, workspaces: [{ ...workspace, linearApiKey: { token: "secret" } }] },
+    { schemaVersion: 2, workspaces: [workspace], tasks: [{ id: "t1" }] },
+    { schemaVersion: 0, repos: [{ id: "r1", linearApiKey: 42 }] },
+    { schemaVersion: 0, repos: [{ id: "r1" }], worktrees: [{ id: "t1", repoId: 42 }] },
+  ])(
+    "leaves disk and credentials untouched on validation failure: $schemaVersion",
+    async (data) => {
+      const contents = { setup: { linearApiKey: "lin_keep", isComplete: true }, ...data };
+      seed(STORE, contents);
+      seed(SIDECAR, { existing: "keep" });
+      keychain.value = JSON.stringify({ setup: "keychain-keep", workspaces: {} });
+      const secretsBeforeLoad = keychain.value;
+
+      await expect(loadState()).rejects.toThrow();
+
+      expect(read(STORE)).toEqual(contents);
+      expect(read(SIDECAR)).toEqual({ existing: "keep" });
+      expect(keychain.value).toBe(secretsBeforeLoad);
+      expect(savedPaths.size).toBe(0);
+    }
+  );
 });

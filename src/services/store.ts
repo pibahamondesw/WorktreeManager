@@ -207,13 +207,13 @@ export async function loadState(
   const s = await getStore();
   const rawSetup = await s.get<unknown>("setup");
   const schemaVersion = (await s.get<number>("schemaVersion")) ?? 0;
-  const rawWorkspaces = await s.get<any[]>("workspaces");
+  const rawWorkspaces = await s.get<unknown[]>("workspaces");
   const setup = normalizeSetup(rawSetup);
 
   // Already on the multi-repo schema: load and normalize directly.
   if (schemaVersion >= 1 || rawWorkspaces) {
     const workspaces = normalizeWorkspaces(rawWorkspaces);
-    const tasks = normalizeTasks(await s.get<any[]>("tasks"));
+    const tasks = normalizeTasks(await s.get<unknown[]>("tasks"));
     const selectedWorkspaceId = resolveSelectedWorkspaceId(
       await s.get<string | null>("selectedWorkspaceId"),
       workspaces
@@ -278,8 +278,8 @@ export async function loadState(
   }
 
   // Legacy single-repo schema: migrate to workspaces/tasks.
-  const rawRepos = await s.get<any[]>("repos");
-  const rawWorktrees = await s.get<any[]>("worktrees");
+  const rawRepos = await s.get<unknown[]>("repos");
+  const rawWorktrees = await s.get<unknown[]>("worktrees");
   const selectedRepoId = await s.get<string | null>("selectedRepoId");
 
   const { workspaces, tasks } = migrateLegacyToWorkspaces(
