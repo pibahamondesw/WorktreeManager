@@ -369,9 +369,9 @@ function App() {
               showAddExternal={showAddWorkspace}
               onCloseAddExternal={() => setShowAddWorkspace(false)}
               themeId={themeId}
-              onThemeChange={updateThemeId}
+              onThemeChange={(id) => void updateThemeId(id)}
               customColors={customColors}
-              onCustomColorsChange={updateCustomColors}
+              onCustomColorsChange={(colors) => void updateCustomColors(colors)}
               defaultLinearApiKey={defaultLinearApiKey}
               vault={state.vault}
               onVaultChange={updateVault}
@@ -396,7 +396,7 @@ function App() {
             onPinnedTasksReordered={(id, targetId) => operations.reorderPinnedTasks(id, targetId)}
             onTaskIssueLinked={(id, issue) => operations.linkTaskIssue(id, issue)}
             editorApp={editorApp}
-            onEditorChange={updateEditorApp}
+            onEditorChange={(editor) => void updateEditorApp(editor)}
             workspaceSwitching={workspaceSwitching}
             onWorkspaceReady={clearWorkspaceSwitching}
             onOpenSearch={() => openSearch(false)}
@@ -438,8 +438,8 @@ function App() {
         onOpenTask={openTask}
         onSelectWorkspace={handleSelectWorkspace}
         onWorkspaceAction={setWorkspaceAction}
-        onThemeChange={updateThemeId}
-        onEditorChange={updateEditorApp}
+        onThemeChange={(id) => void updateThemeId(id)}
+        onEditorChange={(editor) => void updateEditorApp(editor)}
         onNewTask={() => setNewTaskRequested(true)}
       />
       <DoctorModal
@@ -447,24 +447,26 @@ function App() {
         onClose={() => setShowDoctor(false)}
         report={doctorReport}
         running={doctorRunning || keychainRetrying}
-        onRecheck={async () => {
-          if (!keychainError || !doctorConfig) {
-            await recheckDoctor();
-            return;
-          }
-          try {
-            const restored = await retryKeychain();
-            await recheckDoctor({
-              ...doctorConfig,
-              keychainError: null,
-              linearKeys: restored.workspaces.map((workspace) => ({
-                label: workspace.name,
-                key: workspace.linearApiKey ?? null,
-              })),
-            });
-          } catch (error) {
-            await recheckDoctor({ ...doctorConfig, keychainError: String(error) });
-          }
+        onRecheck={() => {
+          void (async () => {
+            if (!keychainError || !doctorConfig) {
+              await recheckDoctor();
+              return;
+            }
+            try {
+              const restored = await retryKeychain();
+              await recheckDoctor({
+                ...doctorConfig,
+                keychainError: null,
+                linearKeys: restored.workspaces.map((workspace) => ({
+                  label: workspace.name,
+                  key: workspace.linearApiKey ?? null,
+                })),
+              });
+            } catch (error) {
+              await recheckDoctor({ ...doctorConfig, keychainError: String(error) });
+            }
+          })().catch(() => console.error("Could not recheck system status"));
         }}
       />
     </div>

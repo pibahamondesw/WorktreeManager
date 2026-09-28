@@ -79,7 +79,7 @@ export function LinkIssueModal({
                   <Button variant="ghost" onClick={close} disabled={saving}>
                     Cancel
                   </Button>
-                  <Button onClick={link} loading={saving}>
+                  <Button onClick={() => void link()} loading={saving}>
                     Link issue
                   </Button>
                 </div>

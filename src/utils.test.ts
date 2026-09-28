@@ -210,7 +210,10 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
   });
 
   it("preserves task note folders on reload and keeps old tasks flat", () => {
-    const [current, legacy] = normalizeTasks([{ id: "new", noteFolder: "new" }, { id: "old" }]);
+    const [current, legacy] = normalizeTasks([
+      { id: "new", workspaceId: "w1", noteFolder: "new" },
+      { id: "old", workspaceId: "w1" },
+    ]);
     expect(current.noteFolder).toBe("new");
     expect(legacy.noteFolder).toBeUndefined();
   });
@@ -355,14 +358,76 @@ describe("secret split and merge", () => {
 
 it("normalizes valid pin positions and ignores malformed or legacy values", () => {
   expect(
-    normalizeTasks([
-      {},
-      { pinOrder: 0 },
-      { pinOrder: 3 },
-      { pinOrder: -1 },
-      { pinOrder: "1" },
-      { pinOrder: null },
-      { pinOrder: 1.5 },
-    ]).map((task) => task.pinOrder)
+    normalizeTasks(
+      [
+        {},
+        { pinOrder: 0 },
+        { pinOrder: 3 },
+        { pinOrder: -1 },
+        { pinOrder: "1" },
+        { pinOrder: null },
+        { pinOrder: 1.5 },
+      ].map((fields, index) => ({ id: `t${index}`, workspaceId: "w1", ...fields }))
+    ).map((task) => task.pinOrder)
   ).toEqual([undefined, 0, 3, undefined, undefined, undefined, undefined]);
+});
+
+describe("persisted input validation", () => {
+  it("preserves legacy defaults and current task metadata", () => {
+    const [workspace] = normalizeWorkspaces([
+      { id: "w1", name: null, linearApiKey: "keep", repos: null, obsolete: "drop" },
+    ]);
+    expect(workspace).toEqual({
+      id: "w1",
+      name: "",
+      linearApiKey: "keep",
+      linearOrgUrlKey: null,
+      repos: [],
+    });
+    const [task] = normalizeTasks([
+      {
+        id: "t1",
+        workspaceId: "w1",
+        branchName: null,
+        createdAt: "2026-09-28T00:00:00Z",
+        linearProjectId: "p1",
+        linearProjectName: "API",
+        noteFolder: "task-folder",
+        noteFileName: "task.md",
+        pinOrder: 0,
+        members: [{ repoId: "r1", path: "/wt", repoName: null }],
+        obsolete: "drop",
+      },
+    ]);
+    expect(task).toMatchObject({
+      id: "t1",
+      workspaceId: "w1",
+      branchName: "",
+      createdAt: "2026-09-28T00:00:00Z",
+      linearProjectId: "p1",
+      linearProjectName: "API",
+      noteFolder: "task-folder",
+      noteFileName: "task.md",
+      pinOrder: 0,
+      members: [{ repoId: "r1", path: "/wt", repoName: "", localPath: "", branchName: "" }],
+    });
+    expect(task).not.toHaveProperty("obsolete");
+  });
+
+  it.each([
+    { normalize: normalizeSetup, input: { linearApiKey: 42 } },
+    { normalize: normalizeSetup, input: { isComplete: "true" } },
+    { normalize: normalizeSetup, input: [] },
+    { normalize: normalizeWorkspaces, input: {} },
+    { normalize: normalizeWorkspaces, input: [null] },
+    { normalize: normalizeWorkspaces, input: [{ name: "No ID" }] },
+    { normalize: normalizeWorkspaces, input: [{ id: "w1", linearApiKey: {} }] },
+    { normalize: normalizeWorkspaces, input: [{ id: "w1", repos: {} }] },
+    { normalize: normalizeWorkspaces, input: [{ id: "w1", repos: [{ id: 7 }] }] },
+    { normalize: normalizeTasks, input: [{ id: "t1" }] },
+    { normalize: normalizeTasks, input: [{ id: "t1", workspaceId: "w1", members: [null] }] },
+    { normalize: normalizeTasks, input: [{ id: "t1", workspaceId: "w1", noteFolder: 42 }] },
+  ])("rejects incompatible data instead of discarding it: $input", ({ normalize, input }) => {
+    expect(() => normalize(input)).toThrow();
+  });
 });

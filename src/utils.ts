@@ -30,23 +30,60 @@ export function githubSlugFromRemote(remoteUrl: string): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
+function persistedRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Invalid persisted record");
+  }
+  return value as Record<string, unknown>;
+}
+
+function persistedArray(value: unknown): unknown[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error("Invalid persisted array");
+  return value;
+}
+
+function persistedString(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string") throw new Error("Invalid persisted string");
+  return value;
+}
+
+function persistedId(value: unknown): string {
+  const id = persistedString(value);
+  if (!id) throw new Error("Missing persisted ID");
+  return id;
+}
+
+function persistedBoolean(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value !== "boolean") throw new Error("Invalid persisted boolean");
+  return value;
+}
+
 /**
  * Normalize workspace objects loaded from the store, filling defaults for fields
  * that may be missing in data written by older builds.
  */
-export function normalizeWorkspaces(raw: any[] | undefined | null): Workspace[] {
-  return (raw ?? []).map((w: any) => ({
-    id: w.id,
-    name: w.name ?? "",
-    linearApiKey: w.linearApiKey ?? null,
-    linearOrgUrlKey: w.linearOrgUrlKey ?? null,
-    repos: (w.repos ?? []).map((r: any) => ({
-      id: r.id,
-      name: r.name ?? "",
-      localPath: r.localPath ?? "",
-      worktreeBasePath: r.worktreeBasePath ?? "",
-    })),
-  }));
+export function normalizeWorkspaces(raw: unknown): Workspace[] {
+  return persistedArray(raw).map((value) => {
+    const w = persistedRecord(value);
+    return {
+      id: persistedId(w.id),
+      name: persistedString(w.name) ?? "",
+      linearApiKey: persistedString(w.linearApiKey) ?? null,
+      linearOrgUrlKey: persistedString(w.linearOrgUrlKey) ?? null,
+      repos: persistedArray(w.repos).map((value) => {
+        const r = persistedRecord(value);
+        return {
+          id: persistedId(r.id),
+          name: persistedString(r.name) ?? "",
+          localPath: persistedString(r.localPath) ?? "",
+          worktreeBasePath: persistedString(r.worktreeBasePath) ?? "",
+        };
+      }),
+    };
+  });
 }
 
 /**
@@ -55,10 +92,11 @@ export function normalizeWorkspaces(raw: any[] | undefined | null): Workspace[] 
  * explicitly — notably `githubToken`, written by builds from before PR info moved
  * to Linear attachments and never read since.
  */
-export function normalizeSetup(raw: any): AppState["setup"] {
+export function normalizeSetup(raw: unknown): AppState["setup"] {
+  const setup = persistedRecord(raw ?? {});
   return {
-    linearApiKey: raw?.linearApiKey ?? null,
-    isComplete: raw?.isComplete ?? false,
+    linearApiKey: persistedString(setup.linearApiKey) ?? null,
+    isComplete: persistedBoolean(setup.isComplete),
   };
 }
 
@@ -75,27 +113,28 @@ const LEGACY_REPO_FIELDS = ["id", "name", "localPath", "worktreeBasePath"] as co
  * token is liability with no upside.
  */
 export function redactLegacyBackup(data: {
-  repos?: any[] | null;
-  worktrees?: any[] | null;
+  repos?: unknown[] | null;
+  worktrees?: unknown[] | null;
   selectedRepoId?: string | null;
-  setup?: any;
+  setup?: unknown;
 }): Record<string, unknown> {
   const redacted: Record<string, unknown> = {
     worktrees: data.worktrees ?? undefined,
     selectedRepoId: data.selectedRepoId ?? undefined,
   };
   if (data.repos) {
-    redacted.repos = data.repos.map((repo: any) =>
-      Object.fromEntries(
-        LEGACY_REPO_FIELDS.filter((field) => repo?.[field] !== undefined).map((field) => [
+    redacted.repos = data.repos.map((value) => {
+      const repo = persistedRecord(value ?? {});
+      return Object.fromEntries(
+        LEGACY_REPO_FIELDS.filter((field) => repo[field] !== undefined).map((field) => [
           field,
           repo[field],
         ])
-      )
-    );
+      );
+    });
   }
   if (data.setup) {
-    redacted.setup = { isComplete: data.setup.isComplete ?? false };
+    redacted.setup = { isComplete: persistedBoolean(persistedRecord(data.setup).isComplete) };
   }
   return redacted;
 }
@@ -165,29 +204,38 @@ export function workspacesWithSecrets(workspaces: Workspace[], secrets: SecretBu
 }
 
 /** Normalize task objects loaded from the store, filling defaults. */
-export function normalizeTasks(raw: any[] | undefined | null): Task[] {
-  return (raw ?? []).map((t: any) => ({
-    id: t.id,
-    workspaceId: t.workspaceId,
-    branchName: t.branchName ?? "",
-    linearIssueId: t.linearIssueId,
-    linearIssueTitle: t.linearIssueTitle,
-    linearProjectId: t.linearProjectId,
-    linearProjectName: t.linearProjectName,
-    linearIssueIdentifier: t.linearIssueIdentifier,
-    workspaceFilePath: t.workspaceFilePath ?? null,
-    noteFolder: t.noteFolder,
-    noteFileName: t.noteFileName,
-    pinOrder: Number.isSafeInteger(t.pinOrder) && t.pinOrder >= 0 ? t.pinOrder : undefined,
-    createdAt: t.createdAt ?? new Date().toISOString(),
-    members: (t.members ?? []).map((m: any) => ({
-      repoId: m.repoId,
-      repoName: m.repoName ?? "",
-      localPath: m.localPath ?? "",
-      path: m.path ?? "",
-      branchName: m.branchName ?? "",
-    })),
-  }));
+export function normalizeTasks(raw: unknown): Task[] {
+  return persistedArray(raw).map((value) => {
+    const t = persistedRecord(value);
+    return {
+      id: persistedId(t.id),
+      workspaceId: persistedId(t.workspaceId),
+      branchName: persistedString(t.branchName) ?? "",
+      linearIssueId: persistedString(t.linearIssueId),
+      linearIssueTitle: persistedString(t.linearIssueTitle),
+      linearProjectId: persistedString(t.linearProjectId),
+      linearProjectName: persistedString(t.linearProjectName),
+      linearIssueIdentifier: persistedString(t.linearIssueIdentifier),
+      workspaceFilePath: persistedString(t.workspaceFilePath) ?? null,
+      noteFolder: persistedString(t.noteFolder),
+      noteFileName: persistedString(t.noteFileName),
+      pinOrder:
+        typeof t.pinOrder === "number" && Number.isSafeInteger(t.pinOrder) && t.pinOrder >= 0
+          ? t.pinOrder
+          : undefined,
+      createdAt: persistedString(t.createdAt) ?? new Date().toISOString(),
+      members: persistedArray(t.members).map((value) => {
+        const m = persistedRecord(value);
+        return {
+          repoId: persistedId(m.repoId),
+          repoName: persistedString(m.repoName) ?? "",
+          localPath: persistedString(m.localPath) ?? "",
+          path: persistedString(m.path) ?? "",
+          branchName: persistedString(m.branchName) ?? "",
+        };
+      }),
+    };
+  });
 }
 
 /**
@@ -197,48 +245,51 @@ export function normalizeTasks(raw: any[] | undefined | null): Task[] {
  * old `selectedRepoId` maps directly onto the new `selectedWorkspaceId`.
  */
 export function migrateLegacyToWorkspaces(
-  rawRepos: any[] | undefined | null,
-  rawWorktrees: any[] | undefined | null,
+  rawRepos: unknown,
+  rawWorktrees: unknown,
   globalLinearApiKey?: string | null
 ): { workspaces: Workspace[]; tasks: Task[] } {
-  const repos = rawRepos ?? [];
+  const repos = persistedArray(rawRepos).map(persistedRecord);
   const applyGlobal =
-    !!globalLinearApiKey && repos.length > 0 && repos.every((r: any) => !r.linearApiKey);
+    !!globalLinearApiKey &&
+    repos.length > 0 &&
+    repos.every((r) => !persistedString(r.linearApiKey));
 
-  const workspaces: Workspace[] = repos.map((r: any) => ({
-    id: r.id,
-    name: r.name ?? "",
-    linearApiKey: r.linearApiKey ?? (applyGlobal ? globalLinearApiKey : null),
+  const workspaces: Workspace[] = repos.map((r) => ({
+    id: persistedId(r.id),
+    name: persistedString(r.name) ?? "",
+    linearApiKey: persistedString(r.linearApiKey) ?? (applyGlobal ? globalLinearApiKey : null),
     linearOrgUrlKey: null,
     repos: [
       {
-        id: r.id,
-        name: r.name ?? "",
-        localPath: r.localPath ?? "",
-        worktreeBasePath: r.worktreeBasePath ?? "",
+        id: persistedId(r.id),
+        name: persistedString(r.name) ?? "",
+        localPath: persistedString(r.localPath) ?? "",
+        worktreeBasePath: persistedString(r.worktreeBasePath) ?? "",
       },
     ],
   }));
 
-  const repoById = new Map<string, any>(repos.map((r: any) => [r.id, r]));
-  const tasks: Task[] = (rawWorktrees ?? []).map((w: any) => {
-    const r = repoById.get(w.repoId);
+  const repoById = new Map(repos.map((r) => [persistedId(r.id), r]));
+  const tasks: Task[] = persistedArray(rawWorktrees).map((value) => {
+    const w = persistedRecord(value);
+    const r = repoById.get(persistedId(w.repoId));
     return {
-      id: w.id,
-      workspaceId: w.repoId,
-      branchName: w.branchName ?? "",
-      linearIssueId: w.linearIssueId,
-      linearIssueTitle: w.linearIssueTitle,
-      linearIssueIdentifier: w.linearIssueIdentifier,
+      id: persistedId(w.id),
+      workspaceId: persistedId(w.repoId),
+      branchName: persistedString(w.branchName) ?? "",
+      linearIssueId: persistedString(w.linearIssueId),
+      linearIssueTitle: persistedString(w.linearIssueTitle),
+      linearIssueIdentifier: persistedString(w.linearIssueIdentifier),
       workspaceFilePath: null,
-      createdAt: w.createdAt ?? new Date().toISOString(),
+      createdAt: persistedString(w.createdAt) ?? new Date().toISOString(),
       members: [
         {
-          repoId: w.repoId,
-          repoName: r?.name ?? "",
-          localPath: r?.localPath ?? "",
-          path: w.path ?? "",
-          branchName: w.branchName ?? "",
+          repoId: persistedId(w.repoId),
+          repoName: persistedString(r?.name) ?? "",
+          localPath: persistedString(r?.localPath) ?? "",
+          path: persistedString(w.path) ?? "",
+          branchName: persistedString(w.branchName) ?? "",
         },
       ],
     };

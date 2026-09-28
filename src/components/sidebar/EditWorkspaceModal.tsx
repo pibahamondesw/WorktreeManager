@@ -38,7 +38,9 @@ export function EditWorkspaceModal({
   const linear = useLinearKeyValidation();
 
   useEffect(() => {
-    homeDir().then(setHome);
+    homeDir()
+      .then(setHome)
+      .catch(() => setError("Could not find the home directory"));
   }, []);
 
   useEffect(() => {
@@ -53,7 +55,7 @@ export function EditWorkspaceModal({
     setRepos(workspace.repos);
     if (workspace.linearApiKey) {
       linear.setLinearKey(workspace.linearApiKey);
-      linear.runValidation(workspace.linearApiKey);
+      void linear.runValidation(workspace.linearApiKey);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -133,7 +135,7 @@ export function EditWorkspaceModal({
           linearValidating={linear.linearValidating}
           linearError={linear.linearError}
           onChange={linear.setLinearKey}
-          onValidate={() => linear.runValidation(linear.linearKey)}
+          onValidate={() => void linear.runValidation(linear.linearKey)}
         />
 
         {error && <p className="text-sm text-danger select-text">{error}</p>}
@@ -142,7 +144,7 @@ export function EditWorkspaceModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={handleSave}>Save</Button>
+          <Button onClick={() => void handleSave()}>Save</Button>
         </div>
 
         <div className="flex items-center justify-between gap-4 pt-4 border-t border-border">

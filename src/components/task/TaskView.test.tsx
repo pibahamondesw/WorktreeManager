@@ -2,9 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import type { invoke } from "@tauri-apps/api/core";
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
+  invoke: vi.fn<typeof invoke>(),
   term: {
     open: vi.fn(),
     write: vi.fn(),

@@ -248,8 +248,9 @@ export function QuickSearchModal({
           active.result.task.linearIssueIdentifier,
           active.result.workspace?.linearOrgUrlKey
         )
-      );
-      onClose();
+      )
+        .then(onClose)
+        .catch(() => showToast("Could not open Linear"));
     }
   };
 

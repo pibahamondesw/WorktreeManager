@@ -21,13 +21,34 @@ afterEach(() => {
   IDBObjectStore.prototype.delete = originalDelete;
 });
 
-function value(paths: string[], host = authority) {
-  return JSON.stringify({
+type TrustChange =
+  | { operation: "initialize"; paths: string[] }
+  | { operation: "update"; added: string[]; removed: string[] };
+
+interface TrustRequest {
+  id: number;
+  documentId: string;
+  change: TrustChange;
+}
+
+interface TrustResponse {
+  id?: number;
+  documentId?: string;
+  snapshot?: { revision: number; paths: string[] };
+  error?: string;
+}
+
+function trustData(paths: string[], host = authority) {
+  return {
     uriTrustInfo: paths.map((path) => ({
       uri: { scheme: "vscode-remote", authority: host, path },
       trusted: true,
     })),
-  });
+  };
+}
+
+function value(paths: string[], host = authority) {
+  return JSON.stringify(trustData(paths, host));
 }
 
 function openDatabase(factory: IDBFactory, name = databaseName) {
@@ -59,7 +80,11 @@ function read(database: IDBDatabase, key = trustKey) {
   return new Promise<string>((resolve, reject) => {
     const transaction = database.transaction("ItemTable", "readonly");
     const request = transaction.objectStore("ItemTable").get(key);
-    transaction.oncomplete = () => resolve(request.result);
+    transaction.oncomplete = () => {
+      const result: unknown = request.result;
+      if (typeof result === "string") resolve(result);
+      else reject(new Error("Expected a stored string"));
+    };
     transaction.onerror = () => reject(transaction.error);
   });
 }
@@ -72,13 +97,19 @@ async function setup(options: { shared?: string[]; existing?: string; folders?: 
     "unrelated-state": "keep this",
   });
   seed.database.close();
-  const changes: any[] = [];
-  const messages: any[] = [];
+  const changes: TrustChange[] = [];
+  const messages: { changed: Map<string, string> }[] = [];
   const shared = new Set(options.shared ?? []);
   let revision = 0;
   let failure: string | undefined;
   let replyDelay = 0;
-  const context = createContext({
+  const receive: (response: TrustResponse) => void = () => {
+    throw new Error("Trust receiver not installed");
+  };
+  const sandbox = {
+    window: undefined as unknown,
+    top: undefined as unknown,
+    __worktreeTrustReceive: receive,
     indexedDB: factory,
     IDBObjectStore,
     Event: seed.eventType,
@@ -89,7 +120,7 @@ async function setup(options: { shared?: string[]; existing?: string; folders?: 
     console: { error: vi.fn() },
     alert: vi.fn(),
     BroadcastChannel: class {
-      postMessage(message: unknown) {
+      postMessage(message: { changed: Map<string, string> }) {
         messages.push(message);
       }
       close() {}
@@ -101,7 +132,7 @@ async function setup(options: { shared?: string[]; existing?: string; folders?: 
         const url = new URL(target);
         expect(url.pathname).toBe("/__worktreemanager_trust");
         expect(url.searchParams.get("token")).toBe("session-token");
-        const request = JSON.parse(url.searchParams.get("message")!);
+        const request = JSON.parse(url.searchParams.get("message")!) as TrustRequest;
         changes.push(request.change);
         if (request.change.operation === "initialize") {
           for (const path of request.change.paths) shared.add(path);
@@ -119,7 +150,8 @@ async function setup(options: { shared?: string[]; existing?: string; folders?: 
         setTimeout(() => context.__worktreeTrustReceive(response), replyDelay);
       },
     },
-  });
+  };
+  const context = createContext(sandbox) as typeof sandbox;
   context.window = context;
   context.top = context;
   runInContext(
@@ -180,16 +212,16 @@ describe("embedded editor workspace trust", () => {
   it("imports local decisions but excludes other remote authorities and generated workspace paths", async () => {
     const existing = JSON.stringify({
       uriTrustInfo: [
-        ...JSON.parse(value(["/legacy", workspace])).uriTrustInfo,
-        ...JSON.parse(value(["/remote"], "ssh-other-machine")).uriTrustInfo,
+        ...trustData(["/legacy", workspace]).uriTrustInfo,
+        ...trustData(["/remote"], "ssh-other-machine").uriTrustInfo,
       ],
     });
     const editor = await setup({ shared: ["/repos"], existing });
     expect(editor.changes[0]).toEqual({ operation: "initialize", paths: ["/legacy"] });
     expect(editor.shared).toEqual(new Set(["/repos", "/legacy"]));
-    expect(JSON.parse(await read(editor.database)).uriTrustInfo).toContainEqual(
-      JSON.parse(value(["/remote"], "ssh-other-machine")).uriTrustInfo[0]
-    );
+    expect(
+      (JSON.parse(await read(editor.database)) as ReturnType<typeof trustData>).uriTrustInfo
+    ).toContainEqual(trustData(["/remote"], "ssh-other-machine").uriTrustInfo[0]);
   });
 
   it("publishes committed additions and removals without sharing unrelated state", async () => {
@@ -263,7 +295,7 @@ describe("embedded editor workspace trust", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(await read(editor.database)).toBe(value([]));
     expect(editor.changes).toHaveLength(1);
-    expect(editor.messages.at(-1).changed.get(trustKey)).toBe(value([]));
+    expect(editor.messages.at(-1)?.changed.get(trustKey)).toBe(value([]));
   });
 
   it("reports persistence failures instead of silently claiming the decision was shared", async () => {

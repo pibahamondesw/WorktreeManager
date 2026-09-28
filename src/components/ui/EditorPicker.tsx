@@ -15,9 +15,9 @@ export function EditorPicker({ value, onChange }: EditorPickerProps) {
 
   useEffect(() => {
     EDITOR_APPS.forEach(({ id }) => {
-      invoke<boolean>("check_app_installed", { editor: id }).then((installed) =>
-        setInstalledMap((prev) => ({ ...prev, [id]: installed }))
-      );
+      invoke<boolean>("check_app_installed", { editor: id })
+        .then((installed) => setInstalledMap((prev) => ({ ...prev, [id]: installed })))
+        .catch(() => setInstalledMap((prev) => ({ ...prev, [id]: false })));
     });
   }, []);
 

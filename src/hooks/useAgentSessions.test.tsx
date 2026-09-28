@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { onChatStatus } from "../services/chat";
+import type { onTerminalExit } from "../services/terminal";
 import { useAgentSessions } from "./useAgentSessions";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
-  onExit: vi.fn(),
+  onExit: vi.fn<typeof onTerminalExit>(),
   chatList: vi.fn(),
-  onChatStatus: vi.fn(),
+  onChatStatus: vi.fn<typeof onChatStatus>(),
 }));
 vi.mock("../services/terminal", () => ({
   terminalList: mocks.list,
@@ -36,7 +38,14 @@ it("counts a live chat as a running session and follows its status events", asyn
   const { result } = renderHook(() => useAgentSessions(false));
   await waitFor(() => expect(result.current.t1).toEqual({ kind: "running" }));
   const onStatus = mocks.onChatStatus.mock.calls[0][0];
-  act(() => onStatus({ taskId: "t1", agent: "codex", status: { kind: "failed", message: "x" } }));
+  void act(() =>
+    onStatus({
+      taskId: "t1",
+      agent: "codex",
+      status: { kind: "failed", message: "x" },
+      waiting: false,
+    })
+  );
   expect(result.current.t1).toEqual({ kind: "exited", code: null });
 });
 afterEach(cleanup);
@@ -52,9 +61,16 @@ it.each([true, false])(
     const { result } = renderHook(() => useAgentSessions(false));
     await waitFor(() => expect(result.current.t1).toEqual({ kind: "running" }));
     const onExit = mocks.onExit.mock.calls[0][0];
-    act(() => onExit({ taskId: "t1", agent: "codex", code: 1 }));
+    void act(() => onExit({ taskId: "t1", agent: "codex", code: 1 }));
     expect(result.current.t1).toEqual({ kind: "running" });
-    act(() => onExit({ taskId: "t1", agent: "claude", code: 0 }));
+    void act(() => onExit({ taskId: "t1", agent: "claude", code: 0 }));
     expect(result.current.t1.kind).toBe("exited");
   }
 );
+
+it("keeps loaded sessions when terminal exit subscription fails", async () => {
+  mocks.list.mockResolvedValue([{ taskId: "t1", agent: "codex", status: { kind: "running" } }]);
+  mocks.onExit.mockRejectedValueOnce(new Error("Events unavailable"));
+  const { result } = renderHook(() => useAgentSessions(false));
+  await waitFor(() => expect(result.current.t1).toEqual({ kind: "running" }));
+});

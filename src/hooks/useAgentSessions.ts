@@ -59,10 +59,12 @@ export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStat
         ...prev.filter((session) => session.taskId !== taskId || session.agent !== agent),
         { taskId, agent, status: { kind: "exited", code } },
       ]);
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
       unlisten?.();

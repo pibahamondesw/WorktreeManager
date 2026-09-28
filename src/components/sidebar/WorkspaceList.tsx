@@ -63,7 +63,7 @@ interface WorkspaceListProps {
   onCustomColorsChange: (colors: Record<string, string>) => void;
   defaultLinearApiKey?: string | null;
   vault: VaultConfig;
-  onVaultChange: (vault: VaultConfig) => void;
+  onVaultChange: (vault: VaultConfig) => void | Promise<void>;
   onCollapse: () => void;
   /** Worst severity the dependency check found, or null before it has run. */
   doctorSeverity: CheckSeverity | null;

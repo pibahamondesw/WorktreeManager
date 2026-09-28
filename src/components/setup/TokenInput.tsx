@@ -66,13 +66,13 @@ export function TokenInput({
             type="password"
             error={error ?? undefined}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleValidate();
+              if (e.key === "Enter") void handleValidate();
             }}
           />
         </div>
         <Button
           variant="secondary"
-          onClick={handleValidate}
+          onClick={() => void handleValidate()}
           loading={validating}
           disabled={!value.trim()}
         >
@@ -90,9 +90,10 @@ export function TokenInput({
       <button
         type="button"
         className="inline-flex items-center gap-1 text-sm text-accent hover:text-accent-hover transition-colors"
-        onClick={async () => {
-          const { openUrl } = await import("@tauri-apps/plugin-opener");
-          openUrl(linkUrl);
+        onClick={() => {
+          void import("@tauri-apps/plugin-opener")
+            .then(({ openUrl }) => openUrl(linkUrl))
+            .catch(() => setError("Could not open the link"));
         }}
       >
         {linkText}

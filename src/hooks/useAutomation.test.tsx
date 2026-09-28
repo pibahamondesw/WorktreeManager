@@ -3,16 +3,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { useAutomation } from "./useAutomation";
 import { Operations } from "../services/operations";
+import type { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import type { AutomationRequest } from "../services/automation";
 import { DEFAULT_STATE } from "../types";
 
-const { invoke, dispatch } = vi.hoisted(() => ({
-  invoke: vi.fn().mockResolvedValue(undefined),
+const { invoke, dispatch, channels } = vi.hoisted(() => ({
+  invoke: vi.fn<typeof tauriInvoke>().mockResolvedValue(undefined),
+  channels: [] as { onmessage: (event: { token: string; request: AutomationRequest }) => void }[],
   dispatch: vi.fn().mockResolvedValue({ ok: true, data: [] }),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke,
   Channel: class {
-    onmessage = () => {};
+    onmessage: (event: { token: string; request: AutomationRequest }) => void = () => {};
+    constructor() {
+      channels.push(this);
+    }
   },
 }));
 vi.mock("../services/automation", () => ({ dispatchAutomation: dispatch }));
@@ -21,6 +27,7 @@ vi.mock("../services/store", () => ({ persist: vi.fn() }));
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  channels.length = 0;
 });
 
 describe("frontend automation bridge", () => {
@@ -37,9 +44,10 @@ describe("frontend automation bridge", () => {
     view.rerender({ ready: true });
     const registration = invoke.mock.calls.find(
       ([command]) => command === "automation_register"
-    )![1];
+    )![1]!;
+    if (!("session" in registration)) throw new Error("Automation registration is missing");
     const request = { id: "r1", version: 1, method: "workspace.list", params: {} };
-    await act(async () => registration.channel.onmessage({ token: "token1", request }));
+    await act(async () => channels[0].onmessage({ token: "token1", request }));
     expect(dispatch).toHaveBeenCalledWith(operations, request, expect.any(Function), undefined);
     expect(invoke).toHaveBeenCalledWith("automation_complete", {
       session: registration.session,

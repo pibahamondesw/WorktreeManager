@@ -84,6 +84,10 @@ A stable signing identity avoids changing signatures on every Rust rebuild. Crea
 
 Set `WTM_DEV_SIGNING_IDENTITY` to another certificate's name or SHA-1 hash to override the default. macOS may still ask to authorize signing or access to existing Linear credentials. For Keychain errors, use **Dependencies → Re-check** after authorizing access; certificate trust and credential access are separate permissions.
 
+### Typed linting
+
+Run `pnpm run lint:ts` to check the frontend, Node scripts and Vite/Vitest configuration. Type-aware rules catch unhandled promises, misused async callbacks and unsafe `any` usage.
+
 ### Build and verify
 
 ```bash

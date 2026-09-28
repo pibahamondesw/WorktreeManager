@@ -1,8 +1,9 @@
+import type { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { invoke, channels } = vi.hoisted(() => {
   const channels: { onmessage?: (e: unknown) => void }[] = [];
-  return { invoke: vi.fn(), channels };
+  return { invoke: vi.fn<typeof tauriInvoke>(), channels };
 });
 
 vi.mock("@tauri-apps/api/core", () => ({

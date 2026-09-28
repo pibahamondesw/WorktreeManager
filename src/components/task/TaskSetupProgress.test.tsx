@@ -124,16 +124,16 @@ function completeSetup() {
 
 it("starts the countdown only after success and stays dismissed across navigation", () => {
   const view = startSetup();
-  act(() => vi.advanceTimersByTime(10000));
+  void act(() => vi.advanceTimersByTime(10000));
   expect(screen.getByRole("status")).toHaveTextContent("Setup running");
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   completeSetup();
   expect(screen.getByRole("status")).toHaveTextContent("Setup completed");
   expect(screen.getByRole("status").querySelector("svg")).toBeInTheDocument();
   expect(screen.getByRole("progressbar")).toHaveClass("bg-accent");
-  act(() => vi.advanceTimersByTime(4999));
+  void act(() => vi.advanceTimersByTime(4999));
   expect(screen.getByRole("status")).toBeInTheDocument();
-  act(() => vi.advanceTimersByTime(1));
+  void act(() => vi.advanceTimersByTime(1));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   view.unmount();
   render(<TaskSetupProgress taskId="progress-test" />);
@@ -146,18 +146,18 @@ it.each(["before", "during"])(
     const view = startSetup();
     if (when === "during") {
       completeSetup();
-      act(() => vi.advanceTimersByTime(2000));
+      void act(() => vi.advanceTimersByTime(2000));
     }
     const summary = screen.getByRole("status").closest("summary")!;
     fireEvent.click(summary);
     fireEvent.click(summary);
     if (when === "before") completeSetup();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(10000));
+    void act(() => vi.advanceTimersByTime(10000));
     expect(screen.getByRole("status")).toBeInTheDocument();
     view.unmount();
     render(<TaskSetupProgress taskId="progress-test" />);
-    act(() => vi.advanceTimersByTime(10000));
+    void act(() => vi.advanceTimersByTime(10000));
     expect(screen.getByRole("status")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss setup progress" }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -177,7 +177,7 @@ it.each(["error", "warning"])("keeps logs with a setup %s visible", (failure) =>
     }
   });
   completeSetup();
-  act(() => vi.advanceTimersByTime(10000));
+  void act(() => vi.advanceTimersByTime(10000));
   expect(screen.getByRole("status")).toBeInTheDocument();
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 });
@@ -185,11 +185,11 @@ it.each(["error", "warning"])("keeps logs with a setup %s visible", (failure) =>
 it("cancels an active countdown if an error arrives", () => {
   startSetup();
   completeSetup();
-  act(() => vi.advanceTimersByTime(2000));
+  void act(() => vi.advanceTimersByTime(2000));
   act(() => {
     updateSetupStep("progress-test", "api", "install_node_deps", "error", [], "Install failed");
   });
-  act(() => vi.advanceTimersByTime(10000));
+  void act(() => vi.advanceTimersByTime(10000));
   expect(screen.getByRole("status")).toHaveTextContent("Setup completed with errors");
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 });

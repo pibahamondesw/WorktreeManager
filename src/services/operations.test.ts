@@ -156,7 +156,7 @@ describe("shared operations", () => {
       return native(command, args);
     }) as typeof invoke);
     let finished = false;
-    const creating = operations.createTask(input).catch((error) => {
+    const creating = operations.createTask(input).catch((error: unknown) => {
       finished = true;
       return error;
     });
@@ -335,12 +335,12 @@ describe("shared operations", () => {
             {
               steps: expect.arrayContaining([
                 expect.objectContaining({ stage: "install_node_deps", status: "error" }),
-              ]),
+              ]) as unknown,
             },
             {
               steps: expect.arrayContaining([
                 expect.objectContaining({ stage: "install_node_deps", status: "completed" }),
-              ]),
+              ]) as unknown,
             },
           ],
         });
@@ -411,7 +411,7 @@ describe("shared operations", () => {
       code: "create_failed",
       details: {
         completedMembers: [expect.objectContaining({ repoId: "api" })],
-        attemptedMember: expect.objectContaining({ repoId: "web" }),
+        attemptedMember: { repoId: "web" },
       },
     });
     expect(operations.getState().tasks).toEqual([]);
@@ -444,7 +444,7 @@ describe("shared operations", () => {
     save.mockRejectedValueOnce(new Error("disk full"));
     await expect(operations.createTask(input)).rejects.toMatchObject({
       code: "persist_failed",
-      details: { task: expect.objectContaining({ members: expect.any(Array) }) },
+      details: { task: { members: expect.any(Array) as unknown } },
     });
     expect(publish).not.toHaveBeenCalled();
   });
@@ -586,7 +586,7 @@ describe("linkTaskIssue", () => {
     vi.mocked(LinearService.prototype.getIssue).mockRejectedValueOnce(new Error("workspace-key"));
     await expect(operations.linkTaskIssue("t1", "WOR-80")).rejects.toMatchObject({
       code: "linear_issue_unavailable",
-      message: expect.not.stringContaining("workspace-key"),
+      message: expect.not.stringContaining("workspace-key") as unknown,
     });
     expect(save).not.toHaveBeenCalled();
     save.mockRejectedValueOnce(new Error("disk full"));

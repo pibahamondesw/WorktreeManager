@@ -106,7 +106,13 @@ export function WorkspaceRepoEditor({ repos, onChange, home }: WorkspaceRepoEdit
           {duplicateWarning}
         </p>
       )}
-      <Button variant="secondary" onClick={addRepo} className="self-start">
+      <Button
+        variant="secondary"
+        onClick={() => {
+          void addRepo().catch(() => setDuplicateWarning("Could not open the directory picker"));
+        }}
+        className="self-start"
+      >
         + Add repo
       </Button>
     </div>
