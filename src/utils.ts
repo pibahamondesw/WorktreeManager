@@ -172,6 +172,8 @@ export function normalizeTasks(raw: any[] | undefined | null): Task[] {
     branchName: t.branchName ?? "",
     linearIssueId: t.linearIssueId,
     linearIssueTitle: t.linearIssueTitle,
+    linearProjectId: t.linearProjectId,
+    linearProjectName: t.linearProjectName,
     linearIssueIdentifier: t.linearIssueIdentifier,
     workspaceFilePath: t.workspaceFilePath ?? null,
     noteFolder: t.noteFolder,

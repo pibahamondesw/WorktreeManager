@@ -1,6 +1,6 @@
-export type FilterField = "in" | "repo" | "branch" | "id" | "path" | "session";
+export type FilterField = "in" | "repo" | "branch" | "id" | "path" | "session" | "project";
 
-const FILTER_FIELDS: FilterField[] = ["in", "repo", "branch", "id", "path", "session"];
+const FILTER_FIELDS: FilterField[] = ["in", "repo", "branch", "id", "path", "session", "project"];
 
 /** One `key:a|b` filter. Values are OR'd against each other. */
 export interface Filter {

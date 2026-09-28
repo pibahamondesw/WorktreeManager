@@ -1,3 +1,5 @@
+import { ProjectFilter } from "../ui/ProjectFilter";
+import { matchesProject } from "../../search/projects";
 import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { LinearProvider } from "../../contexts/LinearContext";
 import { LinearService } from "../../services/linear";
@@ -120,7 +122,7 @@ function withExit(exits: Exits, id: string, exit: ExitingTask | undefined): Exit
 const SELECTED_CARD_SCROLL_ATTEMPTS = 60;
 
 export function WorktreeList({
-  tasks,
+  tasks: allTasks,
   agentSessions = {},
   agentActivities = {},
   workspace,
@@ -151,6 +153,18 @@ export function WorktreeList({
   requestNewTask,
   onRequestNewTaskHandled,
 }: WorktreeListProps) {
+  const [projectFilter, setProjectFilter] = useState({ workspaceId: workspace?.id, value: "" });
+  const project = projectFilter.workspaceId === workspace?.id ? projectFilter.value : "";
+  const revealing = !!revealTaskId && allTasks.some((task) => task.id === revealTaskId);
+  const tasks = useMemo(
+    () => allTasks.filter((task) => revealing || matchesProject(task, project)),
+    [allTasks, project, revealing]
+  );
+  const changeProject = (value: string) => {
+    setProjectFilter({ workspaceId: workspace?.id, value });
+    setSelectedIndex(-1);
+    setDeleteRequested(false);
+  };
   const [linkTaskId, setLinkTaskId] = useState<string | null>(null);
   const linkTask = tasks.find((task) => task.id === linkTaskId && !task.linearIssueId);
   const [showNew, setShowNew] = useState(false);
@@ -176,7 +190,7 @@ export function WorktreeList({
 
   const repoSlugs = useRepoSlugs(workspace);
   const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(
-    tasks,
+    allTasks,
     workspace,
     linearService,
     onWorkspaceReady
@@ -198,11 +212,12 @@ export function WorktreeList({
     if (!revealTaskId) return;
     const index = tasks.findIndex((t) => t.id === revealTaskId);
     if (index === -1) return;
+    setProjectFilter({ workspaceId: workspace?.id, value: "" });
     setSelectedIndex(index);
     setRevealNonce((n) => n + 1);
     if (!openedTask) ringTask(revealTaskId);
     onRevealHandled();
-  }, [revealTaskId, tasks, onRevealHandled, openedTask, ringTask]);
+  }, [revealTaskId, tasks, onRevealHandled, openedTask, ringTask, workspace?.id]);
 
   // The card may not be mounted yet when a reveal lands mid workspace switch (skeletons are
   // rendered instead). Retries on a timer rather than rAF, which is throttled to nothing while
@@ -251,11 +266,12 @@ export function WorktreeList({
     }
   };
 
-  const openTask = openedTask ? (tasks.find((t) => t.id === openedTask.taskId) ?? null) : null;
+  const openTask = openedTask ? (allTasks.find((t) => t.id === openedTask.taskId) ?? null) : null;
 
   const handleCloseTask = () => {
     if (openTask) {
-      setSelectedIndex(tasks.indexOf(openTask));
+      setProjectFilter({ workspaceId: workspace?.id, value: "" });
+      setSelectedIndex(allTasks.indexOf(openTask));
       setRevealNonce((n) => n + 1);
     }
     onCloseTask();
@@ -350,6 +366,12 @@ export function WorktreeList({
             onGoForward={onGoForward}
           />
 
+          {allTasks.length > 0 && (
+            <div className="px-6 pt-3">
+              <ProjectFilter tasks={allTasks} value={project} onChange={changeProject} />
+            </div>
+          )}
+
           <div ref={listRef} className="flex-1 overflow-y-auto p-6">
             {workspaceSwitching ? (
               <div key="skeleton" className="grid gap-3">
@@ -358,7 +380,13 @@ export function WorktreeList({
                 ))}
               </div>
             ) : tasks.length === 0 && exits.size === 0 ? (
-              <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />
+              allTasks.length > 0 ? (
+                <p className="text-sm text-text-muted text-center py-10">
+                  No tasks in this project
+                </p>
+              ) : (
+                <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />
+              )
             ) : (
               <div key="tasks" className="grid gap-3 motion-rise">
                 {withExits(tasks, exits).map(({ task, exit }) =>

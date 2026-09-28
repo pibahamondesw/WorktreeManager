@@ -5,6 +5,8 @@ import App from "./App";
 import { ZoomControls } from "./components/ui/ZoomControls";
 import { DEFAULT_STATE, Task, Workspace } from "./types";
 
+vi.mock("./hooks/useTaskProjects", () => ({ useTaskProjects: vi.fn() }));
+
 const mocks = vi.hoisted(() => ({
   selectWorkspace: vi.fn(),
   historyBack: vi.fn(),

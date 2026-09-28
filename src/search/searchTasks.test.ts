@@ -249,3 +249,20 @@ describe("pinned task ranking", () => {
     ).toEqual(["agent", "current", "pin"]);
   });
 });
+
+it("filters projects with phrases, alternatives, exclusions and unassigned tasks", () => {
+  const tasks = [
+    task({ id: "payments", linearProjectName: "Payment API" }),
+    task({ id: "ledger", linearProjectName: "Ledger" }),
+    task({ id: "manual" }),
+  ];
+  const find = (query: string) =>
+    searchTasks({ tasks, workspaces, selectedWorkspaceId: null, query })
+      .map((result) => result.task.id)
+      .sort();
+  expect(find('project:"payment api"')).toEqual(["payments"]);
+  expect(find("project:payment|ledger")).toEqual(["ledger", "payments"]);
+  expect(find("-project:ledger")).toEqual(["manual", "payments"]);
+  expect(find("project:none")).toEqual(["manual"]);
+  expect(find("payment")).toEqual(["payments"]);
+});

@@ -40,7 +40,13 @@ export interface CreateTaskInput {
   workspaceId: string;
   branchName: string;
   repoIds?: string[];
-  linearIssue?: { id: string; identifier: string; title: string };
+  linearIssue?: {
+    id: string;
+    identifier: string;
+    title: string;
+    projectId?: string;
+    projectName?: string;
+  };
 }
 
 export interface DeleteOptions {
@@ -332,6 +338,8 @@ export class Operations {
               linearIssueId: input.linearIssue.id,
               linearIssueIdentifier: input.linearIssue.identifier,
               linearIssueTitle: input.linearIssue.title,
+              linearProjectId: input.linearIssue.projectId,
+              linearProjectName: input.linearIssue.projectName,
             }
           : {}),
       };
@@ -453,6 +461,38 @@ export class Operations {
     }
   }
 
+  async refreshTaskProjects(workspaceId: string) {
+    const workspace = this.getState().workspaces.find((item) => item.id === workspaceId);
+    if (!workspace?.linearApiKey) return;
+    const tasks = this.getState().tasks.filter((task) => task.workspaceId === workspaceId);
+    const issueIds = tasks.flatMap((task) => (task.linearIssueId ? [task.linearIssueId] : []));
+    const info = await new LinearService(workspace.linearApiKey).fetchIssueLinearInfoBatch(
+      issueIds
+    );
+    return this.enqueue(async () => {
+      if (
+        this.getState().workspaces.find((item) => item.id === workspaceId)?.linearApiKey !==
+        workspace.linearApiKey
+      )
+        return;
+      let changed = false;
+      const updated = this.getState().tasks.map((task) => {
+        const project =
+          task.workspaceId === workspaceId && task.linearIssueId
+            ? info[task.linearIssueId]?.project
+            : undefined;
+        if (
+          project === undefined ||
+          (task.linearProjectId === project?.id && task.linearProjectName === project?.name)
+        )
+          return task;
+        changed = true;
+        return { ...task, linearProjectId: project?.id, linearProjectName: project?.name };
+      });
+      if (changed) await this.write({ tasks: updated });
+    });
+  }
+
   linkTaskIssue(id: string, identifier: string) {
     return this.enqueue(async () => {
       const task = this.task(id);
@@ -487,6 +527,8 @@ export class Operations {
         linearIssueId: issue.id,
         linearIssueIdentifier: issue.identifier,
         linearIssueTitle: issue.title,
+        linearProjectId: issue.projectId,
+        linearProjectName: issue.projectName,
       };
       await this.write({
         tasks: this.getState().tasks.map((item) => (item.id === id ? updated : item)),

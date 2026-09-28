@@ -659,3 +659,28 @@ describe("pinned tasks", () => {
     expect(operations.task("t2").pinOrder).toBe(0);
   });
 });
+
+it("refreshes existing projects, persists them through normalization and clears removed projects", async () => {
+  const linked = { ...task, linearIssueId: "issue-id" };
+  const { operations, save } = fixture([linked]);
+  await operations.updateWorkspace(workspace.id, { linearApiKey: "test-key" });
+  const fetch = vi.spyOn(LinearService.prototype, "fetchIssueLinearInfoBatch").mockResolvedValue({
+    "issue-id": { status: null, prs: [], project: { id: "p1", name: "API" } },
+  });
+  await operations.refreshTaskProjects(workspace.id);
+  expect(normalizeTasks(operations.getState().tasks)[0]).toMatchObject({
+    linearProjectId: "p1",
+    linearProjectName: "API",
+  });
+  save.mockClear();
+  await operations.refreshTaskProjects(workspace.id);
+  expect(save).not.toHaveBeenCalled();
+  fetch.mockResolvedValueOnce({});
+  await operations.refreshTaskProjects(workspace.id);
+  expect(operations.getState().tasks[0].linearProjectId).toBe("p1");
+  fetch.mockResolvedValueOnce({ "issue-id": { status: null, prs: [], project: null } });
+  await operations.refreshTaskProjects(workspace.id);
+  expect(operations.getState().tasks[0].linearProjectId).toBeUndefined();
+  expect(operations.getState().tasks[0].linearProjectName).toBeUndefined();
+  fetch.mockRestore();
+});

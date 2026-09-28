@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { extractPrsFromAttachments, GqlAttachmentNode } from "./linear";
+import { describe, it, expect, vi } from "vitest";
+import { extractPrsFromAttachments, GqlAttachmentNode, LinearService } from "./linear";
 
 describe("extractPrsFromAttachments", () => {
   it("returns an empty array for empty attachments", () => {
@@ -115,4 +115,30 @@ describe("extractPrsFromAttachments", () => {
     ];
     expect(extractPrsFromAttachments(attachments)[0]?.number).toBe(99);
   });
+});
+
+it("loads projects in bounded batches and preserves successful batches on failure", async () => {
+  const service = new LinearService("test-key");
+  const request = vi.fn().mockImplementation(async (_query, variables) => ({
+    data: {
+      issues: {
+        nodes: variables.filter.id.in.map((id: string) => ({
+          id,
+          project: { id: "project", name: "API" },
+          state: null,
+          attachments: { nodes: [] },
+        })),
+      },
+    },
+  }));
+  Object.defineProperty(service, "gql", { value: { rawRequest: request } });
+  const ids = Array.from({ length: 101 }, (_, index) => `issue-${index}`);
+  const result = await service.fetchIssueLinearInfoBatch(ids);
+  expect(request.mock.calls.map((call) => call[1].filter.id.in.length)).toEqual([50, 50, 1]);
+  expect(Object.keys(result)).toHaveLength(101);
+  expect(result["issue-100"].project).toEqual({ id: "project", name: "API" });
+  request.mockRejectedValueOnce(new Error("offline"));
+  const partial = await service.fetchIssueLinearInfoBatch(ids);
+  expect(Object.keys(partial)).toHaveLength(51);
+  expect(partial["issue-0"]).toBeUndefined();
 });

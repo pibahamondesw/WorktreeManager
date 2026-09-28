@@ -1,3 +1,4 @@
+import { taskProjectKey } from "../../search/projects";
 import { Badge } from "../ui/Badge";
 import { BranchIcon } from "../ui/Icons";
 import { PaletteItem } from "../../search/searchPalette";
@@ -29,7 +30,7 @@ export function PaletteResults({
     <>
       {results.map((item, i) => {
         const headerLabel = itemHeader(item);
-        const showHeader = i === 0 || itemHeader(results[i - 1]) !== headerLabel;
+        const showHeader = i === 0 || itemGroup(results[i - 1]) !== itemGroup(item);
         return (
           <div key={item.id}>
             {showHeader && (
@@ -60,12 +61,15 @@ export function PaletteResults({
   );
 }
 
+function itemGroup(item: PaletteItem): string {
+  return item.kind === "task"
+    ? `project:${taskProjectKey(item.result.task)}`
+    : `command:${item.command.group}`;
+}
+
 function itemHeader(item: PaletteItem): string {
   if (item.kind === "task") {
-    const indicator = item.result.indicator;
-    if (indicator === "input") return "Needs your input";
-    if (indicator === "idle" || indicator === "working") return "Active sessions";
-    return item.result.inCurrentWorkspace ? "This workspace" : "Other workspaces";
+    return item.result.task.linearProjectName ?? "No project";
   }
   switch (item.command.group) {
     case "action":

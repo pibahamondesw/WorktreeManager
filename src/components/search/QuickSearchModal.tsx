@@ -1,3 +1,5 @@
+import { ProjectFilter } from "../ui/ProjectFilter";
+import { matchesProject } from "../../search/projects";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { SearchIcon } from "../ui/Icons";
@@ -74,6 +76,7 @@ export function QuickSearchModal({
   useEditorOcclusion(open);
   const [openedWith, setOpenedWith] = useState({ open, activities: agentActivities });
   if (openedWith.open !== open) setOpenedWith({ open, activities: agentActivities });
+  const [project, setProject] = useState("");
   const [query, setQuery] = useState(initialQuery);
   const [activeIndex, setActiveIndex] = useState(0);
   const { toast, showToast } = useEphemeralToast();
@@ -88,6 +91,7 @@ export function QuickSearchModal({
   useEffect(() => {
     if (!open) return;
     setQuery(initialQuery);
+    setProject("");
     setActiveIndex(0);
     // Caret at the end so a pre-filled `in:<workspace>` reads as a starting point.
     requestAnimationFrame(() => {
@@ -110,7 +114,7 @@ export function QuickSearchModal({
     () =>
       open
         ? searchPalette({
-            tasks,
+            tasks: tasks.filter((task) => matchesProject(task, project)),
             workspaces,
             selectedWorkspaceId,
             query,
@@ -126,6 +130,7 @@ export function QuickSearchModal({
       workspaces,
       selectedWorkspaceId,
       query,
+      project,
       lastVisitAt,
       agentSessions,
       openedWith.activities,
@@ -274,7 +279,7 @@ export function QuickSearchModal({
               onKeyDown={handleKeyDown}
             />
           </div>
-          <div className="flex items-center gap-1 mt-2">
+          <div className="flex items-center flex-wrap gap-1 mt-2">
             <ScopeTab active={!scoped} onClick={() => setScoped(false)}>
               All workspaces
             </ScopeTab>
@@ -287,8 +292,19 @@ export function QuickSearchModal({
             >
               Active sessions
             </ScopeTab>
-            <span className="ml-auto text-[0.625rem] text-text-muted font-mono">
-              in:web|api · session:active · repo: · branch: · -exclude · &gt;commands
+            {!commandsOnly && (
+              <ProjectFilter
+                tasks={tasks}
+                value={project}
+                onChange={(value) => {
+                  setProject(value);
+                  setActiveIndex(0);
+                  inputRef.current?.focus();
+                }}
+              />
+            )}
+            <span className="w-full text-[0.625rem] text-text-muted font-mono">
+              in:web|api · project: · session:active · repo: · branch: · -exclude · &gt;commands
             </span>
           </div>
         </div>

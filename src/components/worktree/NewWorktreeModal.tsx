@@ -99,6 +99,8 @@ export function NewWorktreeModal({
                   id: selected.id,
                   identifier: selected.identifier,
                   title: selected.title,
+                  projectId: selected.projectId,
+                  projectName: selected.projectName,
                 },
               }
             : {}),
