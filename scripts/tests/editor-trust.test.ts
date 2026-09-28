@@ -34,7 +34,7 @@ interface TrustRequest {
 interface TrustResponse {
   id?: number;
   documentId?: string;
-  snapshot?: { revision: number; paths: string[] };
+  snapshot?: { revision: number; paths: string[]; workspaces?: WorkspaceTrust[] };
   error?: string;
 }
 
@@ -89,8 +89,25 @@ function read(database: IDBDatabase, key = trustKey) {
   });
 }
 
-async function setup(options: { shared?: string[]; existing?: string; folders?: string[] } = {}) {
-  const factory = new IDBFactory();
+interface WorkspaceTrust {
+  workspace: string;
+  folders: string[];
+}
+
+async function setup(
+  options: {
+    shared?: string[];
+    existing?: string;
+    folders?: string[];
+    factory?: IDBFactory;
+    workspace?: string;
+    workspaces?: WorkspaceTrust[];
+  } = {}
+) {
+  const factory = options.factory ?? new IDBFactory();
+  const currentWorkspace = options.workspace ?? workspace;
+  const folders = options.folders ?? ["/repos/project/task"];
+  const workspaces = options.workspaces ?? [{ workspace: currentWorkspace, folders }];
   const seed = await openDatabase(factory);
   await write(seed.database, {
     ...(options.existing ? { [trustKey]: options.existing } : {}),
@@ -145,7 +162,7 @@ async function setup(options: { shared?: string[]; existing?: string; folders?: 
           : {
               id: request.id,
               documentId: request.documentId,
-              snapshot: { revision: ++revision, paths: [...shared] },
+              snapshot: { revision: ++revision, paths: [...shared], workspaces },
             };
         setTimeout(() => context.__worktreeTrustReceive(response), replyDelay);
       },
@@ -159,8 +176,8 @@ async function setup(options: { shared?: string[]; existing?: string; folders?: 
       origin,
       endpoint: "/__worktreemanager_trust",
       token: "session-token",
-      workspace,
-      folders: options.folders ?? ["/repos/project/task"],
+      workspace: currentWorkspace,
+      folders,
     })})`,
     context
   );
@@ -179,7 +196,7 @@ async function setup(options: { shared?: string[]; existing?: string; folders?: 
       failure = message;
     },
     receive: (paths: string[], nextRevision = ++revision) => {
-      context.__worktreeTrustReceive({ snapshot: { revision: nextRevision, paths } });
+      context.__worktreeTrustReceive({ snapshot: { revision: nextRevision, paths, workspaces } });
     },
   };
 }
@@ -192,6 +209,57 @@ describe("embedded editor workspace trust", () => {
     );
     expect(await read(editor.database, "unrelated-state")).toBe("keep this");
     expect(editor.context.alert).not.toHaveBeenCalled();
+  });
+
+  it("keeps both tasks trusted when their editors write to the same database", async () => {
+    const secondWorkspace = "/editor/sessions/second/task.code-workspace";
+    const workspaces = [
+      { workspace, folders: ["/repos/one"] },
+      { workspace: secondWorkspace, folders: ["/repos/two"] },
+    ];
+    const first = await setup({ shared: ["/repos"], workspaces });
+    const second = await setup({
+      factory: first.factory,
+      shared: ["/repos"],
+      workspace: secondWorkspace,
+      folders: ["/repos/two"],
+      workspaces,
+    });
+    expect(second.changes[0]).toEqual({ operation: "initialize", paths: ["/repos"] });
+    expect(JSON.parse(await read(second.database))).toEqual(
+      JSON.parse(value(["/repos", workspace, secondWorkspace]))
+    );
+    first.receive(["/repos"], 10);
+    await vi.waitFor(() =>
+      expect(first.messages.at(-1)?.changed.get(trustKey)).toBe(
+        value(["/repos", workspace, secondWorkspace])
+      )
+    );
+    expect(await read(second.database)).toBe(value(["/repos", workspace, secondWorkspace]));
+    second.receive([], 11);
+    await vi.waitFor(async () => expect(await read(first.database)).toBe(value([])));
+  });
+
+  it("derives trust for new tasks only when all their repositories are already covered", async () => {
+    const secondWorkspace = "/editor/sessions/second/task.code-workspace";
+    const editor = await setup({
+      shared: ["/repos"],
+      workspaces: [
+        { workspace, folders: ["/repos/one"] },
+        { workspace: secondWorkspace, folders: ["/repos/two", "/untrusted/three"] },
+      ],
+    });
+    expect(await read(editor.database)).toBe(value(["/repos", workspace]));
+    editor.receive(["/repos", "/untrusted"], 10);
+    await vi.waitFor(async () =>
+      expect(await read(editor.database)).toBe(
+        value(["/repos", "/untrusted", workspace, secondWorkspace])
+      )
+    );
+    editor.receive(["/repos"], 11);
+    await vi.waitFor(async () =>
+      expect(await read(editor.database)).toBe(value(["/repos", workspace]))
+    );
   });
 
   it("requires every repository and respects parent path boundaries", async () => {

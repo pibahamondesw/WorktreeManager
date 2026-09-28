@@ -1,22 +1,21 @@
+mod adapter;
 mod profile;
 pub mod runtime;
+mod server;
+mod session;
 mod trust;
 mod view;
 
 use std::collections::HashMap;
-use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State, Webview};
-
-use super::process::OwnedProcess;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub struct Bounds {
@@ -53,16 +52,19 @@ struct Slot {
     folders: Vec<PathBuf>,
     closed: AtomicBool,
     info: Mutex<SessionInfo>,
-    process: Mutex<Option<OwnedProcess>>,
-    view: tokio::sync::Mutex<Option<Webview>>,
+    server: Arc<server::Server>,
+    session: session::Session,
+    view: tokio::sync::Mutex<Option<view::EditorView>>,
 }
 
 impl Slot {
-    fn terminate(&self) {
+    fn terminate(&self) -> Result<(), String> {
         self.closed.store(true, Ordering::SeqCst);
-        if let Some(mut process) = self.process.lock().unwrap().take() {
-            process.terminate();
+        let stopped = self.server.stopped();
+        if stopped {
+            self.server.stop();
         }
+        self.session.close(stopped)
     }
 
     fn update(&self, app: &AppHandle, status: &str, error: Option<String>) -> SessionInfo {
@@ -104,6 +106,7 @@ impl Presentation {
 #[derive(Default)]
 pub struct EditorRegistry {
     sessions: Mutex<HashMap<String, Arc<Slot>>>,
+    servers: Mutex<HashMap<String, Arc<server::Server>>>,
     presentation: Mutex<Presentation>,
     installation: tokio::sync::Mutex<()>,
     installer: Arc<runtime::Installation>,
@@ -121,12 +124,27 @@ impl EditorRegistry {
             .drain()
             .map(|(_, slot)| slot)
             .collect();
+        for server in self
+            .servers
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(_, server)| server)
+        {
+            server.stop();
+        }
         for slot in sessions {
-            slot.terminate();
+            let _ = slot.terminate();
         }
     }
 
-    fn reserve(&self, task_id: &str, folders: Vec<PathBuf>) -> Result<Arc<Slot>, String> {
+    fn reserve(
+        &self,
+        root: &Path,
+        workspace_id: &str,
+        task_id: &str,
+        folders: Vec<PathBuf>,
+    ) -> Result<Arc<Slot>, String> {
         let mut sessions = self.sessions.lock().unwrap();
         if self.shutting_down.load(Ordering::SeqCst) {
             return Err("The app is shutting down".into());
@@ -135,17 +153,31 @@ impl EditorRegistry {
             if slot.closed.load(Ordering::SeqCst) {
                 return Err("The editor is closing. Try again when it finishes.".into());
             }
-            if slot.folders != folders {
+            if slot.folders != folders || slot.server.workspace_id != workspace_id {
                 return Err("This task already has an editor with different folders.".into());
             }
             return Ok(slot.clone());
         }
+        if workspace_id.is_empty() {
+            return Err("The editor requires a workspace".into());
+        }
+        let mut servers = self.servers.lock().unwrap();
+        let server = servers
+            .entry(workspace_id.into())
+            .or_insert_with(|| Arc::new(server::Server::new(root, workspace_id)));
+        if server.stopped() {
+            server.stop();
+            *server = Arc::new(server::Server::new(root, workspace_id));
+        }
+        let server = server.clone();
         let generation = runtime::random_id()?;
+        let session = session::Session::create(&server.control, &generation, task_id)?;
         let slot = Arc::new(Slot {
             label: format!("editor-{}-{}", profile::key(task_id), generation),
             folders,
             closed: AtomicBool::new(false),
-            process: Mutex::new(None),
+            server,
+            session,
             view: tokio::sync::Mutex::new(None),
             info: Mutex::new(SessionInfo {
                 task_id: task_id.into(),
@@ -157,6 +189,16 @@ impl EditorRegistry {
         });
         sessions.insert(task_id.into(), slot.clone());
         Ok(slot)
+    }
+
+    fn retire_server_if_unused(&self, server: &Arc<server::Server>) {
+        let sessions = self.sessions.lock().unwrap();
+        if !sessions
+            .values()
+            .any(|slot| Arc::ptr_eq(&slot.server, server) && !slot.closed.load(Ordering::SeqCst))
+        {
+            server.stop();
+        }
     }
 
     fn present(&self, app: &AppHandle, state: &Presentation, focus: bool) -> Result<(), String> {
@@ -203,13 +245,7 @@ pub async fn vscode_install(
     if registry.shutting_down.load(Ordering::SeqCst) {
         return Err("The app is shutting down".into());
     }
-    if registry
-        .sessions
-        .lock()
-        .unwrap()
-        .values()
-        .any(|slot| !slot.closed.load(Ordering::SeqCst))
-    {
+    if registry.sessions.lock().unwrap().values().next().is_some() {
         return Err("Close embedded editors before repairing the editor installation.".into());
     }
     let root = runtime::root(&app)?;
@@ -232,6 +268,7 @@ pub async fn vscode_open(
     app: AppHandle,
     registry: State<'_, EditorRegistry>,
     task_id: String,
+    workspace_id: String,
     folders: Vec<String>,
 ) -> Result<SessionInfo, String> {
     let installation = registry
@@ -244,7 +281,13 @@ pub async fn vscode_open(
     if !runtime::supported_os() {
         return Err("VS Code embedded requires macOS 14 or later.".into());
     }
-    let slot = registry.reserve(&task_id, profile::canonical_folders(folders)?)?;
+    let root = runtime::root(&app)?;
+    let slot = registry.reserve(
+        &root,
+        &workspace_id,
+        &task_id,
+        profile::canonical_folders(folders)?,
+    )?;
     drop(installation);
     let mut webview = slot.view.lock().await;
     if slot.closed.load(Ordering::SeqCst) {
@@ -256,22 +299,20 @@ pub async fn vscode_open(
     if slot.info.lock().unwrap().status == "exited" {
         return Err("Restart the editor to retry this session.".into());
     }
-    let root = runtime::root(&app)?;
     let worker = slot.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || start_server(&root, &task_id, &worker))
-            .await
-            .map_err(|error| error.to_string())?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let workspace = profile::task_workspace(&root, &task_id, &worker.folders)?;
+        let connection = worker.server.connection(&root)?;
+        Ok::<_, String>((connection, workspace))
+    })
+    .await
+    .map_err(|error| error.to_string())
+    .and_then(|result| result);
     let result = match result {
-        Ok((url, workspace, cookie)) if !slot.closed.load(Ordering::SeqCst) => view::create(
-            &app,
-            &slot.label,
-            &slot.info.lock().unwrap().task_id,
-            &url,
-            &workspace,
-            &slot.folders,
-            &cookie,
-        ),
+        Ok((connection, workspace)) if !slot.closed.load(Ordering::SeqCst) => {
+            slot.info.lock().unwrap().pid = Some(connection.pid);
+            view::create(&app, &slot, &connection, &workspace)
+        }
         Ok(_) => Err("The editor was closed during startup".into()),
         Err(error) => Err(error),
     };
@@ -286,130 +327,29 @@ pub async fn vscode_open(
         result => {
             let error = match result {
                 Ok(view) => {
-                    let _ = view.close();
+                    let _ = view.webview.close();
                     "The editor was closed during startup".to_string()
                 }
                 Err(error) => error,
             };
-            slot.terminate();
+            let cleanup = slot.terminate();
+            registry.retire_server_if_unused(&slot.server);
+            let error = cleanup
+                .err()
+                .map(|cleanup| format!("{error}. {cleanup}"))
+                .unwrap_or(error);
             slot.update(&app, "exited", Some(error.clone()));
             Err(error)
         }
     }
 }
 
-fn start_server(
-    root: &Path,
-    task_id: &str,
-    slot: &Slot,
-) -> Result<(String, PathBuf, String), String> {
-    let profile = profile::prepare(root, task_id, &slot.folders)?;
-    let log = profile.directory.join("server.log");
-    let output = File::create(&log).map_err(|error| error.to_string())?;
-    let mut command = Command::new(runtime::binary(root)?);
-    command
-        .arg("--config")
-        .arg(profile.directory.join("config.yaml"))
-        .arg("--user-data-dir")
-        .arg(profile.directory.join("data"))
-        .arg("--extensions-dir")
-        .arg(root.join("extensions"))
-        .arg(&profile.workspace)
-        .current_dir(&slot.folders[0])
-        .stdout(output.try_clone().map_err(|error| error.to_string())?)
-        .stderr(output)
-        .stdin(Stdio::null());
-    runtime::scrub_environment(&mut command);
-    command
-        .env(super::agent_alerts::TASK_ENV, task_id)
-        .env(super::agent_alerts::SURFACE_ENV, "editor");
-    {
-        let mut process = slot.process.lock().unwrap();
-        if slot.closed.load(Ordering::SeqCst) {
-            return Err("The editor was closed".into());
-        }
-        let child = OwnedProcess::spawn(&mut command)?;
-        slot.info.lock().unwrap().pid = Some(child.id());
-        *process = Some(child);
-    }
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(2))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| error.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while Instant::now() < deadline && !slot.closed.load(Ordering::SeqCst) {
-        if slot
-            .process
-            .lock()
-            .unwrap()
-            .as_mut()
-            .ok_or("Editor closed")?
-            .poll()?
-            .is_some()
-        {
-            return Err(format!(
-                "code-server exited during startup. See {}",
-                log.display()
-            ));
-        }
-        if let Some(url) = server_url(&std::fs::read_to_string(&log).unwrap_or_default()) {
-            if client
-                .get(format!("{url}/healthz"))
-                .send()
-                .is_ok_and(|response| response.status().is_success())
-            {
-                let response = client
-                    .post(format!("{url}/login"))
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .body(format!("password={}", profile.password))
-                    .send()
-                    .map_err(|error| error.to_string())?;
-                if !response.status().is_redirection() {
-                    return Err("Local editor authentication failed".into());
-                }
-                let cookie = response
-                    .headers()
-                    .get(reqwest::header::SET_COOKIE)
-                    .ok_or("The editor did not provide its session cookie")?
-                    .to_str()
-                    .map_err(|error| error.to_string())?
-                    .to_string();
-                let port = url.rsplit(':').next().ok_or("Editor port is missing")?;
-                std::fs::write(profile.directory.join("port"), port)
-                    .map_err(|error| error.to_string())?;
-                return Ok((url, profile.workspace, cookie));
-            }
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    Err(format!(
-        "Editor startup cancelled or timed out. See {}",
-        log.display()
-    ))
-}
-
-fn server_url(log: &str) -> Option<String> {
-    let suffix = log
-        .split("HTTP server listening on http://127.0.0.1:")
-        .nth(1)?;
-    let port: String = suffix.chars().take_while(char::is_ascii_digit).collect();
-    let port: u16 = port.parse().ok()?;
-    (port > 0).then(|| format!("http://127.0.0.1:{port}"))
-}
-
 fn monitor(app: AppHandle, slot: Arc<Slot>) {
     std::thread::spawn(move || {
         while !slot.closed.load(Ordering::SeqCst) {
-            let ended = slot
-                .process
-                .lock()
-                .unwrap()
-                .as_mut()
-                .map(|process| process.poll());
-            if !matches!(ended, Some(Ok(None))) {
-                slot.terminate();
+            if !slot.server.running() {
+                slot.server.stop();
+                let _ = slot.terminate();
                 if let Some(view) = app.get_webview(&slot.label) {
                     let _ = view.hide();
                 }
@@ -456,14 +396,19 @@ pub async fn vscode_close(
     if let Some(view) = app.get_webview(&slot.label) {
         view.hide().map_err(|error| error.to_string())?;
     }
+    let mut view = slot.view.lock().await;
+    if let Some(view) = view.as_ref() {
+        view.shutdown().await;
+    }
     let worker = slot.clone();
     tauri::async_runtime::spawn_blocking(move || worker.terminate())
         .await
-        .map_err(|error| error.to_string())?;
-    let mut view = slot.view.lock().await;
-    if let Some(view) = view.take() {
-        view.close().map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())??;
+    if let Some(editor) = view.as_ref() {
+        editor.webview.close().map_err(|error| error.to_string())?;
     }
+    *view = None;
+    registry.retire_server_if_unused(&slot.server);
     slot.update(&app, "closed", None);
     let mut sessions = registry.sessions.lock().unwrap();
     if sessions
@@ -491,22 +436,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_reuses_only_the_same_task_and_folders() {
+    fn tasks_share_only_their_workspace_server_and_close_independently() {
+        let root = std::env::temp_dir().join(runtime::random_id().unwrap());
         let registry = EditorRegistry::default();
-        let first = registry.reserve("a", vec!["/a".into()]).unwrap();
+        let first = registry
+            .reserve(&root, "workspace", "a", vec!["/a".into()])
+            .unwrap();
         assert!(Arc::ptr_eq(
             &first,
-            &registry.reserve("a", vec!["/a".into()]).unwrap()
+            &registry
+                .reserve(&root, "workspace", "a", vec!["/a".into()])
+                .unwrap()
         ));
-        assert!(registry.reserve("a", vec!["/b".into()]).is_err());
-        assert_ne!(
-            first.label,
-            registry.reserve("b", vec!["/b".into()]).unwrap().label
-        );
-        first.terminate();
-        assert!(registry.reserve("a", vec!["/a".into()]).is_err());
+        assert!(registry
+            .reserve(&root, "other", "a", vec!["/a".into()])
+            .is_err());
+        assert!(registry
+            .reserve(&root, "workspace", "a", vec!["/b".into()])
+            .is_err());
+        let second = registry
+            .reserve(&root, "workspace", "b", vec!["/b".into()])
+            .unwrap();
+        assert!(Arc::ptr_eq(&first.server, &second.server));
+        assert_ne!(first.label, second.label);
+        let other = registry
+            .reserve(&root, "other", "c", vec!["/c".into()])
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first.server, &other.server));
+        first.terminate().unwrap();
+        registry.retire_server_if_unused(&first.server);
+        assert!(!second.server.stopped());
+        assert!(registry
+            .reserve(&root, "workspace", "a", vec!["/a".into()])
+            .is_err());
+        second.terminate().unwrap();
+        registry.retire_server_if_unused(&second.server);
+        assert!(second.server.stopped());
+        assert!(!other.server.stopped());
+        let replacement = registry
+            .reserve(&root, "workspace", "d", vec!["/d".into()])
+            .unwrap();
+        assert!(!Arc::ptr_eq(&replacement.server, &second.server));
         registry.shutdown_all();
-        assert!(registry.reserve("c", vec!["/c".into()]).is_err());
+        assert!(replacement.server.stopped());
+        assert!(registry
+            .reserve(&root, "workspace", "e", vec!["/e".into()])
+            .is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -517,16 +493,5 @@ mod tests {
         assert!(!state.update(2, Some("a".into()), Bounds::default(), false));
         assert_eq!(state.task_id.as_deref(), Some("b"));
         assert!(state.suppressed);
-    }
-
-    #[test]
-    fn readiness_accepts_only_a_valid_loopback_listener() {
-        assert_eq!(
-            server_url("info HTTP server listening on http://127.0.0.1:52110/\n"),
-            Some("http://127.0.0.1:52110".into())
-        );
-        assert!(server_url("HTTP server listening on http://0.0.0.0:8080/").is_none());
-        assert!(server_url("HTTP server listening on http://127.0.0.1:0/").is_none());
-        assert!(server_url("HTTP server listening on http://127.0.0.1:999999/").is_none());
     }
 }

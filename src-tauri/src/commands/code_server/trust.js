@@ -77,18 +77,28 @@ function synchronizeWorkspaceTrust(config) {
       entries(value)
         .filter((entry) => entry.trusted === true && localEntry(entry))
         .map(({ uri }) => uri.path.replace(/\/+$/, "") || "/")
-        .filter((path) => path !== config.workspace)
+        .filter((path) => !generatedWorkspace(path))
     );
   }
 
-  function trustValue(paths, unrelated) {
+  function generatedWorkspace(path) {
+    const directory = config.workspace.slice(0, config.workspace.lastIndexOf("/"));
+    const sessions = directory.slice(0, directory.lastIndexOf("/")) + "/";
+    if (!path.startsWith(sessions)) return false;
+    const relative = path.slice(sessions.length).split("/");
+    return relative.length === 2 && relative[1] === "task.code-workspace";
+  }
+
+  function trustValue(paths, workspaces, unrelated) {
     const trusted = new Set(paths);
     const includes = (folder) =>
       [...trusted].some(
         (path) => folder === path || folder.startsWith(path === "/" ? "/" : `${path}/`)
       );
-    if (config.folders.length > 0 && config.folders.every(includes)) {
-      trusted.add(config.workspace);
+    for (const { workspace, folders } of workspaces) {
+      if (folders.length > 0 && folders.every(includes)) {
+        trusted.add(workspace);
+      }
     }
     return JSON.stringify({
       uriTrustInfo: [
@@ -118,6 +128,7 @@ function synchronizeWorkspaceTrust(config) {
         try {
           value = trustValue(
             snapshot.paths,
+            snapshot.workspaces ?? [{ workspace: config.workspace, folders: config.folders }],
             entries(previous.result).filter((entry) => !localEntry(entry))
           );
           put.call(store, value, trustKey);

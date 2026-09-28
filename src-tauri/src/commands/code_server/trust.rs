@@ -44,6 +44,40 @@ struct Request {
 struct Snapshot {
     revision: u64,
     paths: BTreeSet<String>,
+    workspaces: Vec<Workspace>,
+}
+
+#[derive(Serialize)]
+struct Workspace {
+    workspace: std::path::PathBuf,
+    folders: Vec<std::path::PathBuf>,
+}
+
+fn generated_workspace(root: &Path, value: &str) -> bool {
+    let path = Path::new(value);
+    path.file_name()
+        .is_some_and(|name| name == "task.code-workspace")
+        && path
+            .parent()
+            .and_then(Path::parent)
+            .is_some_and(|parent| parent == root.join("sessions"))
+}
+
+fn active_workspaces(app: &AppHandle, root: &Path) -> Vec<Workspace> {
+    app.state::<super::EditorRegistry>()
+        .sessions
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, slot)| !slot.closed.load(std::sync::atomic::Ordering::SeqCst))
+        .map(|(task, slot)| Workspace {
+            workspace: root
+                .join("sessions")
+                .join(profile::key(task))
+                .join("task.code-workspace"),
+            folders: slot.folders.clone(),
+        })
+        .collect()
 }
 
 fn validate_paths(paths: &BTreeSet<String>) -> Result<(), String> {
@@ -70,23 +104,36 @@ fn update(root: &Path, task: &str, change: Change) -> Result<Snapshot, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoredTrust::default(),
         Err(error) => return Err(error.to_string()),
     };
+    state.paths.retain(|path| !generated_workspace(root, path));
+    state
+        .removed
+        .retain(|path| !generated_workspace(root, path));
     match change {
         Change::Initialize { paths } => {
             validate_paths(&paths)?;
             if state.migrated.insert(profile::key(task)) {
-                state
-                    .paths
-                    .extend(paths.difference(&state.removed).cloned());
+                state.paths.extend(
+                    paths
+                        .difference(&state.removed)
+                        .filter(|path| !generated_workspace(root, path))
+                        .cloned(),
+                );
             }
         }
         Change::Update { added, removed } => {
             validate_paths(&added)?;
             validate_paths(&removed)?;
-            for path in removed {
+            for path in removed
+                .into_iter()
+                .filter(|path| !generated_workspace(root, path))
+            {
                 state.paths.remove(&path);
                 state.removed.insert(path);
             }
-            for path in added {
+            for path in added
+                .into_iter()
+                .filter(|path| !generated_workspace(root, path))
+            {
                 state.removed.remove(&path);
                 state.paths.insert(path);
             }
@@ -105,6 +152,7 @@ fn update(root: &Path, task: &str, change: Change) -> Result<Snapshot, String> {
     Ok(Snapshot {
         revision: state.revision,
         paths: state.paths,
+        workspaces: Vec::new(),
     })
 }
 
@@ -147,7 +195,11 @@ impl Bridge {
         let task = self.task.clone();
         let label = self.label.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            let result = runtime::root(&app).and_then(|root| update(&root, &task, request.change));
+            let result = runtime::root(&app).and_then(|root| {
+                let mut snapshot = update(&root, &task, request.change)?;
+                snapshot.workspaces = active_workspaces(&app, &root);
+                Ok(snapshot)
+            });
             let response = match &result {
                 Ok(snapshot) => {
                     json!({"id": request.id, "documentId": request.document_id, "snapshot": snapshot})
@@ -295,6 +347,53 @@ mod tests {
         });
         let reopened = update(&root, "new", Change::Initialize { paths: paths(&[]) }).unwrap();
         assert_eq!(reopened.paths, paths(&["/one", "/two", "/three"]));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn generated_workspaces_are_not_persisted_as_user_grants() {
+        let root = std::env::temp_dir().join(runtime::random_id().unwrap());
+        let generated = root
+            .join("sessions/one/task.code-workspace")
+            .to_string_lossy()
+            .into_owned();
+        let directory = root.join("preferences");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("workspace-trust.json"),
+            json!({
+                "revision": 1,
+                "paths": ["/repos", generated],
+                "removed": [],
+                "migrated": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let snapshot = update(
+            &root,
+            "new",
+            Change::Initialize {
+                paths: paths(&[&generated]),
+            },
+        )
+        .unwrap();
+        assert_eq!(snapshot.paths, paths(&["/repos"]));
+        let snapshot = update(
+            &root,
+            "new",
+            Change::Update {
+                added: paths(&[&generated]),
+                removed: paths(&["/repos"]),
+            },
+        )
+        .unwrap();
+        assert!(snapshot.paths.is_empty());
+        let stored: StoredTrust =
+            serde_json::from_slice(&fs::read(directory.join("workspace-trust.json")).unwrap())
+                .unwrap();
+        assert!(stored.paths.is_empty());
+        assert_eq!(stored.removed, paths(&["/repos"]));
         fs::remove_dir_all(root).unwrap();
     }
 

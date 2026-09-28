@@ -14,11 +14,12 @@ import { EditorInstallation } from "./EditorInstallation";
 
 interface EditorPaneProps {
   taskId: string;
+  workspaceId: string;
   folders: string[];
   onStatusChange: (status: SessionStatus) => void;
 }
 
-export function EditorPane({ taskId, folders, onStatusChange }: EditorPaneProps) {
+export function EditorPane({ taskId, workspaceId, folders, onStatusChange }: EditorPaneProps) {
   const pane = useRef<HTMLDivElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [needsInstall, setNeedsInstall] = useState(false);
@@ -91,7 +92,7 @@ export function EditorPane({ taskId, folders, onStatusChange }: EditorPaneProps)
         setNeedsInstall(true);
         return;
       }
-      const session = await editorOpen(taskId, JSON.parse(foldersKey) as string[]);
+      const session = await editorOpen(taskId, workspaceId, JSON.parse(foldersKey) as string[]);
       generation = session.generation;
       update(pending.get(session.generation) ?? session);
     })().catch((error: unknown) => {
@@ -105,7 +106,7 @@ export function EditorPane({ taskId, folders, onStatusChange }: EditorPaneProps)
       cancelled = true;
       unlisten?.();
     };
-  }, [taskId, foldersKey, attempt, onStatusChange]);
+  }, [taskId, workspaceId, foldersKey, attempt, onStatusChange]);
 
   const restart = async () => {
     try {

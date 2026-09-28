@@ -61,7 +61,9 @@ describe("EditorPane lifecycle", () => {
       message: "Checking that the editor starts correctly…",
       logs: [],
     });
-    render(<EditorPane taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />);
+    render(
+      <EditorPane workspaceId="workspace" taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />
+    );
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
         "Checking that the editor starts correctly"
@@ -72,16 +74,25 @@ describe("EditorPane lifecycle", () => {
   });
   it("opens all task folders and detaches without stopping the session", async () => {
     const status = vi.fn();
-    const view = render(<EditorPane taskId="a" folders={["/a", "/b"]} onStatusChange={status} />);
+    const view = render(
+      <EditorPane
+        workspaceId="workspace"
+        taskId="a"
+        folders={["/a", "/b"]}
+        onStatusChange={status}
+      />
+    );
     await waitFor(() => expect(status).toHaveBeenCalledWith({ kind: "running" }));
-    expect(mocks.open).toHaveBeenCalledWith("a", ["/a", "/b"]);
+    expect(mocks.open).toHaveBeenCalledWith("a", "workspace", ["/a", "/b"]);
     view.unmount();
     expect(mocks.release).toHaveBeenCalledOnce();
     expect(mocks.close).not.toHaveBeenCalled();
   });
 
   it("ignores another session's events and offers restart for the current process exit", async () => {
-    render(<EditorPane taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />);
+    render(
+      <EditorPane workspaceId="workspace" taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />
+    );
     await waitFor(() => expect(mocks.open).toHaveBeenCalledOnce());
     act(() => notify({ ...session, generation: "older", status: "exited", error: "old error" }));
     act(() => notify({ ...session, taskId: "b", status: "exited", error: "other task" }));
@@ -99,7 +110,9 @@ describe("EditorPane lifecycle", () => {
         finish = resolve;
       })
     );
-    const view = render(<EditorPane taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />);
+    const view = render(
+      <EditorPane workspaceId="workspace" taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />
+    );
     await waitFor(() => expect(mocks.probe).toHaveBeenCalled());
     view.unmount();
     await act(async () => finish({ ready: true }));
@@ -108,7 +121,9 @@ describe("EditorPane lifecycle", () => {
 
   it("installs the dependency before creating an editor session", async () => {
     mocks.probe.mockResolvedValueOnce({ ready: false });
-    render(<EditorPane taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />);
+    render(
+      <EditorPane workspaceId="workspace" taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />
+    );
     fireEvent.click(await screen.findByRole("button", { name: "Install editor" }));
     await waitFor(() => expect(mocks.open).toHaveBeenCalledOnce());
     expect(mocks.install).toHaveBeenCalledOnce();
