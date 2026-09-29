@@ -98,6 +98,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn prepares_a_reusable_copy_without_changing_the_original_runtime() {
         let root = std::env::temp_dir().join(runtime::random_id().unwrap());
         let binary = runtime::binary(&root).unwrap();

@@ -1,0 +1,15 @@
+rules:
+  - id: ts-sensitive-console-log
+    languages: [ts]
+    severity: WARNING
+    message: Possible credential written to the console. Never log tokens, API keys, secrets or passwords.
+    metadata:
+      confidence: HIGH
+    patterns:
+      - pattern: console.$METHOD(..., $ARG, ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(log|info|warn|error|debug)$
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?i)^(\w+\.)*(\w*(token|apikey|secret|password|credential)\w*)$

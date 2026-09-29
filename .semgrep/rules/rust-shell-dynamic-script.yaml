@@ -1,0 +1,25 @@
+rules:
+  - id: rust-shell-dynamic-script
+    languages: [rust]
+    severity: WARNING
+    message: A shell is invoked with a non-literal script. Quote every dynamic value and confirm the script cannot carry user-controlled input.
+    metadata:
+      confidence: HIGH
+    paths:
+      exclude:
+        - src-tauri/src/commands/shell_env.rs
+    patterns:
+      - pattern-not-inside: |
+          mod tests { ... }
+      - pattern-either:
+          - pattern: Command::new($SHELL).args([$FLAG, $SCRIPT, ...])
+          - pattern: std::process::Command::new($SHELL).args([$FLAG, $SCRIPT, ...])
+      - metavariable-regex:
+          metavariable: $SHELL
+          regex: '^"(/bin/)?(sh|bash|zsh)"$'
+      - metavariable-regex:
+          metavariable: $FLAG
+          regex: '^"-\w*c"$'
+      - metavariable-regex:
+          metavariable: $SCRIPT
+          regex: '^(?!").*'

@@ -123,8 +123,7 @@ fn open_zed(folders: &[String]) -> Result<String, String> {
             .collect::<Vec<_>>()
             .join(" ");
         let cmd = format!("{}; zed {joined}", shell_env::claude_env_prelude());
-        Command::new("/bin/zsh")
-            .args(["-lc", &cmd])
+        shell_env::login_shell(&cmd)
             .spawn()
             .map_err(|e| format!("Failed to launch Zed: {e}"))?;
         Ok(format!("Zed opened {} folder(s)", folders.len()))
