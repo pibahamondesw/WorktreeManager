@@ -7,11 +7,13 @@
 //! `skipped_*` so the caller can treat the whole thing as best-effort.
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use crate::commands::doppler::repo_uses_doppler;
 
-use crate::commands::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
+use crate::commands::shell_env::{
+    claude_env_prelude, cli_available, login_shell, shell_single_quoted,
+};
 
 #[derive(serde::Serialize)]
 pub struct InstallDepsResult {
@@ -64,7 +66,7 @@ fn tail(s: &str, max_chars: usize) -> &str {
 pub async fn install_node_deps(worktree_path: String) -> Result<InstallDepsResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_install(&worktree_path, cli_available, |script| {
-            Command::new("/bin/zsh").args(["-lc", script]).output()
+            login_shell(script).output()
         })
     })
     .await

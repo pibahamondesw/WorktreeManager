@@ -12,12 +12,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 
 static DOPPLER_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
-use crate::commands::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
+use crate::commands::shell_env::{
+    claude_env_prelude, cli_available, login_shell, shell_single_quoted,
+};
 
 #[derive(serde::Serialize)]
 pub struct DopplerSetupResult {
@@ -110,8 +111,7 @@ fn doppler_setup_blocking(worktree_path: String) -> Result<DopplerSetupResult, S
         shell_single_quoted(&worktree_path)
     );
 
-    let output = Command::new("/bin/zsh")
-        .args(["-lc", &shell_cmd])
+    let output = login_shell(&shell_cmd)
         .output()
         .map_err(|e| format!("Failed to run doppler setup: {e}"))?;
 
@@ -185,8 +185,7 @@ fn doppler_cleanup_blocking(paths: Vec<String>) -> Result<Vec<String>, String> {
             SCOPED_OPTIONS.join(" "),
             shell_single_quoted(&path)
         );
-        let ok = Command::new("/bin/zsh")
-            .args(["-lc", &shell_cmd])
+        let ok = login_shell(&shell_cmd)
             .output()
             .is_ok_and(|out| out.status.success());
         if ok {

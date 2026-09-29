@@ -1,7 +1,9 @@
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
-use crate::commands::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
+use crate::commands::shell_env::{
+    claude_env_prelude, cli_available, login_shell, shell_single_quoted,
+};
 
 #[derive(Debug, serde::Serialize)]
 pub struct InstallPythonDepsResult {
@@ -65,7 +67,7 @@ fn setup_script(worktree_path: &str, command: &str) -> String {
 }
 
 fn run_zsh(script: &str) -> std::io::Result<Output> {
-    Command::new("/bin/zsh").args(["-lc", script]).output()
+    login_shell(script).output()
 }
 
 fn detect_setup(root: &Path) -> Option<PythonSetup> {
@@ -187,6 +189,7 @@ mod tests {
     use std::fs;
     use std::os::unix::process::ExitStatusExt;
     use std::path::PathBuf;
+    use std::process::Command;
 
     fn temp_root(name: &str, files: &[&str]) -> PathBuf {
         let root =

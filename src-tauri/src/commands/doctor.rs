@@ -12,12 +12,11 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 use crate::commands::doppler::repo_uses_doppler;
 use crate::commands::editor::gui_app_exists;
 use crate::commands::node_deps::detect_package_manager;
-use crate::commands::shell_env::claude_env_prelude;
+use crate::commands::shell_env::{claude_env_prelude, login_shell};
 
 #[derive(serde::Serialize)]
 pub struct CliProbe {
@@ -136,7 +135,7 @@ fn probe_clis(names: &[String]) -> Vec<CliProbe> {
         HashMap::new()
     } else {
         let script = probe_script(&safe);
-        match Command::new("/bin/zsh").args(["-lc", &script]).output() {
+        match login_shell(&script).output() {
             Ok(output) => parse_probe_output(&String::from_utf8_lossy(&output.stdout)),
             Err(e) => {
                 eprintln!("WorktreeManager: doctor CLI probe failed: {e}");

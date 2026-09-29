@@ -28,11 +28,22 @@ pub(crate) fn shell_single_quoted(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Login zsh running `script`. Every value interpolated into `script` must be a literal, validated,
+/// or passed through `shell_single_quoted`.
+pub(crate) fn login_shell(script: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("/bin/zsh");
+    command.args(["-lc", script]);
+    command
+}
+
 /// True if `bin` resolves after the same PATH/profile prelude as launch scripts.
 pub fn cli_available(bin: &str) -> bool {
-    let probe = format!("{}; command -v {bin}", claude_env_prelude());
-    std::process::Command::new("/bin/zsh")
-        .args(["-lc", &probe])
+    let probe = format!(
+        "{}; command -v {}",
+        claude_env_prelude(),
+        shell_single_quoted(bin)
+    );
+    login_shell(&probe)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
