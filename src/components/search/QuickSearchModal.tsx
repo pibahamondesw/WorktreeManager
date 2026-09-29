@@ -1,3 +1,4 @@
+import { useSearchPrNumbers } from "../../hooks/useSearchPrNumbers";
 import { ProjectFilter } from "../ui/ProjectFilter";
 import { matchesProject } from "../../search/projects";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -76,9 +77,11 @@ export function QuickSearchModal({
   useEditorOcclusion(open);
   const [openedWith, setOpenedWith] = useState({ open, activities: agentActivities });
   if (openedWith.open !== open) setOpenedWith({ open, activities: agentActivities });
+  const prNumbersByTask = useSearchPrNumbers(open, tasks, workspaces);
   const [project, setProject] = useState("");
   const [query, setQuery] = useState(initialQuery);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [ring, setRing] = useState<{ index: number; nonce: number }>();
   const { toast, showToast } = useEphemeralToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -118,6 +121,7 @@ export function QuickSearchModal({
             workspaces,
             selectedWorkspaceId,
             query,
+            prNumbersByTask,
             lastVisitAt,
             agentSessions,
             agentActivities: openedWith.activities,
@@ -131,6 +135,7 @@ export function QuickSearchModal({
       selectedWorkspaceId,
       query,
       project,
+      prNumbersByTask,
       lastVisitAt,
       agentSessions,
       openedWith.activities,
@@ -145,6 +150,32 @@ export function QuickSearchModal({
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, results]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleTaskShortcut = (event: KeyboardEvent) => {
+      if (
+        !/^[0-9]$/.test(event.key) ||
+        !event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      )
+        return;
+      const taskIndexes = results
+        .map((result, index) => (result.kind === "task" ? index : -1))
+        .filter((index) => index >= 0);
+      const resultIndex = taskIndexes[Number(event.key)];
+      if (resultIndex === undefined) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveIndex(resultIndex);
+      setRing((current) => ({ index: resultIndex, nonce: (current?.nonce ?? 0) + 1 }));
+      inputRef.current?.focus();
+    };
+    window.addEventListener("keydown", handleTaskShortcut, true);
+    return () => window.removeEventListener("keydown", handleTaskShortcut, true);
+  }, [open, results]);
 
   if (!open) return null;
 
@@ -204,14 +235,6 @@ export function QuickSearchModal({
     if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
       e.preventDefault();
       setActiveIndex((i) => Math.max(i - 1, 0));
-      return;
-    }
-    if (/^[0-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey && bareShortcutsEnabled) {
-      const resultIndex = taskResultIndexes[Number(e.key)];
-      if (resultIndex !== undefined) {
-        e.preventDefault();
-        setActiveIndex(resultIndex);
-      }
       return;
     }
     const shortcutCommand = results.find(
@@ -317,12 +340,13 @@ export function QuickSearchModal({
             emptyMessage={emptyMessage}
             onHover={setActiveIndex}
             onActivate={activate}
+            ring={ring}
           />
         </div>
 
         <div className="flex-shrink-0 px-4 py-2 border-t border-border flex items-center gap-3 text-[0.625rem] text-text-muted font-mono flex-wrap">
           <Hint keys="↑↓">navigate</Hint>
-          {taskCount > 0 && <Hint keys="0-9">jump</Hint>}
+          {taskCount > 0 && <Hint keys="⌘0-9">jump</Hint>}
           <Hint keys="↵">{active?.kind === "command" ? "run" : "open"}</Hint>
           {active?.kind === "task" && (
             <>
