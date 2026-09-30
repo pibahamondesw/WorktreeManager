@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { WorktreeList } from "./WorktreeList";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { Task } from "../../types";
 import { DeleteOptions } from "../../services/operations";
 
@@ -22,7 +22,9 @@ vi.mock("../../hooks/useRepoSlugs", () => ({ useRepoSlugs: () => ({}) }));
 vi.mock("../../hooks/useWorktreeListKeyboardShortcuts", () => ({
   useWorktreeListKeyboardShortcuts: vi.fn(),
 }));
-vi.mock("./WorktreeListHeader", () => ({ WorktreeListHeader: () => null }));
+vi.mock("./WorktreeListHeader", () => ({
+  WorktreeListHeader: ({ projectFilter }: { projectFilter?: ReactNode }) => projectFilter,
+}));
 vi.mock("./NewWorktreeModal", () => ({ NewWorktreeModal: () => null }));
 vi.mock("../task/TaskView", () => ({ TaskView: () => null }));
 vi.mock("./WorktreeCard", () => ({
