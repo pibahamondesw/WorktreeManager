@@ -33,6 +33,7 @@ pub enum ItemKind {
     Tool,
     Error,
     Notice,
+    Review,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -181,6 +182,7 @@ pub enum CommandAction {
     Effort,
     Mode { mode: String },
     Compact,
+    Review,
     Clear,
 }
 
@@ -256,6 +258,15 @@ pub enum ChatSetting {
     Model(String),
     Effort(String),
     Mode(String),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ReviewTarget {
+    UncommittedChanges,
+    BaseBranch { branch: String },
+    Commit { sha: String, title: Option<String> },
+    Custom { instructions: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -428,6 +439,9 @@ pub trait ChatProvider: Send {
     fn interrupt(&mut self, out: &mut ProviderOutput);
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String>;
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
+    fn review(&mut self, _target: &ReviewTarget, _out: &mut ProviderOutput) -> Result<(), String> {
+        Err("This agent has no native review; send /review as a message".into())
+    }
     fn respond(
         &mut self,
         request_id: &str,

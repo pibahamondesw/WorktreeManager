@@ -91,6 +91,7 @@ pub fn run() {
                 commands::chat::chat_interrupt,
                 commands::chat::chat_configure,
                 commands::chat::chat_compact,
+                commands::chat::chat_review,
                 commands::chat::chat_file_search,
                 commands::chat::chat_respond,
                 commands::chat::chat_detach,

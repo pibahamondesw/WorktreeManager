@@ -124,6 +124,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
             interrupt: session.interrupt,
             configure: session.configure,
             compact: session.compact,
+            review: session.review,
             startFresh: session.startFresh,
           }}
           onError={setActionError}

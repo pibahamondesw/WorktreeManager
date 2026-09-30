@@ -17,7 +17,8 @@ export type ChatItemKind =
   | "fileChange"
   | "tool"
   | "error"
-  | "notice";
+  | "notice"
+  | "review";
 
 export interface ChatItem {
   id: string;
@@ -74,6 +75,7 @@ export type CommandAction =
   | { kind: "effort" }
   | { kind: "mode"; mode: string }
   | { kind: "compact" }
+  | { kind: "review" }
   | { kind: "clear" };
 
 export interface CommandOption {
@@ -223,6 +225,15 @@ export const chatConfigure = (taskId: string, agent: AgentId, setting: ChatSetti
 
 export const chatCompact = (taskId: string, agent: AgentId) =>
   invoke<void>("chat_compact", { taskId, agent });
+
+export type ReviewTarget =
+  | { type: "uncommittedChanges" }
+  | { type: "baseBranch"; branch: string }
+  | { type: "commit"; sha: string; title: null }
+  | { type: "custom"; instructions: string };
+
+export const chatReview = (taskId: string, agent: AgentId, target: ReviewTarget) =>
+  invoke<void>("chat_review", { taskId, agent, target });
 
 export const chatFileSearch = (folders: string[], query: string) =>
   invoke<FileMatch[]>("chat_file_search", { folders, query });

@@ -1,4 +1,4 @@
-import { ChatControls, CommandOption, effortsFor } from "../../services/chat";
+import { ChatControls, CommandOption, effortsFor, ReviewTarget } from "../../services/chat";
 
 export type MenuTrigger =
   | { kind: "slash"; query: string }
@@ -40,13 +40,45 @@ export type LocalCommand =
   | { kind: "configure"; setting: "model" | "effort" | "mode"; value: string }
   | { kind: "picker"; picker: "model" | "effort" | "mode" }
   | { kind: "compact" }
+  | { kind: "review"; target: ReviewTarget }
+  | { kind: "reviewPicker" }
   | { kind: "clear" };
+
+export const REVIEW_CHOICES = [
+  {
+    id: "uncommitted",
+    label: "Uncommitted changes",
+    description: "Staged, unstaged and untracked files",
+  },
+  { id: "branch", label: "Against a base branch", description: "Type the branch, e.g. main" },
+  { id: "commit", label: "A commit", description: "Type the commit SHA" },
+  { id: "custom", label: "Custom instructions", description: "Describe what to review" },
+];
+
+/** `/review uncommitted`, `/review branch main`, `/review commit <sha>`, `/review custom <text>`. */
+export function reviewTarget(argument: string): ReviewTarget | null {
+  const match = /^(\S+)\s*([\s\S]*)$/.exec(argument.trim());
+  if (!match) return null;
+  const [, choice, rest] = match;
+  const value = rest.trim();
+  if (choice === "uncommitted" && !value) return { type: "uncommittedChanges" };
+  if (!value) return null;
+  if (choice === "branch" && !/\s/.test(value)) return { type: "baseBranch", branch: value };
+  if (choice === "commit" && !/\s/.test(value)) return { type: "commit", sha: value, title: null };
+  if (choice === "custom") return { type: "custom", instructions: value };
+  return null;
+}
 
 /**
  * A submitted message that the chat handles itself instead of sending: `/model sonnet`,
  * `/effort high`, `/plan`, `/compact`, `/clear`. Unknown arguments open the picker.
  */
 export function localCommand(text: string, controls: ChatControls): LocalCommand | null {
+  const review = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  if (review && controls.commands.find((c) => c.name === review[1])?.action.kind === "review") {
+    const target = reviewTarget(review[2] ?? "");
+    return target ? { kind: "review", target } : { kind: "reviewPicker" };
+  }
   const match = /^\/(\S+)(?:\s+(\S+))?\s*$/.exec(text.trim());
   if (!match) return null;
   const [, name, argument] = match;
@@ -66,6 +98,8 @@ export function localCommand(text: string, controls: ChatControls): LocalCommand
       return { kind: "configure", setting: "mode", value: action.mode };
     case "compact":
       return { kind: "compact" };
+    case "review":
+      return { kind: "reviewPicker" };
     case "clear":
       return { kind: "clear" };
     case "insert":

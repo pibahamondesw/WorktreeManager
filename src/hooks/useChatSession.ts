@@ -4,6 +4,7 @@ import {
   ChatImage,
   applyChatEvent,
   chatCompact,
+  chatReview,
   chatConfigure,
   chatDetach,
   chatInterrupt,
@@ -11,6 +12,7 @@ import {
   chatRespond,
   chatSend,
   ChatResponse,
+  ReviewTarget,
   ChatSetting,
   ChatSnapshot,
   EMPTY_CONTROLS,
@@ -89,6 +91,10 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     [taskId, agent]
   );
   const compact = useCallback(() => chatCompact(taskId, agent), [taskId, agent]);
+  const review = useCallback(
+    (target: ReviewTarget) => chatReview(taskId, agent, target),
+    [taskId, agent]
+  );
   const send = useCallback(
     (text: string, images: ChatImage[]) => chatSend(taskId, agent, text, images),
     [taskId, agent]
@@ -109,5 +115,6 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     respond,
     configure,
     compact,
+    review,
   };
 }
