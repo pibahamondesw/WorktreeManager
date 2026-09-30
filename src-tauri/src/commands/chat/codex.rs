@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use super::model::*;
 
 const UNSUPPORTED: i64 = -32601;
+const REVIEW_UNSUPPORTED: &str = "This Codex version doesn't support /review; update codex-cli";
 const ALWAYS_ALLOW_COMMAND: &str = "acceptWithExecpolicyAmendment";
 
 fn base_commands() -> Vec<CommandOption> {
@@ -45,6 +46,7 @@ enum Call {
     Resume,
     Start,
     Turn,
+    Review,
     Models,
     Config,
     Skills,
@@ -369,7 +371,13 @@ impl CodexProvider {
         let Some(call) = self.calls.remove(&id) else {
             return;
         };
-        let error = message["error"]["message"].as_str();
+        let review_unsupported =
+            matches!(call, Call::Review) && message["error"]["code"].as_i64() == Some(UNSUPPORTED);
+        let error = if review_unsupported {
+            Some(REVIEW_UNSUPPORTED)
+        } else {
+            message["error"]["message"].as_str()
+        };
         let result = &message["result"];
         match call {
             Call::Initialize => match error {
@@ -436,7 +444,7 @@ impl CodexProvider {
                     self.adopt_thread(&result["thread"], out);
                 }
             },
-            Call::Turn => match error {
+            Call::Turn | Call::Review => match error {
                 Some(error) => {
                     let item = self.error_item(error);
                     out.upsert(item);
@@ -820,7 +828,7 @@ impl ChatProvider for CodexProvider {
         }
         self.call(
             out,
-            Call::Turn,
+            Call::Review,
             "review/start",
             json!({ "threadId": thread_id, "target": target, "delivery": "inline" }),
         );
@@ -1856,6 +1864,31 @@ mod tests {
         let review = snapshot.items.iter().find(|i| i.id == "r1").unwrap();
         assert_eq!(review.kind, ItemKind::Review);
         assert_eq!(review.text, "No issues found.");
+    }
+
+    #[test]
+    fn a_failed_review_returns_to_idle_and_explains_old_codex_versions() {
+        let (mut provider, mut snapshot) = resumed();
+        let mut out = ProviderOutput::default();
+        provider
+            .review(&ReviewTarget::UncommittedChanges, &mut out)
+            .unwrap();
+        let id = request(&out, "review/start")["id"].clone();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": id, "error": { "code": UNSUPPORTED, "message": "method not found" } }),
+        );
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        let error = snapshot
+            .items
+            .iter()
+            .rfind(|i| i.kind == ItemKind::Error)
+            .unwrap();
+        assert_eq!(error.text, REVIEW_UNSUPPORTED);
+        assert!(provider
+            .review(&ReviewTarget::UncommittedChanges, &mut out)
+            .is_ok());
     }
 
     #[test]
