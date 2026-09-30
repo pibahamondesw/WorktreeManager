@@ -478,6 +478,7 @@ describe("ChatPane", () => {
     fireEvent.submit(name.closest("form")!);
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_session_rename", {
+        taskId: "t1",
         agent: "claude",
         folders: ["/wt/a"],
         id: "c0",

@@ -234,11 +234,16 @@ export interface ChatSessionList {
 export const chatSessions = (taskId: string, agent: AgentId, folders: string[]) =>
   invoke<ChatSessionList>("chat_sessions", { taskId, agent, folders });
 
-export const chatSessionRename = (agent: AgentId, folders: string[], id: string, title: string) =>
-  invoke<void>("chat_session_rename", { agent, folders, id, title });
+export const chatSessionRename = (
+  taskId: string,
+  agent: AgentId,
+  folders: string[],
+  id: string,
+  title: string
+) => invoke<void>("chat_session_rename", { taskId, agent, folders, id, title });
 
-export const chatSessionArchive = (agent: AgentId, folders: string[], id: string) =>
-  invoke<void>("chat_session_archive", { agent, folders, id });
+export const chatSessionArchive = (taskId: string, agent: AgentId, folders: string[], id: string) =>
+  invoke<void>("chat_session_archive", { taskId, agent, folders, id });
 
 export const chatSend = (taskId: string, agent: AgentId, text: string, images: ChatImage[] = []) =>
   invoke<void>("chat_send", { taskId, agent, text, images });

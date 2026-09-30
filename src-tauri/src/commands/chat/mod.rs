@@ -389,6 +389,7 @@ fn launch(
     cwd: &str,
     extra_dirs: Vec<String>,
     resume: Option<String>,
+    pinned: bool,
 ) -> Result<Launch, String> {
     match agent {
         "codex" => {
@@ -397,11 +398,14 @@ fn launch(
             }
             Ok(Launch {
                 command: login_shell(cwd, "codex", &["app-server".to_string()]),
-                provider: Box::new(codex::CodexProvider::new(
-                    cwd.to_string(),
-                    extra_dirs,
-                    resume,
-                )),
+                provider: Box::new({
+                    let provider = codex::CodexProvider::new(cwd.to_string(), extra_dirs, resume);
+                    if pinned {
+                        provider.pinned()
+                    } else {
+                        provider
+                    }
+                }),
                 history: Vec::new(),
             })
         }
@@ -409,7 +413,7 @@ fn launch(
             if !cli_available("claude") {
                 return Err("claude CLI not found on PATH (see Doctor)".into());
             }
-            let resume = resume.filter(|id| claude::session_exists(cwd, id));
+            let resume = claude_resume(resume, pinned, |id| claude::session_exists(cwd, id))?;
             let history = resume
                 .as_deref()
                 .map(|id| claude::history(cwd, id))
@@ -428,6 +432,17 @@ fn launch(
             })
         }
         other => Err(format!("Unknown agent: {other}")),
+    }
+}
+
+fn claude_resume(
+    resume: Option<String>,
+    pinned: bool,
+    exists: impl Fn(&str) -> bool,
+) -> Result<Option<String>, String> {
+    match resume {
+        Some(id) if !exists(&id) && pinned => Err("That conversation no longer exists".into()),
+        resume => Ok(resume.filter(|id| exists(id))),
     }
 }
 
@@ -475,6 +490,7 @@ pub async fn chat_open(
     let cwd = canonical_folders.next().ok_or("No folders for this task")?;
     let extra_dirs: Vec<String> = canonical_folders.collect();
     let store = Arc::new(conversation_store(&app)?);
+    let pinned = mode != OpenMode::Fresh && conversation.is_some();
     let resume = match (mode, conversation) {
         (OpenMode::Fresh, _) => None,
         (_, Some(conversation)) => Some(conversation),
@@ -488,7 +504,7 @@ pub async fn chat_open(
         provider,
         history,
     } = tauri::async_runtime::spawn_blocking(move || {
-        launch(&launch_agent, &launch_cwd, extra_dirs, resume)
+        launch(&launch_agent, &launch_cwd, extra_dirs, resume, pinned)
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))??;
@@ -667,24 +683,52 @@ pub async fn chat_sessions(
     blocking(move || sessions::list(&agent, &cwd, current.as_deref())).await
 }
 
+/// A live session owns its transcript, so it is renamed through its own process rather than by
+/// resuming the same conversation concurrently.
 #[tauri::command]
 pub async fn chat_session_rename(
+    app: AppHandle,
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
     agent: String,
     folders: Vec<String>,
     id: String,
     title: String,
 ) -> Result<(), String> {
     let cwd = primary_folder(&folders)?;
+    let current = conversation_store(&app)?.get(&task_id, &agent, &cwd);
+    if agent == "claude" && current.as_deref() == Some(id.as_str()) {
+        let live = registry
+            .with_session(&task_id, &agent, |session| {
+                if !session.status().is_live() {
+                    return Err("not live".to_string());
+                }
+                session.with_provider(|provider, _, out| provider.rename(title.trim(), out))
+            })
+            .is_ok();
+        if live {
+            return Ok(());
+        }
+    }
     blocking(move || sessions::rename(&agent, &cwd, &id, &title)).await
 }
 
 #[tauri::command]
 pub async fn chat_session_archive(
+    app: AppHandle,
+    task_id: String,
     agent: String,
     folders: Vec<String>,
     id: String,
 ) -> Result<(), String> {
     let cwd = primary_folder(&folders)?;
+    if conversation_store(&app)?
+        .get(&task_id, &agent, &cwd)
+        .as_deref()
+        == Some(id.as_str())
+    {
+        return Err("The current conversation cannot be archived".into());
+    }
     blocking(move || sessions::archive(&agent, &cwd, &id)).await
 }
 
@@ -970,6 +1014,17 @@ mod tests {
             .is_ok());
         drop(held);
         assert!(registry.open_lock(&key).try_lock().is_ok());
+    }
+
+    #[test]
+    fn picked_claude_conversation_must_exist() {
+        let exists = |id: &str| id == "known";
+        assert!(claude_resume(Some("gone".into()), true, exists).is_err());
+        assert_eq!(claude_resume(Some("gone".into()), false, exists), Ok(None));
+        assert_eq!(
+            claude_resume(Some("known".into()), true, exists),
+            Ok(Some("known".into()))
+        );
     }
 
     #[test]

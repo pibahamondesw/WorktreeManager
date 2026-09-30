@@ -76,7 +76,7 @@ export function SessionList({
     if (!renaming) return;
     const { id, title } = renaming;
     setRenaming(null);
-    void act(() => chatSessionRename(agent, folders, id, title));
+    void act(() => chatSessionRename(taskId, agent, folders, id, title));
   };
 
   const row = (session: ChatSessionSummary) => (
@@ -130,7 +130,7 @@ export function SessionList({
               variant="ghost"
               className="h-7 px-2 text-xs"
               disabled={busy}
-              onClick={() => void act(() => chatSessionArchive(agent, folders, session.id))}
+              onClick={() => void act(() => chatSessionArchive(taskId, agent, folders, session.id))}
             >
               Archive
             </Button>

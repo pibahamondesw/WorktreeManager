@@ -7,7 +7,8 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -257,19 +258,35 @@ fn rename_reply(message: &Value) -> Option<Result<Value, String>> {
     })
 }
 
-/// Whether the installed Claude Code accepts `rename_session`; probed once on a throwaway session
-/// that never sends a message, so it neither calls the model nor writes a transcript.
-fn claude_can_rename(cwd: &str) -> bool {
-    static SUPPORTED: OnceLock<bool> = OnceLock::new();
-    *SUPPORTED.get_or_init(|| {
-        let probe = uuid::Uuid::new_v4().to_string();
-        exchange(
-            claude_headless(cwd, &["--session-id", &probe]),
-            &rename_lines("probe"),
-            rename_reply,
-        )
-        .is_ok()
-    })
+/// Whether the installed Claude Code accepts `rename_session`, probed on a throwaway session in a
+/// scratch directory that never sends a message. Only success is cached, so a timeout retries.
+fn claude_can_rename() -> bool {
+    static SUPPORTED: AtomicBool = AtomicBool::new(false);
+    if SUPPORTED.load(Ordering::Relaxed) {
+        return true;
+    }
+    let scratch = std::env::temp_dir().join(format!("wm-claude-probe-{}", uuid::Uuid::new_v4()));
+    if fs::create_dir_all(&scratch).is_err() {
+        return false;
+    }
+    let cwd = fs::canonicalize(&scratch).unwrap_or(scratch.clone());
+    let cwd = cwd.to_string_lossy();
+    let probe = uuid::Uuid::new_v4().to_string();
+    let supported = exchange(
+        claude_headless(&cwd, &["--session-id", &probe]),
+        &rename_lines("probe"),
+        rename_reply,
+    )
+    .is_ok();
+    if let Some(dir) = projects_dir(&cwd) {
+        let _ = fs::remove_file(dir.join(format!("{probe}.jsonl")));
+        let _ = fs::remove_dir(dir);
+    }
+    let _ = fs::remove_dir_all(&scratch);
+    if supported {
+        SUPPORTED.store(true, Ordering::Relaxed);
+    }
+    supported
 }
 
 pub fn list(agent: &str, cwd: &str, current: Option<&str>) -> Result<SessionList, String> {
@@ -290,7 +307,7 @@ pub fn list(agent: &str, cwd: &str, current: Option<&str>) -> Result<SessionList
             sessions: projects_dir(cwd)
                 .map(|dir| claude_sessions(&dir, current))
                 .unwrap_or_default(),
-            can_rename: claude_can_rename(cwd),
+            can_rename: claude_can_rename(),
             can_archive: false,
         }),
         other => Err(format!("Unknown agent: {other}")),
