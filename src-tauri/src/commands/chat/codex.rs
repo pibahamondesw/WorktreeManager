@@ -74,6 +74,7 @@ pub struct CodexProvider {
     skills: HashMap<String, String>,
     config_approval: Option<Value>,
     config_reviewer: Option<Value>,
+    config_sandbox: Option<Value>,
 }
 
 impl CodexProvider {
@@ -92,6 +93,16 @@ impl CodexProvider {
             controls: ChatControls {
                 modes: vec![
                     ModeOption::new(
+                        "auto",
+                        "Approve for me",
+                        "Codex reviews eligible approvals automatically; applies on the next turn",
+                    ),
+                    ModeOption::new(
+                        "full",
+                        "Full access",
+                        "Codex runs without sandbox restrictions or approval prompts; applies on the next turn",
+                    ),
+                    ModeOption::new(
                         "default",
                         "Config default",
                         "Approvals follow your Codex config",
@@ -103,13 +114,14 @@ impl CodexProvider {
                     ),
                     ModeOption::new("plan", "Plan", "Codex plans with you before changing files"),
                 ],
-                mode: Some("default".into()),
+                mode: Some("auto".into()),
                 commands: base_commands(),
                 ..Default::default()
             },
             skills: HashMap::new(),
             config_approval: None,
             config_reviewer: None,
+            config_sandbox: None,
         }
     }
 
@@ -133,16 +145,24 @@ impl CodexProvider {
         if let Some(effort) = &controls.effort {
             params.insert("effort".into(), json!(effort));
         }
-        let (approval, reviewer) = if controls.mode.as_deref() == Some("ask") {
-            (json!("on-request"), json!("user"))
-        } else {
-            (
+        let workspace = json!({ "type": "workspaceWrite", "writableRoots": self.extra_dirs });
+        let (approval, reviewer, sandbox) = match controls.mode.as_deref() {
+            Some("ask") => (json!("on-request"), json!("user"), workspace),
+            Some("full") => (
+                json!("never"),
+                json!("user"),
+                json!({ "type": "dangerFullAccess" }),
+            ),
+            Some("default") => (
                 self.config_approval.clone().unwrap_or(json!("on-request")),
                 self.config_reviewer.clone().unwrap_or(json!("user")),
-            )
+                self.config_sandbox.clone().unwrap_or(workspace),
+            ),
+            _ => (json!("on-request"), json!("auto_review"), workspace),
         };
         params.insert("approvalPolicy".into(), approval);
         params.insert("approvalsReviewer".into(), reviewer);
+        params.insert("sandboxPolicy".into(), sandbox);
         params
     }
 
@@ -381,14 +401,20 @@ impl CodexProvider {
                     });
                     self.start_thread(out);
                 }
-                None => self.adopt_thread(&result["thread"], out),
+                None => {
+                    self.config_sandbox = Some(result["sandbox"].clone()).filter(|v| !v.is_null());
+                    self.adopt_thread(&result["thread"], out);
+                }
             },
             Call::Start => match error {
                 Some(error) => fail(
                     out,
                     format!("Could not start a Codex conversation: {error}"),
                 ),
-                None => self.adopt_thread(&result["thread"], out),
+                None => {
+                    self.config_sandbox = Some(result["sandbox"].clone()).filter(|v| !v.is_null());
+                    self.adopt_thread(&result["thread"], out);
+                }
             },
             Call::Turn => match error {
                 Some(error) => {
@@ -1470,6 +1496,67 @@ mod tests {
             turn["collaborationMode"]["settings"]["reasoning_effort"],
             "low"
         );
+    }
+
+    #[test]
+    fn permission_modes_override_and_restore_the_sandbox_on_each_turn() {
+        let (mut provider, mut snapshot) = resumed();
+        assert_eq!(provider.controls.mode.as_deref(), Some("auto"));
+        let configured_sandbox = json!({ "type": "readOnly", "networkAccess": false });
+        provider.config_sandbox = Some(configured_sandbox.clone());
+        provider.adopt_config(&json!({ "config": {
+            "approval_policy": "untrusted", "approvals_reviewer": "user"
+        }}));
+        for (mode, approval, reviewer, sandbox) in [
+            (
+                "auto",
+                "on-request",
+                "auto_review",
+                json!({ "type": "workspaceWrite", "writableRoots": ["/wt/b"] }),
+            ),
+            (
+                "full",
+                "never",
+                "user",
+                json!({ "type": "dangerFullAccess" }),
+            ),
+            (
+                "ask",
+                "on-request",
+                "user",
+                json!({ "type": "workspaceWrite", "writableRoots": ["/wt/b"] }),
+            ),
+            (
+                "full",
+                "never",
+                "user",
+                json!({ "type": "dangerFullAccess" }),
+            ),
+            ("default", "untrusted", "user", configured_sandbox),
+            (
+                "plan",
+                "on-request",
+                "auto_review",
+                json!({ "type": "workspaceWrite", "writableRoots": ["/wt/b"] }),
+            ),
+        ] {
+            let mut out = ProviderOutput::default();
+            provider
+                .configure(&ChatSetting::Mode(mode.into()), &mut out)
+                .unwrap();
+            provider.send("go", &mut out).unwrap();
+            let params = &request(&out, "turn/start")["params"];
+            assert_eq!(params["approvalPolicy"], approval, "{mode}");
+            assert_eq!(params["approvalsReviewer"], reviewer, "{mode}");
+            assert_eq!(params["sandboxPolicy"], sandbox, "{mode}");
+            feed(
+                &mut provider,
+                &mut snapshot,
+                json!({
+                    "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t1" } }
+                }),
+            );
+        }
     }
 
     #[test]

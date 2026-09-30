@@ -19,6 +19,7 @@ const EXIT_PLAN_TOOL: &str = "ExitPlanMode";
 enum Control {
     Initialize,
     Settings,
+    Mode(String),
     ContextUsage,
     Ignore,
 }
@@ -50,6 +51,9 @@ pub fn launch_args(session_id: &str, resume: bool, extra_dirs: &[String]) -> Vec
         "--include-partial-messages",
         "--permission-prompt-tool",
         "stdio",
+        "--permission-mode",
+        "auto",
+        "--allow-dangerously-skip-permissions",
     ]
     .iter()
     .map(|arg| arg.to_string())
@@ -97,6 +101,13 @@ impl ClaudeProvider {
             return;
         };
         if response["subtype"] != "success" {
+            if let Control::Mode(_) = call {
+                let message = response["error"]
+                    .as_str()
+                    .unwrap_or("Could not change permission mode");
+                let item = self.error_item(message);
+                out.upsert(item);
+            }
             return;
         }
         let body = &response["response"];
@@ -167,6 +178,10 @@ impl ClaudeProvider {
                     self.controls.context = Some(ContextUsage { used, max });
                     out.controls(&self.controls);
                 }
+            }
+            Control::Mode(mode) => {
+                self.select_mode(&mode);
+                out.controls(&self.controls);
             }
             Control::Ignore => {}
         }
@@ -485,10 +500,9 @@ impl ChatProvider for ClaudeProvider {
                 }
                 self.control(
                     out,
-                    Control::Ignore,
+                    Control::Mode(mode.clone()),
                     json!({ "subtype": "set_permission_mode", "mode": mode }),
                 );
-                self.controls.mode = Some(mode.clone());
             }
         }
         out.controls(&self.controls);
@@ -562,7 +576,7 @@ fn permission_modes(auto: bool) -> Vec<ModeOption> {
     let mut modes = vec![
         ModeOption::new(
             "default",
-            "Ask before edits",
+            "Manual",
             "Claude asks before editing files or running commands",
         ),
         ModeOption::new(
@@ -574,6 +588,11 @@ fn permission_modes(auto: bool) -> Vec<ModeOption> {
             "plan",
             "Plan",
             "Claude explores and proposes a plan without changing files",
+        ),
+        ModeOption::new(
+            "bypassPermissions",
+            "Bypass permissions",
+            "Claude runs without permission prompts",
         ),
     ];
     if auto {
@@ -916,12 +935,18 @@ mod tests {
         let fresh = launch_args("s1", false, &["/wt/b".into()]);
         assert!(fresh.windows(2).any(|w| w == ["--session-id", "s1"]));
         assert!(fresh.windows(2).any(|w| w == ["--add-dir", "/wt/b"]));
+        assert!(fresh.windows(2).any(|w| w == ["--permission-mode", "auto"]));
+        assert!(fresh.contains(&"--allow-dangerously-skip-permissions".to_string()));
         assert!(fresh
             .windows(2)
             .any(|w| w == ["--permission-prompt-tool", "stdio"]));
         let resumed = launch_args("s1", true, &[]);
         assert!(resumed.windows(2).any(|w| w == ["--resume", "s1"]));
         assert!(!resumed.contains(&"--session-id".to_string()));
+        assert!(resumed
+            .windows(2)
+            .any(|w| w == ["--permission-mode", "auto"]));
+        assert!(resumed.contains(&"--allow-dangerously-skip-permissions".to_string()));
     }
 
     #[test]
@@ -1239,8 +1264,11 @@ mod tests {
         provider
             .configure(&ChatSetting::Mode("plan".into()), &mut out)
             .unwrap();
-        assert!(provider
+        provider
             .configure(&ChatSetting::Mode("bypassPermissions".into()), &mut out)
+            .unwrap();
+        assert!(provider
+            .configure(&ChatSetting::Mode("unknown".into()), &mut out)
             .is_err());
         let requests: Vec<_> = written(&out)
             .into_iter()
@@ -1258,9 +1286,84 @@ mod tests {
             requests[2],
             json!({ "subtype": "set_permission_mode", "mode": "plan" })
         );
+        assert_eq!(
+            requests[3],
+            json!({ "subtype": "set_permission_mode", "mode": "bypassPermissions" })
+        );
         let mut out = ProviderOutput::default();
         provider.compact(&mut out).unwrap();
         assert_eq!(written(&out)[0]["message"]["content"], "/compact");
+    }
+
+    #[test]
+    fn permission_mode_changes_only_after_success_and_reports_rejections() {
+        let (mut provider, mut snapshot) = initialized();
+        let mut out = ProviderOutput::default();
+        provider
+            .configure(&ChatSetting::Mode("bypassPermissions".into()), &mut out)
+            .unwrap();
+        assert_eq!(provider.controls.mode.as_deref(), Some("default"));
+        let id = written(&out)[0]["request_id"].clone();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "type": "control_response", "response": {
+                    "subtype": "error", "request_id": id, "error": "Disabled by organization"
+                }
+            }),
+        );
+        assert_eq!(snapshot.controls.mode.as_deref(), Some("default"));
+        assert_eq!(
+            snapshot.items.last().unwrap().text,
+            "Disabled by organization"
+        );
+
+        let mut out = ProviderOutput::default();
+        provider
+            .configure(&ChatSetting::Mode("auto".into()), &mut out)
+            .unwrap();
+        let id = written(&out)[0]["request_id"].clone();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "type": "control_response", "response": {
+                    "subtype": "success", "request_id": id, "response": {}
+                }
+            }),
+        );
+        assert_eq!(snapshot.controls.mode.as_deref(), Some("auto"));
+    }
+
+    #[test]
+    fn unavailable_auto_mode_keeps_the_cli_reported_mode() {
+        let (mut provider, mut snapshot) = started();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "type": "control_response", "response": {
+                    "subtype": "success", "request_id": "wm-1", "response": {
+                        "current_permission_mode": "default",
+                        "models": [{ "value": "haiku", "supportsAutoMode": false }]
+                    }
+                }
+            }),
+        );
+        assert_eq!(snapshot.controls.mode.as_deref(), Some("default"));
+        assert!(snapshot.controls.modes.iter().all(|m| m.id != "auto"));
+        assert!(snapshot
+            .controls
+            .modes
+            .iter()
+            .any(|m| m.id == "bypassPermissions"));
+        assert!(provider
+            .configure(
+                &ChatSetting::Mode("auto".into()),
+                &mut ProviderOutput::default()
+            )
+            .is_err());
     }
 
     #[test]

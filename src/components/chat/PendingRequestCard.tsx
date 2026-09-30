@@ -52,9 +52,11 @@ export function PendingRequestCard({ request, focused, onRespond }: PendingReque
       aria-label={request.title}
       tabIndex={request.kind === "approval" ? 0 : undefined}
       onKeyDown={onKeyDown}
-      className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 flex flex-col gap-2 focus:outline-none focus:border-warning"
+      className="min-w-0 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 flex flex-col gap-2 focus:outline-none focus:border-warning"
     >
-      <h4 className="text-sm font-medium text-text-primary select-text">{request.title}</h4>
+      <h4 className="text-sm font-medium text-text-primary select-text [overflow-wrap:anywhere]">
+        {request.title}
+      </h4>
       {request.detail &&
         (request.format === "diff" ? (
           <DiffText text={request.detail} />
@@ -63,7 +65,7 @@ export function PendingRequestCard({ request, focused, onRespond }: PendingReque
             <MarkdownText text={request.detail} />
           </div>
         ) : (
-          <pre className="text-xs font-mono text-text-secondary whitespace-pre-wrap select-text max-h-60 overflow-y-auto">
+          <pre className="text-xs font-mono text-text-secondary whitespace-pre-wrap [overflow-wrap:anywhere] select-text max-h-60 overflow-y-auto">
             {request.detail}
           </pre>
         ))}
@@ -73,12 +75,14 @@ export function PendingRequestCard({ request, focused, onRespond }: PendingReque
             <Button
               key={decision.id}
               variant={i === 0 ? "primary" : "secondary"}
-              className="h-7 px-3 text-xs"
+              className="min-h-7 max-w-full px-3 py-1 text-xs text-left"
               disabled={sending}
               onClick={() => void respond({ decision: decision.id })}
             >
-              {i < 9 && <kbd className="mr-1 font-mono opacity-50">{i + 1}</kbd>}
-              {decision.label}
+              {i < 9 && <kbd className="mr-1 shrink-0 font-mono opacity-50">{i + 1}</kbd>}
+              <span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                {decision.label}
+              </span>
             </Button>
           ))}
         </div>
