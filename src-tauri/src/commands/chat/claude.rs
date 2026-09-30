@@ -131,6 +131,7 @@ impl ClaudeProvider {
                                 .flatten()
                                 .filter_map(|e| e.as_str().map(String::from))
                                 .collect(),
+                            images: true,
                         })
                     })
                     .collect();
@@ -452,16 +453,21 @@ impl ChatProvider for ClaudeProvider {
     }
 
     /// Messages sent mid-turn are queued by the CLI and run after the current turn.
-    fn send(&mut self, text: &str, out: &mut ProviderOutput) -> Result<(), String> {
+    fn send(
+        &mut self,
+        text: &str,
+        images: &[ChatImage],
+        out: &mut ProviderOutput,
+    ) -> Result<(), String> {
         self.user_messages += 1;
         out.upsert(ChatItem::new(
             format!("local-user-{}", self.user_messages),
             ItemKind::User,
-            text,
+            user_display_text(text, images.len()),
         ));
         out.write(json!({
             "type": "user",
-            "message": { "role": "user", "content": text },
+            "message": { "role": "user", "content": user_content(text, images) },
             "parent_tool_use_id": null,
             "session_id": self.session_id,
         }));
@@ -510,7 +516,7 @@ impl ChatProvider for ClaudeProvider {
     }
 
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String> {
-        self.send("/compact", out)
+        self.send("/compact", &[], out)
     }
 
     fn respond(
@@ -894,6 +900,25 @@ fn parse_history(text: &str) -> Vec<ChatItem> {
         .collect()
 }
 
+fn user_content(text: &str, images: &[ChatImage]) -> Value {
+    if images.is_empty() {
+        return json!(text);
+    }
+    let mut blocks: Vec<Value> = images
+        .iter()
+        .map(|image| {
+            json!({
+                "type": "image",
+                "source": { "type": "base64", "media_type": image.media_type, "data": image.data },
+            })
+        })
+        .collect();
+    if !text.is_empty() {
+        blocks.push(json!({ "type": "text", "text": text }));
+    }
+    Value::Array(blocks)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -950,16 +975,34 @@ mod tests {
     }
 
     #[test]
+    fn sends_images_as_base64_blocks_before_the_text() {
+        let (mut provider, _) = started();
+        let mut out = ProviderOutput::default();
+        let image = ChatImage {
+            media_type: "image/png".into(),
+            data: "aGk=".into(),
+        };
+        provider.send("what is this?", &[image], &mut out).unwrap();
+        assert_eq!(
+            written(&out)[0]["message"]["content"],
+            json!([
+                { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "aGk=" } },
+                { "type": "text", "text": "what is this?" },
+            ])
+        );
+    }
+
+    #[test]
     fn streams_text_then_settles_on_the_final_message() {
         let (mut provider, mut snapshot) = started();
         let mut out = ProviderOutput::default();
-        provider.send("hi", &mut out).unwrap();
+        provider.send("hi", &[], &mut out).unwrap();
         assert_eq!(written(&out)[0]["message"]["content"], "hi");
         for event in &out.events {
             snapshot.apply(event);
         }
         let mut queued = ProviderOutput::default();
-        provider.send("again", &mut queued).unwrap();
+        provider.send("again", &[], &mut queued).unwrap();
         assert_eq!(written(&queued)[0]["message"]["content"], "again");
 
         let events = [
@@ -1101,7 +1144,9 @@ mod tests {
         let mut out = ProviderOutput::default();
         provider.interrupt(&mut out);
         assert!(out.writes.is_empty());
-        provider.send("go", &mut ProviderOutput::default()).unwrap();
+        provider
+            .send("go", &[], &mut ProviderOutput::default())
+            .unwrap();
         provider.interrupt(&mut out);
         assert_eq!(written(&out)[0]["request"]["subtype"], "interrupt");
         feed(
@@ -1111,7 +1156,7 @@ mod tests {
         );
         assert_eq!(snapshot.items.last().unwrap().kind, ItemKind::Error);
         assert!(provider
-            .send("next", &mut ProviderOutput::default())
+            .send("next", &[], &mut ProviderOutput::default())
             .is_ok());
     }
 

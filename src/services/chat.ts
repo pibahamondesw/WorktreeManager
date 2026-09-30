@@ -54,6 +54,12 @@ export interface ModelOption {
   label: string;
   description?: string;
   efforts: string[];
+  images: boolean;
+}
+
+export interface ChatImage {
+  mediaType: string;
+  data: string;
 }
 
 export interface ModeOption {
@@ -113,6 +119,9 @@ export const EMPTY_CONTROLS: ChatControls = {
   todos: [],
   context: null,
 };
+
+export const acceptsImages = (controls: ChatControls) =>
+  controls.models.find((model) => model.id === controls.model)?.images ?? true;
 
 export function effortsFor(controls: ChatControls): string[] {
   return controls.models.find((model) => model.id === controls.model)?.efforts ?? [];
@@ -206,8 +215,8 @@ export function chatOpen({ onEvent, ...args }: ChatOpenArgs): Promise<ChatSnapsh
   return invoke<ChatSnapshot>("chat_open", { ...args, onEvent: channel });
 }
 
-export const chatSend = (taskId: string, agent: AgentId, text: string) =>
-  invoke<void>("chat_send", { taskId, agent, text });
+export const chatSend = (taskId: string, agent: AgentId, text: string, images: ChatImage[] = []) =>
+  invoke<void>("chat_send", { taskId, agent, text, images });
 
 export const chatConfigure = (taskId: string, agent: AgentId, setting: ChatSetting) =>
   invoke<void>("chat_configure", { taskId, agent, setting });

@@ -150,6 +150,7 @@ pub struct ModelOption {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub efforts: Vec<String>,
+    pub images: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -240,6 +241,13 @@ impl ChatControls {
             .map(|m| m.efforts.as_slice())
             .unwrap_or_default()
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatImage {
+    pub media_type: String,
+    pub data: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -387,13 +395,36 @@ impl ProviderOutput {
     }
 }
 
+pub fn user_display_text(text: &str, image_count: usize) -> String {
+    match image_count {
+        0 => text.to_string(),
+        count => {
+            let label = if count == 1 {
+                "[1 image]".to_string()
+            } else {
+                format!("[{count} images]")
+            };
+            if text.is_empty() {
+                label
+            } else {
+                format!("{text}\n{label}")
+            }
+        }
+    }
+}
+
 /// Translates one agent's stdio protocol. `send` may be called while a turn runs: providers
 /// steer or queue the message rather than refusing it. The session owns the process and threading; the
 /// provider only sees lines and user actions. `snapshot` is the state before this input.
 pub trait ChatProvider: Send {
     fn start(&mut self, out: &mut ProviderOutput);
     fn handle_line(&mut self, line: &str, snapshot: &ChatSnapshot, out: &mut ProviderOutput);
-    fn send(&mut self, text: &str, out: &mut ProviderOutput) -> Result<(), String>;
+    fn send(
+        &mut self,
+        text: &str,
+        images: &[ChatImage],
+        out: &mut ProviderOutput,
+    ) -> Result<(), String>;
     fn interrupt(&mut self, out: &mut ProviderOutput);
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String>;
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
