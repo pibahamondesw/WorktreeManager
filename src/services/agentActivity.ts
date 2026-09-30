@@ -212,8 +212,11 @@ export function chatActivityEvent(
   return null;
 }
 
-export function unreadCount(activities: AgentActivities): number {
-  return Object.values(activities).filter((activity) => activity.unread).length;
+/** The Dock badge counts only unread tasks whose agent is still waiting on you. */
+export function pendingInputCount(activities: AgentActivities): number {
+  return Object.values(activities).filter(
+    (activity) => activity.unread && activity.state === "waiting"
+  ).length;
 }
 
 /** What a task shows: needs input, agent working, a live but idle session, or an ended one. */

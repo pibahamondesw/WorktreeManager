@@ -17,7 +17,7 @@ import {
   strongestIndicator,
   taskForCwd,
   taskIndicator,
-  unreadCount,
+  pendingInputCount,
 } from "./agentActivity";
 import { ChatInfo } from "./chat";
 
@@ -85,12 +85,13 @@ describe("activity lifecycle", () => {
 
     activities = applyAgentEvent(activities, "t1", event("done", 2), false);
     activities = applyAgentEvent(activities, "t2", event("waiting", 2), false);
-    expect(unreadCount(activities)).toBe(2);
+    expect(pendingInputCount(activities)).toBe(1);
 
     activities = markTaskSeen(activities, "t1");
     expect(activities.t1).toBeUndefined();
     activities = markTaskSeen(activities, "t2");
     expect(activities.t2).toMatchObject({ state: "waiting", unread: false });
+    expect(pendingInputCount(activities)).toBe(0);
     expect(markTaskSeen(activities, "t2")).toBe(activities);
   });
 
