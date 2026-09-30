@@ -352,6 +352,11 @@ export function WorktreeList({
             workspaceName={workspace.name}
             taskCount={tasks.length}
             repoCount={workspace.repos.length}
+            projectFilter={
+              allTasks.length > 0 && (
+                <ProjectFilter tasks={allTasks} value={project} onChange={changeProject} />
+              )
+            }
             editorApp={editorApp}
             onEditorChange={onEditorChange}
             onRefresh={() => void handleRefresh()}
@@ -365,12 +370,6 @@ export function WorktreeList({
             onGoBack={onGoBack}
             onGoForward={onGoForward}
           />
-
-          {allTasks.length > 0 && (
-            <div className="px-6 pt-3">
-              <ProjectFilter tasks={allTasks} value={project} onChange={changeProject} />
-            </div>
-          )}
 
           <div ref={listRef} className="flex-1 overflow-y-auto p-6">
             {workspaceSwitching ? (

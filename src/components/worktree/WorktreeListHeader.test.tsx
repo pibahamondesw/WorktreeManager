@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { WorktreeListHeader } from "./WorktreeListHeader";
+import { ProjectFilter } from "../ui/ProjectFilter";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(false) }));
 
@@ -18,6 +19,7 @@ function renderHeader(
       workspaceName="Payments"
       taskCount={2}
       repoCount={1}
+      projectFilter={<ProjectFilter tasks={[]} value="" onChange={vi.fn()} />}
       editorApp="cursor"
       onEditorChange={vi.fn()}
       onRefresh={vi.fn()}
@@ -36,6 +38,14 @@ function renderHeader(
 }
 
 afterEach(cleanup);
+
+it("places the project filter immediately to the left of the editor picker", () => {
+  renderHeader(false);
+  const filter = screen.getByRole("combobox", { name: "Linear project" });
+  const editor = screen.getByTitle("Select default editor");
+
+  expect(filter.nextElementSibling).toContainElement(editor);
+});
 
 describe("WorktreeListHeader sidebar toggle", () => {
   it("hides the expand button while the sidebar is visible", () => {

@@ -1,3 +1,4 @@
+import { ReactNode } from "react";
 import { Button } from "../ui/Button";
 import { EditorPicker } from "../ui/EditorPicker";
 import {
@@ -14,6 +15,7 @@ interface WorktreeListHeaderProps {
   workspaceName: string;
   taskCount: number;
   repoCount: number;
+  projectFilter?: ReactNode;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
   onRefresh: () => void;
@@ -32,6 +34,7 @@ export function WorktreeListHeader({
   workspaceName,
   taskCount,
   repoCount,
+  projectFilter,
   editorApp,
   onEditorChange,
   onRefresh,
@@ -92,6 +95,7 @@ export function WorktreeListHeader({
           </button>
         </div>
         <div className="flex items-center gap-2">
+          {projectFilter}
           <EditorPicker value={editorApp} onChange={onEditorChange} />
           <button
             type="button"
