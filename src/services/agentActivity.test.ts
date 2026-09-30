@@ -123,7 +123,9 @@ describe("activity lifecycle", () => {
     expect(replied).toEqual(expect.objectContaining({ state: "working", unread: false }));
     expect(replied.openQuestion).toBeUndefined();
     expect(alertsFor(finished, replied)).toBeNull();
-    expect(alertsFor(replied, nextActivity(replied, event("done", 5), false))).toBe("done");
+    const done = nextActivity(replied, event("done", 5), false)!;
+    expect(alertsFor(replied, done)).toBe("done");
+    expect(alertsFor(done, nextActivity(done, event("done", 6), false))).toBeNull();
   });
 
   it("does not mark results unread for the task being viewed", () => {
@@ -198,7 +200,7 @@ describe("chatActivityEvent", () => {
 describe("alert settings", () => {
   it("fills defaults, keeps silenced categories and rejects unknown sounds", () => {
     expect(normalizeAgentAlerts(undefined)).toEqual(DEFAULT_AGENT_ALERTS);
-    expect(DEFAULT_AGENT_ALERTS.notifications).toEqual({ done: false, waiting: true });
+    expect(DEFAULT_AGENT_ALERTS.notifications).toEqual({ done: true, waiting: true });
     expect(
       normalizeAgentAlerts({
         sounds: { done: null, waiting: "rm -rf" },

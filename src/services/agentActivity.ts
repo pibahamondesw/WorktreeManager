@@ -67,7 +67,7 @@ export interface AgentAlertSettings {
 
 export const DEFAULT_AGENT_ALERTS: AgentAlertSettings = {
   sounds: { done: "Submarine", waiting: "Ping" },
-  notifications: { done: false, waiting: true },
+  notifications: { done: true, waiting: true },
 };
 
 export function normalizeAgentAlerts(value: unknown): AgentAlertSettings {
@@ -136,14 +136,17 @@ export function applyAgentEvent(
   return next ? { ...activities, [taskId]: next } : activities;
 }
 
-/** Only a change into waiting or done deserves a sound or a notification. */
+/**
+ * Only a change into waiting or done deserves a sound or a notification. A repeated "done" is the
+ * agent waking for a finished background task and going idle again, not a new result.
+ */
 export function alertsFor(
   current: AgentActivity | undefined,
   next: AgentActivity | null
 ): AlertCategory | null {
   if (!next || next.state === "working") return null;
   const unchanged = current?.state === next.state && current.openQuestion === next.openQuestion;
-  return unchanged && current?.openQuestion ? null : next.state;
+  return unchanged && (current?.openQuestion || next.state === "done") ? null : next.state;
 }
 
 /** Opening a task reads it; a read "done" is just idle, so it is dropped. */
