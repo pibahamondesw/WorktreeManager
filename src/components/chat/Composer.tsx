@@ -1,7 +1,7 @@
 import { ClipboardEvent, DragEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { ChevronDownIcon, CloseIcon } from "../ui/Icons";
-import { ImageAttachment, imageFiles, readImage } from "./composerImages";
+import { ImageAttachment, imageFiles, oversizedImages, readImage } from "./composerImages";
 import { MenuOption, OptionMenu } from "./OptionMenu";
 import {
   filterCommands,
@@ -71,7 +71,8 @@ export function Composer({
   const [files, setFiles] = useState<FileMatch[]>([]);
   const [recall, setRecall] = useState<number | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
-  const [dragging, setDragging] = useState(false);
+  const [dragDepth, setDragDepth] = useState(0);
+  const dragging = dragDepth > 0;
   const live = isLive(status);
   const busy = status.kind === "busy";
   const ready = status.kind === "idle" || busy;
@@ -177,8 +178,13 @@ export function Composer({
 
   const attach = async (files: File[]) => {
     if (!canAttach || !files.length) return;
+    const oversized = oversizedImages(files);
+    if (oversized.length) {
+      onError(`Images must be 10 MB or smaller: ${oversized.map((f) => f.name).join(", ")}`);
+    }
+    const accepted = files.filter((file) => !oversized.includes(file));
     try {
-      const added = await Promise.all(files.map(readImage));
+      const added = await Promise.all(accepted.map(readImage));
       setImages((current) => [...current, ...added]);
     } catch (e) {
       onError(String(e));
@@ -194,14 +200,20 @@ export function Composer({
 
   const dragsFiles = (e: DragEvent) => canAttach && e.dataTransfer.types.includes("Files");
 
+  const onDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (dragsFiles(e)) setDragDepth((depth) => depth + 1);
+  };
+
+  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (dragsFiles(e)) setDragDepth((depth) => Math.max(0, depth - 1));
+  };
+
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    if (!dragsFiles(e)) return;
-    e.preventDefault();
-    setDragging(true);
+    if (dragsFiles(e)) e.preventDefault();
   };
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    setDragging(false);
+    setDragDepth(0);
     if (!dragsFiles(e)) return;
     e.preventDefault();
     void attach(imageFiles(e.dataTransfer.files));
@@ -316,7 +328,8 @@ export function Composer({
         )}
         <div
           onDragOver={onDragOver}
-          onDragLeave={() => setDragging(false)}
+          onDragEnter={onDragEnter}
+          onDragLeave={onDragLeave}
           onDrop={onDrop}
           className={`rounded-lg bg-bg-secondary border focus-within:border-accent ${
             dragging ? "border-accent" : "border-border"

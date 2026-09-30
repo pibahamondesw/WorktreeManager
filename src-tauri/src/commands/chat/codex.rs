@@ -3,7 +3,7 @@
 //! command/file approvals and tool questions arriving as server requests.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::Engine;
 
@@ -78,6 +78,13 @@ pub struct CodexProvider {
     config_approval: Option<Value>,
     config_reviewer: Option<Value>,
     config_sandbox: Option<Value>,
+    image_dir: PathBuf,
+}
+
+impl Drop for CodexProvider {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.image_dir);
+    }
 }
 
 impl CodexProvider {
@@ -86,6 +93,7 @@ impl CodexProvider {
             cwd,
             extra_dirs,
             resume,
+            image_dir: chat_images_root().join(uuid::Uuid::new_v4().to_string()),
             next_id: 0,
             calls: HashMap::new(),
             requests: HashMap::new(),
@@ -727,7 +735,7 @@ impl ChatProvider for CodexProvider {
             .ok_or("Codex conversation is not ready yet")?;
         let image_paths = images
             .iter()
-            .map(save_image)
+            .map(|image| save_image(&self.image_dir, image))
             .collect::<Result<Vec<_>, _>>()?;
         let input = self.user_input(text, &image_paths);
         self.drop_async_questions(out);
@@ -1015,16 +1023,56 @@ fn accepts_images(model: &Value) -> bool {
         .map_or(true, |modalities| modalities.iter().any(|m| m == "image"))
 }
 
-fn save_image(image: &ChatImage) -> Result<PathBuf, String> {
+const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+const STALE_IMAGE_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+fn chat_images_root() -> PathBuf {
+    std::env::temp_dir().join("worktreemanager-chat-images")
+}
+
+fn image_extension(media_type: &str) -> Result<&'static str, String> {
+    match media_type {
+        "image/png" => Ok("png"),
+        "image/jpeg" => Ok("jpg"),
+        "image/gif" => Ok("gif"),
+        "image/webp" => Ok("webp"),
+        other => Err(format!("Unsupported image type: {other}")),
+    }
+}
+
+fn save_image(dir: &Path, image: &ChatImage) -> Result<PathBuf, String> {
+    let extension = image_extension(&image.media_type)?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&image.data)
         .map_err(|e| format!("Invalid image data: {e}"))?;
-    let extension = image.media_type.rsplit('/').next().unwrap_or("png");
-    let dir = std::env::temp_dir().join("worktreemanager-chat-images");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not save image: {e}"))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("Images must be 10 MB or smaller".into());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("Could not save image: {e}"))?;
     let path = dir.join(format!("{}.{extension}", uuid::Uuid::new_v4()));
     std::fs::write(&path, bytes).map_err(|e| format!("Could not save image: {e}"))?;
     Ok(path)
+}
+
+pub fn purge_stale_chat_images() {
+    purge_stale_images(&chat_images_root(), STALE_IMAGE_AGE);
+}
+
+fn purge_stale_images(root: &Path, max_age: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > max_age);
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
@@ -1269,6 +1317,53 @@ mod tests {
         assert!(path.ends_with(".png"));
         assert_eq!(std::fs::read(path).unwrap(), b"hi");
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn dropping_the_session_removes_its_images() {
+        let (mut provider, _) = resumed();
+        let image = ChatImage {
+            media_type: "image/webp".into(),
+            data: "aGk=".into(),
+        };
+        provider
+            .send("", &[image], &mut ProviderOutput::default())
+            .unwrap();
+        let dir = provider.image_dir.clone();
+        assert!(dir.exists());
+        drop(provider);
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn rejects_unsupported_or_oversized_images() {
+        let dir = std::env::temp_dir().join(format!("wtm-images-{}", uuid::Uuid::new_v4()));
+        let svg = ChatImage {
+            media_type: "image/svg+xml".into(),
+            data: "aGk=".into(),
+        };
+        assert!(save_image(&dir, &svg).is_err());
+        let huge = ChatImage {
+            media_type: "image/png".into(),
+            data: base64::engine::general_purpose::STANDARD.encode(vec![0; MAX_IMAGE_BYTES + 1]),
+        };
+        assert_eq!(
+            save_image(&dir, &huge).unwrap_err(),
+            "Images must be 10 MB or smaller"
+        );
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn purges_only_stale_session_folders() {
+        let root = std::env::temp_dir().join(format!("wtm-purge-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("session")).unwrap();
+        purge_stale_images(&root, std::time::Duration::from_secs(3600));
+        assert!(root.join("session").exists());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        purge_stale_images(&root, std::time::Duration::from_millis(1));
+        assert!(!root.join("session").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

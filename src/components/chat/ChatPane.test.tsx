@@ -155,6 +155,20 @@ describe("ChatPane", () => {
     expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
   });
 
+  it("skips unsupported image types and reports oversized ones", async () => {
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    const huge = new File(["x"], "huge.jpg", { type: "image/jpeg" });
+    Object.defineProperty(huge, "size", { value: 10 * 1024 * 1024 + 1 });
+    fireEvent.paste(box, {
+      clipboardData: {
+        files: [new File(["<svg/>"], "a.svg", { type: "image/svg+xml" }), huge],
+      },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("10 MB or smaller: huge.jpg");
+    expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
+  });
+
   it("ignores images when the model does not accept them", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"

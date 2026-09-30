@@ -6,8 +6,14 @@ export interface ImageAttachment extends ChatImage {
   url: string;
 }
 
-export const imageFiles = (files: FileList | null | undefined) =>
-  Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
+const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+export const imageFiles = (files: FileList | File[] | null | undefined) =>
+  Array.from(files ?? []).filter((file) => SUPPORTED_IMAGE_TYPES.includes(file.type));
+
+export const oversizedImages = (files: File[]) =>
+  files.filter((file) => file.size > MAX_IMAGE_BYTES);
 
 export function readImage(file: File): Promise<ImageAttachment> {
   return new Promise((resolve, reject) => {

@@ -5,6 +5,8 @@
 
 mod claude;
 mod codex;
+
+pub use codex::purge_stale_chat_images;
 mod conversations;
 mod files;
 mod model;
