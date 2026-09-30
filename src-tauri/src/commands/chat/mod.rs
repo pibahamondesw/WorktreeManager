@@ -31,7 +31,7 @@ use super::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
 use conversations::{Conversation, ConversationStore};
 use model::{
     ChatEvent, ChatImage, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus,
-    ProviderOutput,
+    ProviderOutput, ReviewTarget,
 };
 
 const STATUS_EVENT: &str = "chat-status";
@@ -570,6 +570,18 @@ pub fn chat_compact(
 ) -> Result<(), String> {
     registry.with_session(&task_id, &agent, |session| {
         session.with_provider(|provider, _, out| provider.compact(out))
+    })
+}
+
+#[tauri::command]
+pub fn chat_review(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+    target: ReviewTarget,
+) -> Result<(), String> {
+    registry.with_session(&task_id, &agent, |session| {
+        session.with_provider(|provider, _, out| provider.review(&target, out))
     })
 }
 

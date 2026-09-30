@@ -9,6 +9,7 @@ import {
   localCommand,
   menuTrigger,
   promptMemory,
+  REVIEW_CHOICES,
 } from "./composerMenu";
 import {
   acceptsImages,
@@ -21,15 +22,17 @@ import {
   effortsFor,
   FileMatch,
   isLive,
+  ReviewTarget,
 } from "../../services/chat";
 
-type Picker = "model" | "effort" | "mode";
+type Picker = "model" | "effort" | "mode" | "review";
 
 export interface ComposerActions {
   send: (text: string, images: ChatImage[]) => Promise<void>;
   interrupt: () => Promise<void>;
   configure: (setting: ChatSetting) => Promise<void>;
   compact: () => Promise<void>;
+  review: (target: ReviewTarget) => Promise<void>;
   startFresh: () => Promise<void>;
 }
 
@@ -48,6 +51,7 @@ const PICKER_LABEL: Record<Picker, string> = {
   model: "Model",
   effort: "Reasoning effort",
   mode: "Permissions",
+  review: "Review",
 };
 
 const labelFor = (options: { id: string; label: string }[], id: string | null) =>
@@ -159,14 +163,24 @@ export function Composer({
     if (action.kind === "model" || action.kind === "effort") openPicker(action.kind);
     else if (action.kind === "mode") void configure("mode", action.mode);
     else if (action.kind === "compact") void run(actions.compact);
+    else if (action.kind === "review") openPicker("review");
     else void run(actions.startFresh);
+  };
+
+  const pickReview = (choice: string) => {
+    if (choice === "uncommitted")
+      return void run(() => actions.review({ type: "uncommittedChanges" }));
+    update(`/review ${choice} `);
   };
 
   const pick = (option: MenuOption) => {
     if (picker) {
       setPicker(null);
-      void configure(picker, option.id);
-      focus();
+      if (picker === "review") pickReview(option.id);
+      else {
+        void configure(picker, option.id);
+        focus();
+      }
     } else if (trigger?.kind === "slash") {
       const command = slashCommands.find((c) => c.name === option.id);
       if (command) runCommand(command);
@@ -229,6 +243,8 @@ export function Composer({
       if (local.kind === "picker") openPicker(local.picker);
       else if (local.kind === "configure") void configure(local.setting, local.value);
       else if (local.kind === "compact") void run(actions.compact);
+      else if (local.kind === "reviewPicker") openPicker("review");
+      else if (local.kind === "review") void run(() => actions.review(local.target));
       else void run(actions.startFresh);
       return;
     }
@@ -436,6 +452,7 @@ export function Composer({
 }
 
 function pickerOptions(picker: Picker, controls: ChatControls, efforts: string[]): MenuOption[] {
+  if (picker === "review") return REVIEW_CHOICES;
   if (picker === "model")
     return controls.models.map((model) => ({
       id: model.id,

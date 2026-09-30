@@ -130,6 +130,16 @@ export function ChatItemView({ item }: { item: ChatItem }) {
           <span className="whitespace-pre-wrap">{item.text}</span>
         </div>
       );
+    case "review":
+      return (
+        <section
+          aria-label={item.title ?? "Review"}
+          className="rounded-lg border border-border bg-bg-secondary/40 px-3 py-2 flex flex-col gap-1"
+        >
+          <span className="text-xs font-medium text-text-muted">{item.title ?? "Review"}</span>
+          <MarkdownText text={item.text} />
+        </section>
+      );
     default:
       return <Activity item={item} />;
   }

@@ -5,6 +5,7 @@ import {
   localCommand,
   menuTrigger,
   promptMemory,
+  reviewTarget,
 } from "./composerMenu";
 import { ChatControls, CommandOption, EMPTY_CONTROLS } from "../../services/chat";
 
@@ -94,5 +95,38 @@ describe("promptMemory", () => {
     expect(promptMemory.draft("k")).toBe("half");
     promptMemory.saveDraft("k", "");
     expect(promptMemory.draft("k")).toBe("");
+  });
+});
+
+describe("native review", () => {
+  const codex: ChatControls = {
+    ...EMPTY_CONTROLS,
+    commands: [command("review", "Review changes", { kind: "review" })],
+  };
+
+  it("parses each review target and opens the picker otherwise", () => {
+    expect(localCommand("/review", codex)).toEqual({ kind: "reviewPicker" });
+    expect(localCommand("/review uncommitted", codex)).toEqual({
+      kind: "review",
+      target: { type: "uncommittedChanges" },
+    });
+    expect(localCommand("/review branch main", codex)).toEqual({
+      kind: "review",
+      target: { type: "baseBranch", branch: "main" },
+    });
+    expect(localCommand("/review commit abc123", codex)).toEqual({
+      kind: "review",
+      target: { type: "commit", sha: "abc123", title: null },
+    });
+    expect(localCommand("/review custom check the auth flow", codex)).toEqual({
+      kind: "review",
+      target: { type: "custom", instructions: "check the auth flow" },
+    });
+    expect(localCommand("/review branch", codex)).toEqual({ kind: "reviewPicker" });
+    expect(reviewTarget("commit a b")).toBeNull();
+  });
+
+  it("keeps sending /review as text when the agent has no native review", () => {
+    expect(localCommand("/review 12", controls)).toBeNull();
   });
 });

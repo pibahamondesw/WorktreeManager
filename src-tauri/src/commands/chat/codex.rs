@@ -1,5 +1,5 @@
 //! Codex through the installed `codex app-server` (JSON-RPC over stdio). Verified against
-//! codex-cli 0.155.1: initialize → account/read → thread/resume|start → turn/start, with
+//! codex-cli 0.155.1: initialize → account/read → thread/resume|start → turn/start (review/start from 0.159.1), with
 //! command/file approvals and tool questions arriving as server requests.
 
 use std::collections::HashMap;
@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use super::model::*;
 
 const UNSUPPORTED: i64 = -32601;
+const REVIEW_UNSUPPORTED: &str = "This Codex version doesn't support /review; update codex-cli";
 const ALWAYS_ALLOW_COMMAND: &str = "acceptWithExecpolicyAmendment";
 
 fn base_commands() -> Vec<CommandOption> {
@@ -34,6 +35,7 @@ fn base_commands() -> Vec<CommandOption> {
             "Summarize the conversation to free up context",
             CommandAction::Compact,
         ),
+        CommandOption::new("review", "Review changes with Codex", CommandAction::Review),
         CommandOption::new("clear", "Start a new conversation", CommandAction::Clear),
     ]
 }
@@ -44,6 +46,7 @@ enum Call {
     Resume,
     Start,
     Turn,
+    Review,
     Models,
     Config,
     Skills,
@@ -368,7 +371,13 @@ impl CodexProvider {
         let Some(call) = self.calls.remove(&id) else {
             return;
         };
-        let error = message["error"]["message"].as_str();
+        let review_unsupported =
+            matches!(call, Call::Review) && message["error"]["code"].as_i64() == Some(UNSUPPORTED);
+        let error = if review_unsupported {
+            Some(REVIEW_UNSUPPORTED)
+        } else {
+            message["error"]["message"].as_str()
+        };
         let result = &message["result"];
         match call {
             Call::Initialize => match error {
@@ -435,7 +444,7 @@ impl CodexProvider {
                     self.adopt_thread(&result["thread"], out);
                 }
             },
-            Call::Turn => match error {
+            Call::Turn | Call::Review => match error {
                 Some(error) => {
                     let item = self.error_item(error);
                     out.upsert(item);
@@ -809,6 +818,25 @@ impl ChatProvider for CodexProvider {
         Ok(())
     }
 
+    fn review(&mut self, target: &ReviewTarget, out: &mut ProviderOutput) -> Result<(), String> {
+        let thread_id = self
+            .thread_id
+            .clone()
+            .ok_or("Codex conversation is not ready yet")?;
+        if self.busy {
+            return Err("Wait for the current turn to finish before starting a review".into());
+        }
+        self.call(
+            out,
+            Call::Review,
+            "review/start",
+            json!({ "threadId": thread_id, "target": target, "delivery": "inline" }),
+        );
+        self.busy = true;
+        out.status(ChatStatus::Busy);
+        Ok(())
+    }
+
     fn respond(
         &mut self,
         request_id: &str,
@@ -1153,6 +1181,10 @@ pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
             .with_status(status_of(item)),
         "webSearch" => ChatItem::new(id, ItemKind::Tool, text("query")).titled("Web search"),
         "contextCompaction" => ChatItem::new(id, ItemKind::Notice, "Context compacted"),
+        "enteredReviewMode" => {
+            ChatItem::new(id, ItemKind::Notice, text("review")).titled("Reviewing")
+        }
+        "exitedReviewMode" => ChatItem::new(id, ItemKind::Review, text("review")).titled("Review"),
         _ => return None,
     };
     Some(mapped)
@@ -1801,6 +1833,62 @@ mod tests {
             request(&out, "thread/compact/start")["params"]["threadId"],
             "th1"
         );
+    }
+
+    #[test]
+    fn review_starts_inline_and_renders_the_result_as_its_own_item() {
+        let (mut provider, mut snapshot) = resumed();
+        let mut out = ProviderOutput::default();
+        provider
+            .review(
+                &ReviewTarget::BaseBranch {
+                    branch: "main".into(),
+                },
+                &mut out,
+            )
+            .unwrap();
+        assert_eq!(
+            request(&out, "review/start")["params"],
+            json!({ "threadId": "th1", "target": { "type": "baseBranch", "branch": "main" }, "delivery": "inline" })
+        );
+        assert!(provider
+            .review(&ReviewTarget::UncommittedChanges, &mut out)
+            .is_err());
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "item/completed", "params": { "threadId": "th1", "item": {
+                "type": "exitedReviewMode", "id": "r1", "review": "No issues found.",
+            } } }),
+        );
+        let review = snapshot.items.iter().find(|i| i.id == "r1").unwrap();
+        assert_eq!(review.kind, ItemKind::Review);
+        assert_eq!(review.text, "No issues found.");
+    }
+
+    #[test]
+    fn a_failed_review_returns_to_idle_and_explains_old_codex_versions() {
+        let (mut provider, mut snapshot) = resumed();
+        let mut out = ProviderOutput::default();
+        provider
+            .review(&ReviewTarget::UncommittedChanges, &mut out)
+            .unwrap();
+        let id = request(&out, "review/start")["id"].clone();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": id, "error": { "code": UNSUPPORTED, "message": "method not found" } }),
+        );
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        let error = snapshot
+            .items
+            .iter()
+            .rfind(|i| i.kind == ItemKind::Error)
+            .unwrap();
+        assert_eq!(error.text, REVIEW_UNSUPPORTED);
+        assert!(provider
+            .review(&ReviewTarget::UncommittedChanges, &mut out)
+            .is_ok());
     }
 
     #[test]
