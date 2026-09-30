@@ -450,4 +450,47 @@ describe("ChatPane", () => {
       })
     );
   });
+
+  it("lists the worktree's conversations, resumes one and renames another", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_sessions")
+        return Promise.resolve({
+          sessions: [
+            { id: "c1", title: "Current work", updatedAt: 20, current: true },
+            { id: "c0", title: "Older work", updatedAt: 10, current: false },
+          ],
+          canRename: true,
+          canArchive: false,
+        });
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByText("Fix the bug");
+    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
+    const list = await screen.findByRole("list", { name: "Conversations" });
+    expect(within(list).queryByRole("button", { name: "Archive" })).toBeNull();
+    expect(within(list).getByRole("button", { name: /Current work/ })).toBeDisabled();
+
+    fireEvent.click(within(list).getAllByRole("button", { name: "Rename" })[1]);
+    const name = screen.getByLabelText("Conversation name");
+    fireEvent.change(name, { target: { value: "Renamed" } });
+    fireEvent.submit(name.closest("form")!);
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_session_rename", {
+        agent: "claude",
+        folders: ["/wt/a"],
+        id: "c0",
+        title: "Renamed",
+      })
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Older work/ }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "chat_open",
+        expect.objectContaining({ mode: "restart", conversation: "c0" })
+      )
+    );
+  });
 });

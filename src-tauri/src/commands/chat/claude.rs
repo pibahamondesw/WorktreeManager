@@ -800,13 +800,21 @@ fn tool_result(block: &Value, snapshot: &ChatSnapshot) -> Option<ChatItem> {
 
 /// Where Claude Code keeps a session's transcript: `~/.claude/projects/<cwd with non-alphanumerics
 /// replaced by '-'>/<session>.jsonl`. Falls back to scanning when the encoding changes.
-fn session_file(home: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
-    let projects = home.join(".claude").join("projects");
+fn project_dir(home: &Path, cwd: &str) -> PathBuf {
     let encoded: String = cwd
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let direct = projects.join(encoded).join(format!("{session_id}.jsonl"));
+    home.join(".claude").join("projects").join(encoded)
+}
+
+pub fn projects_dir(cwd: &str) -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| project_dir(Path::new(&home), cwd))
+}
+
+fn session_file(home: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
+    let projects = home.join(".claude").join("projects");
+    let direct = project_dir(home, cwd).join(format!("{session_id}.jsonl"));
     if direct.is_file() {
         return Some(direct);
     }

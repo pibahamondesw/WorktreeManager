@@ -10,6 +10,7 @@ pub use codex::purge_stale_chat_images;
 mod conversations;
 mod files;
 mod model;
+mod sessions;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -440,6 +441,7 @@ pub enum OpenMode {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn chat_open(
     app: AppHandle,
     registry: State<'_, ChatRegistry>,
@@ -447,6 +449,7 @@ pub async fn chat_open(
     agent: String,
     folders: Vec<String>,
     mode: OpenMode,
+    conversation: Option<String>,
     on_event: Channel<LiveEvent>,
 ) -> Result<ChatSnapshot, String> {
     let key = (task_id.clone(), agent.clone());
@@ -472,10 +475,10 @@ pub async fn chat_open(
     let cwd = canonical_folders.next().ok_or("No folders for this task")?;
     let extra_dirs: Vec<String> = canonical_folders.collect();
     let store = Arc::new(conversation_store(&app)?);
-    let resume = if mode == OpenMode::Fresh {
-        None
-    } else {
-        store.get(&task_id, &agent, &cwd)
+    let resume = match (mode, conversation) {
+        (OpenMode::Fresh, _) => None,
+        (_, Some(conversation)) => Some(conversation),
+        _ => store.get(&task_id, &agent, &cwd),
     };
     let generation = registry.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
@@ -635,6 +638,54 @@ pub fn chat_detach(
         session.detach(generation);
         Ok(())
     });
+}
+
+fn primary_folder(folders: &[String]) -> Result<String, String> {
+    folders
+        .first()
+        .map(|folder| canonical(folder))
+        .ok_or_else(|| "No folders for this task".to_string())
+}
+
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn chat_sessions(
+    app: AppHandle,
+    task_id: String,
+    agent: String,
+    folders: Vec<String>,
+) -> Result<sessions::SessionList, String> {
+    let cwd = primary_folder(&folders)?;
+    let current = conversation_store(&app)?.get(&task_id, &agent, &cwd);
+    blocking(move || sessions::list(&agent, &cwd, current.as_deref())).await
+}
+
+#[tauri::command]
+pub async fn chat_session_rename(
+    agent: String,
+    folders: Vec<String>,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    let cwd = primary_folder(&folders)?;
+    blocking(move || sessions::rename(&agent, &cwd, &id, &title)).await
+}
+
+#[tauri::command]
+pub async fn chat_session_archive(
+    agent: String,
+    folders: Vec<String>,
+    id: String,
+) -> Result<(), String> {
+    let cwd = primary_folder(&folders)?;
+    blocking(move || sessions::archive(&agent, &cwd, &id)).await
 }
 
 /// Stop one agent's chat but keep its conversation mapping, for the chat/terminal switch.
