@@ -233,7 +233,7 @@ export function taskIndicator(
   return null;
 }
 
-/** Palette and rollup order: needs input, then idle sessions waiting on you, then working. */
+/** Palette order: needs input, then idle sessions waiting on you, then working. */
 export const INDICATOR_RANK: Record<TaskIndicator, number> = {
   input: 3,
   idle: 2,
@@ -241,10 +241,18 @@ export const INDICATOR_RANK: Record<TaskIndicator, number> = {
   ended: 0,
 };
 
+/** Workspace rollup order: a working agent outranks idle sessions so its pulse stays visible. */
+const ROLLUP_RANK: Record<TaskIndicator, number> = {
+  input: 3,
+  working: 2,
+  idle: 1,
+  ended: 0,
+};
+
 export function strongestIndicator(indicators: (TaskIndicator | null)[]): TaskIndicator | null {
   return indicators.reduce<TaskIndicator | null>(
     (best, indicator) =>
-      indicator && (!best || INDICATOR_RANK[indicator] > INDICATOR_RANK[best]) ? indicator : best,
+      indicator && (!best || ROLLUP_RANK[indicator] > ROLLUP_RANK[best]) ? indicator : best,
     null
   );
 }

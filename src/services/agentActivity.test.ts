@@ -164,8 +164,8 @@ describe("indicators", () => {
     expect(taskIndicator(undefined, undefined)).toBeNull();
   });
 
-  it("rolls up to input, then idle, then working", () => {
-    expect(strongestIndicator(["working", "idle", null])).toBe("idle");
+  it("rolls up to input, then working, then idle", () => {
+    expect(strongestIndicator(["working", "idle", null])).toBe("working");
     expect(strongestIndicator(["idle", "input", "working"])).toBe("input");
     expect(strongestIndicator(["ended", "working"])).toBe("working");
     expect(strongestIndicator([])).toBeNull();
