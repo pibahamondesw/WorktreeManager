@@ -82,6 +82,7 @@ pub struct CodexProvider {
     config_reviewer: Option<Value>,
     config_sandbox: Option<Value>,
     image_dir: PathBuf,
+    pinned: bool,
 }
 
 impl Drop for CodexProvider {
@@ -97,6 +98,7 @@ impl CodexProvider {
             extra_dirs,
             resume,
             image_dir: chat_images_root().join(uuid::Uuid::new_v4().to_string()),
+            pinned: false,
             next_id: 0,
             calls: HashMap::new(),
             requests: HashMap::new(),
@@ -314,6 +316,12 @@ impl CodexProvider {
         })
     }
 
+    /// A conversation the user picked must resume or fail; never replace it with a new thread.
+    pub fn pinned(mut self) -> Self {
+        self.pinned = true;
+        self
+    }
+
     fn start_thread(&mut self, out: &mut ProviderOutput) {
         match self.resume.take() {
             Some(thread_id) => {
@@ -418,6 +426,11 @@ impl CodexProvider {
                 out.controls(&self.controls);
             }
             Call::Resume => match error {
+                Some(error) if self.pinned => {
+                    out.status(ChatStatus::Failed {
+                        message: format!("Could not resume that conversation ({error})."),
+                    });
+                }
                 Some(error) => {
                     let notice = ChatItem::new(
                         "resume-failed",
@@ -1301,6 +1314,25 @@ mod tests {
         );
         request(&out, "thread/start");
         assert_eq!(snapshot.items[0].kind, ItemKind::Notice);
+    }
+
+    #[test]
+    fn failed_pinned_resume_keeps_the_saved_conversation() {
+        let (provider, mut snapshot) = ready(Some("gone"));
+        let mut provider = provider.pinned();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": 2, "result": { "account": {} } }),
+        );
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": THREAD_CALL, "error": { "code": -32600, "message": "no rollout found" } }),
+        );
+        assert!(written(&out).iter().all(|m| m["method"] != "thread/start"));
+        assert!(out.conversation.is_none());
+        assert!(matches!(snapshot.status, ChatStatus::Failed { .. }));
     }
 
     fn resumed() -> (CodexProvider, ChatSnapshot) {

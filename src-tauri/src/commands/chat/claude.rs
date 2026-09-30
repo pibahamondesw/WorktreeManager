@@ -20,6 +20,7 @@ enum Control {
     Initialize,
     Settings,
     Mode(String),
+    Rename,
     ContextUsage,
     Ignore,
 }
@@ -101,10 +102,13 @@ impl ClaudeProvider {
             return;
         };
         if response["subtype"] != "success" {
-            if let Control::Mode(_) = call {
-                let message = response["error"]
-                    .as_str()
-                    .unwrap_or("Could not change permission mode");
+            let fallback = match call {
+                Control::Mode(_) => Some("Could not change permission mode"),
+                Control::Rename => Some("Could not rename the conversation"),
+                _ => None,
+            };
+            if let Some(fallback) = fallback {
+                let message = response["error"].as_str().unwrap_or(fallback);
                 let item = self.error_item(message);
                 out.upsert(item);
             }
@@ -184,7 +188,7 @@ impl ClaudeProvider {
                 self.select_mode(&mode);
                 out.controls(&self.controls);
             }
-            Control::Ignore => {}
+            Control::Rename | Control::Ignore => {}
         }
     }
 
@@ -519,6 +523,15 @@ impl ChatProvider for ClaudeProvider {
         self.send("/compact", &[], out)
     }
 
+    fn rename(&mut self, title: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        self.control(
+            out,
+            Control::Rename,
+            json!({ "subtype": "rename_session", "title": title }),
+        );
+        Ok(())
+    }
+
     fn respond(
         &mut self,
         request_id: &str,
@@ -800,13 +813,56 @@ fn tool_result(block: &Value, snapshot: &ChatSnapshot) -> Option<ChatItem> {
 
 /// Where Claude Code keeps a session's transcript: `~/.claude/projects/<cwd with non-alphanumerics
 /// replaced by '-'>/<session>.jsonl`. Falls back to scanning when the encoding changes.
-fn session_file(home: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
-    let projects = home.join(".claude").join("projects");
+fn project_dir(home: &Path, cwd: &str) -> PathBuf {
     let encoded: String = cwd
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let direct = projects.join(encoded).join(format!("{session_id}.jsonl"));
+    home.join(".claude").join("projects").join(encoded)
+}
+
+fn transcript_cwd(dir: &Path) -> Option<String> {
+    fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .find_map(|path| {
+            let file = fs::File::open(path).ok()?;
+            std::io::BufRead::lines(std::io::BufReader::new(file))
+                .map_while(Result::ok)
+                .find_map(|line| {
+                    serde_json::from_str::<Value>(&line).ok()?["cwd"]
+                        .as_str()
+                        .map(String::from)
+                })
+        })
+}
+
+/// Claude shortens long or non-ASCII project names, so an unmatched encoding falls back to the
+/// project whose transcripts record this cwd.
+fn resolve_project_dir(home: &Path, cwd: &str) -> Option<PathBuf> {
+    let direct = project_dir(home, cwd);
+    if direct.is_dir() {
+        return Some(direct);
+    }
+    let canonical = |path: &str| fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let wanted = canonical(cwd);
+    fs::read_dir(home.join(".claude").join("projects"))
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|dir| dir.is_dir())
+        .find(|dir| transcript_cwd(dir).is_some_and(|found| canonical(&found) == wanted))
+}
+
+pub fn projects_dir(cwd: &str) -> Option<PathBuf> {
+    std::env::var_os("HOME").and_then(|home| resolve_project_dir(Path::new(&home), cwd))
+}
+
+fn session_file(home: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
+    let projects = home.join(".claude").join("projects");
+    let direct = project_dir(home, cwd).join(format!("{session_id}.jsonl"));
     if direct.is_file() {
         return Some(direct);
     }
@@ -1193,6 +1249,38 @@ mod tests {
             ]
         );
         assert_eq!(items[2].status.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn project_dir_falls_back_to_the_transcript_cwd() {
+        let home = std::env::temp_dir().join(format!("wm-claude-dirs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let long = format!("/tmp/{}", "a".repeat(210));
+        for (name, cwd) in [
+            ("-shortened-1a2b", long.as_str()),
+            ("-tmp-accion-x", "/tmp/acción"),
+        ] {
+            let dir = home.join(".claude/projects").join(name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("s.jsonl"),
+                format!(
+                    "{{\"type\":\"queue-operation\"}}\n{}\n",
+                    json!({ "cwd": cwd })
+                ),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            resolve_project_dir(&home, &long),
+            Some(home.join(".claude/projects/-shortened-1a2b"))
+        );
+        assert_eq!(
+            resolve_project_dir(&home, "/tmp/acción"),
+            Some(home.join(".claude/projects/-tmp-accion-x"))
+        );
+        assert_eq!(resolve_project_dir(&home, "/tmp/other"), None);
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

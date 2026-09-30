@@ -208,6 +208,7 @@ interface ChatOpenArgs {
   agent: AgentId;
   folders: string[];
   mode: "attach" | "restart" | "fresh";
+  conversation?: string;
   onEvent: (generation: number, event: ChatEvent) => void;
 }
 
@@ -216,6 +217,33 @@ export function chatOpen({ onEvent, ...args }: ChatOpenArgs): Promise<ChatSnapsh
   channel.onmessage = (message) => onEvent(message.generation, message.event);
   return invoke<ChatSnapshot>("chat_open", { ...args, onEvent: channel });
 }
+
+export interface ChatSessionSummary {
+  id: string;
+  title: string;
+  updatedAt: number;
+  current: boolean;
+}
+
+export interface ChatSessionList {
+  sessions: ChatSessionSummary[];
+  canRename: boolean;
+  canArchive: boolean;
+}
+
+export const chatSessions = (taskId: string, agent: AgentId, folders: string[]) =>
+  invoke<ChatSessionList>("chat_sessions", { taskId, agent, folders });
+
+export const chatSessionRename = (
+  taskId: string,
+  agent: AgentId,
+  folders: string[],
+  id: string,
+  title: string
+) => invoke<void>("chat_session_rename", { taskId, agent, folders, id, title });
+
+export const chatSessionArchive = (taskId: string, agent: AgentId, folders: string[], id: string) =>
+  invoke<void>("chat_session_archive", { taskId, agent, folders, id });
 
 export const chatSend = (taskId: string, agent: AgentId, text: string, images: ChatImage[] = []) =>
   invoke<void>("chat_send", { taskId, agent, text, images });

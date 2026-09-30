@@ -36,14 +36,16 @@ const CONNECTING: ChatSnapshot = {
 export function useChatSession(taskId: string, agent: AgentId, folders: string[]) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>(CONNECTING);
   const [error, setError] = useState<string | null>(null);
-  const openRef = useRef<(mode: OpenMode) => Promise<void>>(async () => undefined);
+  const openRef = useRef<(mode: OpenMode, conversation?: string) => Promise<void>>(
+    async () => undefined
+  );
   const foldersKey = folders.join("\n");
 
   useEffect(() => {
     let disposed = false;
     let generation = 0;
 
-    const open = async (mode: OpenMode) => {
+    const open = async (mode: OpenMode, conversation?: string) => {
       const early: { generation: number; apply: (s: ChatSnapshot) => ChatSnapshot }[] = [];
       let ready = false;
       setError(null);
@@ -54,6 +56,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
           agent,
           folders: foldersKey.split("\n"),
           mode,
+          conversation,
           onEvent: (eventGeneration, event) => {
             if (disposed) return;
             const apply = (s: ChatSnapshot) => applyChatEvent(s, event);
@@ -86,6 +89,10 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
 
   const restart = useCallback(() => openRef.current("restart"), []);
   const startFresh = useCallback(() => openRef.current("fresh"), []);
+  const resume = useCallback(
+    (conversation: string) => openRef.current("restart", conversation),
+    []
+  );
   const configure = useCallback(
     (setting: ChatSetting) => chatConfigure(taskId, agent, setting),
     [taskId, agent]
@@ -110,6 +117,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     error,
     restart,
     startFresh,
+    resume,
     send,
     interrupt,
     respond,

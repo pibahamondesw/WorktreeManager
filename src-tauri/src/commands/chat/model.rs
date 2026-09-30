@@ -442,6 +442,10 @@ pub trait ChatProvider: Send {
     fn review(&mut self, _target: &ReviewTarget, _out: &mut ProviderOutput) -> Result<(), String> {
         Err("This agent has no native review; send /review as a message".into())
     }
+
+    fn rename(&mut self, _title: &str, _out: &mut ProviderOutput) -> Result<(), String> {
+        Err("This agent cannot rename a running conversation".into())
+    }
     fn respond(
         &mut self,
         request_id: &str,

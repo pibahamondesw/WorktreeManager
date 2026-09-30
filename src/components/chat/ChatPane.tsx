@@ -3,6 +3,7 @@ import { Button } from "../ui/Button";
 import { ChatItemView } from "./ChatItemView";
 import { Composer } from "./Composer";
 import { PendingRequestCard } from "./PendingRequestCard";
+import { SessionList } from "./SessionList";
 import { TodoPanel } from "./TodoPanel";
 import { useChatSession } from "../../hooks/useChatSession";
 import { SessionStatus } from "../../hooks/useTerminalSession";
@@ -29,6 +30,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   const session = useChatSession(taskId, agent, folders);
   const { snapshot, error, restart, respond } = session;
   const [actionError, setActionError] = useState<string | null>(null);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const { status, items, pending, controls } = snapshot;
@@ -57,7 +59,30 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-bg-primary">
+    <div className="relative flex-1 min-h-0 flex flex-col bg-bg-primary">
+      <Button
+        variant="ghost"
+        onClick={() => setSessionsOpen(true)}
+        className="absolute top-2 right-3 z-10 h-7 px-2 text-xs"
+      >
+        Conversations
+      </Button>
+      <SessionList
+        open={sessionsOpen}
+        taskId={taskId}
+        agent={agent}
+        agentLabel={AGENT_LABEL[agent]}
+        folders={folders}
+        onClose={() => setSessionsOpen(false)}
+        onPick={(id) => {
+          setSessionsOpen(false);
+          void session.resume(id);
+        }}
+        onNew={() => {
+          setSessionsOpen(false);
+          void session.startFresh();
+        }}
+      />
       <div
         ref={scrollRef}
         onScroll={(e) => {
