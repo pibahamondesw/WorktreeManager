@@ -17,7 +17,7 @@ import {
   strongestIndicator,
   taskForCwd,
   taskIndicator,
-  unreadCount,
+  pendingInputCount,
 } from "./agentActivity";
 import { ChatInfo } from "./chat";
 
@@ -85,12 +85,13 @@ describe("activity lifecycle", () => {
 
     activities = applyAgentEvent(activities, "t1", event("done", 2), false);
     activities = applyAgentEvent(activities, "t2", event("waiting", 2), false);
-    expect(unreadCount(activities)).toBe(2);
+    expect(pendingInputCount(activities)).toBe(1);
 
     activities = markTaskSeen(activities, "t1");
     expect(activities.t1).toBeUndefined();
     activities = markTaskSeen(activities, "t2");
     expect(activities.t2).toMatchObject({ state: "waiting", unread: false });
+    expect(pendingInputCount(activities)).toBe(0);
     expect(markTaskSeen(activities, "t2")).toBe(activities);
   });
 
@@ -122,7 +123,9 @@ describe("activity lifecycle", () => {
     expect(replied).toEqual(expect.objectContaining({ state: "working", unread: false }));
     expect(replied.openQuestion).toBeUndefined();
     expect(alertsFor(finished, replied)).toBeNull();
-    expect(alertsFor(replied, nextActivity(replied, event("done", 5), false))).toBe("done");
+    const done = nextActivity(replied, event("done", 5), false)!;
+    expect(alertsFor(replied, done)).toBe("done");
+    expect(alertsFor(done, nextActivity(done, event("done", 6), false))).toBeNull();
   });
 
   it("does not mark results unread for the task being viewed", () => {
@@ -163,8 +166,8 @@ describe("indicators", () => {
     expect(taskIndicator(undefined, undefined)).toBeNull();
   });
 
-  it("rolls up to input, then idle, then working", () => {
-    expect(strongestIndicator(["working", "idle", null])).toBe("idle");
+  it("rolls up to input, then working, then idle", () => {
+    expect(strongestIndicator(["working", "idle", null])).toBe("working");
     expect(strongestIndicator(["idle", "input", "working"])).toBe("input");
     expect(strongestIndicator(["ended", "working"])).toBe("working");
     expect(strongestIndicator([])).toBeNull();
@@ -197,7 +200,7 @@ describe("chatActivityEvent", () => {
 describe("alert settings", () => {
   it("fills defaults, keeps silenced categories and rejects unknown sounds", () => {
     expect(normalizeAgentAlerts(undefined)).toEqual(DEFAULT_AGENT_ALERTS);
-    expect(DEFAULT_AGENT_ALERTS.notifications).toEqual({ done: false, waiting: true });
+    expect(DEFAULT_AGENT_ALERTS.notifications).toEqual({ done: true, waiting: true });
     expect(
       normalizeAgentAlerts({
         sounds: { done: null, waiting: "rm -rf" },

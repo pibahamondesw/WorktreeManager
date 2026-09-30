@@ -67,7 +67,7 @@ export interface AgentAlertSettings {
 
 export const DEFAULT_AGENT_ALERTS: AgentAlertSettings = {
   sounds: { done: "Submarine", waiting: "Ping" },
-  notifications: { done: false, waiting: true },
+  notifications: { done: true, waiting: true },
 };
 
 export function normalizeAgentAlerts(value: unknown): AgentAlertSettings {
@@ -136,14 +136,17 @@ export function applyAgentEvent(
   return next ? { ...activities, [taskId]: next } : activities;
 }
 
-/** Only a change into waiting or done deserves a sound or a notification. */
+/**
+ * Only a change into waiting or done deserves a sound or a notification. A repeated "done" is the
+ * agent waking for a finished background task and going idle again, not a new result.
+ */
 export function alertsFor(
   current: AgentActivity | undefined,
   next: AgentActivity | null
 ): AlertCategory | null {
   if (!next || next.state === "working") return null;
   const unchanged = current?.state === next.state && current.openQuestion === next.openQuestion;
-  return unchanged && current?.openQuestion ? null : next.state;
+  return unchanged && (current?.openQuestion || next.state === "done") ? null : next.state;
 }
 
 /** Opening a task reads it; a read "done" is just idle, so it is dropped. */
@@ -212,8 +215,11 @@ export function chatActivityEvent(
   return null;
 }
 
-export function unreadCount(activities: AgentActivities): number {
-  return Object.values(activities).filter((activity) => activity.unread).length;
+/** The Dock badge counts only unread tasks whose agent is still waiting on you. */
+export function pendingInputCount(activities: AgentActivities): number {
+  return Object.values(activities).filter(
+    (activity) => activity.unread && activity.state === "waiting"
+  ).length;
 }
 
 /** What a task shows: needs input, agent working, a live but idle session, or an ended one. */
@@ -230,7 +236,7 @@ export function taskIndicator(
   return null;
 }
 
-/** Palette and rollup order: needs input, then idle sessions waiting on you, then working. */
+/** Palette order: needs input, then idle sessions waiting on you, then working. */
 export const INDICATOR_RANK: Record<TaskIndicator, number> = {
   input: 3,
   idle: 2,
@@ -238,10 +244,18 @@ export const INDICATOR_RANK: Record<TaskIndicator, number> = {
   ended: 0,
 };
 
+/** Workspace rollup order: a working agent outranks idle sessions so its pulse stays visible. */
+const ROLLUP_RANK: Record<TaskIndicator, number> = {
+  input: 3,
+  working: 2,
+  idle: 1,
+  ended: 0,
+};
+
 export function strongestIndicator(indicators: (TaskIndicator | null)[]): TaskIndicator | null {
   return indicators.reduce<TaskIndicator | null>(
     (best, indicator) =>
-      indicator && (!best || INDICATOR_RANK[indicator] > INDICATOR_RANK[best]) ? indicator : best,
+      indicator && (!best || ROLLUP_RANK[indicator] > ROLLUP_RANK[best]) ? indicator : best,
     null
   );
 }

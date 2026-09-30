@@ -16,7 +16,7 @@ import {
   notificationFor,
   pruneActivities,
   taskForCwd,
-  unreadCount,
+  pendingInputCount,
 } from "../services/agentActivity";
 import { ChatInfo, chatList, onChatStatus } from "../services/chat";
 import { TerminalStatus } from "../services/terminal";
@@ -160,7 +160,7 @@ export function useAgentActivity({
     return () => window.removeEventListener("focus", markSeen);
   }, [openedTaskId, activities]);
 
-  const unread = unreadCount(activities);
+  const unread = pendingInputCount(activities);
   useEffect(() => {
     void invoke("agent_badge", { count: unread }).catch(() => undefined);
   }, [unread]);
