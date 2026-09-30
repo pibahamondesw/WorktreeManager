@@ -5,6 +5,8 @@
 
 mod claude;
 mod codex;
+
+pub use codex::purge_stale_chat_images;
 mod conversations;
 mod files;
 mod model;
@@ -28,7 +30,8 @@ use super::process::OwnedProcess;
 use super::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
 use conversations::{Conversation, ConversationStore};
 use model::{
-    ChatEvent, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus, ProviderOutput,
+    ChatEvent, ChatImage, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus,
+    ProviderOutput,
 };
 
 const STATUS_EVENT: &str = "chat-status";
@@ -539,9 +542,11 @@ pub fn chat_send(
     task_id: String,
     agent: String,
     text: String,
+    images: Option<Vec<ChatImage>>,
 ) -> Result<(), String> {
+    let images = images.unwrap_or_default();
     registry.with_session(&task_id, &agent, |session| {
-        session.with_provider(|provider, _, out| provider.send(&text, out))
+        session.with_provider(|provider, _, out| provider.send(&text, &images, out))
     })
 }
 
@@ -687,7 +692,12 @@ mod tests {
         fn handle_line(&mut self, line: &str, _: &ChatSnapshot, out: &mut ProviderOutput) {
             out.upsert(ChatItem::new(line, ItemKind::Assistant, line));
         }
-        fn send(&mut self, text: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        fn send(
+            &mut self,
+            text: &str,
+            _: &[ChatImage],
+            out: &mut ProviderOutput,
+        ) -> Result<(), String> {
             out.writes.push(text.to_string());
             Ok(())
         }
@@ -744,10 +754,10 @@ mod tests {
         let session = spawn("head -n 2", remembered.clone(), statuses.clone());
         assert_eq!(*remembered.lock().unwrap(), ["conv"]);
         session
-            .with_provider(|p, _, out| p.send("one", out))
+            .with_provider(|p, _, out| p.send("one", &[], out))
             .unwrap();
         session
-            .with_provider(|p, _, out| p.send("two", out))
+            .with_provider(|p, _, out| p.send("two", &[], out))
             .unwrap();
 
         let snapshot = wait_for(&session, |s| matches!(s.status, ChatStatus::Exited { .. }));
@@ -760,7 +770,7 @@ mod tests {
             [ChatStatus::Idle, ChatStatus::Exited { code: Some(0) }]
         );
         assert!(session
-            .with_provider(|p, _, out| p.send("late", out))
+            .with_provider(|p, _, out| p.send("late", &[], out))
             .is_err());
     }
 

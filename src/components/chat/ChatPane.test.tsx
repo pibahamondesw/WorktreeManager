@@ -39,8 +39,8 @@ const snapshot = (overrides = {}) => ({
   pending: [],
   controls: {
     models: [
-      { id: "opus", label: "Opus", efforts: ["low", "high"] },
-      { id: "haiku", label: "Haiku", efforts: [] },
+      { id: "opus", label: "Opus", efforts: ["low", "high"], images: true },
+      { id: "haiku", label: "Haiku", efforts: [], images: false },
     ],
     model: "opus",
     effort: "high",
@@ -107,6 +107,7 @@ describe("ChatPane", () => {
         taskId: "t1",
         agent: "claude",
         text: "Add tests",
+        images: [],
       })
     );
     expect(box).toHaveValue("");
@@ -124,10 +125,64 @@ describe("ChatPane", () => {
         taskId: "t1",
         agent: "claude",
         text: "and add docs",
+        images: [],
       })
     );
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(mocks.invoke).toHaveBeenCalledWith("chat_interrupt", { taskId: "t1", agent: "claude" });
+  });
+
+  it("attaches pasted and dropped images as removable thumbnails and sends them", async () => {
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    const png = (name: string) => new File(["hi"], name, { type: "image/png" });
+    fireEvent.paste(box, { clipboardData: { files: [png("one.png")] } });
+    fireEvent.drop(box.parentElement!, {
+      dataTransfer: { types: ["Files"], files: [png("two.png"), new File(["x"], "a.txt")] },
+    });
+    const thumbnails = await screen.findByRole("list", { name: "Attached images" });
+    await waitFor(() => expect(within(thumbnails).getAllByRole("img")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Remove one.png" }));
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_send", {
+        taskId: "t1",
+        agent: "claude",
+        text: "",
+        images: [{ mediaType: "image/png", data: "aGk=" }],
+      })
+    );
+    expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
+  });
+
+  it("skips unsupported image types and reports oversized ones", async () => {
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    const huge = new File(["x"], "huge.jpg", { type: "image/jpeg" });
+    Object.defineProperty(huge, "size", { value: 10 * 1024 * 1024 + 1 });
+    fireEvent.paste(box, {
+      clipboardData: {
+        files: [new File(["<svg/>"], "a.svg", { type: "image/svg+xml" }), huge],
+      },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("10 MB or smaller: huge.jpg");
+    expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
+  });
+
+  it("ignores images when the model does not accept them", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open"
+        ? Promise.resolve(snapshot({ controls: { ...snapshot().controls, model: "haiku" } }))
+        : Promise.resolve(undefined)
+    );
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    const box = await screen.findByRole("textbox", { name: "Message Codex" });
+    expect(box.getAttribute("placeholder")).not.toContain("paste images");
+    fireEvent.paste(box, {
+      clipboardData: { files: [new File(["hi"], "one.png", { type: "image/png" })] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
   });
 
   it("answers approvals and questions through chat_respond", async () => {

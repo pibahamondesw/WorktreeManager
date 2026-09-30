@@ -6,7 +6,7 @@ import { PendingRequestCard } from "./PendingRequestCard";
 import { TodoPanel } from "./TodoPanel";
 import { useChatSession } from "../../hooks/useChatSession";
 import { SessionStatus } from "../../hooks/useTerminalSession";
-import { ChatStatus, isLive } from "../../services/chat";
+import { ChatImage, ChatStatus, isLive } from "../../services/chat";
 import { AgentId } from "../../types";
 
 interface ChatPaneProps {
@@ -51,9 +51,9 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
     }
   };
 
-  const send = async (text: string) => {
+  const send = async (text: string, images: ChatImage[]) => {
     stickRef.current = true;
-    await session.send(text);
+    await session.send(text, images);
   };
 
   return (

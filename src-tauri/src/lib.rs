@@ -19,6 +19,7 @@ pub fn run() {
         .manage(commands::chat::ChatRegistry::default())
         .manage(commands::code_server::EditorRegistry::default())
         .setup(|app| {
+            std::thread::spawn(commands::chat::purge_stale_chat_images);
             #[cfg(unix)]
             app.manage(
                 automation::Automation::start(automation::socket_path(&app.config().identifier))

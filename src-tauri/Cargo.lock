@@ -6262,6 +6262,7 @@ dependencies = [
 name = "worktree-manager"
 version = "0.11.0"
 dependencies = [
+ "base64 0.22.1",
  "keyring",
  "libc",
  "log",

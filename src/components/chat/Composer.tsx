@@ -1,6 +1,7 @@
-import { KeyboardEvent, useEffect, useRef, useState } from "react";
+import { ClipboardEvent, DragEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
-import { ChevronDownIcon } from "../ui/Icons";
+import { ChevronDownIcon, CloseIcon } from "../ui/Icons";
+import { ImageAttachment, imageFiles, oversizedImages, readImage } from "./composerImages";
 import { MenuOption, OptionMenu } from "./OptionMenu";
 import {
   filterCommands,
@@ -10,6 +11,8 @@ import {
   promptMemory,
 } from "./composerMenu";
 import {
+  acceptsImages,
+  ChatImage,
   chatFileSearch,
   ChatControls,
   ChatSetting,
@@ -23,7 +26,7 @@ import {
 type Picker = "model" | "effort" | "mode";
 
 export interface ComposerActions {
-  send: (text: string) => Promise<void>;
+  send: (text: string, images: ChatImage[]) => Promise<void>;
   interrupt: () => Promise<void>;
   configure: (setting: ChatSetting) => Promise<void>;
   compact: () => Promise<void>;
@@ -67,10 +70,16 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [files, setFiles] = useState<FileMatch[]>([]);
   const [recall, setRecall] = useState<number | null>(null);
+  const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [dragDepth, setDragDepth] = useState(0);
+  const dragging = dragDepth > 0;
   const live = isLive(status);
   const busy = status.kind === "busy";
   const ready = status.kind === "idle" || busy;
   const efforts = effortsFor(controls);
+  const canAttach = live && acceptsImages(controls);
+  const attached = canAttach ? images : [];
+  const sendable = Boolean(text.trim() || attached.length);
   const trigger = picker || dismissed === text ? null : menuTrigger(text, caret);
   const mentionQuery = trigger?.kind === "mention" ? trigger.query : null;
   const foldersKey = folders.join("\n");
@@ -167,10 +176,54 @@ export function Composer({
     }
   };
 
+  const attach = async (files: File[]) => {
+    if (!canAttach || !files.length) return;
+    const oversized = oversizedImages(files);
+    if (oversized.length) {
+      onError(`Images must be 10 MB or smaller: ${oversized.map((f) => f.name).join(", ")}`);
+    }
+    const accepted = files.filter((file) => !oversized.includes(file));
+    try {
+      const added = await Promise.all(accepted.map(readImage));
+      setImages((current) => [...current, ...added]);
+    } catch (e) {
+      onError(String(e));
+    }
+  };
+
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = imageFiles(e.clipboardData.files);
+    if (!canAttach || !files.length) return;
+    e.preventDefault();
+    void attach(files);
+  };
+
+  const dragsFiles = (e: DragEvent) => canAttach && e.dataTransfer.types.includes("Files");
+
+  const onDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (dragsFiles(e)) setDragDepth((depth) => depth + 1);
+  };
+
+  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (dragsFiles(e)) setDragDepth((depth) => Math.max(0, depth - 1));
+  };
+
+  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (dragsFiles(e)) e.preventDefault();
+  };
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    setDragDepth(0);
+    if (!dragsFiles(e)) return;
+    e.preventDefault();
+    void attach(imageFiles(e.dataTransfer.files));
+    focus();
+  };
+
   const submit = async () => {
     const message = text.trim();
-    if (!message || !ready) return;
-    const local = localCommand(message, controls);
+    if (!sendable || !ready) return;
+    const local = attached.length ? null : localCommand(message, controls);
     if (local) {
       update("");
       if (local.kind === "picker") openPicker(local.picker);
@@ -181,8 +234,12 @@ export function Composer({
     }
     onError(null);
     try {
-      await actions.send(message);
-      promptMemory.remember(memoryKey, message);
+      await actions.send(
+        message,
+        attached.map(({ mediaType, data }) => ({ mediaType, data }))
+      );
+      if (message) promptMemory.remember(memoryKey, message);
+      setImages([]);
       update("");
     } catch (e) {
       onError(String(e));
@@ -253,7 +310,7 @@ export function Composer({
 
   const placeholder = busy
     ? `${agentLabel} is working — messages you send now are added to this turn (Esc to stop)`
-    : `Message ${agentLabel} — / for commands, @ for files`;
+    : `Message ${agentLabel} — / for commands, @ for files${canAttach ? ", paste images" : ""}`;
 
   return (
     <div className="max-w-3xl mx-auto flex flex-col gap-1.5">
@@ -269,7 +326,38 @@ export function Composer({
             onPick={pick}
           />
         )}
-        <div className="rounded-lg bg-bg-secondary border border-border focus-within:border-accent">
+        <div
+          onDragOver={onDragOver}
+          onDragEnter={onDragEnter}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+          className={`rounded-lg bg-bg-secondary border focus-within:border-accent ${
+            dragging ? "border-accent" : "border-border"
+          }`}
+        >
+          {attached.length > 0 && (
+            <ul aria-label="Attached images" className="flex flex-wrap gap-2 px-3 pt-2">
+              {attached.map((image) => (
+                <li key={image.id} className="relative group">
+                  <img
+                    src={image.url}
+                    alt={image.name}
+                    title={image.name}
+                    className="h-14 w-14 rounded-md object-cover border border-border"
+                  />
+                  <button
+                    type="button"
+                    aria-label={`Remove ${image.name}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setImages((current) => current.filter((i) => i.id !== image.id))}
+                    className="absolute -top-1.5 -right-1.5 h-4 w-4 flex items-center justify-center rounded-full bg-bg-primary border border-border text-text-secondary hover:text-text-primary cursor-pointer"
+                  >
+                    <CloseIcon size={8} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <textarea
             ref={textareaRef}
             aria-label={`Message ${agentLabel}`}
@@ -284,6 +372,7 @@ export function Composer({
             onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onBlur={() => setPicker(null)}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             disabled={!live}
             rows={Math.min(10, Math.max(2, text.split("\n").length))}
             placeholder={placeholder}
@@ -328,11 +417,11 @@ export function Composer({
                   Stop
                 </Button>
               )}
-              {(!busy || text.trim()) && (
+              {(!busy || sendable) && (
                 <Button
                   type="button"
                   className="h-7 px-3 text-xs"
-                  disabled={!text.trim() || !ready}
+                  disabled={!sendable || !ready}
                   onClick={() => void submit()}
                 >
                   Send

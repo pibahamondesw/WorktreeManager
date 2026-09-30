@@ -17,8 +17,8 @@ const command = (name: string, description: string, action: CommandOption["actio
 const controls: ChatControls = {
   ...EMPTY_CONTROLS,
   models: [
-    { id: "opus", label: "Opus", efforts: ["low", "high"] },
-    { id: "haiku", label: "Haiku", efforts: [] },
+    { id: "opus", label: "Opus", efforts: ["low", "high"], images: true },
+    { id: "haiku", label: "Haiku", efforts: [], images: true },
   ],
   model: "opus",
   commands: [

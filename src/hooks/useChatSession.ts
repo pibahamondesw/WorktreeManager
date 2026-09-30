@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentId } from "../types";
 import {
+  ChatImage,
   applyChatEvent,
   chatCompact,
   chatConfigure,
@@ -88,7 +89,10 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     [taskId, agent]
   );
   const compact = useCallback(() => chatCompact(taskId, agent), [taskId, agent]);
-  const send = useCallback((text: string) => chatSend(taskId, agent, text), [taskId, agent]);
+  const send = useCallback(
+    (text: string, images: ChatImage[]) => chatSend(taskId, agent, text, images),
+    [taskId, agent]
+  );
   const interrupt = useCallback(() => chatInterrupt(taskId, agent), [taskId, agent]);
   const respond = useCallback(
     (requestId: string, response: ChatResponse) => chatRespond(taskId, agent, requestId, response),
