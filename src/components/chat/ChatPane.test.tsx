@@ -318,6 +318,46 @@ describe("ChatPane", () => {
     expect(screen.getByRole("img", { name: "Context 25% used" })).toBeInTheDocument();
   });
 
+  it.each([
+    ["codex", "auto", "Approve for me", "full", "Full access"],
+    ["claude", "auto", "Auto", "bypassPermissions", "Bypass permissions"],
+  ] as const)(
+    "switches %s permissions from automatic to relaxed and manual",
+    async (agent, auto, autoLabel, relaxed, relaxedLabel) => {
+      const state = snapshot();
+      const modes = [
+        { id: auto, label: autoLabel, description: "" },
+        { id: relaxed, label: relaxedLabel, description: "" },
+        { id: "ask", label: "Manual", description: "" },
+      ];
+      const controls = { ...state.controls, modes, mode: auto };
+      mocks.invoke.mockImplementation((command: string) =>
+        Promise.resolve(
+          command === "chat_open" ? { ...state, controls, status: { kind: "busy" } } : undefined
+        )
+      );
+      render(<ChatPane taskId="t1" agent={agent} folders={["/wt/a"]} />);
+      await screen.findByRole("button", { name: `Permissions: ${autoLabel}` });
+      for (const mode of [modes[1], modes[2]]) {
+        fireEvent.click(screen.getByRole("button", { name: /^Permissions:/ }));
+        fireEvent.mouseDown(
+          within(screen.getByRole("listbox", { name: "Permissions" })).getByText(mode.label)
+        );
+        await waitFor(() =>
+          expect(mocks.invoke).toHaveBeenCalledWith("chat_configure", {
+            taskId: "t1",
+            agent,
+            setting: { kind: "mode", value: mode.id },
+          })
+        );
+        emit(3, { type: "controls", controls: { ...controls, mode: mode.id } });
+        expect(
+          screen.getByRole("button", { name: `Permissions: ${mode.label}` })
+        ).toBeInTheDocument();
+      }
+    }
+  );
+
   it("answers the focused approval from the keyboard", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"
