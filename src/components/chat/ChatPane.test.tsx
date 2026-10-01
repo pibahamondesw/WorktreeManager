@@ -256,6 +256,23 @@ describe("ChatPane", () => {
     );
   });
 
+  it("keeps the input disabled until the session finishes starting", async () => {
+    let resolveOpen: (value: unknown) => void = () => undefined;
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open"
+        ? new Promise((resolve) => (resolveOpen = resolve))
+        : Promise.resolve(undefined)
+    );
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    expect(box).toBeDisabled();
+    expect(box).toHaveAttribute("placeholder", "Starting Claude…");
+
+    await act(async () => resolveOpen(snapshot()));
+    expect(box).toBeEnabled();
+    expect(box).toHaveFocus();
+  });
+
   it("shows why a session failed and restarts it", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"

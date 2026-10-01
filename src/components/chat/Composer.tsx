@@ -21,7 +21,6 @@ import {
   CommandOption,
   effortsFor,
   FileMatch,
-  isLive,
   ReviewTarget,
 } from "../../services/chat";
 
@@ -78,11 +77,10 @@ export function Composer({
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [dragDepth, setDragDepth] = useState(0);
   const dragging = dragDepth > 0;
-  const live = isLive(status);
   const busy = status.kind === "busy";
   const ready = status.kind === "idle" || busy;
   const efforts = effortsFor(controls);
-  const canAttach = live && acceptsImages(controls);
+  const canAttach = ready && acceptsImages(controls);
   const attached = canAttach ? images : [];
   const sendable = Boolean(text.trim() || attached.length);
   const trigger = picker || dismissed === text ? null : menuTrigger(text, caret);
@@ -90,6 +88,10 @@ export function Composer({
   const foldersKey = folders.join("\n");
 
   useEffect(() => promptMemory.saveDraft(memoryKey, text), [memoryKey, text]);
+
+  useEffect(() => {
+    if (ready && nothingFocused()) textareaRef.current?.focus();
+  }, [ready]);
 
   useEffect(() => {
     if (mentionQuery === null) return;
@@ -327,9 +329,12 @@ export function Composer({
     }
   };
 
-  const placeholder = busy
-    ? `${agentLabel} is working — messages you send now are added to this turn (Esc to stop)`
-    : `Message ${agentLabel} — / for commands, @ for files${canAttach ? ", paste images" : ""}`;
+  const placeholder =
+    status.kind === "starting"
+      ? `Starting ${agentLabel}…`
+      : busy
+        ? `${agentLabel} is working — messages you send now are added to this turn (Esc to stop)`
+        : `Message ${agentLabel} — / for commands, @ for files${canAttach ? ", paste images" : ""}`;
 
   return (
     <div className="max-w-3xl mx-auto flex flex-col gap-1.5">
@@ -392,11 +397,10 @@ export function Composer({
             onBlur={() => setPicker(null)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
-            disabled={!live}
+            disabled={!ready}
             rows={Math.min(10, Math.max(2, text.split("\n").length))}
             placeholder={placeholder}
             className="block w-full resize-none bg-transparent px-3 pt-2 pb-1 text-sm text-text-primary placeholder:text-text-muted focus:outline-none disabled:opacity-50"
-            autoFocus
           />
           <div className="flex items-center gap-1 px-1.5 pb-1.5">
             {controls.modes.length > 0 && (
@@ -463,6 +467,8 @@ export function Composer({
     </div>
   );
 }
+
+const nothingFocused = () => !document.activeElement || document.activeElement === document.body;
 
 function pickerOptions(picker: Picker, controls: ChatControls, efforts: string[]): MenuOption[] {
   if (picker === "review") return REVIEW_CHOICES;
