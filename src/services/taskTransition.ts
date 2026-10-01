@@ -1,7 +1,14 @@
 import { flushSync } from "react-dom";
 import { editorPresentation } from "./codeEditor";
 
-export const TASK_TRANSITION_PARTS = ["shell", "identifier", "status", "title", "branch"] as const;
+export const TASK_TRANSITION_PARTS = [
+  "shell",
+  "identifier",
+  "status",
+  "title",
+  "branch",
+  "prs",
+] as const;
 export type TaskTransitionPart = (typeof TASK_TRANSITION_PARTS)[number];
 
 export const taskTransitionName = (part: TaskTransitionPart) => `task-${part}`;

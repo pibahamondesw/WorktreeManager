@@ -1,10 +1,11 @@
 import { ReactNode } from "react";
-import { BranchIcon, ChevronLeftIcon, SidebarIcon } from "../ui/Icons";
+import { BranchIcon, ChevronLeftIcon, PullRequestIcon, SidebarIcon } from "../ui/Icons";
 import { GitStatus, IssueLinearInfo, Task } from "../../types";
 import { Badge } from "../ui/Badge";
 import { stateVariant } from "../worktree/cardStyles";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { taskTransitionName } from "../../services/taskTransition";
+import { PullRequestLinks } from "../worktree/PullRequestLinks";
 
 interface TaskHeaderProps {
   task: Task;
@@ -39,6 +40,7 @@ export function TaskHeader({
 }: TaskHeaderProps) {
   const status = statusLabel[sessionStatus.kind];
   const issueStatus = linearInfo?.status ?? null;
+  const prs = task.linearIssueId ? (linearInfo?.prs ?? []) : [];
   return (
     <div
       className="flex items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
@@ -112,6 +114,15 @@ export function TaskHeader({
           </span>
         )}
       </span>
+      {prs.length > 0 && (
+        <span
+          className="flex items-center gap-1.5 text-xs flex-shrink-0"
+          style={{ viewTransitionName: taskTransitionName("prs") }}
+        >
+          <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
+          <PullRequestLinks prs={prs} />
+        </span>
+      )}
       <span className="ml-auto flex items-center gap-1.5 text-xs text-text-muted flex-shrink-0">
         {surfaceSwitcher}
         {onCloseEditor && (
