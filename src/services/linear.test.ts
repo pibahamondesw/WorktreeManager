@@ -99,6 +99,23 @@ describe("extractPrsFromAttachments", () => {
     expect(extractPrsFromAttachments(attachments)[0]?.state).toBe("closed");
   });
 
+  it.each([[{ status: "open", draft: true }], [JSON.stringify({ status: "Draft" })]])(
+    "detects draft state from metadata %j",
+    (metadata) => {
+      expect(
+        extractPrsFromAttachments([{ url: "https://github.com/org/repo/pull/1", metadata }])[0]
+          ?.state
+      ).toBe("draft");
+    }
+  );
+
+  it("prefers merged over draft when both are present", () => {
+    const metadata = { status: "merged", draft: true };
+    expect(
+      extractPrsFromAttachments([{ url: "https://github.com/org/repo/pull/1", metadata }])[0]?.state
+    ).toBe("merged");
+  });
+
   it("returns all PRs when multiple attachments have PR URLs", () => {
     const attachments: GqlAttachmentNode[] = [
       { url: "https://example.com/docs" },

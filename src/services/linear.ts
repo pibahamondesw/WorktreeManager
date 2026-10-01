@@ -183,11 +183,11 @@ export function extractPrsFromAttachments(attachments: GqlAttachmentNode[]): Pul
       const metaState =
         ("status" in metadata ? metadata.status : undefined) ??
         ("state" in metadata ? metadata.state : undefined);
-      if (typeof metaState === "string") {
-        const s = metaState.toLowerCase();
-        if (s.includes("merge")) state = "merged";
-        else if (s.includes("close")) state = "closed";
-      }
+      const status = typeof metaState === "string" ? metaState.toLowerCase() : "";
+      const isDraft = ("draft" in metadata && metadata.draft === true) || status.includes("draft");
+      if (status.includes("merge")) state = "merged";
+      else if (status.includes("close")) state = "closed";
+      else if (isDraft) state = "draft";
     }
     if (state === "open") {
       const sub = (att.subtitle ?? "").toLowerCase();
