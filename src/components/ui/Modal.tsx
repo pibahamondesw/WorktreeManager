@@ -16,7 +16,10 @@ export function Modal({ open, onClose, title, children, wide }: ModalProps) {
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
     };
     if (open) document.addEventListener("keydown", handleEsc);
     return () => document.removeEventListener("keydown", handleEsc);

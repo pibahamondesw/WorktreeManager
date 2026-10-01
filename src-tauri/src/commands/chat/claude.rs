@@ -747,6 +747,7 @@ fn commands(list: &Value, terminal_only: &Value) -> Vec<CommandOption> {
             "effort" => CommandAction::Effort,
             "compact" => CommandAction::Compact,
             "clear" => CommandAction::Clear,
+            "usage" | "status" => CommandAction::Status,
             _ => CommandAction::Insert {
                 text: format!("/{name} "),
             },
@@ -1735,11 +1736,17 @@ mod tests {
             "account": { "email": "a@b.c", "subscriptionType": "Claude Team" },
         } }),
         );
-        assert!(snapshot
-            .controls
-            .commands
+        assert_eq!(
+            commands(
+                &json!([{ "name": "usage" }, { "name": "status" }]),
+                &Value::Null
+            )
             .iter()
-            .any(|c| c.action == CommandAction::Status));
+            .filter(|c| c.action == CommandAction::Status)
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+            ["status", "usage"]
+        );
         assert_eq!(snapshot.controls.usage, None);
 
         let mut out = ProviderOutput::default();

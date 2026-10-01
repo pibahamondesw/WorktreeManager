@@ -406,7 +406,11 @@ describe("ChatPane", () => {
     );
     expect(screen.getByText("25% used")).toBeInTheDocument();
     expect(screen.getAllByText(/^Resets/)).toHaveLength(1);
+    const appShortcut = vi.fn();
+    window.addEventListener("keydown", appShortcut);
     fireEvent.keyDown(document, { key: "Escape" });
+    window.removeEventListener("keydown", appShortcut);
+    expect(appShortcut).not.toHaveBeenCalled();
     expect(screen.queryByText("Weekly limit")).not.toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Context 25% used. Show plan usage and limits" })
