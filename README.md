@@ -57,13 +57,14 @@ pnpm run tauri:dev:local
 
 Development starts Vite on `localhost:5173` and opens the native app with hot reload. See [AGENTS.md](AGENTS.md) for contribution conventions; track features and planned work in Linear.
 
-| Command                     | Data and credentials             | Signing                                           |
-| --------------------------- | -------------------------------- | ------------------------------------------------- |
-| `pnpm run tauri:dev:local`  | Isolated; configure Linear again | Default development signature                     |
-| `pnpm run tauri:dev:shared` | Shares the installed app's state | Stable certificate; setup below                   |
-| `pnpm run tauri dev`        | Shares the installed app's state | Default, unless `WTM_DEV_SIGNING_IDENTITY` is set |
+| Command                       | Data and credentials                                                          | Signing                                           |
+| ----------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
+| `pnpm run tauri:dev:local`    | Isolated; configure Linear again                                              | Default development signature                     |
+| `pnpm run tauri:dev:shared`   | Shares the installed app's state                                              | Stable certificate; setup below                   |
+| `pnpm run tauri:dev:snapshot` | Fresh copy of the installed app's state and Linear credentials on each launch | Stable certificate; setup below                   |
+| `pnpm run tauri dev`          | Shares the installed app's state                                              | Default, unless `WTM_DEV_SIGNING_IDENTITY` is set |
 
-Close the installed app before running shared development: only one instance can own that state.
+Close the installed app before running shared development: only one instance can own that state. Snapshot development runs alongside it; its changes never reach the installed app.
 
 To use the development CLI:
 
