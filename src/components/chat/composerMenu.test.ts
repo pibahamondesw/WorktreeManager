@@ -27,6 +27,7 @@ const controls: ChatControls = {
     command("effort", "Choose the effort", { kind: "effort" }),
     command("plan", "Plan first", { kind: "mode", mode: "plan" }),
     command("compact", "Free up context", { kind: "compact" }),
+    command("status", "Show plan usage", { kind: "status" }),
     command("review", "Review a pull request", { kind: "insert", text: "/review " }),
     command("simplify", "Clean up the model layer", { kind: "insert", text: "/simplify " }),
   ],
@@ -79,6 +80,7 @@ describe("localCommand", () => {
       value: "plan",
     });
     expect(localCommand("/compact", controls)).toEqual({ kind: "compact" });
+    expect(localCommand("/status", controls)).toEqual({ kind: "status" });
     expect(localCommand("/review 12", controls)).toBeNull();
     expect(localCommand("/unknown", controls)).toBeNull();
     expect(localCommand("please /model", controls)).toBeNull();

@@ -57,12 +57,14 @@ const snapshot = (overrides = {}) => ({
         description: "Review changes",
         action: { kind: "insert", text: "/review " },
       },
+      { name: "status", description: "Show plan usage", action: { kind: "status" } },
     ],
     todos: [
       { text: "Read the code", status: "completed" },
       { text: "Write the fix", status: "inProgress" },
     ],
     context: { used: 50, max: 200 },
+    usage: null,
   },
   ...overrides,
 });
@@ -370,7 +372,61 @@ describe("ChatPane", () => {
       })
     );
     expect(screen.getByRole("region", { name: "Plan" })).toHaveTextContent("Plan 1/2");
-    expect(screen.getByRole("img", { name: "Context 25% used" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Context 25% used. Show plan usage and limits" })
+    ).toBeInTheDocument();
+  });
+
+  it("opens plan usage from /status and the context ring, updating with new limits", async () => {
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByText("Fix the bug");
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    fireEvent.change(box, { target: { value: "/status" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByText("Loading usage…")).toBeInTheDocument();
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_refresh_usage", {
+      taskId: "t1",
+      agent: "claude",
+    });
+    const usage = {
+      supported: true,
+      plan: "Claude Team",
+      account: "a@b.c",
+      windows: [
+        { id: "five_hour", label: "5-hour limit", usedPercent: 25, resetsAt: 1790809800 },
+        { id: "seven_day", label: "Weekly limit", usedPercent: 86, resetsAt: null },
+      ],
+      session: null,
+      error: null,
+    };
+    emit(3, { type: "controls", controls: { ...snapshot().controls, usage } });
+    expect(screen.getByRole("progressbar", { name: "Weekly limit" })).toHaveAttribute(
+      "aria-valuenow",
+      "86"
+    );
+    expect(screen.getByText("25% used")).toBeInTheDocument();
+    expect(screen.getAllByText(/^Resets/)).toHaveLength(1);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByText("Weekly limit")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Context 25% used. Show plan usage and limits" })
+    );
+    expect(screen.getByText("Claude Team")).toBeInTheDocument();
+  });
+
+  it("shows why plan usage could not be refreshed", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_refresh_usage") return Promise.reject("Claude is not running");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByText("Fix the bug");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Context 25% used. Show plan usage and limits" })
+    );
+    expect(await screen.findByText("Claude is not running")).toBeInTheDocument();
+    expect(screen.queryByText("Loading usage…")).not.toBeInTheDocument();
   });
 
   it.each([

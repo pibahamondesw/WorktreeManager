@@ -5,6 +5,7 @@ import { Composer } from "./Composer";
 import { PendingRequestCard } from "./PendingRequestCard";
 import { SessionList } from "./SessionList";
 import { TodoPanel } from "./TodoPanel";
+import { UsageDialog } from "./UsageDialog";
 import { useChatSession } from "../../hooks/useChatSession";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { ChatImage, ChatStatus, isLive } from "../../services/chat";
@@ -31,6 +32,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   const { snapshot, error, restart, respond } = session;
   const [actionError, setActionError] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const { status, items, pending, controls } = snapshot;
@@ -151,10 +153,17 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
             compact: session.compact,
             review: session.review,
             startFresh: session.startFresh,
+            showUsage: () => setUsageOpen(true),
           }}
           onError={setActionError}
         />
       </div>
+      <UsageDialog
+        open={usageOpen}
+        usage={controls.usage}
+        onRefresh={session.refreshUsage}
+        onClose={() => setUsageOpen(false)}
+      />
     </div>
   );
 }
