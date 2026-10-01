@@ -192,7 +192,9 @@ body,
 ::view-transition-old(task-title),
 ::view-transition-new(task-title),
 ::view-transition-old(task-branch),
-::view-transition-new(task-branch) {
+::view-transition-new(task-branch),
+::view-transition-old(task-prs),
+::view-transition-new(task-prs) {
   width: auto;
   height: 100%;
   object-fit: none;

@@ -194,3 +194,46 @@ it("reports clipboard failures without showing a success toast", async () => {
     else Reflect.deleteProperty(navigator, "clipboard");
   }
 });
+
+it("lists every attached PR by number with its full title on hover", () => {
+  vi.mocked(openUrl).mockResolvedValueOnce(undefined);
+  const onOpen = vi.fn();
+  render(
+    <WorktreeCard
+      task={{ ...task, linearIssueId: "issue" }}
+      workspace={workspace}
+      vault={vault}
+      onDelete={vi.fn()}
+      onOpen={onOpen}
+      repoSlugs={{}}
+      linearInfo={
+        {
+          status: null,
+          prs: [
+            {
+              url: "https://x/pull/424",
+              title: "First",
+              state: "open",
+              number: 424,
+              repoSlug: "o/r",
+            },
+            {
+              url: "https://x/pull/425",
+              title: "Second",
+              state: "closed",
+              number: 425,
+              repoSlug: "o/r",
+            },
+          ],
+        } as never
+      }
+    />
+  );
+  expect(screen.getByTitle("#424: First")).toHaveTextContent(/^#424open$/);
+  expect(screen.getByTitle("#424: First").parentElement).toHaveTextContent(/^#424open,$/);
+  expect(screen.getByTitle("#425: Second")).toHaveTextContent(/^#425closed$/);
+  expect(screen.queryByText(/First/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByTitle("#425: Second"));
+  expect(openUrl).toHaveBeenCalledWith("https://x/pull/425");
+  expect(onOpen).not.toHaveBeenCalled();
+});

@@ -22,6 +22,7 @@ import {
   IssueLinearInfo,
   PullRequestInfo,
 } from "../../types";
+import { PullRequestLinks } from "./PullRequestLinks";
 import { ensureTaskNote, taskNoteUri } from "../../services/notes";
 import { openCreatePr } from "../../services/pullRequest";
 import { linearIssueUrl, timeAgo } from "../../utils";
@@ -52,9 +53,6 @@ interface WorktreeCardProps {
   onRequestDeleteHandled?: () => void;
 }
 
-const prBadgeVariant = (state: string) =>
-  state === "open" ? "success" : state === "merged" ? "accent" : "default";
-
 export const WorktreeCard = memo(function WorktreeCard({
   task,
   workspace,
@@ -79,7 +77,6 @@ export const WorktreeCard = memo(function WorktreeCard({
   // No Linear issue → no PR attachments will ever load; treat as "loaded, zero PRs"
   // so the Create PR links still render. undefined = still loading, hide PR slots.
   const prs = task.linearIssueId ? linearInfo?.prs : [];
-  const pr = prs === undefined ? undefined : (prs[0] ?? null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -146,19 +143,10 @@ export const WorktreeCard = memo(function WorktreeCard({
     setDeleteError(null);
   };
 
-  const handlePrClick = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (pr) {
-      await openUrl(pr.url);
-    } else if (primaryRepo) {
-      await openCreatePr(task.branchName, primaryRepo);
-    }
-  };
-
-  const prForMember = (m: TaskMember): PullRequestInfo | undefined => {
+  const prsForMember = (m: TaskMember): PullRequestInfo[] => {
     const slug = repoSlugs?.[m.repoId];
-    if (!slug || !prs) return undefined;
-    return prs.find((p) => p.repoSlug.toLowerCase() === slug);
+    if (!slug || !prs) return [];
+    return prs.filter((p) => p.repoSlug.toLowerCase() === slug);
   };
 
   // PRs attached to the Linear issue whose repo doesn't match any member's remote
@@ -168,6 +156,14 @@ export const WorktreeCard = memo(function WorktreeCard({
     prs && repoSlugs !== null
       ? prs.filter((p) => !memberSlugSet.has(p.repoSlug.toLowerCase()))
       : [];
+  const unmatchedPrsByRepo = new Map<string, PullRequestInfo[]>();
+  for (const p of unmatchedPrs) {
+    unmatchedPrsByRepo.set(p.repoSlug, [...(unmatchedPrsByRepo.get(p.repoSlug) ?? []), p]);
+  }
+  const createPrForPrimaryRepo = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (primaryRepo) void openCreatePr(task.branchName, primaryRepo);
+  };
 
   const handleMenuAction = async (action: string) => {
     setMenuOpen(false);
@@ -369,14 +365,16 @@ export const WorktreeCard = memo(function WorktreeCard({
           </div>
 
           {/* Row 4: PR info. Multi-repo tasks get one row per member repo (replacing the old
-              repo chips); single-repo tasks keep the full-title PR row. pointer-events-none
-              containers so empty space clicks pass through to card */}
+              repo chips). pointer-events-none containers so empty space clicks pass through to card */}
           {showRepoChips ? (
-            <div className="mt-2 flex flex-col gap-1 text-left pointer-events-none">
+            <div
+              data-task-part={prs?.length ? "prs" : undefined}
+              className="mt-2 flex flex-col gap-1 text-left pointer-events-none"
+            >
               {task.members.map((m) => {
-                const memberPr = prForMember(m);
+                const memberPrs = prsForMember(m);
                 return (
-                  <div key={m.repoId} className="flex items-center gap-1.5 text-xs">
+                  <div key={m.repoId} className="flex flex-wrap items-center gap-1.5 text-xs">
                     <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
                     <span
                       className="inline-flex items-center rounded px-1.5 py-0.5 text-[0.625rem] bg-bg-hover text-text-muted"
@@ -386,21 +384,8 @@ export const WorktreeCard = memo(function WorktreeCard({
                     </span>
                     {prs !== undefined &&
                       repoSlugs !== null &&
-                      (memberPr ? (
-                        <span
-                          role="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openUrl(memberPr.url).catch(() =>
-                              onOpenError?.("Could not open the pull request")
-                            );
-                          }}
-                          title={memberPr.title}
-                          className="pointer-events-auto inline-flex items-center gap-1.5 text-accent hover:text-accent-hover transition-colors cursor-pointer"
-                        >
-                          #{memberPr.number}
-                          <Badge variant={prBadgeVariant(memberPr.state)}>{memberPr.state}</Badge>
-                        </span>
+                      (memberPrs.length > 0 ? (
+                        <PullRequestLinks prs={memberPrs} onOpenError={onOpenError} />
                       ) : (
                         <span
                           role="button"
@@ -416,52 +401,37 @@ export const WorktreeCard = memo(function WorktreeCard({
                   </div>
                 );
               })}
-              {unmatchedPrs.map((p) => (
-                <div key={p.url} className="flex items-center gap-1.5 text-xs">
+              {[...unmatchedPrsByRepo].map(([repoSlug, repoPrs]) => (
+                <div key={repoSlug} className="flex flex-wrap items-center gap-1.5 text-xs">
                   <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
                   <span
                     className="inline-flex items-center rounded px-1.5 py-0.5 text-[0.625rem] bg-bg-hover text-text-muted"
-                    title={p.repoSlug}
+                    title={repoSlug}
                   >
-                    {p.repoSlug.split("/")[1] ?? p.repoSlug}
+                    {repoSlug.split("/")[1] ?? repoSlug}
                   </span>
-                  <span
-                    role="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openUrl(p.url).catch(() => onOpenError?.("Could not open the pull request"));
-                    }}
-                    title={p.title}
-                    className="pointer-events-auto inline-flex items-center gap-1.5 text-accent hover:text-accent-hover transition-colors cursor-pointer"
-                  >
-                    #{p.number}
-                    <Badge variant={prBadgeVariant(p.state)}>{p.state}</Badge>
-                  </span>
+                  <PullRequestLinks prs={repoPrs} onOpenError={onOpenError} />
                 </div>
               ))}
             </div>
           ) : (
-            pr !== undefined && (
-              <div className="mt-2 text-left pointer-events-none">
-                <span
-                  role="button"
-                  onClick={(event) => {
-                    void handlePrClick(event).catch(() =>
-                      onOpenError?.("Could not open the pull request")
-                    );
-                  }}
-                  className="pointer-events-auto inline items-baseline text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer"
-                >
-                  <PullRequestIcon size={12} className="inline -mt-0.5 mr-1.5" />
-                  {pr ? (
-                    <>
-                      PR #{pr.number}: {pr.title}{" "}
-                      <Badge variant={prBadgeVariant(pr.state)}>{pr.state}</Badge>
-                    </>
-                  ) : (
-                    <span className="text-text-muted hover:text-accent">Create PR</span>
-                  )}
-                </span>
+            prs !== undefined && (
+              <div
+                data-task-part={prs.length ? "prs" : undefined}
+                className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-left pointer-events-none"
+              >
+                <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
+                {prs.length > 0 ? (
+                  <PullRequestLinks prs={prs} onOpenError={onOpenError} />
+                ) : (
+                  <span
+                    role="button"
+                    onClick={createPrForPrimaryRepo}
+                    className="pointer-events-auto text-text-muted hover:text-accent transition-colors cursor-pointer"
+                  >
+                    Create PR
+                  </span>
+                )}
               </div>
             )
           )}
