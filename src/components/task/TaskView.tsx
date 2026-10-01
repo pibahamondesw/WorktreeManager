@@ -111,7 +111,12 @@ export function TaskView({
           {closeError}
         </p>
       )}
-      <TaskSurfaceView task={task} surface={surface} onStatusChange={setSessionStatus} />
+      <TaskSurfaceView
+        task={task}
+        surface={surface}
+        closing={closing}
+        onStatusChange={setSessionStatus}
+      />
     </div>
   );
 }
@@ -119,10 +124,12 @@ export function TaskView({
 function TaskSurfaceView({
   task,
   surface,
+  closing,
   onStatusChange,
 }: {
   task: Task;
   surface: TaskSurface;
+  closing: boolean;
   onStatusChange: (status: SessionStatus) => void;
 }) {
   switch (surface.kind) {
@@ -132,6 +139,7 @@ function TaskSurfaceView({
           workspaceId={task.workspaceId}
           taskId={task.id}
           folders={task.members.map((member) => member.path)}
+          closing={closing}
           onStatusChange={onStatusChange}
         />
       );

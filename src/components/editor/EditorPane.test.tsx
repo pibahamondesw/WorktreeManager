@@ -89,6 +89,20 @@ describe("EditorPane lifecycle", () => {
     expect(mocks.close).not.toHaveBeenCalled();
   });
 
+  it("shows a closing message while the editor is being closed", async () => {
+    const props = {
+      workspaceId: "workspace",
+      taskId: "a",
+      folders: ["/a"],
+      onStatusChange: vi.fn(),
+    };
+    const view = render(<EditorPane {...props} />);
+    expect(screen.getByText("Opening VS Code…")).toBeInTheDocument();
+    view.rerender(<EditorPane {...props} closing />);
+    expect(screen.getByText("Closing VS Code…")).toBeInTheDocument();
+    await waitFor(() => expect(mocks.open).toHaveBeenCalledOnce());
+  });
+
   it("ignores another session's events and offers restart for the current process exit", async () => {
     render(
       <EditorPane workspaceId="workspace" taskId="a" folders={["/a"]} onStatusChange={vi.fn()} />

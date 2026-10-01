@@ -16,10 +16,17 @@ interface EditorPaneProps {
   taskId: string;
   workspaceId: string;
   folders: string[];
+  closing?: boolean;
   onStatusChange: (status: SessionStatus) => void;
 }
 
-export function EditorPane({ taskId, workspaceId, folders, onStatusChange }: EditorPaneProps) {
+export function EditorPane({
+  taskId,
+  workspaceId,
+  folders,
+  closing = false,
+  onStatusChange,
+}: EditorPaneProps) {
   const pane = useRef<HTMLDivElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [needsInstall, setNeedsInstall] = useState(false);
@@ -131,7 +138,7 @@ export function EditorPane({ taskId, workspaceId, folders, onStatusChange }: Edi
       ) : ended ? (
         <Button onClick={() => void restart()}>Restart editor</Button>
       ) : (
-        <p>Opening VS Code…</p>
+        <p>{closing ? "Closing VS Code…" : "Opening VS Code…"}</p>
       )}
       {error && (
         <p role="alert" className="max-w-xl text-danger select-text break-words">
