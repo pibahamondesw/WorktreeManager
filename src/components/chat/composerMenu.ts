@@ -42,7 +42,8 @@ export type LocalCommand =
   | { kind: "compact" }
   | { kind: "review"; target: ReviewTarget }
   | { kind: "reviewPicker" }
-  | { kind: "clear" };
+  | { kind: "clear" }
+  | { kind: "status" };
 
 export const REVIEW_CHOICES = [
   {
@@ -71,7 +72,7 @@ export function reviewTarget(argument: string): ReviewTarget | null {
 
 /**
  * A submitted message that the chat handles itself instead of sending: `/model sonnet`,
- * `/effort high`, `/plan`, `/compact`, `/clear`. Unknown arguments open the picker.
+ * `/effort high`, `/plan`, `/compact`, `/clear`, `/status`. Unknown arguments open the picker.
  */
 export function localCommand(text: string, controls: ChatControls): LocalCommand | null {
   const review = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
@@ -102,6 +103,8 @@ export function localCommand(text: string, controls: ChatControls): LocalCommand
       return { kind: "reviewPicker" };
     case "clear":
       return { kind: "clear" };
+    case "status":
+      return { kind: "status" };
     case "insert":
       return null;
   }

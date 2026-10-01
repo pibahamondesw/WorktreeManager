@@ -1,6 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { AgentId } from "../types";
+import { PlanUsage } from "./usage";
 
 export type ChatStatus =
   | { kind: "starting" }
@@ -76,7 +77,8 @@ export type CommandAction =
   | { kind: "mode"; mode: string }
   | { kind: "compact" }
   | { kind: "review" }
-  | { kind: "clear" };
+  | { kind: "clear" }
+  | { kind: "status" };
 
 export interface CommandOption {
   name: string;
@@ -99,6 +101,7 @@ export interface ChatControls {
   commands: CommandOption[];
   todos: TodoItem[];
   context: { used: number; max: number } | null;
+  usage: PlanUsage | null;
 }
 
 export type ChatSetting =
@@ -120,6 +123,7 @@ export const EMPTY_CONTROLS: ChatControls = {
   commands: [],
   todos: [],
   context: null,
+  usage: null,
 };
 
 export const acceptsImages = (controls: ChatControls) =>
@@ -262,6 +266,9 @@ export type ReviewTarget =
 
 export const chatReview = (taskId: string, agent: AgentId, target: ReviewTarget) =>
   invoke<void>("chat_review", { taskId, agent, target });
+
+export const chatRefreshUsage = (taskId: string, agent: AgentId) =>
+  invoke<void>("chat_refresh_usage", { taskId, agent });
 
 export const chatFileSearch = (folders: string[], query: string) =>
   invoke<FileMatch[]>("chat_file_search", { folders, query });

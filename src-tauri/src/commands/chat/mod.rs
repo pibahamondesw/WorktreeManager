@@ -605,6 +605,17 @@ pub fn chat_review(
 }
 
 #[tauri::command]
+pub fn chat_refresh_usage(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+) -> Result<(), String> {
+    registry.with_session(&task_id, &agent, |session| {
+        session.with_provider(|provider, _, out| provider.refresh_usage(out))
+    })
+}
+
+#[tauri::command]
 pub async fn chat_file_search(
     folders: Vec<String>,
     query: String,
@@ -813,6 +824,9 @@ mod tests {
             Ok(())
         }
         fn compact(&mut self, _: &mut ProviderOutput) -> Result<(), String> {
+            Ok(())
+        }
+        fn refresh_usage(&mut self, _: &mut ProviderOutput) -> Result<(), String> {
             Ok(())
         }
         fn respond(

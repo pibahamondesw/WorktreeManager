@@ -5,6 +5,7 @@ import {
   applyChatEvent,
   chatCompact,
   chatReview,
+  chatRefreshUsage,
   chatConfigure,
   chatDetach,
   chatInterrupt,
@@ -106,6 +107,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     (text: string, images: ChatImage[]) => chatSend(taskId, agent, text, images),
     [taskId, agent]
   );
+  const refreshUsage = useCallback(() => chatRefreshUsage(taskId, agent), [taskId, agent]);
   const interrupt = useCallback(() => chatInterrupt(taskId, agent), [taskId, agent]);
   const respond = useCallback(
     (requestId: string, response: ChatResponse) => chatRespond(taskId, agent, requestId, response),
@@ -124,5 +126,6 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     configure,
     compact,
     review,
+    refreshUsage,
   };
 }

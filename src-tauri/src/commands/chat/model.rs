@@ -184,6 +184,7 @@ pub enum CommandAction {
     Compact,
     Review,
     Clear,
+    Status,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -221,6 +222,28 @@ pub struct ContextUsage {
     pub max: u64,
 }
 
+/// One rate-limit window of the plan; `resets_at` is unix seconds.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageWindow {
+    pub id: String,
+    pub label: String,
+    pub used_percent: f64,
+    pub resets_at: Option<i64>,
+}
+
+/// The account's plan usage. `supported` is false when the installed agent cannot report it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanUsage {
+    pub supported: bool,
+    pub plan: Option<String>,
+    pub account: Option<String>,
+    pub windows: Vec<UsageWindow>,
+    pub session: Option<String>,
+    pub error: Option<String>,
+}
+
 /// Composer state the agent owns: what can be picked, what is picked, and live side panels.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -233,6 +256,7 @@ pub struct ChatControls {
     pub commands: Vec<CommandOption>,
     pub todos: Vec<TodoItem>,
     pub context: Option<ContextUsage>,
+    pub usage: Option<PlanUsage>,
 }
 
 impl ChatControls {
@@ -439,6 +463,8 @@ pub trait ChatProvider: Send {
     fn interrupt(&mut self, out: &mut ProviderOutput);
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String>;
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
+    fn refresh_usage(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
+
     fn review(&mut self, _target: &ReviewTarget, _out: &mut ProviderOutput) -> Result<(), String> {
         Err("This agent has no native review; send /review as a message".into())
     }

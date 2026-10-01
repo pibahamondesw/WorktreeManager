@@ -34,6 +34,7 @@ export interface ComposerActions {
   compact: () => Promise<void>;
   review: (target: ReviewTarget) => Promise<void>;
   startFresh: () => Promise<void>;
+  showUsage: () => void;
 }
 
 interface ComposerProps {
@@ -164,6 +165,7 @@ export function Composer({
     else if (action.kind === "mode") void configure("mode", action.mode);
     else if (action.kind === "compact") void run(actions.compact);
     else if (action.kind === "review") openPicker("review");
+    else if (action.kind === "status") actions.showUsage();
     else void run(actions.startFresh);
   };
 
@@ -245,6 +247,7 @@ export function Composer({
       else if (local.kind === "compact") void run(actions.compact);
       else if (local.kind === "reviewPicker") openPicker("review");
       else if (local.kind === "review") void run(() => actions.review(local.target));
+      else if (local.kind === "status") actions.showUsage();
       else void run(actions.startFresh);
       return;
     }
@@ -422,7 +425,17 @@ export function Composer({
               />
             )}
             <span className="ml-auto flex items-center gap-2">
-              {controls.context && <ContextRing {...controls.context} />}
+              {controls.context && (
+                <button
+                  type="button"
+                  aria-label={`Context ${contextPercent(controls.context)}% used. Show plan usage and limits`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={actions.showUsage}
+                  className="rounded-md px-1 cursor-pointer hover:bg-bg-hover focus-visible:outline focus-visible:outline-accent"
+                >
+                  <ContextRing {...controls.context} />
+                </button>
+              )}
               {busy && (
                 <Button
                   type="button"
@@ -506,17 +519,20 @@ function Chip({
   );
 }
 
+const contextRatio = ({ used, max }: { used: number; max: number }) =>
+  max > 0 ? Math.min(1, used / max) : 0;
+const contextPercent = (context: { used: number; max: number }) =>
+  Math.round(contextRatio(context) * 100);
+
 function ContextRing({ used, max }: { used: number; max: number }) {
-  const ratio = max > 0 ? Math.min(1, used / max) : 0;
+  const ratio = contextRatio({ used, max });
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
   const tone = ratio > 0.85 ? "text-danger" : ratio > 0.6 ? "text-warning" : "text-text-muted";
-  const percent = Math.round(ratio * 100);
+  const percent = contextPercent({ used, max });
   return (
     <span
-      role="img"
-      aria-label={`Context ${percent}% used`}
-      title={`Context: ${used.toLocaleString()} of ${max.toLocaleString()} tokens (${percent}%). /compact frees space.`}
+      title={`Context: ${used.toLocaleString()} of ${max.toLocaleString()} tokens (${percent}%). /compact frees space; click for plan usage.`}
       className={`flex items-center gap-1 text-[0.6875rem] ${tone}`}
     >
       <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">

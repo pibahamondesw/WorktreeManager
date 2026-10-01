@@ -37,6 +37,11 @@ fn base_commands() -> Vec<CommandOption> {
         ),
         CommandOption::new("review", "Review changes with Codex", CommandAction::Review),
         CommandOption::new("clear", "Start a new conversation", CommandAction::Clear),
+        CommandOption::new(
+            "status",
+            "Show plan usage and limits",
+            CommandAction::Status,
+        ),
     ]
 }
 
@@ -50,6 +55,7 @@ enum Call {
     Models,
     Config,
     Skills,
+    RateLimits,
     Ignore,
 }
 
@@ -81,6 +87,7 @@ pub struct CodexProvider {
     config_approval: Option<Value>,
     config_reviewer: Option<Value>,
     config_sandbox: Option<Value>,
+    usage: PlanUsage,
     image_dir: PathBuf,
     pinned: bool,
 }
@@ -138,6 +145,7 @@ impl CodexProvider {
             config_approval: None,
             config_reviewer: None,
             config_sandbox: None,
+            usage: PlanUsage::default(),
         }
     }
 
@@ -403,6 +411,9 @@ impl CodexProvider {
                             .into(),
                     );
                 } else {
+                    let account = &result["account"];
+                    self.usage.plan = account["planType"].as_str().map(String::from);
+                    self.usage.account = account["email"].as_str().map(String::from);
                     self.call(out, Call::Models, "model/list", json!({}));
                     self.call(
                         out,
@@ -471,8 +482,45 @@ impl CodexProvider {
                     }
                 }
             },
+            Call::RateLimits => {
+                match error {
+                    None => {
+                        self.usage.supported = true;
+                        self.usage.error = None;
+                        self.adopt_rate_limits(&result["rateLimits"]);
+                    }
+                    Some(_) if message["error"]["code"] == UNSUPPORTED => {
+                        self.usage.supported = false;
+                        self.usage.error = None;
+                    }
+                    Some(error) => self.usage.error = Some(error.to_string()),
+                }
+                self.publish_usage(out);
+            }
             Call::Models | Call::Config | Call::Skills | Call::Ignore => {}
         }
+    }
+
+    fn adopt_rate_limits(&mut self, snapshot: &Value) {
+        if let Some(plan) = snapshot["planType"].as_str() {
+            self.usage.plan = Some(plan.to_string());
+        }
+        for id in ["primary", "secondary"] {
+            let window = &snapshot[id];
+            if window.is_null() {
+                continue;
+            }
+            self.usage.windows.retain(|w| w.id != id);
+            if let Some(window) = usage_window(id, window) {
+                self.usage.windows.push(window);
+            }
+        }
+        self.usage.windows.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+
+    fn publish_usage(&mut self, out: &mut ProviderOutput) {
+        self.controls.usage = Some(self.usage.clone());
+        out.controls(&self.controls);
     }
 
     fn handle_notification(
@@ -541,6 +589,11 @@ impl CodexProvider {
                     self.controls.context = Some(ContextUsage { used, max });
                     out.controls(&self.controls);
                 }
+            }
+            "account/rateLimits/updated" => {
+                self.usage.supported = true;
+                self.adopt_rate_limits(&params["rateLimits"]);
+                self.publish_usage(out);
             }
             "serverRequest/resolved" => {
                 let id = request_key(&params["requestId"]);
@@ -850,6 +903,11 @@ impl ChatProvider for CodexProvider {
         Ok(())
     }
 
+    fn refresh_usage(&mut self, out: &mut ProviderOutput) -> Result<(), String> {
+        self.call(out, Call::RateLimits, "account/rateLimits/read", json!({}));
+        Ok(())
+    }
+
     fn respond(
         &mut self,
         request_id: &str,
@@ -899,6 +957,25 @@ impl ChatProvider for CodexProvider {
             id: request_id.to_string(),
         });
         Ok(())
+    }
+}
+
+fn usage_window(id: &str, window: &Value) -> Option<UsageWindow> {
+    Some(UsageWindow {
+        id: id.to_string(),
+        label: window_label(window["windowDurationMins"].as_u64()),
+        used_percent: window["usedPercent"].as_f64()?,
+        resets_at: window["resetsAt"].as_i64(),
+    })
+}
+
+fn window_label(minutes: Option<u64>) -> String {
+    match minutes {
+        Some(10_080) => "Weekly limit".into(),
+        Some(minutes) if minutes % 1_440 == 0 => format!("{}-day limit", minutes / 1_440),
+        Some(minutes) if minutes % 60 == 0 => format!("{}-hour limit", minutes / 60),
+        Some(minutes) => format!("{minutes}-minute limit"),
+        None => "Usage limit".into(),
     }
 }
 
@@ -1949,5 +2026,68 @@ mod tests {
             written(&out)[0]["result"]["decision"],
             json!({ "acceptWithExecpolicyAmendment": { "execpolicy_amendment": ["cargo", "test"] } })
         );
+    }
+
+    #[test]
+    fn status_reads_rate_limits_and_merges_sparse_updates() {
+        let (mut provider, mut snapshot) = resumed();
+        let mut out = ProviderOutput::default();
+        provider.refresh_usage(&mut out).unwrap();
+        let id = request(&out, "account/rateLimits/read")["id"].clone();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": id, "result": { "rateLimits": {
+                "planType": "plus",
+                "primary": { "usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1_790_000_000 },
+                "secondary": { "usedPercent": 44, "windowDurationMins": 10080, "resetsAt": 1_791_000_000 },
+            } } }),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "account/rateLimits/updated", "params": { "rateLimits": {
+                "planType": null, "primary": { "usedPercent": 30, "windowDurationMins": 300, "resetsAt": 1_790_000_000 }, "secondary": null,
+            } } }),
+        );
+        let usage = snapshot.controls.usage.clone().unwrap();
+        assert!(usage.supported);
+        assert_eq!(usage.plan.as_deref(), Some("plus"));
+        let windows: Vec<_> = usage
+            .windows
+            .iter()
+            .map(|w| (w.label.as_str(), w.used_percent))
+            .collect();
+        assert_eq!(windows, [("5-hour limit", 30.0), ("Weekly limit", 44.0)]);
+    }
+
+    #[test]
+    fn status_is_unsupported_when_rate_limits_cannot_be_read() {
+        let (mut provider, mut snapshot) = resumed();
+        let mut out = ProviderOutput::default();
+        provider.refresh_usage(&mut out).unwrap();
+        let id = request(&out, "account/rateLimits/read")["id"].clone();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": id, "error": { "code": -32601, "message": "unknown method" } }),
+        );
+        assert_eq!(snapshot.controls.usage.map(|u| u.supported), Some(false));
+    }
+
+    #[test]
+    fn other_rate_limit_errors_are_shown_without_marking_unsupported() {
+        let (mut provider, mut snapshot) = resumed();
+        let mut out = ProviderOutput::default();
+        provider.refresh_usage(&mut out).unwrap();
+        let id = request(&out, "account/rateLimits/read")["id"].clone();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": id, "error": { "code": -32000, "message": "backend down" } }),
+        );
+        let usage = snapshot.controls.usage.unwrap();
+        assert!(!usage.supported);
+        assert_eq!(usage.error.as_deref(), Some("backend down"));
     }
 }

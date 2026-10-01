@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -22,6 +23,8 @@ enum Control {
     Mode(String),
     Rename,
     ContextUsage,
+    Usage,
+    SessionCost,
     Ignore,
 }
 
@@ -39,7 +42,13 @@ pub struct ClaudeProvider {
     user_messages: u64,
     errors: u64,
     control_ids: u64,
+    usage: PlanUsage,
+    usage_in_flight: bool,
+    last_event_usage_request: Option<Instant>,
 }
+
+const UNSUPPORTED_CONTROL: &str = "Unsupported control request";
+const EVENT_USAGE_INTERVAL: Duration = Duration::from_secs(30);
 
 pub fn launch_args(session_id: &str, resume: bool, extra_dirs: &[String]) -> Vec<String> {
     let mut args: Vec<String> = [
@@ -84,6 +93,9 @@ impl ClaudeProvider {
             user_messages: 0,
             errors: 0,
             control_ids: 0,
+            usage: PlanUsage::default(),
+            usage_in_flight: false,
+            last_event_usage_request: None,
         }
     }
 
@@ -102,6 +114,19 @@ impl ClaudeProvider {
             return;
         };
         if response["subtype"] != "success" {
+            if let Control::Usage = call {
+                self.usage_in_flight = false;
+                let error = response["error"]
+                    .as_str()
+                    .unwrap_or("Could not read plan usage");
+                if error.contains(UNSUPPORTED_CONTROL) {
+                    self.usage.supported = false;
+                    self.usage.error = None;
+                } else {
+                    self.usage.error = Some(error.to_string());
+                }
+                self.publish_usage(out);
+            }
             let fallback = match call {
                 Control::Mode(_) => Some("Could not change permission mode"),
                 Control::Rename => Some("Could not rename the conversation"),
@@ -161,7 +186,26 @@ impl ClaudeProvider {
                 }
                 self.command_list = body["commands"].clone();
                 self.controls.commands = commands(&self.command_list, &self.terminal_commands);
+                let account = &body["account"];
+                self.usage.plan = account["subscriptionType"].as_str().map(String::from);
+                self.usage.account = account["email"].as_str().map(String::from);
+                if self.controls.usage.is_some() {
+                    self.controls.usage = Some(self.usage.clone());
+                }
                 out.controls(&self.controls);
+            }
+            Control::Usage => {
+                self.usage_in_flight = false;
+                self.usage.supported = true;
+                self.usage.error = None;
+                self.usage.windows = usage_windows(&body["rate_limits"]);
+                self.publish_usage(out);
+            }
+            Control::SessionCost => {
+                self.usage.session = body["text"].as_str().map(String::from);
+                if self.controls.usage.is_some() {
+                    self.publish_usage(out);
+                }
             }
             Control::Settings => {
                 let applied = &body["applied"];
@@ -193,6 +237,35 @@ impl ClaudeProvider {
     }
 
     /// Settings report the configured alias or the resolved id; the picker lists aliases.
+    fn should_refresh_usage_for_event(&self) -> bool {
+        let unsupported = self
+            .controls
+            .usage
+            .as_ref()
+            .is_some_and(|u| !u.supported && u.error.is_none());
+        let recent = self
+            .last_event_usage_request
+            .is_some_and(|at| at.elapsed() < EVENT_USAGE_INTERVAL);
+        !unsupported && !recent && !self.usage_in_flight
+    }
+
+    fn publish_usage(&mut self, out: &mut ProviderOutput) {
+        self.controls.usage = Some(self.usage.clone());
+        out.controls(&self.controls);
+    }
+
+    fn request_usage(&mut self, out: &mut ProviderOutput) {
+        if self.usage_in_flight {
+            return;
+        }
+        self.usage_in_flight = true;
+        self.control(
+            out,
+            Control::Usage,
+            json!({ "subtype": "get_usage", "skip_behaviors": true }),
+        );
+    }
+
     fn model_option(&self, model: &str) -> String {
         if self.controls.models.iter().any(|m| m.id == model) {
             return model.to_string();
@@ -423,6 +496,10 @@ impl ChatProvider for ClaudeProvider {
                     out.event(ChatEvent::Resolved { id: id.to_string() });
                 }
             }
+            Some("rate_limit_event") if self.should_refresh_usage_for_event() => {
+                self.last_event_usage_request = Some(Instant::now());
+                self.request_usage(out)
+            }
             Some("result") => {
                 self.turns = self.turns.saturating_sub(1);
                 if message["is_error"] == true {
@@ -532,6 +609,16 @@ impl ChatProvider for ClaudeProvider {
         Ok(())
     }
 
+    fn refresh_usage(&mut self, out: &mut ProviderOutput) -> Result<(), String> {
+        self.request_usage(out);
+        self.control(
+            out,
+            Control::SessionCost,
+            json!({ "subtype": "get_session_cost" }),
+        );
+        Ok(())
+    }
+
     fn respond(
         &mut self,
         request_id: &str,
@@ -634,13 +721,20 @@ fn commands(list: &Value, terminal_only: &Value) -> Vec<CommandOption> {
         .filter_map(Value::as_str)
         .map(|name| name.trim_start_matches('/'))
         .collect();
-    let mut commands = vec![CommandOption::new(
-        "plan",
-        "Switch to plan mode",
-        CommandAction::Mode {
-            mode: "plan".into(),
-        },
-    )];
+    let mut commands = vec![
+        CommandOption::new(
+            "plan",
+            "Switch to plan mode",
+            CommandAction::Mode {
+                mode: "plan".into(),
+            },
+        ),
+        CommandOption::new(
+            "status",
+            "Show plan usage and limits",
+            CommandAction::Status,
+        ),
+    ];
     for command in list.as_array().into_iter().flatten() {
         let Some(name) = command["name"].as_str() else {
             continue;
@@ -653,6 +747,7 @@ fn commands(list: &Value, terminal_only: &Value) -> Vec<CommandOption> {
             "effort" => CommandAction::Effort,
             "compact" => CommandAction::Compact,
             "clear" => CommandAction::Clear,
+            "usage" | "status" => CommandAction::Status,
             _ => CommandAction::Insert {
                 text: format!("/{name} "),
             },
@@ -669,6 +764,58 @@ fn commands(list: &Value, terminal_only: &Value) -> Vec<CommandOption> {
         commands.push(option);
     }
     commands
+}
+
+const USAGE_WINDOWS: [(&str, &str); 4] = [
+    ("five_hour", "5-hour limit"),
+    ("seven_day", "Weekly limit"),
+    ("seven_day_opus", "Weekly limit (Opus)"),
+    ("seven_day_sonnet", "Weekly limit (Sonnet)"),
+];
+
+fn usage_windows(rate_limits: &Value) -> Vec<UsageWindow> {
+    USAGE_WINDOWS
+        .iter()
+        .filter_map(|(id, label)| {
+            let window = &rate_limits[*id];
+            Some(UsageWindow {
+                id: id.to_string(),
+                label: label.to_string(),
+                used_percent: window["utilization"].as_f64()?,
+                resets_at: window["resets_at"].as_str().and_then(unix_seconds),
+            })
+        })
+        .collect()
+}
+
+/// Seconds since the epoch for an RFC 3339 timestamp such as `2026-09-30T23:10:00.39+00:00`.
+fn unix_seconds(timestamp: &str) -> Option<i64> {
+    let number = |range: std::ops::Range<usize>| timestamp.get(range)?.parse::<i64>().ok();
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
+    let zone = timestamp
+        .get(19..)?
+        .trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let offset = match zone {
+        "Z" | "" => 0,
+        _ => {
+            let sign = if zone.starts_with('-') { -1 } else { 1 };
+            let hours = zone.get(1..3)?.parse::<i64>().ok()?;
+            let minutes = zone.get(4..6)?.parse::<i64>().ok()?;
+            sign * (hours * 3600 + minutes * 60)
+        }
+    };
+    let (y, m) = if month <= 2 {
+        (year - 1, month + 9)
+    } else {
+        (year, month - 3)
+    };
+    let era = y.div_euclid(400);
+    let year_of_era = y - era * 400;
+    let day_of_year = (153 * m + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset)
 }
 
 fn map_question(question: &Value) -> Question {
@@ -1553,5 +1700,160 @@ mod tests {
             written(&out)[0]["response"]["response"]["behavior"],
             "allow"
         );
+    }
+
+    fn answer(
+        provider: &mut ClaudeProvider,
+        snapshot: &mut ChatSnapshot,
+        out: &ProviderOutput,
+        subtype: &str,
+        reply: Value,
+    ) {
+        let request = written(out)
+            .into_iter()
+            .find(|w| w["request"]["subtype"] == subtype)
+            .unwrap_or_else(|| panic!("no {subtype} in {:?}", out.writes));
+        let mut response = reply;
+        response["request_id"] = request["request_id"].clone();
+        feed(
+            provider,
+            snapshot,
+            json!({ "type": "control_response", "response": response }),
+        );
+    }
+
+    #[test]
+    fn status_reports_plan_windows_and_session_cost() {
+        let (mut provider, mut snapshot) = started();
+        let mut start = ProviderOutput::default();
+        provider.start(&mut start);
+        answer(
+            &mut provider,
+            &mut snapshot,
+            &start,
+            "initialize",
+            json!({ "subtype": "success", "response": {
+            "account": { "email": "a@b.c", "subscriptionType": "Claude Team" },
+        } }),
+        );
+        assert_eq!(
+            commands(
+                &json!([{ "name": "usage" }, { "name": "status" }]),
+                &Value::Null
+            )
+            .iter()
+            .filter(|c| c.action == CommandAction::Status)
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+            ["status", "usage"]
+        );
+        assert_eq!(snapshot.controls.usage, None);
+
+        let mut out = ProviderOutput::default();
+        provider.refresh_usage(&mut out).unwrap();
+        answer(
+            &mut provider,
+            &mut snapshot,
+            &out,
+            "get_usage",
+            json!({ "subtype": "success", "response": {
+            "rate_limits": {
+                "five_hour": { "utilization": 25, "resets_at": "2026-09-30T23:10:00.399116+00:00" },
+                "seven_day": { "utilization": 46.5, "resets_at": "2026-10-04T12:00:00+02:00" },
+                "seven_day_opus": null,
+            },
+        } }),
+        );
+        answer(
+            &mut provider,
+            &mut snapshot,
+            &out,
+            "get_session_cost",
+            json!({ "subtype": "success", "response": { "text": "Total cost: $0.10" } }),
+        );
+        let usage = snapshot.controls.usage.clone().unwrap();
+        assert!(usage.supported);
+        assert_eq!(usage.plan.as_deref(), Some("Claude Team"));
+        assert_eq!(usage.account.as_deref(), Some("a@b.c"));
+        assert_eq!(usage.session.as_deref(), Some("Total cost: $0.10"));
+        assert_eq!(
+            usage.windows,
+            vec![
+                UsageWindow {
+                    id: "five_hour".into(),
+                    label: "5-hour limit".into(),
+                    used_percent: 25.0,
+                    resets_at: Some(1_790_809_800)
+                },
+                UsageWindow {
+                    id: "seven_day".into(),
+                    label: "Weekly limit".into(),
+                    used_percent: 46.5,
+                    resets_at: Some(1_791_108_000)
+                },
+            ]
+        );
+
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "rate_limit_event", "rate_limit_info": { "status": "allowed" } }),
+        );
+        assert_eq!(written(&out)[0]["request"]["subtype"], "get_usage");
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "rate_limit_event" }),
+        );
+        assert!(out.writes.is_empty());
+    }
+
+    #[test]
+    fn other_usage_errors_keep_support_and_show_the_error() {
+        let (mut provider, mut snapshot) = started();
+        let mut out = ProviderOutput::default();
+        provider.refresh_usage(&mut out).unwrap();
+        let mut again = ProviderOutput::default();
+        provider.request_usage(&mut again);
+        assert!(again.writes.is_empty());
+        answer(
+            &mut provider,
+            &mut snapshot,
+            &out,
+            "get_usage",
+            json!({ "subtype": "error", "error": "Network down" }),
+        );
+        let usage = snapshot.controls.usage.clone().unwrap();
+        assert_eq!(usage.error.as_deref(), Some("Network down"));
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "rate_limit_event" }),
+        );
+        assert_eq!(written(&out)[0]["request"]["subtype"], "get_usage");
+    }
+
+    #[test]
+    fn status_is_unsupported_when_the_cli_rejects_get_usage() {
+        let (mut provider, mut snapshot) = started();
+        let mut out = ProviderOutput::default();
+        provider.refresh_usage(&mut out).unwrap();
+        answer(
+            &mut provider,
+            &mut snapshot,
+            &out,
+            "get_usage",
+            json!({ "subtype": "error", "error": "Unsupported control request" }),
+        );
+        assert_eq!(
+            snapshot.controls.usage.as_ref().map(|u| u.supported),
+            Some(false)
+        );
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "rate_limit_event" }),
+        );
+        assert!(out.writes.is_empty());
     }
 }
