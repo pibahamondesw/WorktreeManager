@@ -23,6 +23,8 @@ interface TaskViewProps {
   onBack: () => void;
   onSwitchSurface: (surface: TaskSurface) => void;
   agentActivity?: AgentActivity;
+  onRename?: (title: string) => Promise<unknown>;
+  onRenameError?: (message: string) => void;
 }
 
 /** A task opened inside the app: compact header on top, the task's surface filling the rest. */
@@ -36,6 +38,8 @@ export function TaskView({
   onBack,
   onSwitchSurface,
   agentActivity,
+  onRename,
+  onRenameError,
 }: TaskViewProps) {
   const [switching, setSwitching] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({ kind: "connecting" });
@@ -97,6 +101,8 @@ export function TaskView({
         onBack={onBack}
         onCloseEditor={surface.kind !== "external" ? () => void closeEditor() : undefined}
         closingEditor={closing}
+        onRename={onRename}
+        onRenameError={onRenameError}
         surfaceSwitcher={
           <AgentSurfaceSwitcher
             surface={surface}

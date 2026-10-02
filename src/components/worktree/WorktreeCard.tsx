@@ -31,6 +31,7 @@ import { AgentActivity, taskIndicator } from "../../services/agentActivity";
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
 import { DeleteOptions, OperationResult } from "../../services/operations";
 import { stateVariant } from "./cardStyles";
+import { EditableTaskTitle } from "../task/EditableTaskTitle";
 
 interface WorktreeCardProps {
   task: Task;
@@ -46,6 +47,7 @@ interface WorktreeCardProps {
   onOpen?: () => void;
   onTogglePin?: () => void;
   onLinkIssue?: () => void;
+  onRename?: (title: string) => Promise<unknown>;
   sessionStatus?: TerminalStatus;
   agentActivity?: AgentActivity;
   repoSlugs: Record<string, string> | null;
@@ -66,6 +68,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   onToast,
   onOpen,
   onLinkIssue,
+  onRename,
   onTogglePin,
   sessionStatus,
   agentActivity,
@@ -309,13 +312,12 @@ export const WorktreeCard = memo(function WorktreeCard({
           </div>
 
           {/* Row 2: title */}
-          <h3
-            data-task-part="title"
-            className="text-sm font-medium text-text-primary truncate"
+          <EditableTaskTitle
             title={task.linearIssueTitle || task.branchName}
-          >
-            {task.linearIssueTitle || task.branchName}
-          </h3>
+            textClassName="text-sm font-medium text-text-primary"
+            onRename={onRename}
+            onError={onOpenError}
+          />
 
           {/* Row 3: branch + git status */}
           <div className="flex items-center gap-3 mt-2">

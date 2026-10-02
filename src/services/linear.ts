@@ -274,6 +274,11 @@ export class LinearService {
     };
   }
 
+  async updateIssueTitle(issueId: string, title: string): Promise<void> {
+    const result = await this.client.updateIssue(issueId, { title });
+    if (!result.success) throw new Error("Linear rejected the title update");
+  }
+
   async startIssue(issueId: string): Promise<void> {
     const issue = await this.client.issue(issueId);
     const currentState = await issue.state;

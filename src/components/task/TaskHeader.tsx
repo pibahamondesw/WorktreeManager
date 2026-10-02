@@ -6,6 +6,7 @@ import { stateVariant } from "../worktree/cardStyles";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { taskTransitionName } from "../../services/taskTransition";
 import { PullRequestLinks } from "../worktree/PullRequestLinks";
+import { EditableTaskTitle } from "./EditableTaskTitle";
 
 interface TaskHeaderProps {
   task: Task;
@@ -18,6 +19,8 @@ interface TaskHeaderProps {
   onCloseEditor?: () => void;
   closingEditor?: boolean;
   surfaceSwitcher?: ReactNode;
+  onRename?: (title: string) => Promise<unknown>;
+  onRenameError?: (message: string) => void;
 }
 
 const statusLabel: Record<SessionStatus["kind"], { text: string; dot: string }> = {
@@ -37,6 +40,8 @@ export function TaskHeader({
   onCloseEditor,
   closingEditor,
   surfaceSwitcher,
+  onRename,
+  onRenameError,
 }: TaskHeaderProps) {
   const status = statusLabel[sessionStatus.kind];
   const issueStatus = linearInfo?.status ?? null;
@@ -86,12 +91,13 @@ export function TaskHeader({
           <Badge variant={stateVariant[issueStatus.type] ?? "default"}>{issueStatus.name}</Badge>
         </span>
       )}
-      <h3
-        className="text-sm font-semibold text-text-primary truncate min-w-0"
-        style={{ viewTransitionName: taskTransitionName("title") }}
-      >
-        {task.linearIssueTitle ?? task.branchName}
-      </h3>
+      <EditableTaskTitle
+        title={task.linearIssueTitle ?? task.branchName}
+        textClassName="text-sm font-semibold text-text-primary"
+        titleStyle={{ viewTransitionName: taskTransitionName("title") }}
+        onRename={onRename}
+        onError={onRenameError}
+      />
       <span
         className="flex items-center gap-1 text-xs font-mono text-text-muted truncate"
         style={{ viewTransitionName: taskTransitionName("branch") }}

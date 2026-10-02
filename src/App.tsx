@@ -428,6 +428,7 @@ function App() {
             onTaskPinned={(id, pinned) => operations.setTaskPinned(id, pinned)}
             onPinnedTasksReordered={(id, targetId) => operations.reorderPinnedTasks(id, targetId)}
             onTaskIssueLinked={(id, issue) => operations.linkTaskIssue(id, issue)}
+            onTaskRenamed={(id, title) => operations.renameTask(id, title)}
             editorApp={editorApp}
             onEditorChange={(editor) => void updateEditorApp(editor)}
             workspaceSwitching={workspaceSwitching}

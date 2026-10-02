@@ -44,6 +44,7 @@ interface WorktreeListProps {
   onTaskPinned: (id: string, pinned: boolean) => Promise<void>;
   onPinnedTasksReordered: (id: string, targetId: string) => Promise<void>;
   onTaskIssueLinked: (taskId: string, issue: string) => Promise<Task>;
+  onTaskRenamed: (taskId: string, title: string) => Promise<Task>;
   onTaskDeleted: (
     taskId: string,
     options: DeleteOptions
@@ -130,6 +131,7 @@ export function WorktreeList({
   onTaskCreated,
   onTaskDeleted,
   onTaskIssueLinked,
+  onTaskRenamed,
   onTaskPinned,
   onPinnedTasksReordered,
   editorApp,
@@ -311,6 +313,7 @@ export function WorktreeList({
       vault={vault}
       onDelete={deleteTask}
       onLinkIssue={() => setLinkTaskId(task.id)}
+      onRename={task.linearIssueId ? (title) => onTaskRenamed(task.id, title) : undefined}
       linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
       gitStatus={aggregateTaskStatus(task, gitStatuses)}
       selected={i >= 0 && i === selectedIndex}
@@ -343,6 +346,10 @@ export function WorktreeList({
             onBack={handleCloseTask}
             onSwitchSurface={(surface) => onSwitchSurface(openTask.id, surface)}
             agentActivity={agentActivities[openTask.id]}
+            onRename={
+              openTask.linearIssueId ? (title) => onTaskRenamed(openTask.id, title) : undefined
+            }
+            onRenameError={showToast}
           />
         )}
         {/* The grid stays mounted while a task is open so returning is instant (no re-probing of

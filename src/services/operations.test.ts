@@ -634,23 +634,23 @@ describe("shared operations", () => {
   });
 });
 
+async function configured(tasks = [task]) {
+  const result = fixture(tasks);
+  await result.operations.change((state) => ({
+    workspaces: state.workspaces.map((workspace) => ({
+      ...workspace,
+      linearApiKey: "workspace-key",
+    })),
+  }));
+  result.save.mockClear();
+  result.publish.mockClear();
+  return result;
+}
+
 describe("linkTaskIssue", () => {
   beforeEach(() => {
     vi.spyOn(LinearService.prototype, "getIssue").mockResolvedValue(input.linearIssue!);
   });
-
-  async function configured(tasks = [task]) {
-    const result = fixture(tasks);
-    await result.operations.change((state) => ({
-      workspaces: state.workspaces.map((workspace) => ({
-        ...workspace,
-        linearApiKey: "workspace-key",
-      })),
-    }));
-    result.save.mockClear();
-    result.publish.mockClear();
-    return result;
-  }
 
   it("persists the association and preserves all repositories and the note filename after reload", async () => {
     const { operations, save } = await configured();
@@ -717,6 +717,57 @@ describe("linkTaskIssue", () => {
     ]);
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
     expect(LinearService.prototype.getIssue).toHaveBeenCalledOnce();
+  });
+});
+
+describe("renameTask", () => {
+  const linked = { ...task, linearIssueId: "issue-id", linearIssueTitle: "Old title" };
+
+  beforeEach(() => {
+    vi.spyOn(LinearService.prototype, "updateIssueTitle").mockResolvedValue();
+  });
+
+  it("updates Linear before persisting the trimmed title", async () => {
+    const { operations, save } = await configured([linked]);
+    const updated = await operations.renameTask("t1", "  New title ");
+    expect(LinearService.prototype.updateIssueTitle).toHaveBeenCalledWith("issue-id", "New title");
+    expect(updated).toEqual({ ...linked, linearIssueTitle: "New title" });
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("skips Linear and the write when the title is unchanged", async () => {
+    const { operations, save } = await configured([linked]);
+    await expect(operations.renameTask("t1", " Old title ")).resolves.toBe(linked);
+    expect(LinearService.prototype.updateIssueTitle).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty titles, unlinked tasks, and missing credentials", async () => {
+    const { operations } = fixture([linked, { ...task, id: "t2" }]);
+    await expect(operations.renameTask("t1", " ")).rejects.toMatchObject({
+      code: "invalid_params",
+    });
+    await expect(operations.renameTask("t2", "Title")).rejects.toMatchObject({
+      code: "invalid_params",
+    });
+    await expect(operations.renameTask("t1", "Title")).rejects.toMatchObject({
+      code: "linear_not_configured",
+    });
+    expect(LinearService.prototype.updateIssueTitle).not.toHaveBeenCalled();
+  });
+
+  it("retains the local title when Linear rejects the update, without exposing credentials", async () => {
+    const { operations, save, publish } = await configured([linked]);
+    vi.mocked(LinearService.prototype.updateIssueTitle).mockRejectedValueOnce(
+      new Error("workspace-key")
+    );
+    await expect(operations.renameTask("t1", "New title")).rejects.toMatchObject({
+      code: "linear_update_failed",
+      message: expect.not.stringContaining("workspace-key") as unknown,
+    });
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(operations.task("t1").linearIssueTitle).toBe("Old title");
   });
 });
 
