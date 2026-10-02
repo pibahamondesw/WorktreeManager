@@ -24,6 +24,18 @@ export function VaultSettingsModal({
   vault,
   onVaultChange,
 }: VaultSettingsModalProps) {
+  return (
+    <Modal open={open} onClose={onClose} title="Obsidian vault">
+      <VaultSettings vault={vault} onVaultChange={onVaultChange} onClose={onClose} />
+    </Modal>
+  );
+}
+
+export function VaultSettings({
+  vault,
+  onVaultChange,
+  onClose,
+}: Omit<VaultSettingsModalProps, "open">) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -69,92 +81,83 @@ export function VaultSettingsModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Obsidian vault">
-      <div className="p-6 space-y-4">
-        {!vault.enabled ? (
-          <>
-            <p className="text-sm text-text-secondary">
-              Create an Obsidian vault for your tasks: one note per task with frontmatter kept in
-              sync by the app, plus a project layer for work that spans tickets and repos. The vault
-              ships its own guide (<span className="font-mono">AGENTS.md</span>), templates, and
-              scripts.
-            </p>
-            <div className="rounded-lg bg-bg-tertiary border border-border px-3 py-2">
-              <p className="text-xs text-text-muted">Vault location</p>
-              <p className="text-sm font-mono text-text-primary truncate select-text">
-                {targetPath}
+    <div className="p-6 space-y-4">
+      {!vault.enabled ? (
+        <>
+          <p className="text-sm text-text-secondary">
+            Create an Obsidian vault for your tasks: one note per task with frontmatter kept in sync
+            by the app, plus a project layer for work that spans tickets and repos. The vault ships
+            its own guide (<span className="font-mono">AGENTS.md</span>), templates, and scripts.
+          </p>
+          <div className="rounded-lg bg-bg-tertiary border border-border px-3 py-2">
+            <p className="text-xs text-text-muted">Vault location</p>
+            <p className="text-sm font-mono text-text-primary truncate select-text">{targetPath}</p>
+          </div>
+          <p className="text-xs text-text-muted">
+            The folder is created and registered with Obsidian automatically (if Obsidian is
+            running, it closes briefly to pick up the new vault). Files you already have are never
+            overwritten.
+          </p>
+          {error && <p className="text-sm text-danger select-text">{error}</p>}
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleEnable()} disabled={busy}>
+              {busy ? "Creating…" : "Enable vault"}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="rounded-lg bg-bg-tertiary border border-border px-3 py-2">
+            <p className="text-xs text-text-muted">Vault location</p>
+            <p className="text-sm font-mono text-text-primary truncate select-text">{vault.path}</p>
+          </div>
+
+          {setupLine && (
+            <div className="space-y-1">
+              <p className="text-xs text-text-muted">
+                Wire up your agents: add this line to your AI tool's global instructions (e.g.{" "}
+                <span className="font-mono">~/.claude/CLAUDE.md</span>). Details in the vault's{" "}
+                <span className="font-mono">agent-setup.md</span>.
               </p>
-            </div>
-            <p className="text-xs text-text-muted">
-              The folder is created and registered with Obsidian automatically (if Obsidian is
-              running, it closes briefly to pick up the new vault). Files you already have are never
-              overwritten.
-            </p>
-            {error && <p className="text-sm text-danger select-text">{error}</p>}
-            <div className="flex justify-end gap-3 pt-2">
-              <Button variant="ghost" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button onClick={() => void handleEnable()} disabled={busy}>
-                {busy ? "Creating…" : "Enable vault"}
-              </Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="rounded-lg bg-bg-tertiary border border-border px-3 py-2">
-              <p className="text-xs text-text-muted">Vault location</p>
-              <p className="text-sm font-mono text-text-primary truncate select-text">
-                {vault.path}
-              </p>
-            </div>
-
-            {setupLine && (
-              <div className="space-y-1">
-                <p className="text-xs text-text-muted">
-                  Wire up your agents: add this line to your AI tool's global instructions (e.g.{" "}
-                  <span className="font-mono">~/.claude/CLAUDE.md</span>). Details in the vault's{" "}
-                  <span className="font-mono">agent-setup.md</span>.
-                </p>
-                <button
-                  onClick={handleCopySetupLine}
-                  className="w-full flex items-center justify-between gap-2 rounded-lg bg-bg-tertiary border border-border px-3 py-2 text-left hover:bg-bg-hover transition-colors cursor-pointer"
-                  title="Copy to clipboard"
-                >
-                  <span className="text-xs font-mono text-text-primary truncate">{setupLine}</span>
-                  <span className="flex items-center gap-1 text-xs text-text-muted flex-shrink-0">
-                    <CopyIcon /> {copied ? "Copied" : "Copy"}
-                  </span>
-                </button>
-              </div>
-            )}
-
-            {error && <p className="text-sm text-danger select-text">{error}</p>}
-
-            <div className="flex items-center justify-between gap-3 pt-2">
-              <Button variant="danger" onClick={() => void handleDisable()} disabled={busy}>
-                Disable
-              </Button>
-              <Button
-                onClick={() => {
-                  const uri = vaultUri(vault);
-                  if (!uri) return;
-                  openUrl(uri).catch((e) =>
-                    setError(
-                      typeof e === "string" ? e : "Could not open Obsidian — is it installed?"
-                    )
-                  );
-                }}
+              <button
+                onClick={handleCopySetupLine}
+                className="w-full flex items-center justify-between gap-2 rounded-lg bg-bg-tertiary border border-border px-3 py-2 text-left hover:bg-bg-hover transition-colors cursor-pointer"
+                title="Copy to clipboard"
               >
-                Open in Obsidian
-              </Button>
+                <span className="text-xs font-mono text-text-primary truncate">{setupLine}</span>
+                <span className="flex items-center gap-1 text-xs text-text-muted flex-shrink-0">
+                  <CopyIcon /> {copied ? "Copied" : "Copy"}
+                </span>
+              </button>
             </div>
-            <p className="text-xs text-text-muted">
-              Disabling stops note creation; nothing on disk is touched.
-            </p>
-          </>
-        )}
-      </div>
-    </Modal>
+          )}
+
+          {error && <p className="text-sm text-danger select-text">{error}</p>}
+
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <Button variant="danger" onClick={() => void handleDisable()} disabled={busy}>
+              Disable
+            </Button>
+            <Button
+              onClick={() => {
+                const uri = vaultUri(vault);
+                if (!uri) return;
+                openUrl(uri).catch((e) =>
+                  setError(typeof e === "string" ? e : "Could not open Obsidian — is it installed?")
+                );
+              }}
+            >
+              Open in Obsidian
+            </Button>
+          </div>
+          <p className="text-xs text-text-muted">
+            Disabling stops note creation; nothing on disk is touched.
+          </p>
+        </>
+      )}
+    </div>
   );
 }

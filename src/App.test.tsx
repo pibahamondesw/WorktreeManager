@@ -65,11 +65,11 @@ vi.mock("./components/sidebar/WorkspaceList", () => ({
   WorkspaceList: ({
     workspaces,
     onSelect,
-    onOpenDoctor,
+    onOpenSettings,
   }: {
     workspaces: Workspace[];
     onSelect: (workspaceId: string) => void;
-    onOpenDoctor: () => void;
+    onOpenSettings: () => void;
   }) => (
     <>
       {workspaces.map((workspace) => (
@@ -77,7 +77,7 @@ vi.mock("./components/sidebar/WorkspaceList", () => ({
           Workspace {workspace.name}
         </button>
       ))}
-      <button onClick={onOpenDoctor}>Dependencies</button>
+      <button onClick={onOpenSettings}>Settings</button>
     </>
   ),
 }));
@@ -130,6 +130,29 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+describe("unified settings", () => {
+  it("opens with Cmd+S while the sidebar is collapsed and closes with Escape", () => {
+    mocks.useStore.mockReturnValue({ ...mocks.useStore(), sidebarCollapsed: true });
+    const view = render(<App />);
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    expect(view.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    expect(view.getByRole("tab", { name: "Theme" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(view.queryByRole("dialog", { name: "Settings" })).toBeNull();
+  });
+
+  it("keeps Cmd+S in text fields and terminals available to their own content", () => {
+    const view = render(<App />);
+    const terminal = document.createElement("div");
+    terminal.className = "xterm";
+    const input = document.createElement("textarea");
+    terminal.appendChild(input);
+    view.container.appendChild(terminal);
+    fireEvent.keyDown(input, { key: "s", metaKey: true });
+    expect(view.queryByRole("dialog", { name: "Settings" })).toBeNull();
+  });
+});
 
 describe("native editor navigation", () => {
   it("opens task search from the native editor event", async () => {
@@ -275,7 +298,8 @@ describe("doctor alerts", () => {
     const view = render(<App />);
     expect(view.queryByRole("status")).toBeNull();
     expect(view.queryByText("pnpm")).toBeNull();
-    fireEvent.click(view.getByRole("button", { name: "Dependencies" }));
+    fireEvent.click(view.getByRole("button", { name: "Settings" }));
+    fireEvent.click(view.getByRole("tab", { name: /Dependencies/ }));
     expect(view.getByText("pnpm")).toBeTruthy();
     expect(view.queryByText("Optional for repos")).toBeNull();
     expect(
@@ -359,7 +383,7 @@ describe("doctor alerts", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     fireEvent.click(view.getByRole("button", { name: "Dismiss" }));
     expect(view.queryByRole("status")).toBeNull();
-    expect(view.getByRole("button", { name: "Dependencies" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Settings" })).toBeTruthy();
   });
 });
 

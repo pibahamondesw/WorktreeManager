@@ -43,6 +43,18 @@ const CATEGORIES: { id: AlertCategory; label: string }[] = [
 ];
 
 export function AgentAlertsModal({ open, onClose, alerts, onAlertsChange }: AgentAlertsModalProps) {
+  return (
+    <Modal open={open} onClose={onClose} title="Agent alerts">
+      <AgentAlertSettingsPanel open={open} alerts={alerts} onAlertsChange={onAlertsChange} />
+    </Modal>
+  );
+}
+
+export function AgentAlertSettingsPanel({
+  open,
+  alerts,
+  onAlertsChange,
+}: Omit<AgentAlertsModalProps, "onClose">) {
   const [hooks, setHooks] = useState<AgentHooksStatus | null>(null);
   const [busy, setBusy] = useState<AgentId | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,80 +92,72 @@ export function AgentAlertsModal({ open, onClose, alerts, onAlertsChange }: Agen
     });
 
   return (
-    <Modal open={open} onClose={onClose} title="Agent alerts">
-      <div className="p-6 space-y-5">
-        <div className="space-y-2">
-          <p className="text-sm text-text-secondary">
-            Global hooks tell WorktreeManager when an agent starts working, needs your input or
-            finishes in embedded terminals and editors, Cursor and external terminals. Embedded
-            chats report it on their own. Your other hooks are kept as they are.
-          </p>
-          {AGENTS.map((agent) => (
-            <div
-              key={agent.id}
-              className="flex items-center justify-between gap-3 rounded-lg bg-bg-tertiary border border-border px-3 py-2"
+    <div className="p-6 space-y-5">
+      <div className="space-y-2">
+        <p className="text-sm text-text-secondary">
+          Global hooks tell WorktreeManager when an agent starts working, needs your input or
+          finishes in embedded terminals and editors, Cursor and external terminals. Embedded chats
+          report it on their own. Your other hooks are kept as they are.
+        </p>
+        {AGENTS.map((agent) => (
+          <div
+            key={agent.id}
+            className="flex items-center justify-between gap-3 rounded-lg bg-bg-tertiary border border-border px-3 py-2"
+          >
+            <div className="min-w-0">
+              <p className="text-sm text-text-primary">{agent.label}</p>
+              <p className="text-xs font-mono text-text-muted truncate select-text">
+                {agent.config}
+              </p>
+              {agent.trust && hooks?.[agent.id] !== "missing" && (
+                <p className="text-xs text-text-muted select-text">{agent.trust}</p>
+              )}
+            </div>
+            <Button
+              variant={hooks?.[agent.id] === "installed" ? "ghost" : "primary"}
+              disabled={!hooks || busy !== null}
+              loading={busy === agent.id}
+              onClick={() => void toggleHooks(agent.id)}
             >
-              <div className="min-w-0">
-                <p className="text-sm text-text-primary">{agent.label}</p>
-                <p className="text-xs font-mono text-text-muted truncate select-text">
-                  {agent.config}
-                </p>
-                {agent.trust && hooks?.[agent.id] !== "missing" && (
-                  <p className="text-xs text-text-muted select-text">{agent.trust}</p>
-                )}
-              </div>
-              <Button
-                variant={hooks?.[agent.id] === "installed" ? "ghost" : "primary"}
-                disabled={!hooks || busy !== null}
-                loading={busy === agent.id}
-                onClick={() => void toggleHooks(agent.id)}
-              >
-                {ACTION_LABELS[hooks?.[agent.id] ?? "missing"]}
-              </Button>
-            </div>
-          ))}
-          {error && <p className="text-sm text-danger select-text">{error}</p>}
-        </div>
-
-        <div className="space-y-2">
-          {CATEGORIES.map((category) => (
-            <div key={category.id} className="flex items-center gap-3">
-              <span className="text-sm text-text-primary flex-1">{category.label}</span>
-              <select
-                value={alerts.sounds[category.id] ?? ""}
-                onChange={(e) => setSound(category.id, e.target.value || null)}
-                className="bg-bg-tertiary border border-border rounded-md px-2 py-1 text-xs text-text-primary cursor-pointer"
-                aria-label={`${category.label} sound`}
-              >
-                <option value="">No sound</option>
-                {SYSTEM_SOUNDS.map((sound) => (
-                  <option key={sound} value={sound}>
-                    {sound}
-                  </option>
-                ))}
-              </select>
-              <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={alerts.notifications[category.id]}
-                  onChange={(e) => setNotification(category.id, e.target.checked)}
-                />
-                Notify
-              </label>
-            </div>
-          ))}
-          <p className="text-xs text-text-muted">
-            Notifications appear only while WorktreeManager is in the background; clicking one opens
-            its task.
-          </p>
-        </div>
-
-        <div className="flex justify-end pt-2">
-          <Button variant="ghost" onClick={onClose}>
-            Done
-          </Button>
-        </div>
+              {ACTION_LABELS[hooks?.[agent.id] ?? "missing"]}
+            </Button>
+          </div>
+        ))}
+        {error && <p className="text-sm text-danger select-text">{error}</p>}
       </div>
-    </Modal>
+
+      <div className="space-y-2">
+        {CATEGORIES.map((category) => (
+          <div key={category.id} className="flex items-center gap-3">
+            <span className="text-sm text-text-primary flex-1">{category.label}</span>
+            <select
+              value={alerts.sounds[category.id] ?? ""}
+              onChange={(e) => setSound(category.id, e.target.value || null)}
+              className="bg-bg-tertiary border border-border rounded-md px-2 py-1 text-xs text-text-primary cursor-pointer"
+              aria-label={`${category.label} sound`}
+            >
+              <option value="">No sound</option>
+              {SYSTEM_SOUNDS.map((sound) => (
+                <option key={sound} value={sound}>
+                  {sound}
+                </option>
+              ))}
+            </select>
+            <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer">
+              <input
+                type="checkbox"
+                checked={alerts.notifications[category.id]}
+                onChange={(e) => setNotification(category.id, e.target.checked)}
+              />
+              Notify
+            </label>
+          </div>
+        ))}
+        <p className="text-xs text-text-muted">
+          Notifications appear only while WorktreeManager is in the background; clicking one opens
+          its task.
+        </p>
+      </div>
+    </div>
   );
 }

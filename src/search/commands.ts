@@ -2,6 +2,7 @@ import { CUSTOM_THEME_ID, themes } from "../themes";
 import { EditorApp, EDITOR_APPS, Task, Workspace } from "../types";
 
 export type WorkspaceAction =
+  | { kind: "settings" }
   | { kind: "vault" }
   | { kind: "themes" }
   | { kind: "edit"; workspaceId: string }
@@ -119,6 +120,16 @@ export function buildCommands({
       action: { type: "workspace", action: { kind: "remove", workspaceId: workspace.id } },
     });
   }
+
+  commands.push({
+    id: "settings",
+    label: "Settings",
+    group: "settings",
+    keywords: "settings preferences theme obsidian vault dependencies agent alerts",
+    emptyVisible: true,
+    shortcut: { key: "s", label: "⌘S", meta: true },
+    action: { type: "workspace", action: { kind: "settings" } },
+  });
 
   commands.push({
     id: "vault",

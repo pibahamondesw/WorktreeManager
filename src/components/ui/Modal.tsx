@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef } from "react";
+import { KeyboardEventHandler, ReactNode, useEffect, useRef } from "react";
 import { CloseIcon } from "./Icons";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 
@@ -8,9 +8,11 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   wide?: boolean;
+  size?: "settings";
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 }
 
-export function Modal({ open, onClose, title, children, wide }: ModalProps) {
+export function Modal({ open, onClose, title, children, wide, size, onKeyDown }: ModalProps) {
   useEditorOcclusion(open);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -36,20 +38,25 @@ export function Modal({ open, onClose, title, children, wide }: ModalProps) {
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onKeyDown={onKeyDown}
         className={`motion-rise bg-bg-secondary border border-border rounded-xl shadow-2xl flex flex-col max-h-[80vh] max-w-[92vw] ${
-          wide ? "w-[40rem]" : "w-[30rem]"
+          size === "settings" ? "w-[56rem] h-[40rem]" : wide ? "w-[40rem]" : "w-[30rem]"
         }`}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-base font-semibold text-text-primary">{title}</h2>
           <button
             onClick={onClose}
+            aria-label={`Close ${title}`}
             className="text-text-muted hover:text-text-primary transition-colors cursor-pointer"
           >
             <CloseIcon />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto">{children}</div>
+        <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
       </div>
     </div>
   );
