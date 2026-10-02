@@ -100,6 +100,38 @@ CARGO_TARGET_DIR="$HOME/.cache/worktreemanager-target" cargo test --manifest-pat
 
 Builds default to `~/.cache/worktreemanager-target`; the app bundle is under `release/bundle/macos/`. Override `CARGO_TARGET_DIR` when needed. Run the specific test files relevant to your changes.
 
+### Frontend coverage pilot
+
+```bash
+pnpm run test:coverage
+```
+
+Runs only the store, utils and operations test files with Vitest V8. [Coverage configuration](vitest.config.ts) includes all TypeScript/TSX sources, even files these tests never import, and excludes tests and declaration files. Zeros elsewhere describe this focused pilot, not the coverage of the full test suite.
+
+Reports are written to the ignored coverage directory: [HTML with uncovered lines and branches](coverage/index.html), [LCOV](coverage/lcov.info) and [JSON summary](coverage/coverage-summary.json), plus the console table. Coverage is opt-in; normal test runs do not collect it. Upgrade Vitest and its coverage provider together; their versions must match.
+
+CI runs the same pilot in **Frontend coverage (pilot report)** when the existing frontend change filter matches, including fork PRs, with read-only permissions and no secrets or external coverage service. Download the **frontend-coverage** artifact from that workflow run; retention is seven days. Reports are also uploaded after test failures when available. A skipped job has no artifact and means **not measured**, not 0%; failed/cancelled runs without reports also have no measurement. Do not substitute artifacts from older runs.
+
+Baseline on 2026-10-02, Node 22.23.2 / Vitest 4.1.11, 114 tests:
+
+| Source                                   | Lines            | Branches         | Proposed minimum lines | Proposed minimum branches |
+| ---------------------------------------- | ---------------- | ---------------- | ---------------------- | ------------------------- |
+| [store](src/services/store.ts)           | 90% (117/130)    | 77.77% (56/72)   | 90%                    | 77%                       |
+| [utils](src/utils.ts)                    | 97.36% (74/76)   | 88.8% (111/125)  | 97%                    | 88%                       |
+| [operations](src/services/operations.ts) | 90.56% (240/265) | 82.84% (140/169) | 90%                    | 82%                       |
+
+Start with reporting only. The proposed ratchet uses per-file lines/branches floors rounded down from this baseline, raised as tests improve. Validate them on Linux CI before enabling `coverage.thresholds` for these three exact paths; the pilot's global percentage is not a suitable gate. Keep the test selection fixed when comparing results.
+
+To preview the utils floor locally:
+
+```bash
+pnpm exec vitest run src/services/store.test.ts src/utils.test.ts src/services/operations.test.ts --coverage --coverage.include=src/utils.ts --coverage.thresholds.lines=97 --coverage.thresholds.branches=88 --coverage.reportsDirectory=coverage/ratchet-preview
+```
+
+Adding `-t timeAgo` to that preview failed the same thresholds; restoring the full pilot selection passed. Utils reaches this baseline through the combined pilot: its own test file alone measures 93.42% lines / 83.2% branches. Four pilot runs produced identical JSON coverage metrics. On macOS arm64, three alternating timed pairs had median wall times of 1.31 s without coverage and 1.86 s with coverage (+0.55 s, about 42%). This excludes CI provisioning, dependency installation and artifact upload; hosted runner cost remains to be measured.
+
+To roll back the CI integration, remove the `frontend-coverage` job from the [CI workflow](.github/workflows/ci.yml); ordinary tests remain available.
+
 ## Releasing
 
 ```bash
