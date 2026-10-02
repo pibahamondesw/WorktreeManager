@@ -8,12 +8,14 @@ import {
   EditorApp,
   EDITOR_CONFIG_PATHS,
   ALWAYS_COPIED_CONFIG_PATHS,
+  VaultConfig,
 } from "../types";
 import { compareTaskPins } from "../utils";
 import { LinearService } from "./linear";
 import { persist } from "./store";
 import { archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
+import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
 import {
   SETUP_STAGES,
   SetupStage,
@@ -114,6 +116,55 @@ export class Operations {
 
   change(build: (state: AppState) => Partial<AppState>) {
     return this.enqueue(() => this.write(build(this.getState())));
+  }
+
+  updateVault(vault: VaultConfig) {
+    return this.enqueue(async () => {
+      if (vault.enabled && !vault.path?.startsWith("/")) {
+        throw new OperationError("invalid_input", "An enabled vault needs an absolute path.");
+      }
+      // Save first: global agent setup is optional and must not undo a usable vault.
+      await this.write({ vault });
+      await this.syncVaultAgents(vault, false);
+    });
+  }
+
+  repairVaultAgents(agent?: VaultAgent) {
+    return this.enqueue(() =>
+      this.syncVaultAgents(this.getState().vault, true, agent ? [agent] : undefined)
+    );
+  }
+
+  private async syncVaultAgents(
+    vault: VaultConfig,
+    repair: boolean,
+    agents: VaultAgent[] = ["codex", "claude"]
+  ) {
+    if (vault.enabled && !vault.path?.startsWith("/")) {
+      throw new OperationError(
+        "invalid_input",
+        "Configure an absolute vault path in settings before repairing agent setup."
+      );
+    }
+    const failures: string[] = [];
+    // Attempt both agents even when one fails, and expose every partial result.
+    for (const agent of agents) {
+      try {
+        await invoke("sync_vault_agent", {
+          agent,
+          vaultPath: vault.enabled ? vault.path : null,
+          repair,
+        });
+      } catch (error) {
+        failures.push(`${VAULT_AGENT_LABELS[agent]}: ${String(error)}`);
+      }
+    }
+    if (failures.length) {
+      throw new OperationError(
+        "vault_agent_setup_failed",
+        `Vault settings were saved, but agent ${vault.enabled ? "setup" : "cleanup"} failed: ${failures.join("; ")}. Retry from vault settings${vault.enabled ? " or Dependencies" : ""}.`
+      );
+    }
   }
 
   refresh(load: (getState: () => AppState) => Promise<AppState>) {

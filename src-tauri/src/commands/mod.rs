@@ -15,6 +15,7 @@ pub mod python_deps;
 pub mod shell_env;
 pub mod terminal;
 pub mod vault;
+pub mod vault_agents;
 pub mod workspace;
 
 pub mod validation;

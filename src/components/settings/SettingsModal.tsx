@@ -5,6 +5,7 @@ import { ThemeSettings } from "../ui/ThemePicker";
 import { VaultSettings } from "../sidebar/VaultSettingsModal";
 import { AgentAlertSettingsPanel } from "../sidebar/AgentAlertsModal";
 import { DependencySettings } from "../doctor/DoctorModal";
+import { VaultAgent } from "../../services/vault";
 import { VaultConfig } from "../../types";
 import { AgentAlertSettings } from "../../services/agentActivity";
 import { CheckSeverity, DoctorReport } from "../../services/doctor";
@@ -28,6 +29,7 @@ interface SettingsModalProps {
   onCustomColorsChange: (colors: Record<string, string>) => void;
   vault: VaultConfig;
   onVaultChange: (vault: VaultConfig) => void | Promise<void>;
+  onRepairVaultAgents: (agent?: VaultAgent) => Promise<void>;
   alerts: AgentAlertSettings;
   onAlertsChange: (alerts: AgentAlertSettings) => void;
   report: DoctorReport | null;
@@ -148,6 +150,7 @@ export function SettingsModal(props: SettingsModalProps) {
                   <VaultSettings
                     vault={props.vault}
                     onVaultChange={props.onVaultChange}
+                    onRepairAgents={props.onRepairVaultAgents}
                     onClose={onClose}
                   />
                 )}
@@ -157,6 +160,7 @@ export function SettingsModal(props: SettingsModalProps) {
                     report={props.report}
                     running={props.running}
                     onRecheck={props.onRecheck}
+                    onRepairVaultAgents={props.onRepairVaultAgents}
                   />
                 )}
                 {id === "alerts" && (

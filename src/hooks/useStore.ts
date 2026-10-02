@@ -1,3 +1,4 @@
+import { VaultAgent } from "../services/vault";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { compareTaskPins } from "../utils";
 import { invoke } from "@tauri-apps/api/core";
@@ -132,7 +133,12 @@ export function useStore() {
   );
 
   const updateVault = useCallback(
-    (vault: VaultConfig) => report(operations.change(() => ({ vault }))),
+    (vault: VaultConfig) => report(operations.updateVault(vault)),
+    [operations, report]
+  );
+
+  const repairVaultAgents = useCallback(
+    (agent?: VaultAgent) => report(operations.repairVaultAgents(agent)),
     [operations, report]
   );
 
@@ -326,6 +332,7 @@ export function useStore() {
     dismissPersistError,
     updateSetup,
     updateVault,
+    repairVaultAgents,
     addWorkspace,
     updateWorkspace,
     removeWorkspace,

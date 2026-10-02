@@ -24,6 +24,7 @@ function config(overrides: Partial<DoctorConfig> = {}): DoctorConfig {
   return {
     editor: "cursor",
     vaultEnabled: false,
+    vaultPath: "/vault",
     repoPaths: ["/repos/app"],
     linearKeys: [],
     ...overrides,
@@ -44,6 +45,7 @@ function run(cfg: DoctorConfig, probe: ProbeReport, online = true) {
     probe: () => Promise.resolve(probe),
     validateKey: () => Promise.resolve({ valid: true, name: "Ada" }),
     online: () => online,
+    vaultAgentProbe: async () => ({ status: "ok", detail: "Installed" }),
   });
 }
 
@@ -52,15 +54,77 @@ function check(report: Awaited<ReturnType<typeof runDoctor>>, id: string) {
 }
 
 describe("runDoctor", () => {
-  it("checks the managed embedded runtime instead of accepting any code-server on PATH", async () => {
-    const runtime = vi
-      .fn()
-      .mockResolvedValue({
-        installed: true,
-        ready: false,
-        version: "4.136.2",
-        detail: "Repair the editor",
+  it.each(["missing", "broken", "unknown", "ok"] as const)(
+    "reports %s Codex vault setup separately from the executable",
+    async (status) => {
+      const vaultAgentProbe = vi.fn().mockResolvedValue({ status, detail: "Global guide status" });
+      const report = await runDoctor(config({ vaultEnabled: true }), {
+        probe: async () => healthyProbe(),
+        vaultAgentProbe,
       });
+      expect(vaultAgentProbe).toHaveBeenCalledWith("codex", "/vault");
+      expect(check(report, "codex-vault")).toMatchObject({
+        status,
+        detail: "Global guide status",
+        severity: status === "ok" ? "ok" : "warning",
+        repair: "codex",
+      });
+    }
+  );
+
+  it("skips Codex vault checks when disabled and surfaces probe failures when enabled", async () => {
+    const vaultAgentProbe = vi.fn().mockRejectedValue("Cannot read global guide");
+    const deps = { probe: async () => healthyProbe(), vaultAgentProbe };
+    const disabled = await runDoctor(config(), deps);
+    expect(check(disabled, "codex-vault")).toBeUndefined();
+    expect(check(disabled, "claude-vault")).toBeUndefined();
+    expect(vaultAgentProbe).not.toHaveBeenCalled();
+    const enabled = await runDoctor(config({ vaultEnabled: true }), deps);
+    expect(check(enabled, "codex-vault")).toMatchObject({
+      status: "unknown",
+      severity: "warning",
+      detail: "Cannot read global guide",
+    });
+    expect(check(enabled, "claude-vault")).toMatchObject({
+      status: "unknown",
+      severity: "warning",
+      detail: "Cannot read global guide",
+    });
+  });
+
+  it.each(["missing", "broken", "unknown", "ok"] as const)(
+    "reports Claude setup as %s independently of Codex",
+    async (status) => {
+      const vaultAgentProbe = vi.fn(async (agent: string) => ({
+        status: agent === "claude" ? status : ("ok" as const),
+        detail: "Global guide status",
+      }));
+      const report = await runDoctor(config({ vaultEnabled: true }), {
+        probe: async () => healthyProbe(),
+        vaultAgentProbe,
+      });
+      expect(vaultAgentProbe).toHaveBeenCalledWith("claude", "/vault");
+      expect(check(report, "claude-vault")).toMatchObject({
+        label: "Claude Code Obsidian setup",
+        status,
+        severity: status === "ok" ? "ok" : "warning",
+        repair: "claude",
+      });
+      expect(check(report, "codex-vault")).toMatchObject({
+        status: "ok",
+        severity: "ok",
+        repair: "codex",
+      });
+    }
+  );
+
+  it("checks the managed embedded runtime instead of accepting any code-server on PATH", async () => {
+    const runtime = vi.fn().mockResolvedValue({
+      installed: true,
+      ready: false,
+      version: "4.136.2",
+      detail: "Repair the editor",
+    });
     const report = await runDoctor(config({ editor: "vscode-web" }), {
       probe: async () => healthyProbe({ apps: [] }),
       editorProbe: runtime,

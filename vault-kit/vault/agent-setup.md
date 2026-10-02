@@ -22,13 +22,15 @@ The two layers interlock: a **project** spans tickets and repos, a **task log** 
 
 ## Installing this snippet
 
-Make your AI tool load this file (or its contents) globally, once, replacing `<vault>` with this vault's absolute path:
+WorktreeManager configures Codex and Claude Code automatically when enabling the vault. For an existing vault, use **Obsidian vault → Repair agent setup** to configure both, or repair each agent from **Dependencies**. Start new agent sessions afterward.
 
-| Tool | How |
-| --- | --- |
-| Claude Code | Add a line `@<vault>/agent-setup.md` to `~/.claude/CLAUDE.md` |
-| Codex CLI | Paste this file's contents into `~/.codex/AGENTS.md` |
-| Cursor | Paste into a global rule (Settings → Rules) |
-| Other | Any tool that supports global/user instructions: paste this file's contents there |
+Without WorktreeManager, make your AI tool load this file (or its contents) globally, once, replacing `<vault>` with this vault's absolute path:
+
+| Tool        | How                                                                                                                                                                                            |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | Add `@<vault>/agent-setup.md` and `@<vault>/AGENTS.md` to `CLAUDE.md` under `CLAUDE_CONFIG_DIR` (default `~/.claude`). Escape spaces in import paths with a backslash; do not quote the paths. |
+| Codex       | Paste this snippet into the active global instruction file in `CODEX_HOME` (default `~/.codex`): non-empty `AGENTS.override.md`, otherwise `AGENTS.md`.                                        |
+| Cursor      | Paste into a global rule (Settings → Rules)                                                                                                                                                    |
+| Other       | Any tool that supports global/user instructions: paste this file's contents there                                                                                                              |
 
 Claude Code users can optionally also install the `/task-log` slash command: copy this vault's `skills/task-log/` to `~/.claude/skills/task-log/`. It packages the task-log writing rules as an explicit command; with this snippet installed it's a convenience, not a requirement.

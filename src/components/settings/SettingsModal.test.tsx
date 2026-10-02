@@ -38,6 +38,7 @@ function renderSettings() {
         onCustomColorsChange={vi.fn()}
         vault={{ enabled: false, path: null }}
         onVaultChange={onVaultChange}
+        onRepairVaultAgents={vi.fn()}
         alerts={DEFAULT_AGENT_ALERTS}
         onAlertsChange={onAlertsChange}
         report={null}

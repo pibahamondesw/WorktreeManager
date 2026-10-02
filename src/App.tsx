@@ -8,7 +8,7 @@ import { SettingsModal, SettingsSection } from "./components/settings/SettingsMo
 import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
-import { enableVault } from "./services/vault";
+import { enableVault, VaultAgent } from "./services/vault";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useUpdater } from "./hooks/useUpdater";
 import { useLinearOrgKeyBackfill } from "./hooks/useLinearOrgKeyBackfill";
@@ -21,7 +21,7 @@ import { NavigationEntry } from "./navigation/history";
 import { withScope } from "./search/query";
 import { WorkspaceAction } from "./search/commands";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
-import { Task } from "./types";
+import { Task, VaultConfig } from "./types";
 import { listen } from "@tauri-apps/api/event";
 import { useAutomation } from "./hooks/useAutomation";
 import { editorPresentation } from "./services/codeEditor";
@@ -45,6 +45,7 @@ function App() {
     dismissPersistError,
     updateSetup,
     updateVault,
+    repairVaultAgents,
     addWorkspace,
     updateWorkspace,
     removeWorkspace,
@@ -199,6 +200,7 @@ function App() {
       editor: editorApp,
       keychainError,
       vaultEnabled: state.vault.enabled,
+      vaultPath: state.vault.path,
       repoPaths: [...new Set(state.workspaces.flatMap((w) => w.repos.map((r) => r.localPath)))],
       linearKeys: state.workspaces.map((w) => ({
         label: w.name,
@@ -209,6 +211,7 @@ function App() {
     loading,
     state.setup.isComplete,
     state.vault.enabled,
+    state.vault.path,
     state.workspaces,
     editorApp,
     keychainError,
@@ -219,6 +222,29 @@ function App() {
     running: doctorRunning,
     recheck: recheckDoctor,
   } = useDoctor(doctorConfig);
+
+  const handleVaultChange = async (vault: VaultConfig) => {
+    try {
+      await updateVault(vault);
+    } finally {
+      if (doctorConfig) {
+        const currentVault = operations.getState().vault;
+        void recheckDoctor({
+          ...doctorConfig,
+          vaultEnabled: currentVault.enabled,
+          vaultPath: currentVault.path,
+        });
+      }
+    }
+  };
+
+  const handleRepairVaultAgents = async (agent?: VaultAgent) => {
+    try {
+      await repairVaultAgents(agent);
+    } finally {
+      await recheckDoctor();
+    }
+  };
 
   const doctorSeverity: CheckSeverity | null = doctorReport
     ? doctorReport.errors > 0
@@ -307,7 +333,7 @@ function App() {
           // Best-effort here — the sidebar's vault settings are the recovery path.
           if (wantsVault) {
             enableVault()
-              .then(updateVault)
+              .then(handleVaultChange)
               .catch(() => undefined);
           }
         }}
@@ -458,7 +484,8 @@ function App() {
         customColors={customColors}
         onCustomColorsChange={(colors) => void updateCustomColors(colors)}
         vault={state.vault}
-        onVaultChange={updateVault}
+        onVaultChange={handleVaultChange}
+        onRepairVaultAgents={handleRepairVaultAgents}
         alerts={agentActivity.alerts}
         onAlertsChange={agentActivity.updateAlerts}
         severity={doctorSeverity}

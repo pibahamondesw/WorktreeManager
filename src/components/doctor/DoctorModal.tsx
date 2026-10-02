@@ -1,3 +1,4 @@
+import { VaultAgent, VAULT_AGENT_LABELS } from "../../services/vault";
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Modal } from "../ui/Modal";
@@ -13,6 +14,7 @@ interface DoctorModalProps {
   report: DoctorReport | null;
   running: boolean;
   onRecheck: () => void;
+  onRepairVaultAgents: (agent: VaultAgent) => Promise<void>;
 }
 
 const STATUS_LABELS: Record<CheckStatus, string> = {
@@ -38,10 +40,23 @@ const DOT_COLORS: Record<CheckSeverity, string> = {
  * Per-dependency health, with the command that installs whatever is missing. Advisory only —
  * the app works (or fails) exactly the same whether this is open or not.
  */
-export function DoctorModal({ open, onClose, report, running, onRecheck }: DoctorModalProps) {
+export function DoctorModal({
+  open,
+  onClose,
+  report,
+  running,
+  onRecheck,
+  onRepairVaultAgents,
+}: DoctorModalProps) {
   return (
     <Modal open={open} onClose={onClose} title="Dependencies" wide>
-      <DependencySettings open={open} report={report} running={running} onRecheck={onRecheck} />
+      <DependencySettings
+        open={open}
+        report={report}
+        running={running}
+        onRecheck={onRecheck}
+        onRepairVaultAgents={onRepairVaultAgents}
+      />
     </Modal>
   );
 }
@@ -51,8 +66,25 @@ export function DependencySettings({
   report,
   running,
   onRecheck,
+  onRepairVaultAgents,
 }: Omit<DoctorModalProps, "onClose">) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState<VaultAgent | null>(null);
+  const [repairError, setRepairError] = useState<{ agent: VaultAgent; message: string } | null>(
+    null
+  );
+
+  const repairAgent = async (agent: VaultAgent) => {
+    setRepairing(agent);
+    setRepairError(null);
+    try {
+      await onRepairVaultAgents(agent);
+    } catch (error) {
+      setRepairError({ agent, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setRepairing(null);
+    }
+  };
 
   const copy = (id: string, command: string) => {
     void navigator.clipboard.writeText(command);
@@ -64,7 +96,12 @@ export function DependencySettings({
     <>
       <div className="px-6 py-4 border-b border-border flex items-center justify-between gap-4">
         <p className="text-xs text-text-muted">{summary(report, running)}</p>
-        <Button variant="secondary" onClick={onRecheck} disabled={running} loading={running}>
+        <Button
+          variant="secondary"
+          onClick={onRecheck}
+          disabled={running || repairing !== null}
+          loading={running}
+        >
           {running ? "Checking…" : "Re-check"}
         </Button>
       </div>
@@ -100,7 +137,23 @@ export function DependencySettings({
                   </p>
                 )}
                 {check.severity !== "ok" &&
-                  (check.id === "embedded-editor" ? (
+                  (check.repair ? (
+                    <div className="space-y-2 pt-1">
+                      <Button
+                        variant="secondary"
+                        onClick={() => void repairAgent(check.repair!)}
+                        disabled={repairing !== null || running}
+                        loading={repairing === check.repair}
+                      >
+                        {repairing === check.repair
+                          ? "Repairing…"
+                          : `Repair ${VAULT_AGENT_LABELS[check.repair]} setup`}
+                      </Button>
+                      {repairError?.agent === check.repair && (
+                        <p className="text-xs text-danger select-text">{repairError.message}</p>
+                      )}
+                    </div>
+                  ) : check.id === "embedded-editor" ? (
                     open && <EditorInstallation onReady={onRecheck} />
                   ) : (
                     <Remedy check={check} copiedId={copiedId} onCopy={copy} />
