@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { WorkspaceList } from "./WorkspaceList";
 import { Task, Workspace } from "../../types";
-import { DEFAULT_AGENT_ALERTS } from "../../services/agentActivity";
 
 vi.mock("./AddWorkspaceModal", () => ({ AddWorkspaceModal: () => null }));
 vi.mock("./VaultSettingsModal", () => ({ VaultSettingsModal: () => null }));
@@ -38,17 +37,10 @@ describe("WorkspaceList session indicator", () => {
         onUpdate={vi.fn()}
         onRemove={vi.fn()}
         onReorder={vi.fn()}
-        themeId="default"
-        onThemeChange={vi.fn()}
-        customColors={null}
-        onCustomColorsChange={vi.fn()}
         vault={{ enabled: false, path: null }}
-        onVaultChange={vi.fn()}
         onCollapse={vi.fn()}
         doctorSeverity={null}
-        onOpenDoctor={vi.fn()}
-        agentAlerts={DEFAULT_AGENT_ALERTS}
-        onAgentAlertsChange={vi.fn()}
+        onOpenSettings={vi.fn()}
       />
     );
 
@@ -88,17 +80,10 @@ describe("WorkspaceList session indicator", () => {
         onUpdate={vi.fn()}
         onRemove={vi.fn()}
         onReorder={vi.fn()}
-        themeId="default"
-        onThemeChange={vi.fn()}
-        customColors={null}
-        onCustomColorsChange={vi.fn()}
         vault={{ enabled: false, path: null }}
-        onVaultChange={vi.fn()}
         onCollapse={vi.fn()}
         doctorSeverity={null}
-        onOpenDoctor={vi.fn()}
-        agentAlerts={DEFAULT_AGENT_ALERTS}
-        onAgentAlertsChange={vi.fn()}
+        onOpenSettings={vi.fn()}
       />
     );
 

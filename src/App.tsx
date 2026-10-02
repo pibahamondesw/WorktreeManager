@@ -4,7 +4,7 @@ import { SetupWizard } from "./components/setup/SetupWizard";
 import { WorkspaceList } from "./components/sidebar/WorkspaceList";
 import { WorktreeList } from "./components/worktree/WorktreeList";
 import { QuickSearchModal } from "./components/search/QuickSearchModal";
-import { DoctorModal } from "./components/doctor/DoctorModal";
+import { SettingsModal, SettingsSection } from "./components/settings/SettingsModal";
 import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
@@ -72,9 +72,15 @@ function App() {
     query: "",
   });
   const [revealTaskId, setRevealTaskId] = useState<string | null>(null);
-  const [showDoctor, setShowDoctor] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [doctorAlertDismissed, setDoctorAlertDismissed] = useState(false);
   const [workspaceAction, setWorkspaceAction] = useState<WorkspaceAction | null>(null);
+  const handleWorkspaceAction = (action: WorkspaceAction) => {
+    if (action.kind === "settings") setSettingsSection("theme");
+    else if (action.kind === "vault") setSettingsSection("vault");
+    else if (action.kind === "themes") setSettingsSection("theme");
+    else setWorkspaceAction(action);
+  };
   const [newTaskRequested, setNewTaskRequested] = useState(false);
 
   useEffect(() => {
@@ -241,6 +247,14 @@ function App() {
       handler: toggleSidebarCollapsed,
       enabled: state.setup.isComplete && !search.open,
     },
+    "meta+s": {
+      handler: () => {
+        setSearch((current) => ({ ...current, open: false }));
+        setSettingsSection("theme");
+      },
+      enabled: state.setup.isComplete,
+      inTextFields: search.open,
+    },
     "meta+k": {
       handler: () => openSearch(false),
       enabled: state.setup.isComplete,
@@ -327,7 +341,7 @@ function App() {
               </span>
               <span className="flex items-center gap-3 ml-4 flex-shrink-0">
                 <button
-                  onClick={() => setShowDoctor(true)}
+                  onClick={() => setSettingsSection("dependencies")}
                   className="text-xs text-warning underline hover:no-underline transition-all cursor-pointer"
                 >
                   Review
@@ -358,8 +372,6 @@ function App() {
               tasks={state.tasks}
               agentSessions={agentSessions}
               agentActivities={agentActivity.activities}
-              agentAlerts={agentActivity.alerts}
-              onAgentAlertsChange={agentActivity.updateAlerts}
               selectedWorkspaceId={state.selectedWorkspaceId}
               onSelect={handleSelectWorkspace}
               onAdd={addWorkspace}
@@ -368,16 +380,11 @@ function App() {
               onReorder={reorderWorkspaces}
               showAddExternal={showAddWorkspace}
               onCloseAddExternal={() => setShowAddWorkspace(false)}
-              themeId={themeId}
-              onThemeChange={(id) => void updateThemeId(id)}
-              customColors={customColors}
-              onCustomColorsChange={(colors) => void updateCustomColors(colors)}
               defaultLinearApiKey={defaultLinearApiKey}
               vault={state.vault}
-              onVaultChange={updateVault}
               onCollapse={toggleSidebarCollapsed}
               doctorSeverity={doctorSeverity}
-              onOpenDoctor={() => setShowDoctor(true)}
+              onOpenSettings={() => setSettingsSection("theme")}
               workspaceAction={workspaceAction}
               onWorkspaceActionHandled={() => setWorkspaceAction(null)}
             />
@@ -437,14 +444,24 @@ function App() {
         onReveal={handleReveal}
         onOpenTask={openTask}
         onSelectWorkspace={handleSelectWorkspace}
-        onWorkspaceAction={setWorkspaceAction}
+        onWorkspaceAction={handleWorkspaceAction}
         onThemeChange={(id) => void updateThemeId(id)}
         onEditorChange={(editor) => void updateEditorApp(editor)}
         onNewTask={() => setNewTaskRequested(true)}
       />
-      <DoctorModal
-        open={showDoctor}
-        onClose={() => setShowDoctor(false)}
+      <SettingsModal
+        section={settingsSection}
+        onSectionChange={setSettingsSection}
+        onClose={() => setSettingsSection(null)}
+        themeId={themeId}
+        onThemeChange={(id) => void updateThemeId(id)}
+        customColors={customColors}
+        onCustomColorsChange={(colors) => void updateCustomColors(colors)}
+        vault={state.vault}
+        onVaultChange={updateVault}
+        alerts={agentActivity.alerts}
+        onAlertsChange={agentActivity.updateAlerts}
+        severity={doctorSeverity}
         report={doctorReport}
         running={doctorRunning || keychainRetrying}
         onRecheck={() => {

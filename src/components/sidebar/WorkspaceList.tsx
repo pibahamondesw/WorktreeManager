@@ -3,25 +3,13 @@ import { Task, VaultConfig, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { EditWorkspaceModal } from "./EditWorkspaceModal";
 import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
-import { ThemePicker } from "../ui/ThemePicker";
-import { VaultSettingsModal } from "./VaultSettingsModal";
-import {
-  PlusIcon,
-  GearIcon,
-  SunIcon,
-  GripIcon,
-  NotebookIcon,
-  SidebarIcon,
-  WrenchIcon,
-  BellIcon,
-} from "../ui/Icons";
+import { PlusIcon, GearIcon, GripIcon, SidebarIcon } from "../ui/Icons";
 import { DeleteOptions, OperationResult } from "../../services/operations";
 import { CheckSeverity } from "../../services/doctor";
 import { WorkspaceAction } from "../../search/commands";
 import { TerminalStatus } from "../../services/terminal";
 import {
   AgentActivities,
-  AgentAlertSettings,
   TaskIndicator,
   strongestIndicator,
   taskIndicator,
@@ -34,15 +22,12 @@ const WORKSPACE_INDICATOR_LABELS: Record<TaskIndicator, string> = {
   working: "An agent in this workspace is working",
   ended: "",
 };
-import { AgentAlertsModal } from "./AgentAlertsModal";
 
 interface WorkspaceListProps {
   workspaces: Workspace[];
   tasks: Task[];
   agentSessions?: Record<string, TerminalStatus>;
   agentActivities?: AgentActivities;
-  agentAlerts: AgentAlertSettings;
-  onAgentAlertsChange: (alerts: AgentAlertSettings) => void;
   selectedWorkspaceId: string | null;
   onSelect: (workspaceId: string) => void;
   onAdd: (workspace: Workspace) => Promise<Workspace>;
@@ -57,17 +42,12 @@ interface WorkspaceListProps {
   onReorder: (fromIndex: number, toIndex: number) => void;
   showAddExternal?: boolean;
   onCloseAddExternal?: () => void;
-  themeId: string;
-  onThemeChange: (themeId: string) => void;
-  customColors: Record<string, string> | null;
-  onCustomColorsChange: (colors: Record<string, string>) => void;
   defaultLinearApiKey?: string | null;
   vault: VaultConfig;
-  onVaultChange: (vault: VaultConfig) => void | Promise<void>;
   onCollapse: () => void;
   /** Worst severity the dependency check found, or null before it has run. */
   doctorSeverity: CheckSeverity | null;
-  onOpenDoctor: () => void;
+  onOpenSettings: () => void;
   /** Palette (or anything else) asking this list to open a sidebar overlay. */
   workspaceAction?: WorkspaceAction | null;
   onWorkspaceActionHandled?: () => void;
@@ -78,8 +58,6 @@ export function WorkspaceList({
   tasks,
   agentSessions = {},
   agentActivities = {},
-  agentAlerts,
-  onAgentAlertsChange,
   selectedWorkspaceId,
   onSelect,
   onAdd,
@@ -88,16 +66,11 @@ export function WorkspaceList({
   onReorder,
   showAddExternal,
   onCloseAddExternal,
-  themeId,
-  onThemeChange,
-  customColors,
-  onCustomColorsChange,
   defaultLinearApiKey,
   vault,
-  onVaultChange,
   onCollapse,
   doctorSeverity,
-  onOpenDoctor,
+  onOpenSettings,
   workspaceAction,
   onWorkspaceActionHandled,
 }: WorkspaceListProps) {
@@ -105,9 +78,6 @@ export function WorkspaceList({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [editWorkspace, setEditWorkspace] = useState<Workspace | null>(null);
   const [removeWorkspace, setRemoveWorkspace] = useState<Workspace | null>(null);
-  const [showThemes, setShowThemes] = useState(false);
-  const [showVault, setShowVault] = useState(false);
-  const [showAlerts, setShowAlerts] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // Source index lives in a ref so drop logic never depends on async state having flushed.
@@ -171,12 +141,6 @@ export function WorkspaceList({
   useEffect(() => {
     if (!workspaceAction) return;
     switch (workspaceAction.kind) {
-      case "vault":
-        setShowVault(true);
-        break;
-      case "themes":
-        setShowThemes(true);
-        break;
       case "edit": {
         const workspace = workspaces.find((w) => w.id === workspaceAction.workspaceId);
         if (workspace) setEditWorkspace(workspace);
@@ -333,20 +297,13 @@ export function WorkspaceList({
       {/* Footer: global settings */}
       <div className="flex-shrink-0 border-t border-border px-4 py-2 space-y-0.5">
         <button
-          onClick={() => setShowVault(true)}
+          onClick={onOpenSettings}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
-          title="Obsidian vault settings"
+          title="Settings (⌘S)"
         >
-          <NotebookIcon />
-          Obsidian vault
-        </button>
-        <button
-          onClick={onOpenDoctor}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
-          title="Check required tools and API keys"
-        >
-          <WrenchIcon size={14} />
-          Dependencies
+          <GearIcon size={14} />
+          Settings
+          <kbd className="ml-auto text-text-muted/50">⌘S</kbd>
           {doctorSeverity && doctorSeverity !== "ok" && (
             <span
               className={`ml-auto w-1.5 h-1.5 rounded-full ${
@@ -360,36 +317,7 @@ export function WorkspaceList({
             />
           )}
         </button>
-        <button
-          onClick={() => setShowAlerts(true)}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
-          title="Agent hooks, sounds and notifications"
-        >
-          <BellIcon />
-          Agent alerts
-        </button>
-        <button
-          onClick={() => setShowThemes(true)}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
-          title="Change theme"
-        >
-          <SunIcon />
-          Theme
-        </button>
       </div>
-
-      <AgentAlertsModal
-        open={showAlerts}
-        onClose={() => setShowAlerts(false)}
-        alerts={agentAlerts}
-        onAlertsChange={onAgentAlertsChange}
-      />
-      <VaultSettingsModal
-        open={showVault}
-        onClose={() => setShowVault(false)}
-        vault={vault}
-        onVaultChange={onVaultChange}
-      />
 
       <AddWorkspaceModal
         open={addOpen}
@@ -434,15 +362,6 @@ export function WorkspaceList({
           }}
         />
       )}
-
-      <ThemePicker
-        open={showThemes}
-        onClose={() => setShowThemes(false)}
-        currentThemeId={themeId}
-        onThemeChange={onThemeChange}
-        customColors={customColors}
-        onCustomColorsChange={onCustomColorsChange}
-      />
     </aside>
   );
 }

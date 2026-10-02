@@ -255,6 +255,15 @@ describe("QuickSearchModal commands", () => {
     expect(onSelectWorkspace).toHaveBeenCalledWith("ws-2");
   });
 
+  it("opens Settings with Cmd+S from the palette", () => {
+    const onClose = vi.fn();
+    const { onWorkspaceAction } = renderModal({ initialQuery: "", onClose });
+    expect(screen.getByRole("button", { name: /Settings.*⌘S/ })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "s", metaKey: true });
+    expect(onWorkspaceAction).toHaveBeenCalledWith({ kind: "settings" });
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it("opens vault settings from a matching command", () => {
     const { onWorkspaceAction } = renderModal({ initialQuery: "obsidian" });
     fireEvent.click(screen.getByRole("button", { name: /Obsidian vault/ }));

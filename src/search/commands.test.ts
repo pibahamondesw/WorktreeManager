@@ -53,6 +53,7 @@ describe("buildCommands", () => {
         "edit-ws:ws-1",
         "remove-ws:ws-1",
         "new-task",
+        "settings",
         "vault",
         "theme-picker",
         "theme:default",
@@ -108,6 +109,11 @@ describe("buildCommands", () => {
       editorApp: "cursor",
     });
 
+    expect(commands.find((command) => command.id === "settings")?.shortcut).toEqual({
+      key: "s",
+      label: "⌘S",
+      meta: true,
+    });
     expect(commands.find((command) => command.id === "new-task")?.shortcut).toEqual({
       key: "n",
       label: "N",

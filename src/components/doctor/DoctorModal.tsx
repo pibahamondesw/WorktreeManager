@@ -39,6 +39,19 @@ const DOT_COLORS: Record<CheckSeverity, string> = {
  * the app works (or fails) exactly the same whether this is open or not.
  */
 export function DoctorModal({ open, onClose, report, running, onRecheck }: DoctorModalProps) {
+  return (
+    <Modal open={open} onClose={onClose} title="Dependencies" wide>
+      <DependencySettings open={open} report={report} running={running} onRecheck={onRecheck} />
+    </Modal>
+  );
+}
+
+export function DependencySettings({
+  open,
+  report,
+  running,
+  onRecheck,
+}: Omit<DoctorModalProps, "onClose">) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const copy = (id: string, command: string) => {
@@ -48,7 +61,7 @@ export function DoctorModal({ open, onClose, report, running, onRecheck }: Docto
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Dependencies" wide>
+    <>
       <div className="px-6 py-4 border-b border-border flex items-center justify-between gap-4">
         <p className="text-xs text-text-muted">{summary(report, running)}</p>
         <Button variant="secondary" onClick={onRecheck} disabled={running} loading={running}>
@@ -105,7 +118,7 @@ export function DoctorModal({ open, onClose, report, running, onRecheck }: Docto
           installed only in an interactive-shell-specific path may not be found here.
         </p>
       </div>
-    </Modal>
+    </>
   );
 }
 

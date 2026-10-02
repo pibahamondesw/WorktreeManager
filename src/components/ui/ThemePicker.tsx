@@ -20,6 +20,24 @@ export function ThemePicker({
   customColors,
   onCustomColorsChange,
 }: ThemePickerProps) {
+  return (
+    <Modal open={open} onClose={onClose} title="Theme" wide>
+      <ThemeSettings
+        currentThemeId={currentThemeId}
+        onThemeChange={onThemeChange}
+        customColors={customColors}
+        onCustomColorsChange={onCustomColorsChange}
+      />
+    </Modal>
+  );
+}
+
+export function ThemeSettings({
+  currentThemeId,
+  onThemeChange,
+  customColors,
+  onCustomColorsChange,
+}: Omit<ThemePickerProps, "open" | "onClose">) {
   const handleSelect = (themeId: string) => {
     onThemeChange(themeId);
   };
@@ -31,62 +49,14 @@ export function ThemePicker({
   const isCustom = currentThemeId === CUSTOM_THEME_ID;
 
   return (
-    <Modal open={open} onClose={onClose} title="Theme" wide>
-      <div className="p-6">
-        <div className="grid grid-cols-2 gap-3">
-          {themes.map((theme) => (
-            <button
-              key={theme.id}
-              onClick={() => handleSelect(theme.id)}
-              className={`flex items-center gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
-                currentThemeId === theme.id
-                  ? "border-accent bg-bg-tertiary"
-                  : "border-border hover:border-border-light hover:bg-bg-hover"
-              }`}
-            >
-              {/* Color swatch preview */}
-              <div className="flex gap-0.5 flex-shrink-0">
-                <div
-                  className="w-4 h-8 rounded-l-md"
-                  style={{ backgroundColor: theme.colors["bg-secondary"] }}
-                />
-                <div className="flex flex-col gap-0.5">
-                  <div
-                    className="w-4 h-[15px]"
-                    style={{ backgroundColor: theme.colors["accent"] }}
-                  />
-                  <div
-                    className="w-4 h-[15px] rounded-br-md"
-                    style={{ backgroundColor: theme.colors["bg-tertiary"] }}
-                  />
-                </div>
-              </div>
-
-              <div className="text-left min-w-0">
-                <p className="text-sm font-medium text-text-primary">{theme.name}</p>
-                <div className="flex gap-1 mt-1">
-                  {["accent", "success", "warning", "danger"].map((key) => (
-                    <div
-                      key={key}
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: theme.colors[key] }}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {currentThemeId === theme.id && (
-                <CheckIcon size={14} className="text-accent ml-auto flex-shrink-0" />
-              )}
-            </button>
-          ))}
-
-          {/* Custom, user-configurable theme */}
+    <div className="p-6">
+      <div className="grid grid-cols-2 gap-3">
+        {themes.map((theme) => (
           <button
-            key={CUSTOM_THEME_ID}
-            onClick={() => handleSelect(CUSTOM_THEME_ID)}
+            key={theme.id}
+            onClick={() => handleSelect(theme.id)}
             className={`flex items-center gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
-              isCustom
+              currentThemeId === theme.id
                 ? "border-accent bg-bg-tertiary"
                 : "border-border hover:border-border-light hover:bg-bg-hover"
             }`}
@@ -95,41 +65,81 @@ export function ThemePicker({
             <div className="flex gap-0.5 flex-shrink-0">
               <div
                 className="w-4 h-8 rounded-l-md"
-                style={{ backgroundColor: customPreview["bg-secondary"] }}
+                style={{ backgroundColor: theme.colors["bg-secondary"] }}
               />
               <div className="flex flex-col gap-0.5">
-                <div
-                  className="w-4 h-[15px]"
-                  style={{ backgroundColor: customPreview["accent"] }}
-                />
+                <div className="w-4 h-[15px]" style={{ backgroundColor: theme.colors["accent"] }} />
                 <div
                   className="w-4 h-[15px] rounded-br-md"
-                  style={{ backgroundColor: customPreview["bg-tertiary"] }}
+                  style={{ backgroundColor: theme.colors["bg-tertiary"] }}
                 />
               </div>
             </div>
 
             <div className="text-left min-w-0">
-              <p className="text-sm font-medium text-text-primary">Custom</p>
+              <p className="text-sm font-medium text-text-primary">{theme.name}</p>
               <div className="flex gap-1 mt-1">
                 {["accent", "success", "warning", "danger"].map((key) => (
                   <div
                     key={key}
                     className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: customPreview[key] }}
+                    style={{ backgroundColor: theme.colors[key] }}
                   />
                 ))}
               </div>
             </div>
 
-            {isCustom && <CheckIcon size={14} className="text-accent ml-auto flex-shrink-0" />}
+            {currentThemeId === theme.id && (
+              <CheckIcon size={14} className="text-accent ml-auto flex-shrink-0" />
+            )}
           </button>
-        </div>
+        ))}
 
-        {isCustom && customColors && (
-          <CustomThemeEditor colors={customColors} onChange={onCustomColorsChange} />
-        )}
+        {/* Custom, user-configurable theme */}
+        <button
+          key={CUSTOM_THEME_ID}
+          onClick={() => handleSelect(CUSTOM_THEME_ID)}
+          className={`flex items-center gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+            isCustom
+              ? "border-accent bg-bg-tertiary"
+              : "border-border hover:border-border-light hover:bg-bg-hover"
+          }`}
+        >
+          {/* Color swatch preview */}
+          <div className="flex gap-0.5 flex-shrink-0">
+            <div
+              className="w-4 h-8 rounded-l-md"
+              style={{ backgroundColor: customPreview["bg-secondary"] }}
+            />
+            <div className="flex flex-col gap-0.5">
+              <div className="w-4 h-[15px]" style={{ backgroundColor: customPreview["accent"] }} />
+              <div
+                className="w-4 h-[15px] rounded-br-md"
+                style={{ backgroundColor: customPreview["bg-tertiary"] }}
+              />
+            </div>
+          </div>
+
+          <div className="text-left min-w-0">
+            <p className="text-sm font-medium text-text-primary">Custom</p>
+            <div className="flex gap-1 mt-1">
+              {["accent", "success", "warning", "danger"].map((key) => (
+                <div
+                  key={key}
+                  className="w-3 h-3 rounded-full"
+                  style={{ backgroundColor: customPreview[key] }}
+                />
+              ))}
+            </div>
+          </div>
+
+          {isCustom && <CheckIcon size={14} className="text-accent ml-auto flex-shrink-0" />}
+        </button>
       </div>
-    </Modal>
+
+      {isCustom && customColors && (
+        <CustomThemeEditor colors={customColors} onChange={onCustomColorsChange} />
+      )}
+    </div>
   );
 }
