@@ -141,7 +141,7 @@ fn ensure_task_note_support(root: &Path) -> Result<(), String> {
 /// Scaffold the vault structure at `root`. Idempotent: existing files are
 /// preserved and missing ones created. Task-note support adds a skill reference
 /// to the guide without replacing user instructions.
-fn scaffold_vault_at(root: &Path) -> Result<(), String> {
+pub(crate) fn scaffold_vault_at(root: &Path) -> Result<(), String> {
     for dir in VAULT_DIRS {
         let path = root.join(dir);
         fs::create_dir_all(&path).map_err(|e| format!("create {}: {e}", path.display()))?;

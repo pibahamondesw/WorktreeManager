@@ -270,6 +270,45 @@ describe("workspace task-surface navigation", () => {
 });
 
 describe("doctor alerts", () => {
+  it.each([true, false])(
+    "rechecks Codex vault setup after repair (success: %s)",
+    async (success) => {
+      const repairVaultAgents = success
+        ? vi.fn().mockResolvedValue(undefined)
+        : vi.fn().mockRejectedValue(new Error("Permission denied"));
+      const recheck = vi.fn().mockResolvedValue(undefined);
+      const store = mocks.useStore();
+      mocks.useStore.mockReturnValue({ ...store, repairVaultAgents });
+      mocks.useDoctor.mockReturnValue({
+        report: {
+          errors: 0,
+          warnings: 1,
+          checks: [
+            {
+              id: "codex-vault",
+              label: "Codex Obsidian setup",
+              scope: "app",
+              status: "missing",
+              severity: "warning",
+              reason: "Loads vault instructions",
+              detail: "No global block",
+              repair: "codex",
+            },
+          ],
+        },
+        running: false,
+        recheck,
+      });
+      const view = render(<App />);
+      fireEvent.click(view.getByRole("button", { name: "Settings" }));
+      fireEvent.click(view.getByRole("tab", { name: /Dependencies/ }));
+      fireEvent.click(view.getByRole("button", { name: "Repair Codex setup" }));
+      await waitFor(() => expect(recheck).toHaveBeenCalledOnce());
+      expect(repairVaultAgents).toHaveBeenCalledOnce();
+      if (!success) expect(await view.findByText("Permission denied")).toBeTruthy();
+    }
+  );
+
   const git = {
     id: "cli:git",
     label: "git",

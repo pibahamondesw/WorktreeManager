@@ -47,7 +47,13 @@ Two layers, one system: **projects** span tickets and repos; a **task log** is o
 
 ## Wiring up your agents
 
-The vault only pays off if agents write to it and read it back. `<vault>/agent-setup.md` is a short router snippet for your AI tools' **global** instructions — it tells every session where the vault is, when to write a task log, and when to open a project. Install it once per tool (Claude Code: one `@<vault>/agent-setup.md` line in `~/.claude/CLAUDE.md`; other tools: paste — the file lists them). The vault settings modal shows the exact line with a copy button.
+The vault only pays off if agents write to it and read it back. `<vault>/agent-setup.md` is a short router snippet for your AI tools' **global** instructions — it tells every session where the vault is, when to write a task log, and when to open a project.
+
+**Codex and Claude Code are configured automatically when you enable the vault.** WorktreeManager adds a delimited block to each agent's global instructions, resolving its configuration directory through the same shell profiles as its launchers. For Codex this is `CODEX_HOME` (default `~/.codex`), using a non-empty `AGENTS.override.md` before `AGENTS.md`. For Claude Code this is `CLAUDE.md` under `CLAUDE_CONFIG_DIR` (default `~/.claude`); its block imports the vault's setup and guide with absolute paths, escaping spaces. Personal instructions, including manually added imports, are preserved. Repeating setup updates only the app's blocks. Start new agent sessions to load them. Re-enabling keeps the existing vault path.
+
+For an already-enabled vault, use **Obsidian vault → Repair agent setup** to configure both agents, or the individual repair actions in **Dependencies**. Dependencies reports each agent separately, including missing or outdated instructions and inaccessible vault guides. Repair recreates missing scaffold files without overwriting existing vault content. If one agent's setup fails, the other is still attempted and the vault remains enabled; the error identifies the agent that needs a retry. Disabling removes only the app's blocks from both Codex instruction files and Claude Code's global file, while preserving personal instructions and all vault files. Failed cleanup can be retried from vault settings.
+
+For standalone installations without WorktreeManager, or other AI tools, use the snippet's installation instructions.
 
 This is plain Markdown, so it works with any agent that supports global instructions — nothing here is Claude-specific.
 
@@ -65,12 +71,12 @@ Run `/task-log` from inside a worktree and it resolves the right note from the b
 
 ## Daily use
 
-| When                     | What happens                                                                                                                                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| You create a task        | The app writes the note with frontmatter filled in. It never overwrites an existing note, so your prose is safe.                                                                                      |
-| You are working          | Press `O` (or **More actions → Open notes**) to open the note in Obsidian. Your agent appends distilled decisions and learnings as they happen.                                                       |
+| When                     | What happens                                                                                                                                                     |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You create a task        | The app writes the note with frontmatter filled in. It never overwrites an existing note, so your prose is safe.                                                 |
+| You are working          | Press `O` (or **More actions → Open notes**) to open the note in Obsidian. Your agent appends distilled decisions and learnings as they happen.                  |
 | You delete the task      | The task folder moves to `task-logs/_archive/<task-id>/` with the note marked `status: archived`. Notes and attachments are kept, including untouched templates. |
-| You remove the workspace | Same, once per task — whether or not you keep the worktrees on disk.                                                                                                                                  |
+| You remove the workspace | Same, once per task — whether or not you keep the worktrees on disk.                                                                                             |
 
 The point is not to have notes. The point is that in three months `grep` over `task-logs/` answers questions your git history cannot — and agents are instructed to do exactly that before non-trivial work.
 

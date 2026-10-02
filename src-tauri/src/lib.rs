@@ -56,6 +56,8 @@ pub fn run() {
                 commands::git::git_worktree_status_batch,
                 commands::git::git_remote_url,
                 commands::doctor::doctor_probe,
+                commands::vault_agents::sync_vault_agent,
+                commands::vault_agents::probe_vault_agent,
                 commands::doppler::doppler_setup,
                 commands::doppler::doppler_cleanup,
                 commands::node_deps::install_node_deps,

@@ -96,6 +96,118 @@ beforeEach(() => {
 });
 
 describe("shared operations", () => {
+  it("saves an enabled vault before installing Codex instructions", async () => {
+    const { operations, save } = fixture();
+    const vault = { enabled: true, path: "/custom/vault" };
+    vi.mocked(invoke).mockImplementation((async (command: string) => {
+      if (command === "sync_vault_agent") {
+        expect(save).toHaveBeenCalledWith([["vault", vault]]);
+        expect(operations.getState().vault).toEqual(vault);
+      }
+    }) as typeof invoke);
+    await operations.updateVault(vault);
+    expect(invoke).toHaveBeenCalledWith("sync_vault_agent", {
+      agent: "codex",
+      vaultPath: vault.path,
+      repair: false,
+    });
+    expect(invoke).toHaveBeenCalledWith("sync_vault_agent", {
+      agent: "claude",
+      vaultPath: vault.path,
+      repair: false,
+    });
+  });
+
+  it("retains the vault on Codex setup failure and repairs without rewriting state", async () => {
+    const { operations, save } = fixture();
+    const vault = { enabled: true, path: "/vault" };
+    vi.mocked(invoke).mockRejectedValueOnce("Permission denied");
+    await expect(operations.updateVault(vault)).rejects.toThrow(
+      "Vault settings were saved, but agent setup failed: Codex: Permission denied"
+    );
+    expect(operations.getState().vault).toEqual(vault);
+    expect(invoke).toHaveBeenCalledWith("sync_vault_agent", {
+      agent: "claude",
+      vaultPath: "/vault",
+      repair: false,
+    });
+    await operations.repairVaultAgents("codex");
+    expect(invoke).toHaveBeenLastCalledWith("sync_vault_agent", {
+      agent: "codex",
+      vaultPath: "/vault",
+      repair: true,
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports failures for both agents without rolling back the enabled vault", async () => {
+    const { operations } = fixture();
+    const vault = { enabled: true, path: "/vault" };
+    vi.mocked(invoke).mockRejectedValueOnce("Codex denied").mockRejectedValueOnce("Claude denied");
+    await expect(operations.updateVault(vault)).rejects.toThrow(
+      "Codex: Codex denied; Claude Code: Claude denied"
+    );
+    expect(operations.getState().vault).toEqual(vault);
+    await operations.repairVaultAgents();
+    expect(invoke).toHaveBeenCalledWith("sync_vault_agent", {
+      agent: "codex",
+      vaultPath: "/vault",
+      repair: true,
+    });
+    expect(invoke).toHaveBeenLastCalledWith("sync_vault_agent", {
+      agent: "claude",
+      vaultPath: "/vault",
+      repair: true,
+    });
+  });
+
+  it("keeps successful Codex setup when Claude fails and repairs only Claude on request", async () => {
+    const { operations, save } = fixture();
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce("Claude permission denied");
+    await expect(operations.updateVault({ enabled: true, path: "/vault" })).rejects.toThrow(
+      "agent setup failed: Claude Code: Claude permission denied"
+    );
+    vi.mocked(invoke).mockClear();
+    await operations.repairVaultAgents("claude");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("sync_vault_agent", {
+      agent: "claude",
+      vaultPath: "/vault",
+      repair: true,
+    });
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("does not touch Codex instructions if vault persistence fails", async () => {
+    const { operations, save } = fixture();
+    save.mockRejectedValueOnce(new Error("Disk full"));
+    await expect(operations.updateVault({ enabled: true, path: "/vault" })).rejects.toMatchObject({
+      code: "persist_failed",
+    });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(operations.getState().vault).toEqual(DEFAULT_STATE.vault);
+  });
+
+  it("disables the vault and can retry cleanup without discarding the path", async () => {
+    const { operations } = fixture();
+    const vault = { enabled: false, path: "/vault" };
+    vi.mocked(invoke).mockRejectedValueOnce("Permission denied");
+    await expect(operations.updateVault(vault)).rejects.toThrow("agent cleanup failed: Codex:");
+    expect(operations.getState().vault).toEqual(vault);
+    expect(invoke).toHaveBeenCalledWith("sync_vault_agent", {
+      agent: "claude",
+      vaultPath: null,
+      repair: false,
+    });
+    await operations.repairVaultAgents("codex");
+    expect(invoke).toHaveBeenLastCalledWith("sync_vault_agent", {
+      agent: "codex",
+      vaultPath: null,
+      repair: true,
+    });
+  });
+
   it("validates every destination before creating and waits for setup", async () => {
     const { operations } = fixture();
     const setup = deferred();

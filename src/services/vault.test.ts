@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentSetupLine, defaultVaultPath, taskLogsPath, vaultUri } from "./vault";
+import { defaultVaultPath, taskLogsPath, vaultUri } from "./vault";
 
 describe("defaultVaultPath", () => {
   it("joins under Documents", () => {
@@ -39,15 +39,5 @@ describe("vaultUri", () => {
 
   it("returns null without a path", () => {
     expect(vaultUri({ enabled: false, path: null })).toBeNull();
-  });
-});
-
-describe("agentSetupLine", () => {
-  it("points at agent-setup.md in the vault", () => {
-    expect(agentSetupLine({ enabled: true, path: "/v/vault" })).toBe("@/v/vault/agent-setup.md");
-  });
-
-  it("returns null without a path", () => {
-    expect(agentSetupLine({ enabled: false, path: null })).toBeNull();
   });
 });

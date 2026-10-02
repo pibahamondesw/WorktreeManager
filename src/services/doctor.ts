@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { EditorApp, EDITOR_REQUIREMENTS } from "../types";
 import { validateLinearToken } from "./linear";
 import { editorProbe, EditorRuntime } from "./codeEditor";
+import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
 
 /**
  * Startup health check. The `.app` bundle has a minimal PATH, so every tool the app shells out
@@ -57,6 +58,7 @@ export interface DependencyCheck {
   /** Shell command that installs it. */
   install?: string;
   url?: string;
+  repair?: VaultAgent;
 }
 
 export interface DoctorReport {
@@ -74,6 +76,7 @@ export interface LinearKeySource {
 export interface DoctorConfig {
   editor: EditorApp;
   vaultEnabled: boolean;
+  vaultPath: string | null;
   /** Main clones of every configured repo, across all workspaces. */
   repoPaths: string[];
   linearKeys: LinearKeySource[];
@@ -217,6 +220,10 @@ interface DoctorDeps {
   validateKey: typeof validateLinearToken;
   online: () => boolean;
   editorProbe: () => Promise<EditorRuntime>;
+  vaultAgentProbe: (
+    agent: VaultAgent,
+    vaultPath: string
+  ) => Promise<{ status: CheckStatus; detail: string }>;
 }
 
 const defaultDeps: DoctorDeps = {
@@ -224,6 +231,7 @@ const defaultDeps: DoctorDeps = {
   validateKey: validateLinearToken,
   online: () => navigator.onLine,
   editorProbe,
+  vaultAgentProbe: (agent, vaultPath) => invoke("probe_vault_agent", { agent, vaultPath }),
 };
 
 export async function runDoctor(
@@ -236,7 +244,7 @@ export async function runDoctor(
   const apps = [...requirements.apps, ...(config.vaultEnabled ? ["Obsidian"] : [])];
   const clis = unique([...BASE_CLIS, ...requirements.clis, ...requirements.optionalClis]);
 
-  const [probe, linear, embedded] = await Promise.all([
+  const [probe, linear, embedded, vaultAgents] = await Promise.all([
     deps.probe({ clis, apps, repoPaths: config.repoPaths }),
     config.keychainError
       ? Promise.resolve<DependencyCheck>({
@@ -251,6 +259,13 @@ export async function runDoctor(
         })
       : checkLinearKeys(config.linearKeys, deps),
     config.editor === "vscode-web" ? checkEmbeddedEditor(deps.editorProbe) : Promise.resolve(null),
+    config.vaultEnabled
+      ? Promise.all(
+          (["codex", "claude"] as const).map((agent) =>
+            checkVaultAgent(agent, config.vaultPath, deps.vaultAgentProbe)
+          )
+        )
+      : Promise.resolve([]),
   ]);
 
   const checks = [
@@ -258,6 +273,7 @@ export async function runDoctor(
     ...appChecks(probe),
     ...(linear ? [linear] : []),
     ...(embedded ? [embedded] : []),
+    ...vaultAgents,
   ];
 
   return {
@@ -265,6 +281,34 @@ export async function runDoctor(
     errors: checks.filter((c) => c.scope === "app" && c.severity === "error").length,
     warnings: checks.filter((c) => c.scope === "app" && c.severity === "warning").length,
   };
+}
+
+async function checkVaultAgent(
+  agent: VaultAgent,
+  path: string | null | undefined,
+  probe: DoctorDeps["vaultAgentProbe"]
+): Promise<DependencyCheck> {
+  const base = {
+    id: `${agent}-vault`,
+    label: `${VAULT_AGENT_LABELS[agent]} Obsidian setup`,
+    scope: "app" as const,
+    reason: `Loads vault conventions and task-log instructions in new ${VAULT_AGENT_LABELS[agent]} sessions.`,
+    repair: agent,
+  };
+  try {
+    if (!path?.trim()) {
+      return {
+        ...base,
+        status: "broken",
+        severity: "warning",
+        detail: "No vault path configured. Enable the vault from settings.",
+      };
+    }
+    const result = await probe(agent, path);
+    return { ...base, ...result, severity: result.status === "ok" ? "ok" : "warning" };
+  } catch (error) {
+    return { ...base, status: "unknown", severity: "warning", detail: String(error) };
+  }
 }
 
 async function checkEmbeddedEditor(probe: () => Promise<EditorRuntime>): Promise<DependencyCheck> {
