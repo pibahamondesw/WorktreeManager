@@ -82,6 +82,7 @@ function fixture({
       onTaskCreated={vi.fn()}
       onTaskDeleted={onTaskDeleted}
       onTaskIssueLinked={vi.fn()}
+      onTaskRenamed={vi.fn()}
       onTaskPinned={onTaskPinned}
       onPinnedTasksReordered={onPinnedTasksReordered}
       editorApp="cursor"

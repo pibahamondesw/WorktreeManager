@@ -168,6 +168,25 @@ export function CopyIcon({ size = 12, className = "" }: IconProps) {
   );
 }
 
+export function PencilIcon({ size = 12, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M11.2 2.3a1.6 1.6 0 0 1 2.3 2.3L5.3 12.8 2.5 13.5l.7-2.8 8-8.4z" />
+      <path d="M10 3.6l2.4 2.4" />
+    </svg>
+  );
+}
+
 export function TrashIcon({ size = 16, className = "" }: IconProps) {
   return (
     <svg

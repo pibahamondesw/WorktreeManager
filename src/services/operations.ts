@@ -588,6 +588,36 @@ export class Operations {
     });
   }
 
+  renameTask(id: string, title: string) {
+    return this.enqueue(async () => {
+      const task = this.task(id);
+      const trimmed = title.trim();
+      if (!trimmed) throw new OperationError("invalid_params", "Provide a title.");
+      if (!task.linearIssueId)
+        throw new OperationError("invalid_params", "Only tasks linked to Linear can be renamed.");
+      if (trimmed === task.linearIssueTitle) return task;
+      const workspace = this.workspace(task.workspaceId);
+      if (!workspace.linearApiKey)
+        throw new OperationError(
+          "linear_not_configured",
+          "Configure Linear in this workspace first."
+        );
+      await new LinearService(workspace.linearApiKey)
+        .updateIssueTitle(task.linearIssueId, trimmed)
+        .catch(() => {
+          throw new OperationError(
+            "linear_update_failed",
+            "Could not rename the Linear issue. Check the workspace credentials and connection."
+          );
+        });
+      const updated = { ...this.task(id), linearIssueTitle: trimmed };
+      await this.write({
+        tasks: this.getState().tasks.map((item) => (item.id === id ? updated : item)),
+      });
+      return updated;
+    });
+  }
+
   private async optional(
     warnings: OperationWarning[],
     stage: string,
