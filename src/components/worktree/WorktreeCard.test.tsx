@@ -237,3 +237,66 @@ it("lists every attached PR by number with its full title on hover", () => {
   expect(openUrl).toHaveBeenCalledWith("https://x/pull/425");
   expect(onOpen).not.toHaveBeenCalled();
 });
+
+it("shows repository teardown scripts for approval and deletes with the chosen option", async () => {
+  const approval = Object.assign(new Error("Review the teardown"), {
+    code: "teardown_needs_approval",
+    details: { scripts: [{ repoName: "api", source: "worktreemanager", script: "make stop" }] },
+  });
+  const onDelete = vi
+    .fn()
+    .mockRejectedValueOnce(approval)
+    .mockResolvedValue({ data: { id: task.id }, warnings: [] });
+  render(
+    <WorktreeCard
+      task={task}
+      workspace={workspace}
+      vault={vault}
+      onDelete={onDelete}
+      repoSlugs={{}}
+      requestDelete
+    />
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  expect(await screen.findByText("make stop")).toBeInTheDocument();
+  expect(screen.getByText("api · .worktreemanager.toml")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Run and delete" }));
+  await waitFor(() =>
+    expect(onDelete).toHaveBeenLastCalledWith(task.id, {
+      deleteWorktrees: true,
+      force: true,
+      approveTeardown: true,
+    })
+  );
+});
+
+it("offers deleting without teardown after a teardown failure", async () => {
+  const failure = Object.assign(new Error("Teardown failed for api."), {
+    code: "teardown_failed",
+  });
+  const onDelete = vi
+    .fn()
+    .mockRejectedValueOnce(failure)
+    .mockResolvedValue({ data: { id: task.id }, warnings: [] });
+  render(
+    <WorktreeCard
+      task={task}
+      workspace={workspace}
+      vault={vault}
+      onDelete={onDelete}
+      repoSlugs={{}}
+      requestDelete
+    />
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  expect(await screen.findByText("Teardown failed for api.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Run and delete" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Delete without teardown" }));
+  await waitFor(() =>
+    expect(onDelete).toHaveBeenLastCalledWith(task.id, {
+      deleteWorktrees: true,
+      force: true,
+      skipTeardown: true,
+    })
+  );
+});

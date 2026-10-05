@@ -20,6 +20,7 @@ import { LinkIssueModal } from "./LinkIssueModal";
 import { NewWorktreeModal } from "./NewWorktreeModal";
 import { Task, TaskSurface, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
 import { TaskView } from "../task/TaskView";
+import type { SetupControls } from "../task/TaskSetupProgress";
 import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
 import {
   CreateTaskInput,
@@ -45,6 +46,7 @@ interface WorktreeListProps {
   onPinnedTasksReordered: (id: string, targetId: string) => Promise<void>;
   onTaskIssueLinked: (taskId: string, issue: string) => Promise<Task>;
   onTaskRenamed: (taskId: string, title: string) => Promise<Task>;
+  setupControls?: SetupControls;
   onTaskDeleted: (
     taskId: string,
     options: DeleteOptions
@@ -132,6 +134,7 @@ export function WorktreeList({
   onTaskDeleted,
   onTaskIssueLinked,
   onTaskRenamed,
+  setupControls,
   onTaskPinned,
   onPinnedTasksReordered,
   editorApp,
@@ -350,6 +353,7 @@ export function WorktreeList({
               openTask.linearIssueId ? (title) => onTaskRenamed(openTask.id, title) : undefined
             }
             onRenameError={showToast}
+            setupControls={setupControls}
           />
         )}
         {/* The grid stays mounted while a task is open so returning is instant (no re-probing of

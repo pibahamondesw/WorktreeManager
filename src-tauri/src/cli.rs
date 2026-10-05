@@ -20,12 +20,12 @@ workspace list
 workspace get <id>
 workspace create --input <file|->
 workspace update <id> --input <file|->
-workspace delete <id> [--keep-worktrees|--delete-worktrees] [--force]
+workspace delete <id> [--keep-worktrees|--delete-worktrees] [--force] [--skip-teardown]
 task list [--workspace <id>]
 task get <id> [--git]
 task create --input <file|->
 task link-issue <id> --issue <identifier>
-task delete <id> <--keep-worktrees|--delete-worktrees> [--force]
+task delete <id> <--keep-worktrees|--delete-worktrees> [--force] [--skip-teardown]
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
 
@@ -38,6 +38,9 @@ Use Linear's exact branchName alongside linearIssue. Without it, branch names
 are namespaced under the Git username and get a suffix on collision.
 Omit repoIds to include all repositories. Creation waits for setup and does not
 open editors or modify Linear. Warnings indicate setup steps needing attention.
+Repositories declare setup and teardown scripts in .worktreemanager.toml (or
+Conductor, Superset or Cursor config); without one the app detects Doppler, Node
+and Python. Scripts from a repository run only after approval in the app.
 
 Examples:
   wtm
@@ -49,6 +52,8 @@ Examples:
 
 --local targets isolated development; default targets the installed/shared app.
 --force only works with --delete-worktrees and discards uncommitted files.
+Approved teardown scripts run before worktrees are removed; a failing one keeps
+the task. --skip-teardown deletes without running them.
 Deletion keeps Git branches and archives notes. Workspace deletion needs a mode
 when tasks exist. JSON goes to stdout; progress goes to stderr. Exit 0 = success,
 1 = operation/connection failure, 2 = invalid arguments. Never retry mutations
@@ -99,6 +104,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
             "--force" if !params.contains_key("force") => {
                 params.insert("force".into(), json!(true));
             }
+            "--skip-teardown" if !params.contains_key("skipTeardown") => {
+                params.insert("skipTeardown".into(), json!(true));
+            }
             "--keep-worktrees" | "--delete-worktrees"
                 if !params.contains_key("deleteWorktrees") =>
             {
@@ -119,7 +127,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "workspace.get" => (true, false, &[]),
         "workspace.create" | "task.create" => (false, true, &[]),
         "workspace.update" => (true, true, &[]),
-        "workspace.delete" | "task.delete" => (true, false, &["deleteWorktrees", "force"]),
+        "workspace.delete" | "task.delete" => {
+            (true, false, &["deleteWorktrees", "force", "skipTeardown"])
+        }
         "task.list" => (false, false, &["workspaceId"]),
         "task.link-issue" => (true, false, &["issue"]),
         "task.get" => (true, false, &["git"]),
@@ -155,8 +165,10 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
     if method == "task.delete" && !params.contains_key("deleteWorktrees") {
         return Err("Choose --keep-worktrees or --delete-worktrees".into());
     }
-    if params.contains_key("force") && params.get("deleteWorktrees") != Some(&json!(true)) {
-        return Err("--force requires --delete-worktrees".into());
+    for flag in ["force", "skipTeardown"] {
+        if params.contains_key(flag) && params.get("deleteWorktrees") != Some(&json!(true)) {
+            return Err("--force and --skip-teardown require --delete-worktrees".into());
+        }
     }
     Ok(Arguments {
         local,
@@ -517,6 +529,19 @@ mod tests {
             "task get t1 --issue WOR-123",
             "task link-issue t1 --issue A --issue B",
             "task link-issue t1 --issue A --input -",
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn skip_teardown_requires_deleting_worktrees() {
+        let parsed = parse(&args("task delete t1 --delete-worktrees --skip-teardown")).unwrap();
+        assert_eq!(parsed.params["skipTeardown"], true);
+        for invalid in [
+            "task delete t1 --keep-worktrees --skip-teardown",
+            "workspace delete w1 --skip-teardown",
+            "task list --skip-teardown",
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");
         }

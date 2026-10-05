@@ -360,6 +360,19 @@ export async function loadAgentViews(): Promise<AgentViews> {
   return { claude: view(stored.claude), codex: view(stored.codex) };
 }
 
+/** Approved repository script fingerprints, keyed by the repository's main checkout. */
+export async function loadScriptApprovals(): Promise<Record<string, string[]>> {
+  const s = await getStore();
+  const stored = await s.get<unknown>("scriptApprovals");
+  if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return {};
+  return Object.fromEntries(
+    Object.entries(stored).map(([path, hashes]) => [
+      path,
+      Array.isArray(hashes) ? hashes.filter((hash) => typeof hash === "string") : [],
+    ])
+  );
+}
+
 export async function loadSidebarCollapsed(): Promise<boolean> {
   const s = await getStore();
   return (await s.get<boolean>("sidebarCollapsed")) ?? false;

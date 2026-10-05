@@ -30,6 +30,7 @@ import { TerminalStatus } from "../../services/terminal";
 import { AgentActivity, taskIndicator } from "../../services/agentActivity";
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
 import { DeleteOptions, OperationResult } from "../../services/operations";
+import { SCRIPT_SOURCE_LABELS, TeardownBlock, teardownBlockFrom } from "../../services/repoScripts";
 import { stateVariant } from "./cardStyles";
 import { EditableTaskTitle } from "../task/EditableTaskTitle";
 
@@ -83,6 +84,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [teardownBlock, setTeardownBlock] = useState<TeardownBlock | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -116,18 +118,36 @@ export const WorktreeCard = memo(function WorktreeCard({
     setConfirmDelete(true);
   };
 
-  const deleteTask = async (deleteWorktrees: boolean) => {
+  const deleteTask = async (
+    deleteWorktrees: boolean,
+    teardown: Pick<DeleteOptions, "approveTeardown" | "skipTeardown"> = {}
+  ) => {
     setConfirmDelete(false);
     setDeleteError(null);
+    setTeardownBlock(null);
     setDeleting(true);
     try {
-      const result = await onDelete(task.id, { deleteWorktrees, force: deleteWorktrees });
+      const result = await onDelete(task.id, {
+        deleteWorktrees,
+        force: deleteWorktrees,
+        ...teardown,
+      });
       for (const warning of result.warnings) onToast?.(warning.message);
     } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : String(error));
+      const block = teardownBlockFrom(error);
+      if (block) setTeardownBlock(block);
+      else setDeleteError(error instanceof Error ? error.message : String(error));
     } finally {
       setDeleting(false);
     }
+  };
+
+  const handleTeardownChoice = async (
+    event: React.MouseEvent,
+    teardown: Pick<DeleteOptions, "approveTeardown" | "skipTeardown">
+  ) => {
+    event.stopPropagation();
+    await deleteTask(true, teardown);
   };
 
   const handleDeleteConfirm = async (event: React.MouseEvent) => {
@@ -144,6 +164,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     e.stopPropagation();
     setConfirmDelete(false);
     setDeleteError(null);
+    setTeardownBlock(null);
   };
 
   const prsForMember = (m: TaskMember): PullRequestInfo[] => {
@@ -556,6 +577,53 @@ export const WorktreeCard = memo(function WorktreeCard({
               >
                 Delete
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {teardownBlock && (
+        <div className="motion-expand">
+          <div
+            className="mt-3 pt-3 border-t border-border space-y-2 select-text"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p
+              className={`text-xs leading-relaxed ${teardownBlock.kind === "failed" ? "text-danger" : "text-text-secondary"}`}
+            >
+              {teardownBlock.message}
+            </p>
+            {teardownBlock.scripts.map((script) => (
+              <div key={script.repoName} className="space-y-1">
+                <p className="text-[0.625rem] text-text-muted">
+                  {script.repoName} · {SCRIPT_SOURCE_LABELS[script.source]}
+                </p>
+                <pre className="max-h-32 overflow-auto rounded-md border border-border bg-bg-tertiary p-2 text-[0.625rem] font-mono whitespace-pre-wrap">
+                  {script.script}
+                </pre>
+              </div>
+            ))}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={handleDeleteCancel}
+                className="px-3 py-1 text-xs rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover border border-border transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={(event) => void handleTeardownChoice(event, { skipTeardown: true })}
+                className="px-3 py-1 text-xs rounded-md text-danger hover:bg-danger/10 border border-border transition-colors cursor-pointer"
+              >
+                Delete without teardown
+              </button>
+              {teardownBlock.kind === "approval" && (
+                <button
+                  onClick={(event) => void handleTeardownChoice(event, { approveTeardown: true })}
+                  className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
+                >
+                  Run and delete
+                </button>
+              )}
             </div>
           </div>
         </div>

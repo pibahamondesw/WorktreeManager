@@ -8,9 +8,14 @@ import { normalizeTasks } from "../utils";
 import { taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
 import { dismissTaskSetup, getTaskSetup } from "./taskSetup";
+import { ResolvedScripts, resetScriptApprovalsCache } from "./repoScripts";
+import { loadScriptApprovals, persist } from "./store";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("./store", () => ({ persist: vi.fn() }));
+vi.mock("./store", () => ({
+  persist: vi.fn(),
+  loadScriptApprovals: vi.fn().mockResolvedValue({}),
+}));
 vi.mock("./notes", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./notes")>()),
   ensureTaskNote: vi.fn().mockResolvedValue("/note"),
@@ -86,11 +91,24 @@ async function native(command: string, args?: Record<string, unknown>) {
   if (command === "install_node_deps") return { status: "installed" };
   if (command === "install_python_deps") return { status: "skipped_no_config" };
   if (command === "prepare_task_workspace") return "/generated/workspace.code-workspace";
+  if (command === "resolve_repo_scripts") return noScripts;
+  if (command === "worktree_include_paths") return null;
   return undefined;
 }
 
+const noScripts: ResolvedScripts = {
+  present: true,
+  source: null,
+  setup: null,
+  setupHash: null,
+  teardown: null,
+  teardownHash: null,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
+  resetScriptApprovalsCache();
+  vi.mocked(loadScriptApprovals).mockResolvedValue({});
   vi.mocked(invoke).mockImplementation(native as typeof invoke);
   vi.mocked(closeTaskSessions).mockResolvedValue(undefined);
 });
@@ -631,6 +649,226 @@ describe("shared operations", () => {
     await expect(fixture().operations.deleteWorkspace("w1")).resolves.toMatchObject({
       data: { id: "w1" },
     });
+  });
+});
+
+describe("repository scripts", () => {
+  const declared = (overrides: Partial<ResolvedScripts>): ResolvedScripts => ({
+    ...noScripts,
+    source: "worktreemanager",
+    ...overrides,
+  });
+
+  function withScripts(resolved: ResolvedScripts, exitCode: number | null = 0) {
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      if (command === "resolve_repo_scripts")
+        return String(args?.worktreePath).startsWith("/wt/api") ? resolved : noScripts;
+      if (command === "run_task_script") return exitCode;
+      return native(command, args);
+    }) as typeof invoke);
+  }
+
+  const calls = (command: string) =>
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([name]) => name === command)
+      .map(([name, args]) => [name, args as Record<string, unknown> | undefined] as const);
+
+  it("runs an approved repository setup instead of detected steps and passes context as env", async () => {
+    vi.mocked(loadScriptApprovals).mockResolvedValue({ "/repos/api": ["setup-hash"] });
+    withScripts(declared({ setup: "pnpm install", setupHash: "setup-hash" }));
+    const { operations } = fixture();
+    const result = await operations.createTask(input);
+    const created = result.data;
+    const [, run] = calls("run_task_script")[0];
+    expect(run).toMatchObject({
+      taskId: created.id,
+      session: "setup:api",
+      script: "pnpm install",
+      cwd: created.members[0].path,
+    });
+    expect(Object.fromEntries((run as { env: [string, string][] }).env)).toMatchObject({
+      WTM_ROOT_PATH: "/repos/api",
+      WTM_WORKTREE_PATH: created.members[0].path,
+      WTM_ISSUE_ID: "WOR-80",
+      CONDUCTOR_ROOT_PATH: "/repos/api",
+    });
+    const detectedFor = (path: string) =>
+      ["doppler_setup", "install_node_deps", "install_python_deps", "prepare_python_env"].some(
+        (command) => calls(command).some(([, args]) => args?.worktreePath === path)
+      );
+    expect(detectedFor(created.members[0].path)).toBe(false);
+    expect(detectedFor(created.members[1].path)).toBe(true);
+    expect(result.setup?.[0].steps).toEqual([
+      { stage: "config", status: "completed" },
+      { stage: "script", status: "completed" },
+    ]);
+    expect(getTaskSetup(created.id)?.repos[0].source).toBe("worktreemanager");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("copies .worktreeinclude matches instead of the default env files", async () => {
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      if (command === "worktree_include_paths")
+        return args?.repoPath === "/repos/api" ? ["config/master.key"] : null;
+      return native(command, args);
+    }) as typeof invoke);
+    const { operations } = fixture();
+    await operations.createTask(input);
+    const paths = (repo: string) =>
+      calls("copy_local_configs").find(([, args]) => args?.sourceRepo === repo)?.[1]?.paths;
+    expect(paths("/repos/api")).toContain("config/master.key");
+    expect(paths("/repos/api")).not.toContain(".env");
+    expect(paths("/repos/web")).toContain(".env");
+  });
+
+  it("waits for approval of unknown repository scripts, then runs them once approved", async () => {
+    withScripts(declared({ setup: "make setup", setupHash: "setup-hash" }));
+    const { operations } = fixture();
+    const result = await operations.createTask(input);
+    expect(calls("run_task_script")).toEqual([]);
+    expect(result.setup?.[0].steps).toContainEqual({ stage: "script", status: "needs_approval" });
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ stage: "script", repoId: "api" })
+    );
+    const repo = getTaskSetup(result.data.id)!.repos[0];
+    expect(repo.approval).toMatchObject({ script: "make setup", hash: "setup-hash" });
+
+    const rerun = await operations.rerunRepoSetup(result.data.id, "api", "approve");
+    expect(persist).toHaveBeenCalledWith([["scriptApprovals", { "/repos/api": ["setup-hash"] }]]);
+    expect(calls("run_task_script")).toHaveLength(1);
+    expect(rerun.data.steps).toEqual([{ stage: "script", status: "completed" }]);
+    expect(getTaskSetup(result.data.id)).toMatchObject({ active: false, warnings: [] });
+    expect(getTaskSetup(result.data.id)?.repos[0].approval).toBeUndefined();
+  });
+
+  it("can fall back to detected setup instead of a repository script", async () => {
+    withScripts(declared({ setup: "make setup", setupHash: "setup-hash" }));
+    const { operations } = fixture();
+    const created = (await operations.createTask(input)).data;
+    vi.mocked(invoke).mockClear();
+    const rerun = await operations.rerunRepoSetup(created.id, "api", "detected");
+    expect(calls("run_task_script")).toEqual([]);
+    expect(rerun.data.steps.map((step) => step.stage)).toEqual([
+      "doppler_setup",
+      "install_node_deps",
+      "install_python_deps",
+    ]);
+  });
+
+  it("trusts app overrides and reports failing or stopped scripts as warnings", async () => {
+    const { operations } = fixture();
+    await operations.updateWorkspace("w1", {
+      repos: workspace.repos.map((repo) =>
+        repo.id === "web" ? { ...repo, scripts: { setup: "exit 3" } } : repo
+      ),
+    });
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => (command === "run_task_script" ? 3 : native(command, args))) as typeof invoke);
+    const result = await operations.createTask(input);
+    expect(calls("run_task_script")).toHaveLength(1);
+    expect(result.setup?.[1].steps).toContainEqual({ stage: "script", status: "error" });
+    expect(getTaskSetup(result.data.id)?.repos[1]).toMatchObject({
+      source: "local",
+    });
+    expect(getTaskSetup(result.data.id)?.repos[1].steps).toContainEqual({
+      stage: "script",
+      status: "error",
+      message: "Setup script exited with code 3.",
+      run: 1,
+    });
+    expect(result.warnings).toEqual([expect.objectContaining({ stage: "script", repoId: "web" })]);
+
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => (command === "run_task_script" ? null : native(command, args))) as typeof invoke);
+    const stopped = await operations.rerunRepoSetup(result.data.id, "web");
+    expect(stopped.data.steps).toEqual([{ stage: "script", status: "cancelled" }]);
+  });
+
+  it("reports an invalid repository config without running detected setup", async () => {
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      if (command === "resolve_repo_scripts" && String(args?.worktreePath).startsWith("/wt/api"))
+        throw "Invalid .worktreemanager.toml: expected a table";
+      return native(command, args);
+    }) as typeof invoke);
+    const { operations } = fixture();
+    const result = await operations.createTask(input);
+    expect(result.setup?.[0].steps).toContainEqual({ stage: "script", status: "error" });
+    expect(
+      calls("install_node_deps").some(([, args]) =>
+        String(args?.worktreePath).startsWith("/wt/api")
+      )
+    ).toBe(false);
+    expect(result.warnings).toContainEqual({
+      stage: "script",
+      repoId: "api",
+      message: "Invalid .worktreemanager.toml: expected a table",
+    });
+  });
+
+  it("requires approval for repository teardown and retains the task until it is given", async () => {
+    withScripts(declared({ teardown: "make stop", teardownHash: "teardown-hash" }));
+    const { operations } = fixture([task]);
+    await expect(operations.deleteTask("t1", { deleteWorktrees: true })).rejects.toMatchObject({
+      code: "teardown_needs_approval",
+      details: { scripts: [{ repoName: "api", source: "worktreemanager", script: "make stop" }] },
+    });
+    expect(calls("git_worktree_remove")).toEqual([]);
+    expect(operations.task("t1")).toBe(task);
+
+    await operations.deleteTask("t1", { deleteWorktrees: true, approveTeardown: true });
+    expect(persist).toHaveBeenCalledWith([
+      ["scriptApprovals", { "/repos/api": ["teardown-hash"] }],
+    ]);
+    const order = vi.mocked(invoke).mock.calls.map(([name]) => name);
+    expect(order.indexOf("run_task_script")).toBeLessThan(order.indexOf("git_worktree_remove"));
+    expect(calls("run_task_script")[0][1]).toMatchObject({
+      session: "teardown:api",
+      script: "make stop",
+      cwd: "/wt/api/feature",
+      timeoutSecs: 300,
+    });
+    expect(operations.getState().tasks).toEqual([]);
+  });
+
+  it("retains the task when teardown fails and can delete without it", async () => {
+    vi.mocked(loadScriptApprovals).mockResolvedValue({ "/repos/api": ["teardown-hash"] });
+    withScripts(declared({ teardown: "make stop", teardownHash: "teardown-hash" }), 2);
+    const { operations } = fixture([task]);
+    await expect(operations.deleteTask("t1", { deleteWorktrees: true })).rejects.toMatchObject({
+      code: "teardown_failed",
+      details: { repoNames: ["api"] },
+    });
+    expect(calls("git_worktree_remove")).toEqual([]);
+    expect(operations.task("t1")).toBe(task);
+    expect(getTaskSetup("t1")?.active).toBe(false);
+
+    vi.mocked(invoke).mockClear();
+    await operations.deleteTask("t1", { deleteWorktrees: true, skipTeardown: true });
+    expect(calls("run_task_script")).toEqual([]);
+    expect(calls("git_worktree_remove")).toHaveLength(2);
+    expect(operations.getState().tasks).toEqual([]);
+  });
+
+  it("skips teardown for worktrees that no longer exist", async () => {
+    withScripts({ ...declared({ teardown: "make stop", teardownHash: "h" }), present: false });
+    const { operations } = fixture([task]);
+    await operations.deleteTask("t1", { deleteWorktrees: true });
+    expect(calls("run_task_script")).toEqual([]);
+    expect(operations.getState().tasks).toEqual([]);
   });
 });
 

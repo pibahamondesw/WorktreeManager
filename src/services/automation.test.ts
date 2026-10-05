@@ -66,6 +66,26 @@ describe("automation contract", () => {
     expect(JSON.stringify(edited)).not.toContain("secret");
   });
 
+  it("sets, keeps and clears repository script overrides", async () => {
+    const update = (repo: Record<string, unknown>) =>
+      call("workspace.update", {
+        id: "w1",
+        input: { repos: [{ localPath: "/repos/api", ...repo }] },
+      });
+    expect(await update({ scripts: { setup: " pnpm i ", teardown: "" } })).toMatchObject({
+      ok: true,
+      data: { repos: [{ scripts: { setup: "pnpm i" } }] },
+    });
+    await update({ name: "Renamed" });
+    expect(operations.workspace("w1").repos[0].scripts).toEqual({ setup: "pnpm i" });
+    expect(await update({ scripts: { setup: 1 } })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+    await update({ scripts: null });
+    expect(operations.workspace("w1").repos[0]).not.toHaveProperty("scripts");
+  });
+
   it("rejects mismatched protocol, IDs, flags, and malformed inputs", async () => {
     expect(await call("workspace.list", {}, 2)).toMatchObject({
       ok: false,
@@ -90,6 +110,9 @@ describe("automation contract", () => {
     ).toMatchObject({ ok: false, error: { code: "invalid_params" } });
     expect(
       await call("task.delete", { id: "t1", deleteWorktrees: false, force: true })
+    ).toMatchObject({ ok: false, error: { code: "invalid_params" } });
+    expect(
+      await call("task.delete", { id: "t1", deleteWorktrees: false, skipTeardown: true })
     ).toMatchObject({ ok: false, error: { code: "invalid_params" } });
     expect(await call("workspace.create", { input: null })).toMatchObject({
       ok: false,

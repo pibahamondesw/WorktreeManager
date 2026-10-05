@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use super::agent_alerts;
 use super::agents::{self, LaunchContext, LaunchSpec};
 use super::git::GIT_ENV_SCRUB;
+use super::shell_env::repo_script_args;
 
 const SCROLLBACK_CAP: usize = 2 * 1024 * 1024;
 const READ_BUF: usize = 32 * 1024;
@@ -146,6 +147,7 @@ pub struct TerminalSession {
     channel: Arc<Mutex<Option<Channel<TermEvent>>>>,
     status: Arc<Mutex<TermStatus>>,
     reader: Option<JoinHandle<()>>,
+    pid: Option<u32>,
     agent: String,
     canonical_dir: String,
 }
@@ -196,6 +198,7 @@ impl TerminalSession {
             .take_writer()
             .map_err(|e| format!("pty writer: {e}"))?;
 
+        let pid = child.process_id();
         let child = Arc::new(Mutex::new(child));
         let scrollback = Arc::new(Mutex::new(Scrollback::new(SCROLLBACK_CAP)));
         let channel: Arc<Mutex<Option<Channel<TermEvent>>>> = Arc::new(Mutex::new(None));
@@ -253,6 +256,7 @@ impl TerminalSession {
             channel,
             status,
             reader: Some(reader_handle),
+            pid,
             agent: agent.to_string(),
             canonical_dir: spec.cwd.clone(),
         })
@@ -272,6 +276,27 @@ impl TerminalSession {
 
     fn detach(&self) {
         *self.channel.lock().unwrap() = None;
+    }
+
+    /// Signal the whole process group (the PTY child leads its own session) after `delay`, so
+    /// commands a script started stop too, while the scrollback stays available for review.
+    fn interrupt_after(&self, delay: Duration) {
+        let Some(pid) = self.pid.and_then(|pid| libc::pid_t::try_from(pid).ok()) else {
+            return;
+        };
+        let status = self.status.clone();
+        let running = move || *status.lock().unwrap() == TermStatus::Running;
+        thread::spawn(move || {
+            thread::sleep(delay);
+            if !running() {
+                return;
+            }
+            unsafe { libc::killpg(pid, libc::SIGTERM) };
+            thread::sleep(KILL_GRACE * 4);
+            if running() {
+                unsafe { libc::killpg(pid, libc::SIGKILL) };
+            }
+        });
     }
 
     fn write(&mut self, data: &str) -> Result<(), String> {
@@ -508,12 +533,101 @@ pub fn terminal_list(registry: State<'_, TerminalRegistry>) -> Vec<TerminalInfo>
         .lock()
         .unwrap()
         .iter()
+        .filter(|((_, name), _)| !is_script_session(name))
         .map(|((task_id, _), s)| TerminalInfo {
             task_id: task_id.clone(),
             agent: s.agent.clone(),
             status: s.status(),
         })
         .collect()
+}
+
+const SCRIPT_COLS: u16 = 120;
+const SCRIPT_ROWS: u16 = 32;
+
+/// Setup and teardown scripts share the agent terminal registry under `setup:<repoId>` and
+/// `teardown:<repoId>`, so they can be attached, typed into and closed with the task.
+fn is_script_session(name: &str) -> bool {
+    name.starts_with("setup:") || name.starts_with("teardown:")
+}
+
+/// Run a repository script in a PTY and return its exit code (`None` when killed by a signal or
+/// after `timeout_secs`). The finished session stays attachable until the task closes its
+/// sessions; output is only shown there, never returned, since it may carry secrets.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_task_script(
+    registry: State<'_, TerminalRegistry>,
+    task_id: String,
+    session: String,
+    script: String,
+    cwd: String,
+    env: Vec<(String, String)>,
+    timeout_secs: Option<u64>,
+) -> Result<Option<i32>, String> {
+    if !is_script_session(&session) {
+        return Err(format!("Not a script session: {session}"));
+    }
+    if !std::path::Path::new(&cwd).is_dir() {
+        return Err(format!("Script directory not found: {cwd}"));
+    }
+    let key = (task_id, session.clone());
+    let spec = LaunchSpec {
+        program: "/bin/zsh".to_string(),
+        args: repo_script_args(&script),
+        env,
+        cwd,
+    };
+    let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
+    let previous = {
+        let mut sessions = registry.0.lock().unwrap();
+        if sessions
+            .get(&key)
+            .is_some_and(|existing| existing.status() == TermStatus::Running)
+        {
+            return Err("This script is already running.".to_string());
+        }
+        let started =
+            TerminalSession::spawn(&spec, &session, SCRIPT_COLS, SCRIPT_ROWS, move |code| {
+                let _ = exit_tx.send(code);
+            })?;
+        if let Some(seconds) = timeout_secs {
+            started.interrupt_after(Duration::from_secs(seconds));
+        }
+        sessions.insert(key.clone(), started)
+    };
+    if let Some(mut previous) = previous {
+        tauri::async_runtime::spawn_blocking(move || previous.terminate());
+    }
+    Ok(exit_rx.await.unwrap_or(None))
+}
+
+/// Stop a running script's processes while keeping its output attachable.
+#[tauri::command]
+pub fn script_cancel(registry: State<'_, TerminalRegistry>, task_id: String, session: String) {
+    if let Some(running) = registry.0.lock().unwrap().get(&(task_id, session)) {
+        running.interrupt_after(Duration::ZERO);
+    }
+}
+
+/// Attach to an existing session without starting one, replaying its scrollback.
+#[tauri::command]
+pub fn terminal_attach(
+    registry: State<'_, TerminalRegistry>,
+    task_id: String,
+    session: String,
+    on_event: Channel<TermEvent>,
+) -> Result<TerminalOpenResult, String> {
+    let mut sessions = registry.0.lock().unwrap();
+    let existing = sessions
+        .get_mut(&(task_id, session))
+        .ok_or("This script has no output in this app session.")?;
+    let replay = existing.attach(on_event);
+    Ok(TerminalOpenResult {
+        created: false,
+        status: existing.status(),
+        replay,
+    })
 }
 
 #[cfg(test)]
@@ -611,6 +725,48 @@ mod tests {
         let (valid, tail) = split_utf8_tail(&[0xff, b'a']);
         assert_eq!(valid, &[0xff, b'a']);
         assert!(tail.is_empty());
+    }
+
+    #[test]
+    fn script_sessions_are_recognized_by_prefix() {
+        assert!(is_script_session("setup:api"));
+        assert!(is_script_session("teardown:api"));
+        assert!(!is_script_session("claude"));
+    }
+
+    #[test]
+    fn repo_script_stops_at_first_failure_and_interrupt_stops_running_scripts() {
+        let spec = LaunchSpec {
+            program: "/bin/zsh".to_string(),
+            args: repo_script_args("echo one\nfalse\necho never"),
+            env: vec![],
+            cwd: "/tmp".to_string(),
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut session = TerminalSession::spawn(&spec, "setup:api", 80, 24, move |code| {
+            let _ = tx.send(code);
+        })
+        .unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), Some(1));
+        let replay = session.scrollback.lock().unwrap().replay();
+        assert!(replay.contains("one") && !replay.contains("never"));
+        session.terminate();
+
+        let spec = LaunchSpec {
+            program: "/bin/sh".to_string(),
+            args: vec!["-c".to_string(), "sleep 30".to_string()],
+            env: vec![],
+            cwd: "/tmp".to_string(),
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut session = TerminalSession::spawn(&spec, "setup:api", 80, 24, move |code| {
+            let _ = tx.send(code);
+        })
+        .unwrap();
+        session.interrupt_after(Duration::ZERO);
+        rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(matches!(session.status(), TermStatus::Exited { .. }));
+        session.terminate();
     }
 
     #[test]

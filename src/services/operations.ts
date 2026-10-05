@@ -18,13 +18,30 @@ import { closeTaskSessions } from "./taskSessions";
 import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
 import {
   SETUP_STAGES,
-  SetupStage,
+  SetupStatus,
+  DETECTED_STAGES,
   initializeTaskSetup,
   getTaskSetup,
   updateTaskSetup,
   updateSetupStep,
+  updateRepoSetup,
+  planRepoSetup,
+  beginSetupRun,
+  endSetupRun,
   clearTaskSetup,
 } from "./taskSetup";
+import {
+  PhaseScript,
+  ResolvedScripts,
+  SCRIPT_SOURCE_LABELS,
+  approveScripts,
+  isScriptTrusted,
+  phaseScript,
+  resolveRepoScripts,
+  scriptEnv,
+  scriptSession,
+} from "./repoScripts";
+import { runTaskScript, scriptCancel, terminalClose } from "./terminal";
 
 export type TaskReady = (task: Task) => Promise<boolean>;
 
@@ -54,6 +71,30 @@ export interface CreateTaskInput {
 export interface DeleteOptions {
   deleteWorktrees: boolean;
   force?: boolean;
+  /** Delete without running repository teardown scripts. */
+  skipTeardown?: boolean;
+  /** Approve the repository teardown scripts shown to the user before running them. */
+  approveTeardown?: boolean;
+}
+
+/** How a repository's setup should run again after the task exists. */
+export type SetupRetry = "retry" | "approve" | "detected";
+
+const TEARDOWN_TIMEOUT_SECS = 300;
+
+type SetupSteps = { stage: string; status: string }[];
+
+type RepoScriptsResolution = { resolved: ResolvedScripts } | { error: string };
+
+function repoScriptsResolution(path: string): Promise<RepoScriptsResolution> {
+  return resolveRepoScripts(path).then(
+    (resolved) => ({ resolved }),
+    (error) => ({ error: typeof error === "string" ? error : "Could not read setup scripts." })
+  );
+}
+
+function scriptStatus(code: number | null): SetupStatus {
+  return code === 0 ? "completed" : code === null ? "cancelled" : "error";
 }
 
 export interface OperationWarning {
@@ -67,6 +108,15 @@ export interface OperationResult<T> {
   warnings: OperationWarning[];
   setup?: { repoId: string; steps: { stage: string; status: string }[] }[];
 }
+
+const EMPTY_SCRIPTS: ResolvedScripts = {
+  present: true,
+  source: null,
+  setup: null,
+  setupHash: null,
+  teardown: null,
+  teardownHash: null,
+};
 
 export function operationError(error: unknown): OperationError {
   return error instanceof OperationError
@@ -410,18 +460,24 @@ export class Operations {
       repoId: member.repoId,
       steps: [],
     }));
+    const resolutions = new Map<string, RepoScriptsResolution>();
     try {
       progress("Copying local configuration…");
       await Promise.all([
         ...task.members.map(async (member, index) => {
+          const resolution = await repoScriptsResolution(member.path);
+          resolutions.set(member.repoId, resolution);
           updateSetupStep(task.id, member.repoId, "config", "running", warnings);
-          const copied = await this.optional(warnings, "config", member.repoId, () =>
-            invoke("copy_local_configs", {
+          const copied = await this.optional(warnings, "config", member.repoId, async () => {
+            const included = await invoke<string[] | null>("worktree_include_paths", {
+              repoPath: member.localPath,
+            });
+            await invoke("copy_local_configs", {
               sourceRepo: member.localPath,
               worktreePath: member.path,
-              paths: [...EDITOR_CONFIG_PATHS[editor], ...ALWAYS_COPIED_CONFIG_PATHS],
-            })
-          );
+              paths: [...EDITOR_CONFIG_PATHS[editor], ...(included ?? ALWAYS_COPIED_CONFIG_PATHS)],
+            });
+          });
           setup[index].steps.push({ stage: "config", status: copied ? "completed" : "error" });
           updateSetupStep(
             task.id,
@@ -430,10 +486,11 @@ export class Operations {
             copied ? "completed" : "error",
             warnings
           );
+          if (!this.setupScript(member.repoId, workspace, resolution))
+            await invoke("prepare_python_env", { worktreePath: member.path }).catch(
+              () => undefined
+            );
         }),
-        ...task.members.map((member) =>
-          invoke("prepare_python_env", { worktreePath: member.path }).catch(() => undefined)
-        ),
         this.optional(warnings, "note", undefined, async () => {
           if (vault.enabled && vault.path && !(await ensureTaskNote(vault, workspace, task)))
             throw new Error();
@@ -460,41 +517,16 @@ export class Operations {
         });
       }
       await Promise.all(
-        task.members.map(async (member, index) => {
-          for (const stage of [
-            "doppler_setup",
-            "install_node_deps",
-            "install_python_deps",
-          ] as SetupStage[]) {
-            progress(`${member.repoName} · ${SETUP_STAGES[stage]}…`);
-            updateSetupStep(task.id, member.repoId, stage, "running", warnings);
-            let status = "error";
-            let message: string | undefined;
-            await this.optional(warnings, stage, member.repoId, async () => {
-              const result = await invoke<{ status: string; message?: string }>(stage, {
-                worktreePath: member.path,
-              });
-              status = result.status;
-              if (status === "error" || status === "skipped_no_cli") {
-                message = result.message;
-                throw new Error();
-              }
-            });
-            setup[index].steps.push({ stage, status });
-            updateSetupStep(
-              task.id,
-              member.repoId,
-              stage,
-              status === "error" || status === "skipped_no_cli"
-                ? "error"
-                : status.startsWith("skipped_")
-                  ? "skipped"
-                  : "completed",
-              warnings,
-              message
-            );
-          }
-        })
+        task.members.map((member, index) =>
+          this.runRepoSetup(
+            task,
+            member,
+            resolutions.get(member.repoId)!,
+            warnings,
+            setup[index].steps,
+            progress
+          )
+        )
       );
       warnings.sort(
         (a, b) =>
@@ -504,12 +536,252 @@ export class Operations {
       progress(warnings.length ? "Setup completed with warnings" : "Setup completed");
       return { data: this.task(task.id), warnings, setup };
     } finally {
-      updateTaskSetup(task.id, {
-        ...getTaskSetup(task.id)!,
-        active: false,
-        warnings: [...warnings],
-      });
+      endSetupRun(task.id, warnings);
     }
+  }
+
+  /** The setup script that applies to a repository, or a resolution error for explicit config. */
+  private setupScript(
+    repoId: string,
+    workspace: Workspace | undefined,
+    resolution: RepoScriptsResolution
+  ): PhaseScript | { error: string } | null {
+    const repo = workspace?.repos.find((item) => item.id === repoId);
+    if ("error" in resolution)
+      return repo?.scripts?.setup ? phaseScript(repo, EMPTY_SCRIPTS, "setup") : resolution;
+    return phaseScript(repo, resolution.resolved, "setup");
+  }
+
+  /**
+   * Prepare one repository after its worktree exists: its declared setup script when there is
+   * one (once approved), otherwise the detected Doppler, Node and Python steps.
+   */
+  private async runRepoSetup(
+    task: Task,
+    member: TaskMember,
+    resolution: RepoScriptsResolution,
+    warnings: OperationWarning[],
+    steps: SetupSteps,
+    progress: (message: string) => void = () => undefined,
+    choice: SetupRetry = "retry"
+  ) {
+    const workspace = this.getState().workspaces.find((item) => item.id === task.workspaceId);
+    const script =
+      choice === "detected" ? null : this.setupScript(member.repoId, workspace, resolution);
+    if (script && "error" in script) {
+      planRepoSetup(task.id, member.repoId, ["script"], "worktreemanager");
+      warnings.push({ stage: "script", repoId: member.repoId, message: script.error });
+      steps.push({ stage: "script", status: "error" });
+      updateSetupStep(task.id, member.repoId, "script", "error", warnings, script.error);
+      return;
+    }
+    if (!script) {
+      planRepoSetup(task.id, member.repoId, DETECTED_STAGES);
+      await this.runDetectedSetup(task, member, warnings, steps, progress);
+      return;
+    }
+    planRepoSetup(task.id, member.repoId, ["script"], script.source);
+    if (choice === "approve" && script.hash) await approveScripts(member.localPath, [script.hash]);
+    if (!(await isScriptTrusted(member.localPath, script))) {
+      const message = `Review the setup script from ${SCRIPT_SOURCE_LABELS[script.source]} before it runs.`;
+      warnings.push({ stage: "script", repoId: member.repoId, message });
+      steps.push({ stage: "script", status: "needs_approval" });
+      updateSetupStep(task.id, member.repoId, "script", "needs_approval", warnings);
+      updateRepoSetup(task.id, member.repoId, (repo) => ({ ...repo, approval: script }));
+      return;
+    }
+    progress(`${member.repoName} · ${SETUP_STAGES.script}…`);
+    const session = scriptSession("setup", member.repoId);
+    updateSetupStep(task.id, member.repoId, "script", "running", warnings);
+    const code = await runTaskScript({
+      taskId: task.id,
+      session,
+      script: script.script,
+      cwd: member.path,
+      env: scriptEnv(task, member, workspace),
+    }).catch(() => undefined);
+    const status = code === undefined ? "error" : scriptStatus(code);
+    const message =
+      status === "completed"
+        ? undefined
+        : status === "cancelled"
+          ? "Setup script was stopped."
+          : code === undefined
+            ? "Setup script could not start."
+            : `Setup script exited with code ${code}.`;
+    if (message)
+      warnings.push({
+        stage: "script",
+        repoId: member.repoId,
+        message: `${message} Open its output to inspect and retry.`,
+      });
+    steps.push({ stage: "script", status });
+    updateSetupStep(task.id, member.repoId, "script", status, warnings, message);
+  }
+
+  private async runDetectedSetup(
+    task: Task,
+    member: TaskMember,
+    warnings: OperationWarning[],
+    steps: SetupSteps,
+    progress: (message: string) => void
+  ) {
+    for (const stage of DETECTED_STAGES) {
+      progress(`${member.repoName} · ${SETUP_STAGES[stage]}…`);
+      updateSetupStep(task.id, member.repoId, stage, "running", warnings);
+      let status = "error";
+      let message: string | undefined;
+      await this.optional(warnings, stage, member.repoId, async () => {
+        const result = await invoke<{ status: string; message?: string }>(stage, {
+          worktreePath: member.path,
+        });
+        status = result.status;
+        if (status === "error" || status === "skipped_no_cli") {
+          message = result.message;
+          throw new Error();
+        }
+      });
+      steps.push({ stage, status });
+      updateSetupStep(
+        task.id,
+        member.repoId,
+        stage,
+        status === "error" || status === "skipped_no_cli"
+          ? "error"
+          : status.startsWith("skipped_")
+            ? "skipped"
+            : "completed",
+        warnings,
+        message
+      );
+    }
+  }
+
+  /**
+   * Run one repository's setup again: re-read its scripts (so edits apply), approve the shown
+   * script first, or fall back to detected setup.
+   */
+  async rerunRepoSetup(
+    taskId: string,
+    repoId: string,
+    choice: SetupRetry = "retry"
+  ): Promise<OperationResult<{ repoId: string; steps: SetupSteps }>> {
+    const task = this.task(taskId);
+    const member = task.members.find((item) => item.repoId === repoId);
+    if (!member) throw new OperationError("not_found", "Repository not found in this task.");
+    const running = getTaskSetup(taskId)?.repos.find((repo) => repo.repoId === repoId);
+    if (running?.steps.some((step) => step.status === "running"))
+      throw new OperationError("setup_active", "This repository's setup is still running.");
+    beginSetupRun(task);
+    const warnings: OperationWarning[] = [];
+    const steps: SetupSteps = [];
+    try {
+      const resolution = await repoScriptsResolution(member.path);
+      if ("resolved" in resolution && !resolution.resolved.present)
+        throw new OperationError("not_found", "The worktree no longer exists.");
+      await this.runRepoSetup(task, member, resolution, warnings, steps, undefined, choice);
+      return { data: { repoId, steps }, warnings };
+    } finally {
+      const previous = getTaskSetup(taskId)?.warnings ?? [];
+      endSetupRun(taskId, [...previous.filter((item) => item.repoId !== repoId), ...warnings]);
+    }
+  }
+
+  /** Stop a running setup script; its output stays available. */
+  cancelRepoSetup(taskId: string, repoId: string) {
+    return scriptCancel(taskId, scriptSession("setup", repoId));
+  }
+
+  /**
+   * Run each repository's teardown script before its worktree is removed. Missing worktrees are
+   * skipped. Repository scripts need approval: unapproved ones stop the deletion so the user can
+   * review them, and any failure retains the task.
+   */
+  private async runTeardowns(tasks: Task[], options: DeleteOptions) {
+    const pending: { task: Task; member: TaskMember; script: PhaseScript }[] = [];
+    for (const task of tasks) {
+      const workspace = this.getState().workspaces.find((item) => item.id === task.workspaceId);
+      for (const member of task.members) {
+        const repo = workspace?.repos.find((item) => item.id === member.repoId);
+        const resolution = await repoScriptsResolution(member.path);
+        if ("resolved" in resolution && !resolution.resolved.present) continue;
+        const script = phaseScript(
+          repo,
+          "resolved" in resolution ? resolution.resolved : EMPTY_SCRIPTS,
+          "teardown"
+        );
+        if (script) pending.push({ task, member, script });
+        else if ("error" in resolution)
+          throw new OperationError("teardown_failed", resolution.error, {
+            repoName: member.repoName,
+          });
+      }
+    }
+    if (!pending.length) return;
+    const untrusted = [];
+    for (const item of pending)
+      if (!(await isScriptTrusted(item.member.localPath, item.script))) untrusted.push(item);
+    if (untrusted.length && !options.approveTeardown)
+      throw new OperationError(
+        "teardown_needs_approval",
+        "Review the repository teardown scripts before they run, or delete without them.",
+        {
+          scripts: untrusted.map(({ member, script }) => ({
+            repoName: member.repoName,
+            source: script.source,
+            script: script.script,
+          })),
+        }
+      );
+    for (const { member, script } of untrusted)
+      await approveScripts(member.localPath, [script.hash!]);
+    const failed: string[] = [];
+    for (const task of tasks) {
+      const taskScripts = pending.filter((item) => item.task === task);
+      if (!taskScripts.length) continue;
+      beginSetupRun(task);
+      const warnings = getTaskSetup(task.id)?.warnings ?? [];
+      try {
+        await Promise.all(
+          taskScripts.map(async ({ member, script }) => {
+            updateSetupStep(task.id, member.repoId, "teardown", "running", warnings);
+            const workspace = this.getState().workspaces.find(
+              (item) => item.id === task.workspaceId
+            );
+            const code = await runTaskScript({
+              taskId: task.id,
+              session: scriptSession("teardown", member.repoId),
+              script: script.script,
+              cwd: member.path,
+              env: scriptEnv(task, member, workspace),
+              timeoutSecs: TEARDOWN_TIMEOUT_SECS,
+            }).catch(() => undefined);
+            const status = code === undefined ? "error" : scriptStatus(code);
+            if (status !== "completed") failed.push(member.repoName);
+            updateSetupStep(
+              task.id,
+              member.repoId,
+              "teardown",
+              status === "cancelled" ? "error" : status,
+              warnings,
+              status === "completed"
+                ? undefined
+                : code == null
+                  ? "Teardown script did not finish."
+                  : `Teardown script exited with code ${code}.`
+            );
+          })
+        );
+      } finally {
+        endSetupRun(task.id);
+      }
+    }
+    if (failed.length)
+      throw new OperationError(
+        "teardown_failed",
+        `Teardown failed for ${failed.join(", ")}. The task was retained; inspect the output, or delete without teardown.`,
+        { repoNames: failed }
+      );
   }
 
   async refreshTaskProjects(workspaceId: string) {
@@ -657,6 +929,7 @@ export class Operations {
       );
     }
     if (!options.deleteWorktrees || !tasks.length) return;
+    if (!options.skipTeardown) await this.runTeardowns(tasks, options);
     const removed: TaskMember[] = [];
     const failed: TaskMember[] = [];
     for (const task of tasks) {
@@ -689,6 +962,7 @@ export class Operations {
     for (const command of ["cleanup_claude_json", "doppler_cleanup"]) {
       await this.optional(warnings, command, undefined, () => invoke(command, { paths }));
     }
+    await Promise.all(tasks.map((task) => terminalClose(task.id)));
   }
 
   private async archiveNotes(tasks: Task[], warnings: OperationWarning[]) {
