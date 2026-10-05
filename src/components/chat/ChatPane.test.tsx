@@ -286,7 +286,9 @@ describe("ChatPane", () => {
       <ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} onStatusChange={onStatusChange} />
     );
     await screen.findByText("Codex is not signed in");
-    expect(onStatusChange).toHaveBeenLastCalledWith({ kind: "exited", code: null });
+    await waitFor(() =>
+      expect(onStatusChange).toHaveBeenLastCalledWith({ kind: "exited", code: null })
+    );
     expect(screen.getByRole("textbox")).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Restart chat" }));
     await waitFor(() =>
