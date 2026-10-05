@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDownIcon } from "../ui/Icons";
 import { ChatItem } from "../../services/chat";
+import { MarkdownLink } from "./MarkdownLink";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted animate-pulse",
@@ -21,7 +22,9 @@ const STATUS_LABEL: Record<string, string> = {
 export function MarkdownText({ text }: { text: string }) {
   return (
     <div className="chat-markdown text-sm text-text-primary select-text break-words">
-      <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
+      <Markdown remarkPlugins={[remarkGfm]} components={{ a: MarkdownLink }}>
+        {text}
+      </Markdown>
     </div>
   );
 }
