@@ -81,6 +81,12 @@ export interface LinearIssue {
   updatedAt: string;
 }
 
+export interface LinearTeam {
+  id: string;
+  key: string;
+  name: string;
+}
+
 export interface WorktreeGitInfo {
   path: string;
   branch: string;

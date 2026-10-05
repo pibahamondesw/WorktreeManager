@@ -171,3 +171,57 @@ it("loads projects in bounded batches and preserves successful batches on failur
   expect(Object.keys(partial)).toHaveLength(51);
   expect(partial["issue-0"]).toBeUndefined();
 });
+
+it("creates an assigned issue with nested data returned by the mutation", async () => {
+  const service = new LinearService("test-key");
+  const issue = {
+    id: "issue",
+    identifier: "WOR-1",
+    title: "New thing",
+    branchName: "me/wor-1-new-thing",
+    description: "Details",
+    priority: 0,
+    updatedAt: "2026-10-04T00:00:00.000Z",
+    project: { id: "project", name: "App" },
+    state: { name: "Todo", type: "unstarted" },
+  };
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ data: { viewer: { id: "viewer" } } })
+    .mockResolvedValueOnce({ data: { issueCreate: { success: true, issue } } });
+  Object.defineProperty(service, "gql", { value: { rawRequest: request } });
+  await expect(
+    service.createIssue({ teamId: "team", title: "New thing", description: "Details" })
+  ).resolves.toEqual({
+    id: "issue",
+    identifier: "WOR-1",
+    title: "New thing",
+    branchName: "me/wor-1-new-thing",
+    description: "Details",
+    priority: 0,
+    updatedAt: issue.updatedAt,
+    projectId: "project",
+    projectName: "App",
+    stateName: "Todo",
+    stateType: "unstarted",
+  });
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(request).toHaveBeenLastCalledWith(expect.stringContaining("mutation CreateIssue"), {
+    input: { teamId: "team", title: "New thing", description: "Details", assigneeId: "viewer" },
+  });
+});
+
+it.each([
+  { success: false, issue: null },
+  { success: true, issue: null },
+])("rejects unsuccessful creation payloads: %j", async (payload) => {
+  const service = new LinearService("test-key");
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ data: { viewer: { id: "viewer" } } })
+    .mockResolvedValueOnce({ data: { issueCreate: payload } });
+  Object.defineProperty(service, "gql", { value: { rawRequest: request } });
+  await expect(service.createIssue({ teamId: "team", title: "New thing" })).rejects.toThrow(
+    "Linear rejected the issue creation"
+  );
+});
