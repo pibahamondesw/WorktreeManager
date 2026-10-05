@@ -12,6 +12,7 @@ pub mod node_deps;
 pub mod notes;
 pub mod process;
 pub mod python_deps;
+pub mod scripts;
 pub mod shell_env;
 pub mod terminal;
 pub mod vault;

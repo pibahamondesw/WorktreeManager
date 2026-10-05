@@ -36,6 +36,17 @@ pub(crate) fn login_shell(script: &str) -> std::process::Command {
     command
 }
 
+/// Login zsh arguments running a repository setup or teardown script verbatim, after the PATH
+/// prelude and with errexit, so the first failing line fails the script. The script is authored
+/// by the user or a repository they approved; task context reaches it only through environment
+/// variables, never by interpolation.
+pub(crate) fn repo_script_args(script: &str) -> Vec<String> {
+    vec![
+        "-lc".to_string(),
+        format!("{}\nset -e\n{}", claude_env_prelude(), script),
+    ]
+}
+
 /// True if `bin` resolves after the same PATH/profile prelude as launch scripts.
 pub fn cli_available(bin: &str) -> bool {
     let probe = format!(
