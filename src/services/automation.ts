@@ -179,21 +179,29 @@ function agentEvent(params: Record<string, unknown>): AgentEvent {
 
 function deleteOptions(params: Record<string, unknown>): DeleteOptions | undefined {
   if (params.deleteWorktrees === undefined) {
-    if (params.force)
-      throw new OperationError("invalid_params", "--force requires --delete-worktrees.");
+    if (params.force || params.skipTeardown)
+      throw new OperationError(
+        "invalid_params",
+        "--force and --skip-teardown require --delete-worktrees."
+      );
     return undefined;
   }
   if (
     typeof params.deleteWorktrees !== "boolean" ||
     (params.force !== undefined && typeof params.force !== "boolean") ||
-    (params.force && !params.deleteWorktrees)
+    (params.skipTeardown !== undefined && typeof params.skipTeardown !== "boolean") ||
+    ((params.force || params.skipTeardown) && !params.deleteWorktrees)
   ) {
     throw new OperationError(
       "invalid_params",
-      "Choose a deletion mode; --force requires --delete-worktrees."
+      "Choose a deletion mode; --force and --skip-teardown require --delete-worktrees."
     );
   }
-  return { deleteWorktrees: params.deleteWorktrees, force: params.force === true };
+  return {
+    deleteWorktrees: params.deleteWorktrees,
+    force: params.force === true,
+    skipTeardown: params.skipTeardown === true,
+  };
 }
 
 export async function dispatchAutomation(
@@ -210,12 +218,12 @@ export async function dispatchAutomation(
       "workspace.get": ["id"],
       "workspace.create": ["input"],
       "workspace.update": ["id", "input"],
-      "workspace.delete": ["id", "deleteWorktrees", "force"],
+      "workspace.delete": ["id", "deleteWorktrees", "force", "skipTeardown"],
       "task.list": ["workspaceId"],
       "task.get": ["id", "git"],
       "task.create": ["input"],
       "task.link-issue": ["id", "issue"],
-      "task.delete": ["id", "deleteWorktrees", "force"],
+      "task.delete": ["id", "deleteWorktrees", "force", "skipTeardown"],
       "agent.event": [
         "state",
         "agent",

@@ -111,6 +111,9 @@ describe("automation contract", () => {
     expect(
       await call("task.delete", { id: "t1", deleteWorktrees: false, force: true })
     ).toMatchObject({ ok: false, error: { code: "invalid_params" } });
+    expect(
+      await call("task.delete", { id: "t1", deleteWorktrees: false, skipTeardown: true })
+    ).toMatchObject({ ok: false, error: { code: "invalid_params" } });
     expect(await call("workspace.create", { input: null })).toMatchObject({
       ok: false,
       error: { code: "invalid_params" },
