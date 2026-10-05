@@ -1,5 +1,5 @@
 import { LinearClient } from "@linear/sdk";
-import { IssueLinearInfo, LinearIssue, PullRequestInfo } from "../types";
+import { IssueLinearInfo, LinearIssue, LinearTeam, PullRequestInfo } from "../types";
 
 // ---- Standalone: does not require an initialized client ----
 
@@ -272,6 +272,50 @@ export class LinearService {
       projectId: project?.id,
       projectName: project?.name,
     };
+  }
+
+  async listTeams(): Promise<LinearTeam[]> {
+    const teams = await this.client.teams();
+    return teams.nodes.map((team) => ({ id: team.id, key: team.key, name: team.name }));
+  }
+
+  async createIssue(input: {
+    teamId: string;
+    title: string;
+    description?: string;
+  }): Promise<LinearIssue> {
+    const viewer = await this.gql.rawRequest<ViewerIdResponse, Record<string, unknown>>(
+      VIEWER_ID_QUERY,
+      {}
+    );
+    const result = await this.gql.rawRequest<
+      { issueCreate: { success: boolean; issue: GqlIssueNode | null } },
+      Record<string, unknown>
+    >(
+      `
+      mutation CreateIssue($input: IssueCreateInput!) {
+        issueCreate(input: $input) {
+          success
+          issue {
+            id identifier title branchName description priority updatedAt
+            project { id name }
+            state { name type }
+          }
+        }
+      }
+    `,
+      {
+        input: {
+          teamId: input.teamId,
+          title: input.title,
+          description: input.description || undefined,
+          assigneeId: viewer.data!.viewer.id,
+        },
+      }
+    );
+    const payload = result.data?.issueCreate;
+    if (!payload?.success || !payload.issue) throw new Error("Linear rejected the issue creation");
+    return mapIssueNode(payload.issue);
   }
 
   async updateIssueTitle(issueId: string, title: string): Promise<void> {

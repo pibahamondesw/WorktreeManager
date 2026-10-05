@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Modal } from "../ui/Modal";
-import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 import { ChevronLeftIcon } from "../ui/Icons";
 import { LinearIssuePicker } from "./LinearIssuePicker";
+import { NewLinearIssueForm, NewLinearIssueDraft } from "./NewLinearIssueForm";
+import { RepositoryChecklist } from "./RepositoryChecklist";
+import { NewTaskFooter } from "./NewTaskFooter";
 import { useLinear } from "../../contexts/useLinear";
 import { EditorApp, LinearIssue, Task, TaskMember, Workspace } from "../../types";
 import {
@@ -46,16 +48,24 @@ export function NewWorktreeModal({
   const creatingRef = useRef(false);
   const [creatingStatus, setCreatingStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [manualMode, setManualMode] = useState(false);
+  const [mode, setMode] = useState<"existingIssue" | "manualBranch" | "newIssue">("existingIssue");
   const [manualBranch, setManualBranch] = useState("");
+  const [issueDraft, setIssueDraft] = useState<NewLinearIssueDraft>({
+    title: "",
+    description: "",
+    teamId: "",
+  });
+  const [createdIssue, setCreatedIssue] = useState<LinearIssue | null>(null);
   const [repoSel, setRepoSel] = useState<Record<string, RepoSelection>>({});
 
   useEffect(() => {
     if (!open) {
       setSelected(null);
       setError(null);
-      setManualMode(false);
+      setMode("existingIssue");
       setManualBranch("");
+      setIssueDraft({ title: "", description: "", teamId: "" });
+      setCreatedIssue(null);
       return;
     }
     // Initialize the repo checklist: all repos included, each at its default mode.
@@ -75,8 +85,7 @@ export function NewWorktreeModal({
 
   const handleCreate = async () => {
     if (creatingRef.current) return;
-    const branchInput = (selected?.branchName ?? manualBranch).trim();
-    if (!branchInput) return;
+    if (!canCreate) return;
     if (includedRepos.length === 0) {
       setError("Select at least one repository");
       return;
@@ -88,19 +97,36 @@ export function NewWorktreeModal({
 
     let ready = false;
     try {
+      let linearIssue =
+        mode === "existingIssue" && linear
+          ? selected
+          : mode === "newIssue" && linear
+            ? createdIssue
+            : null;
+      if (!linearIssue && mode === "newIssue" && linear) {
+        setCreatingStatus("Creating Linear issue...");
+        linearIssue = await linear.createIssue({
+          teamId: issueDraft.teamId,
+          title: issueDraft.title.trim(),
+          description: issueDraft.description.trim(),
+        });
+        setCreatedIssue(linearIssue);
+      }
+      const branchInput = (linearIssue?.branchName ?? manualBranch).trim();
+      setCreatingStatus("Preparing worktrees...");
       await onCreated(
         {
           workspaceId: workspace.id,
           branchName: branchInput,
           repoIds: includedRepos.map((repo) => repo.id),
-          ...(selected
+          ...(linearIssue
             ? {
                 linearIssue: {
-                  id: selected.id,
-                  identifier: selected.identifier,
-                  title: selected.title,
-                  projectId: selected.projectId,
-                  projectName: selected.projectName,
+                  id: linearIssue.id,
+                  identifier: linearIssue.identifier,
+                  title: linearIssue.title,
+                  projectId: linearIssue.projectId,
+                  projectName: linearIssue.projectName,
                 },
               }
             : {}),
@@ -110,9 +136,9 @@ export function NewWorktreeModal({
         },
         async (task) => {
           ready = true;
-          if (selected && linear) {
+          if (linearIssue && linear) {
             void linear
-              .startIssue(selected.id)
+              .startIssue(linearIssue.id)
               .catch(() => onOpenHint?.("Could not update Linear issue status"));
           }
           try {
@@ -155,36 +181,32 @@ export function NewWorktreeModal({
     }
   };
 
-  const showManualForm = !linear || manualMode;
+  const showManualForm = !linear || mode !== "existingIssue";
+  const canCreate =
+    !linear || mode === "manualBranch"
+      ? !!manualBranch.trim()
+      : mode === "newIssue"
+        ? !!createdIssue || (!!issueDraft.title.trim() && !!issueDraft.teamId)
+        : !!selected?.branchName.trim();
 
-  const repoChecklist =
-    workspace.repos.length > 1 ? (
-      <div className="flex flex-col gap-2">
-        <p className="text-xs text-text-muted">Repositories in this task</p>
-        <div className="rounded-lg border border-border bg-bg-tertiary divide-y divide-border/50">
-          {workspace.repos.map((r) => {
-            const sel = repoSel[r.id];
-            const included = sel?.included ?? false;
-            return (
-              <label key={r.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  disabled={creating}
-                  checked={included}
-                  onChange={(e) => setIncluded(r.id, e.target.checked)}
-                  className="accent-accent"
-                />
-                <span
-                  className={`text-sm truncate ${included ? "text-text-primary" : "text-text-muted"}`}
-                >
-                  {r.name}
-                </span>
-              </label>
-            );
-          })}
-        </div>
-      </div>
-    ) : null;
+  const repoChecklist = (
+    <RepositoryChecklist
+      repos={workspace.repos}
+      selection={repoSel}
+      disabled={creating}
+      onChange={setIncluded}
+    />
+  );
+  const footer = (
+    <NewTaskFooter
+      error={error}
+      creating={creating}
+      status={creatingStatus}
+      canCreate={canCreate}
+      onClose={onClose}
+      onCreate={() => void handleCreate()}
+    />
+  );
 
   return (
     <Modal
@@ -193,14 +215,15 @@ export function NewWorktreeModal({
         if (!creatingRef.current) onClose();
       }}
       title="New Task"
-      wide={!showManualForm || !!selected}
+      wide={!showManualForm}
     >
-      {showManualForm && !selected ? (
+      {showManualForm ? (
         /* Manual branch mode */
         <div className="p-6 space-y-4">
           {linear && (
             <button
-              onClick={() => setManualMode(false)}
+              disabled={creating}
+              onClick={() => setMode("existingIssue")}
               className="flex items-center gap-1 text-sm text-text-muted hover:text-text-primary transition-colors cursor-pointer"
             >
               <ChevronLeftIcon />
@@ -208,50 +231,48 @@ export function NewWorktreeModal({
             </button>
           )}
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-secondary">Branch name</label>
-            <input
-              className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors font-mono"
-              placeholder="feature/my-branch"
+          {linear && (
+            <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+              <input
+                type="checkbox"
+                disabled={creating}
+                checked={mode === "newIssue"}
+                onChange={(e) => setMode(e.target.checked ? "newIssue" : "manualBranch")}
+                className="accent-accent"
+              />
+              Also create Linear issue
+            </label>
+          )}
+
+          {linear && mode === "newIssue" ? (
+            <NewLinearIssueForm
+              linear={linear}
+              value={issueDraft}
+              onChange={setIssueDraft}
               disabled={creating}
-              value={manualBranch}
-              onChange={(e) => setManualBranch(e.target.value)}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !creating && manualBranch.trim()) void handleCreate();
-              }}
+              createdIssue={createdIssue}
+              onSubmit={() => void handleCreate()}
             />
-          </div>
-
-          {repoChecklist}
-
-          {error && (
-            <div className="rounded-lg bg-danger/10 border border-danger/20 px-3 py-2">
-              <p className="text-sm text-danger select-text cursor-text whitespace-pre-wrap wrap-break-word">
-                {error}
-              </p>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">Branch name</label>
+              <input
+                className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors font-mono"
+                placeholder="feature/my-branch"
+                disabled={creating}
+                value={manualBranch}
+                onChange={(e) => setManualBranch(e.target.value)}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !creating && manualBranch.trim()) void handleCreate();
+                }}
+              />
             </div>
           )}
 
-          <div className="flex items-center justify-between">
-            {creating && creatingStatus ? (
-              <span className="text-xs text-text-muted">{creatingStatus}</span>
-            ) : (
-              <span />
-            )}
-            <div className="flex gap-3">
-              <Button variant="ghost" onClick={onClose} disabled={creating}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => void handleCreate()}
-                loading={creating}
-                disabled={!manualBranch.trim()}
-              >
-                Create Task
-              </Button>
-            </div>
-          </div>
+          {repoChecklist}
+
+          {footer}
         </div>
       ) : (
         /* Linear issue mode */
@@ -261,6 +282,7 @@ export function NewWorktreeModal({
               {selected ? (
                 <div className="p-6 space-y-4">
                   <button
+                    disabled={creating}
                     onClick={() => setSelected(null)}
                     className="flex items-center gap-1 text-sm text-text-muted hover:text-text-primary transition-colors cursor-pointer"
                   >
@@ -296,29 +318,7 @@ export function NewWorktreeModal({
 
                   {repoChecklist}
 
-                  {error && (
-                    <div className="rounded-lg bg-danger/10 border border-danger/20 px-3 py-2">
-                      <p className="text-sm text-danger select-text cursor-text whitespace-pre-wrap wrap-break-word">
-                        {error}
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between">
-                    {creating && creatingStatus ? (
-                      <span className="text-xs text-text-muted">{creatingStatus}</span>
-                    ) : (
-                      <span />
-                    )}
-                    <div className="flex gap-3">
-                      <Button variant="ghost" onClick={onClose} disabled={creating}>
-                        Cancel
-                      </Button>
-                      <Button onClick={() => void handleCreate()} loading={creating}>
-                        Create Task
-                      </Button>
-                    </div>
-                  </div>
+                  {footer}
                 </div>
               ) : undefined}
             </LinearIssuePicker>
@@ -328,7 +328,8 @@ export function NewWorktreeModal({
           {!selected && (
             <div className="px-6 py-3 border-t border-border flex-shrink-0">
               <button
-                onClick={() => setManualMode(true)}
+                disabled={creating}
+                onClick={() => setMode("manualBranch")}
                 className="text-xs text-text-muted hover:text-text-primary transition-colors cursor-pointer"
               >
                 Create without Linear issue
