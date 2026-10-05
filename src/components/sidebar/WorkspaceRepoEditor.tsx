@@ -4,6 +4,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "../ui/Button";
 import { CloseIcon } from "../ui/Icons";
 import { WorkspaceRepo } from "../../types";
+import { RepoScriptsEditor } from "./RepoScriptsEditor";
 
 interface WorkspaceRepoEditorProps {
   repos: WorkspaceRepo[];
@@ -98,6 +99,7 @@ export function WorkspaceRepoEditor({ repos, onChange, home }: WorkspaceRepoEdit
               placeholder="Worktree base path"
               onChange={(e) => update(r.id, { worktreeBasePath: e.target.value })}
             />
+            <RepoScriptsEditor repo={r} onChange={(scripts) => update(r.id, { scripts })} />
           </div>
         ))}
       </div>

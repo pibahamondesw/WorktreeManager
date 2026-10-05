@@ -8,6 +8,7 @@ import { WorkspaceRepoEditor } from "./WorkspaceRepoEditor";
 import { SavedLinearKeySelect } from "./SavedLinearKeySelect";
 import { LinearKeyField } from "./LinearKeyField";
 import { useLinearKeyValidation } from "../../hooks/useLinearKeyValidation";
+import { normalizeRepoScripts } from "../../utils";
 
 interface EditWorkspaceModalProps {
   open: boolean;
@@ -92,11 +93,15 @@ export function EditWorkspaceModal({
     try {
       await onSave(workspace.id, {
         name: name.trim(),
-        repos: repos.map((r) => ({
-          ...r,
-          name: r.name.trim(),
-          worktreeBasePath: r.worktreeBasePath.trim(),
-        })),
+        repos: repos.map(({ scripts, ...r }) => {
+          const overrides = normalizeRepoScripts(scripts);
+          return {
+            ...r,
+            name: r.name.trim(),
+            worktreeBasePath: r.worktreeBasePath.trim(),
+            ...(overrides ? { scripts: overrides } : {}),
+          };
+        }),
         linearApiKey: newLinearKey,
         linearOrgUrlKey: newLinearKey
           ? linear.linearValid
