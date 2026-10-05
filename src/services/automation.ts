@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { v4 as uuid } from "uuid";
 import { Workspace, WorkspaceRepo, GitStatus } from "../types";
+import { normalizeRepoScripts } from "../utils";
 import {
   Operations,
   OperationError,
@@ -49,14 +50,23 @@ export function publicWorkspace(workspace: Workspace) {
   return {
     id: workspace.id,
     name: workspace.name,
-    repos: workspace.repos.map(({ id, name, localPath, worktreeBasePath }) => ({
+    repos: workspace.repos.map(({ id, name, localPath, worktreeBasePath, scripts }) => ({
       id,
       name,
       localPath,
       worktreeBasePath,
+      ...(scripts ? { scripts } : {}),
     })),
     linearOrgUrlKey: workspace.linearOrgUrlKey ?? null,
   };
+}
+
+function repoScriptsInput(value: unknown) {
+  if (value === null) return undefined;
+  const input = object(value, ["setup", "teardown"]);
+  if (Object.values(input).some((script) => script !== null && typeof script !== "string"))
+    throw new OperationError("invalid_params", "Repository scripts must be strings or null.");
+  return normalizeRepoScripts(input);
 }
 
 async function workspaceInput(value: unknown, existing?: Workspace): Promise<Workspace> {
@@ -67,7 +77,7 @@ async function workspaceInput(value: unknown, existing?: Workspace): Promise<Wor
       throw new OperationError("invalid_params", "repos must be an array.");
     const home = (await homeDir()).replace(/\/$/, "");
     repos = input.repos.map((value): WorkspaceRepo => {
-      const repo = object(value, ["id", "name", "localPath", "worktreeBasePath"]);
+      const repo = object(value, ["id", "name", "localPath", "worktreeBasePath", "scripts"]);
       const localPath = text(repo.localPath).replace(/\/+$/, "");
       const name = repo.name === undefined ? localPath.split("/").pop()! : text(repo.name);
       const previous = existing?.repos.find((item) => item.localPath === localPath);
@@ -77,10 +87,13 @@ async function workspaceInput(value: unknown, existing?: Workspace): Promise<Wor
           "invalid_params",
           "Repository IDs may only reference existing members."
         );
+      const scripts =
+        repo.scripts === undefined ? previous?.scripts : repoScriptsInput(repo.scripts);
       return {
         id,
         name,
         localPath,
+        ...(scripts ? { scripts } : {}),
         worktreeBasePath:
           repo.worktreeBasePath === undefined
             ? (previous?.worktreeBasePath ??

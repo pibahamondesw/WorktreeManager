@@ -191,6 +191,20 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     });
   });
 
+  it("keeps only non-blank repository script overrides", () => {
+    const [w] = normalizeWorkspaces([
+      {
+        id: "w1",
+        repos: [
+          { id: "r1", scripts: { setup: " pnpm i ", teardown: " ", extra: "x" } },
+          { id: "r2", scripts: { setup: "" } },
+        ],
+      },
+    ]);
+    expect(w.repos[0].scripts).toEqual({ setup: "pnpm i" });
+    expect(w.repos[1]).not.toHaveProperty("scripts");
+  });
+
   it("fills task member defaults", () => {
     const [t] = normalizeTasks([
       {

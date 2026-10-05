@@ -1,4 +1,4 @@
-import { AppState, Task, Workspace } from "./types";
+import { AppState, RepoScripts, Task, Workspace } from "./types";
 
 export function timeAgo(epoch: number): { label: string; stale: boolean; veryStale: boolean } {
   if (!epoch) return { label: "", stale: false, veryStale: false };
@@ -61,6 +61,18 @@ function persistedBoolean(value: unknown): boolean {
   return value;
 }
 
+/** Keep only non-blank phases; undefined when no phase is overridden. */
+export function normalizeRepoScripts(raw: unknown): RepoScripts | undefined {
+  if (raw == null) return undefined;
+  const record = persistedRecord(raw);
+  const scripts: RepoScripts = {};
+  for (const phase of ["setup", "teardown"] as const) {
+    const script = persistedString(record[phase])?.trim();
+    if (script) scripts[phase] = script;
+  }
+  return Object.keys(scripts).length ? scripts : undefined;
+}
+
 /**
  * Normalize workspace objects loaded from the store, filling defaults for fields
  * that may be missing in data written by older builds.
@@ -75,11 +87,13 @@ export function normalizeWorkspaces(raw: unknown): Workspace[] {
       linearOrgUrlKey: persistedString(w.linearOrgUrlKey) ?? null,
       repos: persistedArray(w.repos).map((value) => {
         const r = persistedRecord(value);
+        const scripts = normalizeRepoScripts(r.scripts);
         return {
           id: persistedId(r.id),
           name: persistedString(r.name) ?? "",
           localPath: persistedString(r.localPath) ?? "",
           worktreeBasePath: persistedString(r.worktreeBasePath) ?? "",
+          ...(scripts ? { scripts } : {}),
         };
       }),
     };

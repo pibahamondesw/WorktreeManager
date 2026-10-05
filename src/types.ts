@@ -4,6 +4,13 @@ export interface WorkspaceRepo {
   name: string;
   localPath: string;
   worktreeBasePath: string;
+  /** Local override of the setup/teardown the repository declares; only set phases apply. */
+  scripts?: RepoScripts;
+}
+
+export interface RepoScripts {
+  setup?: string;
+  teardown?: string;
 }
 
 /** A named group of peer repos opened together. Replaces the old single-repo "Repo"/project. */
