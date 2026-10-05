@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { TaskSetupProgress } from "./TaskSetupProgress";
+import { SetupControls, TaskSetupProgress } from "./TaskSetupProgress";
 import { TaskHeader } from "./TaskHeader";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { ChatPane } from "../chat/ChatPane";
@@ -25,6 +25,7 @@ interface TaskViewProps {
   agentActivity?: AgentActivity;
   onRename?: (title: string) => Promise<unknown>;
   onRenameError?: (message: string) => void;
+  setupControls?: SetupControls;
 }
 
 /** A task opened inside the app: compact header on top, the task's surface filling the rest. */
@@ -40,6 +41,7 @@ export function TaskView({
   agentActivity,
   onRename,
   onRenameError,
+  setupControls,
 }: TaskViewProps) {
   const [switching, setSwitching] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({ kind: "connecting" });
@@ -111,7 +113,7 @@ export function TaskView({
           />
         }
       />
-      <TaskSetupProgress taskId={task.id} />
+      <TaskSetupProgress taskId={task.id} controls={setupControls} />
       {closeError && (
         <p role="alert" className="px-4 py-2 text-sm text-danger">
           {closeError}

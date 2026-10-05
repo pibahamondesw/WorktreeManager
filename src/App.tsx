@@ -22,6 +22,7 @@ import { withScope } from "./search/query";
 import { WorkspaceAction } from "./search/commands";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
 import { Task, VaultConfig } from "./types";
+import type { SetupRetry } from "./services/operations";
 import { listen } from "@tauri-apps/api/event";
 import { useAutomation } from "./hooks/useAutomation";
 import { editorPresentation } from "./services/codeEditor";
@@ -66,6 +67,15 @@ function App() {
   } = useStore();
 
   useTaskProjects(state.tasks, state.workspaces, operations);
+
+  const setupControls = useMemo(
+    () => ({
+      rerun: (taskId: string, repoId: string, choice: SetupRetry) =>
+        operations.rerunRepoSetup(taskId, repoId, choice),
+      cancel: (taskId: string, repoId: string) => operations.cancelRepoSetup(taskId, repoId),
+    }),
+    [operations]
+  );
 
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
   const [search, setSearch] = useState<{ open: boolean; query: string }>({
@@ -429,6 +439,7 @@ function App() {
             onPinnedTasksReordered={(id, targetId) => operations.reorderPinnedTasks(id, targetId)}
             onTaskIssueLinked={(id, issue) => operations.linkTaskIssue(id, issue)}
             onTaskRenamed={(id, title) => operations.renameTask(id, title)}
+            setupControls={setupControls}
             editorApp={editorApp}
             onEditorChange={(editor) => void updateEditorApp(editor)}
             workspaceSwitching={workspaceSwitching}

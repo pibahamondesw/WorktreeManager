@@ -7,9 +7,13 @@ import {
   clearTaskSetup,
   initializeTaskSetup,
   getTaskSetup,
+  planRepoSetup,
+  updateRepoSetup,
   updateSetupStep,
   updateTaskSetup,
 } from "../../services/taskSetup";
+
+vi.mock("./ScriptOutput", () => ({ ScriptOutput: () => null }));
 import { Task } from "../../types";
 
 afterEach(() => {
@@ -192,4 +196,55 @@ it("cancels an active countdown if an error arrives", () => {
   void act(() => vi.advanceTimersByTime(10000));
   expect(screen.getByRole("status")).toHaveTextContent("Setup completed with errors");
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+});
+
+it("shows a repository script waiting for approval and runs the chosen option", async () => {
+  const rerun = vi.fn().mockResolvedValue(undefined);
+  render(<TaskSetupProgress taskId="progress-test" controls={{ rerun, cancel: vi.fn() }} />);
+  act(() => {
+    initializeTaskSetup(
+      { id: "progress-test", members: [{ repoId: "api", repoName: "API" }] } as Task,
+      []
+    );
+    planRepoSetup("progress-test", "api", ["script"], "conductor");
+    updateSetupStep("progress-test", "api", "script", "needs_approval", []);
+    updateRepoSetup("progress-test", "api", (repo) => ({
+      ...repo,
+      approval: { source: "conductor", script: "npm ci", hash: "h" },
+    }));
+    updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, active: false });
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("Setup waiting for approval");
+  expect(screen.getByText("npm ci")).toBeInTheDocument();
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Use detected setup" }));
+  expect(rerun).toHaveBeenCalledWith("progress-test", "api", "detected");
+  fireEvent.click(screen.getByRole("button", { name: "Approve and run" }));
+  expect(rerun).toHaveBeenLastCalledWith("progress-test", "api", "approve");
+});
+
+it("offers stopping a running setup script and keeps finished script results visible", () => {
+  const cancel = vi.fn().mockResolvedValue(undefined);
+  const rerun = vi.fn().mockResolvedValue(undefined);
+  render(<TaskSetupProgress taskId="progress-test" controls={{ rerun, cancel }} />);
+  act(() => {
+    initializeTaskSetup(
+      { id: "progress-test", members: [{ repoId: "api", repoName: "API" }] } as Task,
+      []
+    );
+    planRepoSetup("progress-test", "api", ["script"], "worktreemanager");
+    updateSetupStep("progress-test", "api", "script", "running", []);
+  });
+  expect(
+    screen.getByText(/API · Running setup script from \.worktreemanager\.toml · running/)
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+  expect(cancel).toHaveBeenCalledWith("progress-test", "api");
+  act(() => {
+    updateSetupStep("progress-test", "api", "script", "completed", []);
+    updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, active: false });
+  });
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+  expect(rerun).toHaveBeenCalledWith("progress-test", "api", "retry");
 });

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Task, VaultConfig, Workspace } from "../../types";
-import { OperationResult } from "../../services/operations";
+import { DeleteOptions, OperationResult } from "../../services/operations";
+import { SCRIPT_SOURCE_LABELS, TeardownBlock, teardownBlockFrom } from "../../services/repoScripts";
 
 interface RemoveWorkspaceModalProps {
   open: boolean;
@@ -10,7 +11,10 @@ interface RemoveWorkspaceModalProps {
   workspace: Workspace;
   vault: VaultConfig;
   tasks: Task[];
-  onConfirm: (deleteFromDisk: boolean) => Promise<OperationResult<{ id: string }>>;
+  onConfirm: (
+    deleteFromDisk: boolean,
+    teardown?: Pick<DeleteOptions, "approveTeardown" | "skipTeardown">
+  ) => Promise<OperationResult<{ id: string }>>;
 }
 
 export function RemoveWorkspaceModal({
@@ -23,14 +27,21 @@ export function RemoveWorkspaceModal({
 }: RemoveWorkspaceModalProps) {
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [teardownBlock, setTeardownBlock] = useState<TeardownBlock | null>(null);
 
-  const handleRemove = async (deleteFromDisk: boolean) => {
+  const handleRemove = async (
+    deleteFromDisk: boolean,
+    teardown?: Pick<DeleteOptions, "approveTeardown" | "skipTeardown">
+  ) => {
     setRemoving(true);
     setError(null);
+    setTeardownBlock(null);
     try {
-      await onConfirm(deleteFromDisk);
+      await onConfirm(deleteFromDisk, teardown);
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      const block = teardownBlockFrom(error);
+      if (block) setTeardownBlock(block);
+      else setError(error instanceof Error ? error.message : String(error));
     } finally {
       setRemoving(false);
     }
@@ -81,8 +92,47 @@ export function RemoveWorkspaceModal({
           </div>
         )}
 
+        {teardownBlock && (
+          <div className="space-y-2 select-text">
+            <p
+              className={`text-sm ${teardownBlock.kind === "failed" ? "text-danger" : "text-text-secondary"}`}
+            >
+              {teardownBlock.message}
+            </p>
+            {teardownBlock.scripts.map((script) => (
+              <div key={script.repoName} className="space-y-1">
+                <p className="text-xs text-text-muted">
+                  {script.repoName} · {SCRIPT_SOURCE_LABELS[script.source]}
+                </p>
+                <pre className="max-h-32 overflow-auto rounded-md border border-border bg-bg-tertiary p-2 text-xs font-mono whitespace-pre-wrap">
+                  {script.script}
+                </pre>
+              </div>
+            ))}
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => void handleRemove(true, { skipTeardown: true })}
+                disabled={removing}
+                className="text-danger hover:bg-danger/10"
+              >
+                Delete without teardown
+              </Button>
+              {teardownBlock.kind === "approval" && (
+                <Button
+                  variant="danger"
+                  onClick={() => void handleRemove(true, { approveTeardown: true })}
+                  loading={removing}
+                >
+                  Run and delete
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col gap-2 pt-2">
-          {tasks.length > 0 && (
+          {tasks.length > 0 && !teardownBlock && (
             <Button
               variant="ghost"
               onClick={() => void handleRemove(true)}
