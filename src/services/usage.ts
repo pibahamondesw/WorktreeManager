@@ -17,7 +17,7 @@ export interface PlanUsage {
 
 export type UsageTone = "normal" | "warning" | "danger";
 
-export const USAGE_WARNING_PERCENT = 80;
+const USAGE_WARNING_PERCENT = 80;
 
 export function usageTone(usedPercent: number): UsageTone {
   if (usedPercent >= 95) return "danger";

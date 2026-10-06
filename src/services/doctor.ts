@@ -17,18 +17,18 @@ import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
 
 // ---- Rust probe payload ----
 
-export interface CliProbe {
+interface CliProbe {
   name: string;
   path: string | null;
   version: string | null;
 }
 
-export interface AppProbe {
+interface AppProbe {
   name: string;
   installed: boolean;
 }
 
-export interface RepoUsage {
+interface RepoUsage {
   package_managers: string[];
   doppler: boolean;
 }
@@ -68,7 +68,7 @@ export interface DoctorReport {
 }
 
 /** A Linear key in use, labelled by the workspace it belongs to. */
-export interface LinearKeySource {
+interface LinearKeySource {
   label: string;
   key: string | null;
 }

@@ -226,10 +226,3 @@ export function applyTheme(themeId: string, customColors?: Record<string, string
     root.style.setProperty(`--color-${key}`, value);
   }
 }
-
-export function getTheme(themeId: string, customColors?: Record<string, string>): Theme {
-  if (themeId === CUSTOM_THEME_ID) {
-    return { id: CUSTOM_THEME_ID, name: "Custom", colors: customColors ?? themes[0].colors };
-  }
-  return themes.find((t) => t.id === themeId) ?? themes[0];
-}

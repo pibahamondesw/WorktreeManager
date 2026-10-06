@@ -4,7 +4,7 @@ interface Bounds {
 }
 
 /** Matches the `p-6` padding of the worktree list scroll container. */
-export const CARD_SCROLL_PADDING = 24;
+const CARD_SCROLL_PADDING = 24;
 
 /**
  * How much to scroll so the card is visible, aligning it near the top of the

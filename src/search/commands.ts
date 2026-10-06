@@ -19,7 +19,7 @@ export type CommandAction =
   | { type: "open-codex"; taskId: string }
   | { type: "new-task" };
 
-export type CommandGroup = "workspace" | "settings" | "action";
+type CommandGroup = "workspace" | "settings" | "action";
 
 export interface CommandShortcut {
   key: string;

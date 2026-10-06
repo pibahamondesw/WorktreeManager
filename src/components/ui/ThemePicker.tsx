@@ -1,35 +1,12 @@
 import { themes, CUSTOM_THEME_ID } from "../../themes";
-import { Modal } from "./Modal";
 import { CustomThemeEditor } from "./CustomThemeEditor";
 import { CheckIcon } from "./Icons";
 
-interface ThemePickerProps {
-  open: boolean;
-  onClose: () => void;
+interface ThemeSettingsProps {
   currentThemeId: string;
   onThemeChange: (themeId: string) => void;
   customColors: Record<string, string> | null;
   onCustomColorsChange: (colors: Record<string, string>) => void;
-}
-
-export function ThemePicker({
-  open,
-  onClose,
-  currentThemeId,
-  onThemeChange,
-  customColors,
-  onCustomColorsChange,
-}: ThemePickerProps) {
-  return (
-    <Modal open={open} onClose={onClose} title="Theme" wide>
-      <ThemeSettings
-        currentThemeId={currentThemeId}
-        onThemeChange={onThemeChange}
-        customColors={customColors}
-        onCustomColorsChange={onCustomColorsChange}
-      />
-    </Modal>
-  );
 }
 
 export function ThemeSettings({
@@ -37,7 +14,7 @@ export function ThemeSettings({
   onThemeChange,
   customColors,
   onCustomColorsChange,
-}: Omit<ThemePickerProps, "open" | "onClose">) {
+}: ThemeSettingsProps) {
   const handleSelect = (themeId: string) => {
     onThemeChange(themeId);
   };

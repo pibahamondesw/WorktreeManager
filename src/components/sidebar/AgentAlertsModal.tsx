@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { AgentId } from "../../types";
 import {
@@ -14,9 +13,8 @@ import {
   removeAgentHooks,
 } from "../../services/agentActivity";
 
-interface AgentAlertsModalProps {
+interface AgentAlertSettingsPanelProps {
   open: boolean;
-  onClose: () => void;
   alerts: AgentAlertSettings;
   onAlertsChange: (alerts: AgentAlertSettings) => void;
 }
@@ -42,19 +40,11 @@ const CATEGORIES: { id: AlertCategory; label: string }[] = [
   { id: "done", label: "Finished" },
 ];
 
-export function AgentAlertsModal({ open, onClose, alerts, onAlertsChange }: AgentAlertsModalProps) {
-  return (
-    <Modal open={open} onClose={onClose} title="Agent alerts">
-      <AgentAlertSettingsPanel open={open} alerts={alerts} onAlertsChange={onAlertsChange} />
-    </Modal>
-  );
-}
-
 export function AgentAlertSettingsPanel({
   open,
   alerts,
   onAlertsChange,
-}: Omit<AgentAlertsModalProps, "onClose">) {
+}: AgentAlertSettingsPanelProps) {
   const [hooks, setHooks] = useState<AgentHooksStatus | null>(null);
   const [busy, setBusy] = useState<AgentId | null>(null);
   const [error, setError] = useState<string | null>(null);

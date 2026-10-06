@@ -7,7 +7,6 @@ import { Task, Workspace } from "../../types";
 
 vi.mock("./AddWorkspaceModal", () => ({ AddWorkspaceModal: () => null }));
 vi.mock("./VaultSettingsModal", () => ({ VaultSettingsModal: () => null }));
-vi.mock("./AgentAlertsModal", () => ({ AgentAlertsModal: () => null }));
 
 const workspaces: Workspace[] = [
   { id: "ws-active", name: "Active workspace", repos: [] },

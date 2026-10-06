@@ -3,7 +3,7 @@ import { Task, TaskMember, Workspace, WorkspaceRepo } from "../types";
 import { loadScriptApprovals, persist } from "./store";
 
 export type ScriptPhase = "setup" | "teardown";
-export type RepoScriptSource = "worktreemanager" | "conductor" | "superset" | "cursor";
+type RepoScriptSource = "worktreemanager" | "conductor" | "superset" | "cursor";
 export type ScriptSource = "local" | RepoScriptSource;
 
 export const SCRIPT_SOURCE_LABELS: Record<ScriptSource, string> = {

@@ -17,7 +17,7 @@ export function historyFromEntries(entries: NavigationEntry[]): NavigationHistor
   return { entries, cursor: entries.length - 1 };
 }
 
-export function sameTarget(a: NavigationEntry, b: NavigationEntry): boolean {
+function sameTarget(a: NavigationEntry, b: NavigationEntry): boolean {
   if (a.kind === "workspace" && b.kind === "workspace") return a.workspaceId === b.workspaceId;
   if (a.kind === "task" && b.kind === "task") return a.taskId === b.taskId;
   return false;

@@ -26,7 +26,7 @@ import {
 
 type Picker = "model" | "effort" | "mode" | "review";
 
-export interface ComposerActions {
+interface ComposerActions {
   send: (text: string, images: ChatImage[]) => Promise<void>;
   interrupt: () => Promise<void>;
   configure: (setting: ChatSetting) => Promise<void>;

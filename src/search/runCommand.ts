@@ -18,7 +18,7 @@ export interface PaletteActionDeps {
 }
 
 /** Stay open on failure so the error toast is readable. */
-export async function openPaletteTask(task: Task, deps: PaletteActionDeps): Promise<void> {
+async function openPaletteTask(task: Task, deps: PaletteActionDeps): Promise<void> {
   const opened = await deps.onOpenTask(task, {
     onMessage: deps.showToast,
     onError: deps.showToast,

@@ -46,7 +46,7 @@ function text(value: unknown): string {
   return value.trim();
 }
 
-export function publicWorkspace(workspace: Workspace) {
+function publicWorkspace(workspace: Workspace) {
   return {
     id: workspace.id,
     name: workspace.name,

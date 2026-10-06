@@ -267,12 +267,6 @@ export const INDICATOR_LABELS: Record<TaskIndicator, string> = {
   ended: "Agent session ended",
 };
 
-export const ACTIVITY_LABELS: Record<AgentActivityState, string> = {
-  working: "Working",
-  waiting: "Needs input",
-  done: "Done",
-};
-
 const AGENT_NAMES: Record<AgentId, string> = { claude: "Claude", codex: "Codex" };
 
 export interface NotificationTarget {
