@@ -12,6 +12,9 @@ mod files;
 mod model;
 mod sessions;
 
+pub(crate) use claude::usage_windows;
+pub(crate) use model::PlanUsage;
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;

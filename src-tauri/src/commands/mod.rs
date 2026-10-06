@@ -2,6 +2,7 @@ pub mod agent_alerts;
 pub mod agents;
 pub mod chat;
 pub mod claude_config;
+pub mod claude_usage;
 pub mod code_server;
 pub mod doctor;
 pub mod doppler;
