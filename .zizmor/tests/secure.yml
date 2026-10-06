@@ -1,0 +1,21 @@
+name: Secure fixture
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Greet
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$TITLE"
