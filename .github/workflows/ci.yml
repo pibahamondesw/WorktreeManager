@@ -22,6 +22,7 @@ jobs:
     outputs:
       sast: ${{ steps.filter.outputs.sast }}
       workflow_security: ${{ steps.filter.outputs.workflow_security }}
+      workflow_lint: ${{ steps.filter.outputs.workflow_lint }}
       frontend: ${{ steps.filter.outputs.frontend }}
       rust: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.vault_kit == 'true' || steps.filter.outputs.workflow == 'true' }}
     steps:
@@ -44,6 +45,8 @@ jobs:
               - '{src/**,src-tauri/src/**,.semgrep/**,.github/workflows/ci.yml}'
             workflow_security:
               - '{.github/workflows/**,.zizmor/**}'
+            workflow_lint:
+              - '{.github/workflows/**,.actionlint/**}'
             rust:
               - '{src-tauri/**,deny.toml}'
             vault_kit:
@@ -217,6 +220,48 @@ jobs:
 
       - name: Scan
         run: semgrep scan --metrics=off --config .semgrep/rules --error src src-tauri/src
+
+  workflow-lint:
+    name: actionlint
+    needs: changes
+    if: needs.changes.outputs.workflow_lint == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint and ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          shellcheck --version
+
+      - name: Test fixtures
+        run: |
+          actionlint -pyflakes= -shellcheck=shellcheck .actionlint/tests/valid.yml
+          findings="$RUNNER_TEMP/actionlint-findings.json"
+          if actionlint -pyflakes= -shellcheck=shellcheck -format '{{json .}}' .actionlint/tests/invalid.yml > "$findings"; then
+            echo "::error::actionlint accepted the invalid fixture"
+            exit 1
+          fi
+          for kind in expression action job-needs shellcheck; do
+            if ! jq -e --arg kind "$kind" 'any(.[]; .kind == $kind)' "$findings" > /dev/null; then
+              echo "::error::actionlint did not report $kind in the invalid fixture"
+              cat "$findings"
+              exit 1
+            fi
+          done
+
+      - name: Scan all workflows
+        run: time actionlint -pyflakes= -shellcheck=shellcheck
 
   workflow-security:
     name: zizmor
