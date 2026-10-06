@@ -45,8 +45,7 @@ jobs:
             workflow_security:
               - '{.github/workflows/**,.zizmor/**}'
             rust:
-              - 'src-tauri/**'
-              - 'deny.toml'
+              - '{src-tauri/**,deny.toml}'
             vault_kit:
               - 'vault-kit/**'
             workflow:
@@ -148,7 +147,8 @@ jobs:
             libxdo-dev \
             libssl-dev \
             python3-venv \
-            build-essential
+            build-essential \
+            zsh
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
