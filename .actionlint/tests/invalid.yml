@@ -1,0 +1,23 @@
+name: Invalid fixture
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  build:
+    needs: missing-job
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          invalid-input: true
+
+      - name: Greet
+        env:
+          BRANCH: ${{ github.invalid_property }}
+        run: echo $BRANCH

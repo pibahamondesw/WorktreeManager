@@ -1,0 +1,21 @@
+name: Valid fixture
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Greet
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: echo "$BRANCH"
