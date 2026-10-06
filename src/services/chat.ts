@@ -10,7 +10,7 @@ export type ChatStatus =
   | { kind: "exited"; code: number | null }
   | { kind: "failed"; message: string };
 
-export type ChatItemKind =
+type ChatItemKind =
   | "user"
   | "assistant"
   | "reasoning"
@@ -51,7 +51,7 @@ export type PendingRequest = {
   | { kind: "unsupported" }
 );
 
-export interface ModelOption {
+interface ModelOption {
   id: string;
   label: string;
   description?: string;
@@ -64,13 +64,13 @@ export interface ChatImage {
   data: string;
 }
 
-export interface ModeOption {
+interface ModeOption {
   id: string;
   label: string;
   description: string;
 }
 
-export type CommandAction =
+type CommandAction =
   | { kind: "insert"; text: string }
   | { kind: "model" }
   | { kind: "effort" }

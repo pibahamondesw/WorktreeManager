@@ -94,13 +94,6 @@ export interface LinearTeam {
   name: string;
 }
 
-export interface WorktreeGitInfo {
-  path: string;
-  branch: string;
-  head: string;
-  bare: boolean;
-}
-
 export interface GitStatus {
   ahead: number;
   behind: number;

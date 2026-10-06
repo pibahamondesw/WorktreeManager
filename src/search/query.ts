@@ -1,4 +1,4 @@
-export type FilterField = "in" | "repo" | "branch" | "id" | "path" | "session" | "project";
+type FilterField = "in" | "repo" | "branch" | "id" | "path" | "session" | "project";
 
 const FILTER_FIELDS: FilterField[] = ["in", "repo", "branch", "id", "path", "session", "project"];
 

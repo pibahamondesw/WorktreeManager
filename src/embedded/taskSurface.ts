@@ -24,6 +24,3 @@ export function taskSurfaceFor(
 }
 
 export const isEmbedded = (surface: TaskSurface): boolean => surface.kind !== "external";
-
-export const surfaceAgent = (surface: TaskSurface): AgentId | null =>
-  surface.kind === "terminal" || surface.kind === "chat" ? surface.agent : null;

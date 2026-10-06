@@ -7,7 +7,7 @@ export interface ImageAttachment extends ChatImage {
 }
 
 const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export const imageFiles = (files: FileList | File[] | null | undefined) =>
   Array.from(files ?? []).filter((file) => SUPPORTED_IMAGE_TYPES.includes(file.type));
