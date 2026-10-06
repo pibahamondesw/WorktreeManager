@@ -773,7 +773,7 @@ const USAGE_WINDOWS: [(&str, &str); 4] = [
     ("seven_day_sonnet", "Weekly limit (Sonnet)"),
 ];
 
-fn usage_windows(rate_limits: &Value) -> Vec<UsageWindow> {
+pub(crate) fn usage_windows(rate_limits: &Value) -> Vec<UsageWindow> {
     USAGE_WINDOWS
         .iter()
         .filter_map(|(id, label)| {
