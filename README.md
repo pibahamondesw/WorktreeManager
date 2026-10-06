@@ -89,22 +89,6 @@ Set `WTM_DEV_SIGNING_IDENTITY` to another certificate's name or SHA-1 hash to ov
 
 Run `pnpm run lint:ts` to check the frontend, Node scripts and Vite/Vitest configuration. Type-aware rules catch unhandled promises, misused async callbacks and unsafe `any` usage.
 
-### Unused code and dependencies pilot
-
-Run `pnpm run knip` to report unused files, exports, types and dependencies. It exits with code 1 when findings exist. For an informational run, use `pnpm run knip --no-exit-code`.
-
-[Knip configuration](knip.json) scopes analysis to frontend sources (including CSS), Node scripts and TypeScript configuration files. Knip's Vite plugin discovers the React entry from [index.html](index.html); its Vitest plugin includes tests and their helpers, and package scripts identify the release entry. ESLint configuration and its dependencies are discovered automatically. Rust sources, generated native bindings, vault templates and Semgrep fixtures are outside this scope. Tauri command names passed to `invoke` are native boundaries, not TypeScript imports.
-
-CI runs the informational command in the existing frontend job whenever its change filter matches. Findings remain visible in the job log without blocking this pilot; execution/configuration errors still fail the step. No automatic cleanup or blanket suppressions are enabled. Review references, test-only use and native integration before removing any reported item. See [Knip's CI guidance](https://knip.dev/guides/using-knip-in-ci).
-
-Initial baseline on 2026-10-06, Node 22.23.2 / Knip 6.40.0: 0 unused files, 2 unused dependencies (`@tauri-apps/plugin-shell` and `@types/uuid`), 12 unused exports and 13 unused exported types. These are candidates for review, not approved deletions. Gate only validated categories after reviewing this baseline.
-
-Reviewed and resolved all 27 findings on 2026-10-06: made module-local exports private, removed unreferenced UI wrappers/helpers and a type, and removed the two unused JavaScript dependencies. The native Rust shell plugin remains registered. The current scan reports no findings; CI remains informational.
-
-Added scan cost measured locally on macOS with dependencies installed, without Knip caching: 0.617 s, 0.532 s and 0.543 s across three runs (median 0.543 s). This excludes dependency installation and does not measure Linux CI runtime. Roll back the CI integration by removing the **Unused code and dependencies (pilot report)** step; local scanning remains available.
-
-Verify the scanner integration with `pnpm exec vitest run scripts/knip.test.ts`.
-
 ### Build and verify
 
 ```bash

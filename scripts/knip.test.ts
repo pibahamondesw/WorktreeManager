@@ -69,7 +69,7 @@ describe("Knip configuration", () => {
     expect(result.status).toBe(0);
   });
 
-  it("reports unused files, exports and dependencies without blocking the CI pilot", () => {
+  it("fails on unused files, exports, types and dependencies until corrected", () => {
     const originalPackage = readFileSync(join(directory, "package.json"), "utf8");
     write("src/unused.ts", "export const unusedFile = true;");
     write(
@@ -96,10 +96,6 @@ describe("Knip configuration", () => {
     expect(strict.stdout).toContain("UnusedType");
     expect(strict.stdout).toContain("uuid");
 
-    const report = scan("--no-exit-code");
-    expect(report.status).toBe(0);
-    expect(report.stdout).toBe(strict.stdout);
-
     rmSync(join(directory, "src/unused.ts"));
     rmSync(join(directory, "scripts/unused.mjs"));
     write("src/testHelper.ts", 'export const testOnly = "value";');
@@ -110,9 +106,9 @@ describe("Knip configuration", () => {
     expect(corrected.status).toBe(0);
   });
 
-  it("fails on invalid configuration even in report mode", () => {
+  it("fails on invalid configuration", () => {
     write("knip.json", "{");
-    const result = scan("--no-exit-code");
+    const result = scan();
     expect(result.status).toBe(2);
     expect(result.stderr).not.toBe("");
   });

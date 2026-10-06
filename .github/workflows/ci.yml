@@ -87,8 +87,8 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
-      - name: Unused code and dependencies (pilot report)
-        run: pnpm run knip --no-exit-code
+      - name: Unused code and dependencies
+        run: pnpm run knip
 
       - name: Test
         run: pnpm test
