@@ -1,0 +1,15 @@
+name: Insecure fixture
+
+on:
+  pull_request_target:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Greet
+        run: echo "${{ github.event.pull_request.title }}"
