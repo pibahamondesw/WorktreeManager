@@ -6,6 +6,7 @@ import { PendingRequestCard } from "./PendingRequestCard";
 import { SessionList } from "./SessionList";
 import { TodoPanel } from "./TodoPanel";
 import { UsageDialog } from "./UsageDialog";
+import { ClaudeUsageIndicator } from "../usage/ClaudeUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { ChatImage, ChatStatus, isLive } from "../../services/chat";
@@ -62,13 +63,12 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col bg-bg-primary">
-      <Button
-        variant="ghost"
-        onClick={() => setSessionsOpen(true)}
-        className="absolute top-2 right-3 z-10 h-7 px-2 text-xs"
-      >
-        Conversations
-      </Button>
+      <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 px-3 py-1">
+        {agent === "claude" && <ClaudeUsageIndicator />}
+        <Button variant="ghost" onClick={() => setSessionsOpen(true)} className="h-7 px-2 text-xs">
+          Conversations
+        </Button>
+      </div>
       <SessionList
         open={sessionsOpen}
         taskId={taskId}

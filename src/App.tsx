@@ -29,7 +29,6 @@ import { editorPresentation } from "./services/codeEditor";
 import { useAgentSessions } from "./hooks/useAgentSessions";
 import { useAgentActivity } from "./hooks/useAgentActivity";
 import { NotificationTarget, embeddedSurface } from "./services/agentActivity";
-import { ClaudeUsageIndicator } from "./components/usage/ClaudeUsageIndicator";
 
 function App() {
   const {
@@ -357,9 +356,7 @@ function App() {
       <div
         className="h-[33px] shrink-0 flex items-center justify-end px-3 bg-bg-secondary border-b border-border"
         data-drag-region
-      >
-        <ClaudeUsageIndicator />
-      </div>
+      />
       {(persistError || showDoctorAlert) && (
         <div className="shrink-0 bg-bg-secondary">
           {persistError && (
@@ -444,6 +441,7 @@ function App() {
             onTaskPinned={(id, pinned) => operations.setTaskPinned(id, pinned)}
             onPinnedTasksReordered={(id, targetId) => operations.reorderPinnedTasks(id, targetId)}
             onTaskIssueLinked={(id, issue) => operations.linkTaskIssue(id, issue)}
+            onPrReady={(taskId, pr) => operations.markPrReady(taskId, pr)}
             onTaskRenamed={(id, title) => operations.renameTask(id, title)}
             setupControls={setupControls}
             editorApp={editorApp}
@@ -474,6 +472,7 @@ function App() {
         </ErrorBoundary>
       </div>
       <QuickSearchModal
+        onPrReady={(taskId, pr) => operations.markPrReady(taskId, pr)}
         open={search.open}
         onClose={() => setSearch((s) => ({ ...s, open: false }))}
         initialQuery={search.query}

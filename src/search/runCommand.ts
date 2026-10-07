@@ -2,9 +2,10 @@ import { OpenTaskOptions } from "../hooks/useOpenTask";
 import { openPrForMember } from "../services/pullRequest";
 import { CommandAction, WorkspaceAction } from "./commands";
 import { PaletteItem } from "./searchPalette";
-import { EditorApp, Task, Workspace } from "../types";
+import { EditorApp, PullRequestInfo, Task, Workspace } from "../types";
 
 export interface PaletteActionDeps {
+  onPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
   tasks: Task[];
   workspaces: Workspace[];
   onClose: () => void;
@@ -59,6 +60,17 @@ export async function runPaletteCommand(
       await navigator.clipboard.writeText(action.text);
       deps.showToast("Linear ID copied");
       return;
+    case "ready-pr": {
+      try {
+        if (!deps.onPrReady) throw new Error("Could not mark the pull request ready");
+        await deps.onPrReady(action.taskId, action.pr);
+        deps.showToast("Pull request marked as ready");
+        deps.onClose();
+      } catch (error) {
+        deps.showToast(String(error));
+      }
+      return;
+    }
     case "open-pr": {
       const task = deps.tasks.find((t) => t.id === action.taskId);
       const member = task?.members.find((m) => m.repoId === action.repoId);

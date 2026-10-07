@@ -101,6 +101,13 @@ export interface GitStatus {
   last_commit_epoch: number;
 }
 
+export interface GithubPrStatus {
+  state: "open" | "closed" | "merged";
+  isDraft: boolean;
+  ci: "passing" | "failing" | "running" | "none" | "unknown";
+  review: "approved" | "changes_requested" | "pending";
+}
+
 export interface PullRequestInfo {
   url: string;
   title: string;

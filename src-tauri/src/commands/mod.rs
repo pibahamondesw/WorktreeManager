@@ -8,6 +8,7 @@ pub mod doctor;
 pub mod doppler;
 pub mod editor;
 pub mod git;
+pub mod github;
 pub mod keychain;
 pub mod node_deps;
 pub mod notes;

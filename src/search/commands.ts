@@ -1,5 +1,5 @@
 import { CUSTOM_THEME_ID, themes } from "../themes";
-import { EditorApp, EDITOR_APPS, Task, Workspace } from "../types";
+import { EditorApp, EDITOR_APPS, PullRequestInfo, Task, Workspace } from "../types";
 
 export type WorkspaceAction =
   | { kind: "settings" }
@@ -14,6 +14,7 @@ export type CommandAction =
   | { type: "set-editor"; editor: EditorApp }
   | { type: "set-theme"; themeId: string }
   | { type: "copy-linear"; text: string }
+  | { type: "ready-pr"; taskId: string; pr: PullRequestInfo }
   | { type: "open-pr"; taskId: string; repoId: string }
   | { type: "open-claude"; taskId: string }
   | { type: "open-codex"; taskId: string }
@@ -48,6 +49,7 @@ interface BuildCommandsArgs {
   tasks: Task[];
   themeId: string;
   editorApp: EditorApp;
+  readyPrsByTask?: Record<string, PullRequestInfo[]>;
 }
 
 function workspaceHint(
@@ -69,6 +71,7 @@ export function buildCommands({
   tasks,
   themeId,
   editorApp,
+  readyPrsByTask = {},
 }: BuildCommandsArgs): PaletteCommand[] {
   const commands: PaletteCommand[] = [];
   const workspaceById = new Map(workspaces.map((w) => [w.id, w]));
@@ -204,6 +207,19 @@ export function buildCommands({
         keywords: `copy linear id identifier ${taskKeywords}`,
         emptyVisible: false,
         action: { type: "copy-linear", text: task.linearIssueIdentifier },
+      });
+    }
+
+    for (const pr of readyPrsByTask[task.id] ?? []) {
+      commands.push({
+        id: `ready-pr:${task.id}:${pr.repoSlug.toLowerCase()}:${pr.number}`,
+        label: `Mark as ready · ${label} · ${pr.repoSlug} #${pr.number}`,
+        hint,
+        group: "action",
+        emptyVisible: false,
+        keywords:
+          `mark ready draft pr pull request github ${pr.repoSlug} ${pr.number} ${taskKeywords}`.toLowerCase(),
+        action: { type: "ready-pr", taskId: task.id, pr },
       });
     }
 

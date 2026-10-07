@@ -48,7 +48,7 @@ export function TaskHeader({
   const prs = task.linearIssueId ? (linearInfo?.prs ?? []) : [];
   return (
     <div
-      className="flex items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
+      className="flex flex-wrap items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
       style={{ viewTransitionName: taskTransitionName("shell") }}
       data-drag-region
     >
@@ -122,7 +122,7 @@ export function TaskHeader({
       </span>
       {prs.length > 0 && (
         <span
-          className="flex items-center gap-1.5 text-xs flex-shrink-0"
+          className="flex flex-wrap items-center gap-1.5 text-xs min-w-0"
           style={{ viewTransitionName: taskTransitionName("prs") }}
         >
           <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
