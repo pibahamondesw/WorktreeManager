@@ -18,7 +18,15 @@ import { WorktreeListToast } from "./WorktreeListToast";
 import { DepartingCard } from "./DepartingCard";
 import { LinkIssueModal } from "./LinkIssueModal";
 import { NewWorktreeModal } from "./NewWorktreeModal";
-import { Task, TaskSurface, VaultConfig, Workspace, EditorApp, GitStatus } from "../../types";
+import {
+  PullRequestInfo,
+  Task,
+  TaskSurface,
+  VaultConfig,
+  Workspace,
+  EditorApp,
+  GitStatus,
+} from "../../types";
 import { TaskView } from "../task/TaskView";
 import type { SetupControls } from "../task/TaskSetupProgress";
 import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
@@ -46,6 +54,7 @@ interface WorktreeListProps {
   onPinnedTasksReordered: (id: string, targetId: string) => Promise<void>;
   onTaskIssueLinked: (taskId: string, issue: string) => Promise<Task>;
   onTaskRenamed: (taskId: string, title: string) => Promise<Task>;
+  onPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
   setupControls?: SetupControls;
   onTaskDeleted: (
     taskId: string,
@@ -134,6 +143,7 @@ export function WorktreeList({
   onTaskDeleted,
   onTaskIssueLinked,
   onTaskRenamed,
+  onPrReady,
   setupControls,
   onTaskPinned,
   onPinnedTasksReordered,
@@ -324,6 +334,7 @@ export function WorktreeList({
       sessionStatus={agentSessions[task.id]}
       agentActivity={agentActivities[task.id]}
       onOpenError={showToast}
+      onPrReady={onPrReady ? (pr) => onPrReady(task.id, pr) : undefined}
       onToast={showToast}
       onOpen={() => void onOpenTask(task, { onMessage: showToast, onError: showToast })}
       repoSlugs={repoSlugs}

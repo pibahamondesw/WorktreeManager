@@ -1,6 +1,14 @@
+import {
+  githubPrStatus,
+  invalidateGithubRepo,
+  prKey,
+  refreshGithubRepo,
+  setPrReadyPending,
+} from "./github";
 import { invoke } from "@tauri-apps/api/core";
 import { v4 as uuid } from "uuid";
 import {
+  PullRequestInfo,
   AppState,
   Task,
   TaskMember,
@@ -129,6 +137,7 @@ export function operationError(error: unknown): OperationError {
 
 export class Operations {
   private pending: Promise<unknown> = Promise.resolve();
+  private readyRequests = new Map<string, Promise<void>>();
   readonly getState: () => AppState;
   private publish: (state: AppState) => void;
   private getEditor: () => EditorApp;
@@ -150,6 +159,54 @@ export class Operations {
     const result = this.pending.then(run);
     this.pending = result.catch(() => {});
     return result;
+  }
+
+  markPrReady(taskId: string, pr: PullRequestInfo): Promise<void> {
+    const key = prKey(pr);
+    const active = this.readyRequests.get(key);
+    if (active) return active;
+    setPrReadyPending(pr, true);
+    const request = (async () => {
+      const task = this.getState().tasks.find((task) => task.id === taskId);
+      const workspace = this.getState().workspaces.find(
+        (workspace) => workspace.id === task?.workspaceId
+      );
+      if (!task?.linearIssueId || !workspace?.linearApiKey) {
+        throw new OperationError(
+          "invalid_input",
+          "The pull request is no longer linked to this task."
+        );
+      }
+      const info = await new LinearService(workspace.linearApiKey).fetchIssueLinearInfoBatch([
+        task.linearIssueId,
+      ]);
+      const linked = info[task.linearIssueId]?.prs ?? [];
+      if (
+        !linked.some((candidate) => prKey(candidate) === key) ||
+        this.getState().tasks.find((current) => current.id === taskId)?.linearIssueId !==
+          task.linearIssueId
+      ) {
+        throw new OperationError(
+          "invalid_input",
+          "The pull request is no longer linked to this task."
+        );
+      }
+      const status = githubPrStatus(pr);
+      if (!status || status.state !== "open" || !status.isDraft) {
+        throw new OperationError(
+          "invalid_input",
+          "Refresh the pull request before marking it ready."
+        );
+      }
+      await invoke("github_pr_ready", { repoSlug: pr.repoSlug.toLowerCase(), prNumber: pr.number });
+      invalidateGithubRepo(pr.repoSlug, pr);
+      await refreshGithubRepo(pr.repoSlug);
+    })().finally(() => {
+      this.readyRequests.delete(key);
+      setPrReadyPending(pr, false);
+    });
+    this.readyRequests.set(key, request);
+    return request;
   }
 
   private async write(patch: Partial<AppState>) {

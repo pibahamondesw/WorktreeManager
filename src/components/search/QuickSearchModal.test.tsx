@@ -335,7 +335,25 @@ it("filters by project and opens the visible task with keyboard navigation", () 
 
 it.each(["1234", "#1234"])("finds and opens a task by PR number %s", async (query) => {
   linearMocks.fetch.mockResolvedValue({
-    "issue-2": { status: null, prs: [{ number: 1234 }, { number: 5678 }] },
+    "issue-2": {
+      status: null,
+      prs: [
+        {
+          number: 1234,
+          repoSlug: "org/repo",
+          url: "https://github.com/org/repo/pull/1234",
+          title: "PR",
+          state: "open",
+        },
+        {
+          number: 5678,
+          repoSlug: "org/repo",
+          url: "https://github.com/org/repo/pull/5678",
+          title: "Other PR",
+          state: "open",
+        },
+      ],
+    },
   });
   const linkedTask = { ...otherTask, linearIssueId: "issue-2" };
   const { onOpenTask } = renderModal({

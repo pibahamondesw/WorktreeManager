@@ -1,3 +1,4 @@
+import { githubPrStatus, refreshGithubPrs, resetGithubCache } from "./github";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { DEFAULT_STATE, AppState, Task, Workspace } from "../types";
@@ -1084,4 +1085,83 @@ it("refreshes existing projects, persists them through normalization and clears 
   expect(operations.getState().tasks[0].linearProjectId).toBeUndefined();
   expect(operations.getState().tasks[0].linearProjectName).toBeUndefined();
   fetch.mockRestore();
+});
+
+describe("markPrReady", () => {
+  const pr = {
+    repoSlug: "org/repo",
+    number: 1,
+    state: "draft",
+    title: "One",
+    url: "https://github.com/org/repo/pull/1",
+  };
+  const status = { state: "open", isDraft: true, ci: "passing", review: "pending" };
+  let operations: Operations;
+  let fetchInfo: ReturnType<typeof vi.fn<LinearService["fetchIssueLinearInfoBatch"]>>;
+
+  beforeEach(async () => {
+    resetGithubCache();
+    const state = {
+      ...DEFAULT_STATE,
+      workspaces: [{ ...workspace, linearApiKey: "test-key" }],
+      tasks: [{ ...task, linearIssueId: "i1" }],
+    };
+    operations = new Operations(
+      () => state,
+      vi.fn(),
+      () => "cursor",
+      vi.fn()
+    );
+    fetchInfo = vi
+      .spyOn(LinearService.prototype, "fetchIssueLinearInfoBatch")
+      .mockResolvedValue({ i1: { status: null, prs: [pr] } });
+    vi.mocked(invoke).mockImplementation((async (command: string) =>
+      command === "github_pr_status_batch" ? { 1: status } : undefined) as typeof invoke);
+    await refreshGithubPrs([pr]);
+    vi.mocked(invoke).mockClear();
+  });
+
+  it("validates the link, shares duplicate actions and refreshes the affected repo", async () => {
+    const first = operations.markPrReady(task.id, pr);
+    expect(operations.markPrReady(task.id, pr)).toBe(first);
+    await first;
+    expect(fetchInfo).toHaveBeenCalledWith(["i1"]);
+    expect(invoke).toHaveBeenCalledWith("github_pr_ready", { repoSlug: "org/repo", prNumber: 1 });
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes PRs from other tasks in the same repository after ready", async () => {
+    await refreshGithubPrs([{ ...pr, number: 2 }]);
+    vi.mocked(invoke).mockClear();
+    await operations.markPrReady(task.id, pr);
+    expect(invoke).toHaveBeenLastCalledWith("github_pr_status_batch", {
+      repoSlug: "org/repo",
+      prNumbers: [1, 2],
+    });
+  });
+
+  it("rejects a removed attachment before mutating GitHub", async () => {
+    fetchInfo.mockResolvedValue({ i1: { status: null, prs: [] } });
+    await expect(operations.markPrReady(task.id, pr)).rejects.toThrow("no longer linked");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("retains draft when ready fails", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("denied"));
+    await expect(operations.markPrReady(task.id, pr)).rejects.toThrow("denied");
+    expect(githubPrStatus(pr)?.isDraft).toBe(true);
+    expect(invoke).toHaveBeenCalledOnce();
+  });
+
+  it("preserves success when the subsequent refresh fails", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("offline"));
+    await expect(operations.markPrReady(task.id, pr)).resolves.toBeUndefined();
+    expect(githubPrStatus(pr)).toBeUndefined();
+  });
+
+  it("rejects unverified or inactive PRs", async () => {
+    resetGithubCache();
+    await expect(operations.markPrReady(task.id, pr)).rejects.toThrow("Refresh the pull request");
+    expect(invoke).not.toHaveBeenCalled();
+  });
 });

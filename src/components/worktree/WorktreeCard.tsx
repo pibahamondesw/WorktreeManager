@@ -45,6 +45,7 @@ interface WorktreeCardProps {
   index?: number;
   onOpenError?: (msg: string) => void;
   onToast?: (msg: string) => void;
+  onPrReady?: (pr: PullRequestInfo) => Promise<void>;
   onOpen?: () => void;
   onTogglePin?: () => void;
   onLinkIssue?: () => void;
@@ -71,6 +72,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   index,
   onOpenError,
   onToast,
+  onPrReady,
   onOpen,
   onLinkIssue,
   onRename,
@@ -412,7 +414,11 @@ export const WorktreeCard = memo(function WorktreeCard({
                     {prs !== undefined &&
                       repoSlugs !== null &&
                       (memberPrs.length > 0 ? (
-                        <PullRequestLinks prs={memberPrs} onOpenError={onOpenError} />
+                        <PullRequestLinks
+                          prs={memberPrs}
+                          onOpenError={onOpenError}
+                          onReady={onPrReady}
+                        />
                       ) : (
                         <button
                           type="button"
@@ -438,7 +444,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                   >
                     {repoSlug.split("/")[1] ?? repoSlug}
                   </span>
-                  <PullRequestLinks prs={repoPrs} onOpenError={onOpenError} />
+                  <PullRequestLinks prs={repoPrs} onOpenError={onOpenError} onReady={onPrReady} />
                 </div>
               ))}
             </div>
@@ -450,7 +456,7 @@ export const WorktreeCard = memo(function WorktreeCard({
               >
                 <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
                 {prs.length > 0 ? (
-                  <PullRequestLinks prs={prs} onOpenError={onOpenError} />
+                  <PullRequestLinks prs={prs} onOpenError={onOpenError} onReady={onPrReady} />
                 ) : (
                   <button
                     type="button"

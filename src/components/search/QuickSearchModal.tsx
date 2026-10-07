@@ -1,3 +1,4 @@
+import { prKey, useGithubPrStatuses } from "../../services/github";
 import { useSearchPrNumbers } from "../../hooks/useSearchPrNumbers";
 import { ProjectFilter } from "../ui/ProjectFilter";
 import { matchesProject } from "../../search/projects";
@@ -20,7 +21,7 @@ import {
 import { buildCommands, CommandShortcut, WorkspaceAction } from "../../search/commands";
 import { PaletteItem, searchPalette } from "../../search/searchPalette";
 import { activatePaletteItem, PaletteActionDeps } from "../../search/runCommand";
-import { EditorApp, Task, Workspace } from "../../types";
+import { EditorApp, PullRequestInfo, Task, Workspace } from "../../types";
 import { NavigationEntry, lastTaskVisits } from "../../navigation/history";
 import { linearIssueUrl } from "../../utils";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
@@ -32,6 +33,7 @@ const EMPTY_ENTRIES: NavigationEntry[] = [];
 const EMPTY_ACTIVITIES: AgentActivities = {};
 
 interface QuickSearchModalProps {
+  onPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
   open: boolean;
   onClose: () => void;
   initialQuery: string;
@@ -56,6 +58,7 @@ interface QuickSearchModalProps {
 
 export function QuickSearchModal({
   open,
+  onPrReady,
   onClose,
   initialQuery,
   tasks,
@@ -77,7 +80,21 @@ export function QuickSearchModal({
   useEditorOcclusion(open);
   const [openedWith, setOpenedWith] = useState({ open, activities: agentActivities });
   if (openedWith.open !== open) setOpenedWith({ open, activities: agentActivities });
-  const prNumbersByTask = useSearchPrNumbers(open, tasks, workspaces);
+  const { prNumbersByTask, prsByTask } = useSearchPrNumbers(open, tasks, workspaces);
+  const githubStatuses = useGithubPrStatuses();
+  const readyPrsByTask = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(prsByTask).map(([taskId, prs]) => [
+          taskId,
+          prs.filter((pr) => {
+            const entry = githubStatuses[prKey(pr)];
+            return entry?.status?.state === "open" && entry.status.isDraft && !entry.pendingReady;
+          }),
+        ])
+      ),
+    [prsByTask, githubStatuses]
+  );
   const [project, setProject] = useState("");
   const [query, setQuery] = useState(initialQuery);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -109,8 +126,17 @@ export function QuickSearchModal({
 
   const commands = useMemo(
     () =>
-      open ? buildCommands({ workspaces, selectedWorkspaceId, tasks, themeId, editorApp }) : [],
-    [open, workspaces, selectedWorkspaceId, tasks, themeId, editorApp]
+      open
+        ? buildCommands({
+            workspaces,
+            selectedWorkspaceId,
+            tasks,
+            themeId,
+            editorApp,
+            readyPrsByTask,
+          })
+        : [],
+    [open, workspaces, selectedWorkspaceId, tasks, themeId, editorApp, readyPrsByTask]
   );
 
   const results = useMemo(
@@ -205,6 +231,7 @@ export function QuickSearchModal({
   };
 
   const deps: PaletteActionDeps = {
+    onPrReady,
     tasks,
     workspaces,
     onClose,

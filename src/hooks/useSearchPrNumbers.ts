@@ -1,16 +1,17 @@
+import { refreshGithubPrs } from "../services/github";
 import { useEffect, useState } from "react";
 import { LinearService } from "../services/linear";
-import { Task, Workspace } from "../types";
+import { PullRequestInfo, Task, Workspace } from "../types";
 
 export function useSearchPrNumbers(open: boolean, tasks: Task[], workspaces: Workspace[]) {
-  const [prNumbersByTask, setPrNumbersByTask] = useState<Record<string, number[]>>({});
+  const [prsByTask, setPrsByTask] = useState<Record<string, PullRequestInfo[]>>({});
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
 
     void Promise.all(
-      workspaces.map(async (workspace): Promise<Record<string, number[]>> => {
+      workspaces.map(async (workspace): Promise<Record<string, PullRequestInfo[]>> => {
         if (!workspace.linearApiKey) return {};
         const linkedTasks = tasks.filter(
           (task) => task.workspaceId === workspace.id && task.linearIssueId
@@ -22,18 +23,17 @@ export function useSearchPrNumbers(open: boolean, tasks: Task[], workspaces: Wor
             issueIds
           );
           return Object.fromEntries(
-            linkedTasks.map((task) => [
-              task.id,
-              info[task.linearIssueId!]?.prs.map((pr) => pr.number) ?? [],
-            ])
+            linkedTasks.map((task) => [task.id, info[task.linearIssueId!]?.prs ?? []])
           );
         } catch {
           return {};
         }
       })
     ).then((results) => {
-      if (!cancelled)
-        setPrNumbersByTask(Object.fromEntries(results.flatMap((result) => Object.entries(result))));
+      if (cancelled) return;
+      const prs = Object.fromEntries(results.flatMap((result) => Object.entries(result)));
+      setPrsByTask(prs);
+      void refreshGithubPrs(Object.values(prs).flat());
     });
 
     return () => {
@@ -41,5 +41,10 @@ export function useSearchPrNumbers(open: boolean, tasks: Task[], workspaces: Wor
     };
   }, [open, tasks, workspaces]);
 
-  return prNumbersByTask;
+  return {
+    prsByTask,
+    prNumbersByTask: Object.fromEntries(
+      Object.entries(prsByTask).map(([taskId, prs]) => [taskId, prs.map((pr) => pr.number)])
+    ),
+  };
 }

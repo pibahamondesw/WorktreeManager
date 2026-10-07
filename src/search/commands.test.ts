@@ -126,3 +126,25 @@ describe("buildCommands", () => {
     });
   });
 });
+
+it("identifies ready actions by task, repo and PR number", () => {
+  const pr = {
+    repoSlug: "org/repo",
+    number: 1,
+    state: "draft",
+    title: "One",
+    url: "https://github.com/org/repo/pull/1",
+  };
+  const commands = buildCommands({
+    workspaces,
+    selectedWorkspaceId: "ws-1",
+    tasks: [task],
+    themeId: "default",
+    editorApp: "cursor",
+    readyPrsByTask: { [task.id]: [pr, { ...pr, number: 2 }, { ...pr, repoSlug: "other/repo" }] },
+  });
+  const ready = commands.filter((command) => command.action.type === "ready-pr");
+  expect(new Set(ready.map((command) => command.id)).size).toBe(3);
+  expect(ready[0].label).toContain("org/repo #1");
+  expect(ready[0].action).toEqual({ type: "ready-pr", taskId: task.id, pr });
+});

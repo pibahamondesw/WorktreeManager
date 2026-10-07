@@ -98,3 +98,23 @@ describe("runPaletteCommand", () => {
     expect(d.onClose).not.toHaveBeenCalled();
   });
 });
+
+it("runs ready for the selected PR and closes only on success", async () => {
+  const pr = {
+    repoSlug: "org/repo",
+    number: 1,
+    state: "draft",
+    title: "One",
+    url: "https://github.com/org/repo/pull/1",
+  };
+  const onPrReady = vi.fn().mockResolvedValue(undefined);
+  const d = deps({ onPrReady });
+  await runPaletteCommand({ type: "ready-pr", taskId: task.id, pr }, d);
+  expect(onPrReady).toHaveBeenCalledWith(task.id, pr);
+  expect(d.onClose).toHaveBeenCalledOnce();
+  vi.mocked(d.onClose).mockClear();
+  onPrReady.mockRejectedValue(new Error("denied"));
+  await runPaletteCommand({ type: "ready-pr", taskId: task.id, pr }, d);
+  expect(d.onClose).not.toHaveBeenCalled();
+  expect(d.showToast).toHaveBeenLastCalledWith("Error: denied");
+});

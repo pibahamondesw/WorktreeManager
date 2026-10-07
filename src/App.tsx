@@ -444,6 +444,7 @@ function App() {
             onTaskPinned={(id, pinned) => operations.setTaskPinned(id, pinned)}
             onPinnedTasksReordered={(id, targetId) => operations.reorderPinnedTasks(id, targetId)}
             onTaskIssueLinked={(id, issue) => operations.linkTaskIssue(id, issue)}
+            onPrReady={(taskId, pr) => operations.markPrReady(taskId, pr)}
             onTaskRenamed={(id, title) => operations.renameTask(id, title)}
             setupControls={setupControls}
             editorApp={editorApp}
@@ -474,6 +475,7 @@ function App() {
         </ErrorBoundary>
       </div>
       <QuickSearchModal
+        onPrReady={(taskId, pr) => operations.markPrReady(taskId, pr)}
         open={search.open}
         onClose={() => setSearch((s) => ({ ...s, open: false }))}
         initialQuery={search.query}

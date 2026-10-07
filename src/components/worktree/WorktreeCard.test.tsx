@@ -239,8 +239,8 @@ it("lists every attached PR by number with its full title on hover", () => {
       }
     />
   );
-  expect(screen.getByTitle("#424: First")).toHaveTextContent(/^#424open$/);
-  expect(screen.getByTitle("#424: First").parentElement).toHaveTextContent(/^#424open,$/);
+  expect(screen.getByTitle("#424: First")).toHaveTextContent(/^#424$/);
+  expect(screen.getByTitle("#424: First").parentElement).toHaveTextContent(/^#424,$/);
   expect(screen.getByTitle("#425: Second")).toHaveTextContent(/^#425closed$/);
   expect(screen.queryByText(/First/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByTitle("#425: Second"));
