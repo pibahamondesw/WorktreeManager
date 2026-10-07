@@ -1,4 +1,5 @@
 import js from "@eslint/js";
+import vitest from "@vitest/eslint-plugin";
 import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
@@ -11,6 +12,14 @@ export default defineConfig([
     files: ["*.{js,ts}", "scripts/**/*.{mjs,ts}"],
     extends: [js.configs.recommended],
     languageOptions: { globals: globals.node },
+  },
+  {
+    files: ["{src,scripts}/**/*.test.{ts,tsx}"],
+    plugins: { vitest },
+    rules: {
+      "vitest/no-focused-tests": "error",
+      "vitest/valid-expect": "error",
+    },
   },
   {
     files: ["**/*.{ts,tsx}"],
