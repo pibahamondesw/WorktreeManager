@@ -12,8 +12,9 @@ mod files;
 mod model;
 mod sessions;
 
-pub(crate) use claude::usage_windows;
-pub(crate) use model::PlanUsage;
+pub(crate) use claude::{unix_seconds, usage_windows};
+pub(crate) use codex::window_label;
+pub(crate) use model::{PlanUsage, UsageWindow};
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};

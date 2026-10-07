@@ -789,7 +789,7 @@ pub(crate) fn usage_windows(rate_limits: &Value) -> Vec<UsageWindow> {
 }
 
 /// Seconds since the epoch for an RFC 3339 timestamp such as `2026-09-30T23:10:00.39+00:00`.
-fn unix_seconds(timestamp: &str) -> Option<i64> {
+pub(crate) fn unix_seconds(timestamp: &str) -> Option<i64> {
     let number = |range: std::ops::Range<usize>| timestamp.get(range)?.parse::<i64>().ok();
     let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
     let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);

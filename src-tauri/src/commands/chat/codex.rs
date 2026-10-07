@@ -969,7 +969,7 @@ fn usage_window(id: &str, window: &Value) -> Option<UsageWindow> {
     })
 }
 
-fn window_label(minutes: Option<u64>) -> String {
+pub(crate) fn window_label(minutes: Option<u64>) -> String {
     match minutes {
         Some(10_080) => "Weekly limit".into(),
         Some(minutes) if minutes % 1_440 == 0 => format!("{}-day limit", minutes / 1_440),
