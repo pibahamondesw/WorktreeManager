@@ -574,3 +574,21 @@ describe("ChatPane", () => {
     );
   });
 });
+
+it.each(["claude", "codex"] as const)(
+  "shows Claude usage only in Claude chat, current agent: %s",
+  async (agent) => {
+    render(<ChatPane taskId="t1" agent={agent} folders={["/wt/a"]} />);
+    await screen.findByRole("textbox", {
+      name: `Message ${agent === "claude" ? "Claude" : "Codex"}`,
+    });
+    const indicator = screen.queryByRole("button", { name: "Claude Code usage and limits" });
+    if (agent === "claude") {
+      expect(indicator).toBeInTheDocument();
+      expect(mocks.invoke).toHaveBeenCalledWith("claude_cached_usage");
+    } else {
+      expect(indicator).not.toBeInTheDocument();
+      expect(mocks.invoke).not.toHaveBeenCalledWith("claude_cached_usage");
+    }
+  }
+);
