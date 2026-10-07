@@ -346,9 +346,7 @@ it.each(["1234", "#1234"])("finds and opens a task by PR number %s", async (quer
   const input = screen.getByRole("textbox");
   expect(fireEvent.keyDown(input, { key: "1" })).toBe(true);
   fireEvent.change(input, { target: { value: query } });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: /feature\/ledger-sync/ })).toBeInTheDocument()
-  );
+  expect(await screen.findByRole("button", { name: /feature\/ledger-sync/ })).toBeInTheDocument();
   fireEvent.keyDown(input, { key: "Enter" });
   expect(onOpenTask).toHaveBeenCalledWith(linkedTask, expect.any(Object));
 });

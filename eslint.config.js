@@ -3,6 +3,7 @@ import vitest from "@vitest/eslint-plugin";
 import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
+import testingLibrary from "eslint-plugin-testing-library";
 import tseslint from "typescript-eslint";
 import { defineConfig, globalIgnores } from "eslint/config";
 
@@ -47,5 +48,16 @@ export default defineConfig([
     extends: [reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
     languageOptions: { globals: globals.browser },
     rules: { "react-hooks/set-state-in-effect": "off" },
+  },
+  {
+    files: ["src/**/*.test.tsx"],
+    plugins: { "testing-library": testingLibrary },
+    rules: {
+      "testing-library/await-async-queries": "error",
+      "testing-library/await-async-utils": "error",
+      "testing-library/no-await-sync-queries": "error",
+      "testing-library/no-wait-for-side-effects": "error",
+      "testing-library/prefer-find-by": "error",
+    },
   },
 ]);

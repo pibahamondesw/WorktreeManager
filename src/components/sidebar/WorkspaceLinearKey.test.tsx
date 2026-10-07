@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { validateLinearToken } from "../../services/linear";
 import { Workspace } from "../../types";
@@ -142,7 +142,7 @@ describe("workspace Linear connections", () => {
     expect(screen.getByRole("combobox")).toHaveValue("custom");
     fireEvent.change(screen.getByPlaceholderText("lin_api_..."), { target: { value: "new-key" } });
     fireEvent.click(screen.getByRole("button", { name: "Validate" }));
-    await waitFor(() => expect(screen.getByText("Connected as Person")).toBeInTheDocument());
+    expect(await screen.findByText("Connected as Person")).toBeInTheDocument();
     expect(validate).toHaveBeenCalledWith("new-key");
   });
 
