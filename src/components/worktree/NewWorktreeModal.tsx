@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useId } from "react";
 import { Modal } from "../ui/Modal";
 import { Badge } from "../ui/Badge";
 import { ChevronLeftIcon } from "../ui/Icons";
@@ -43,6 +43,7 @@ export function NewWorktreeModal({
   onOpenHint,
 }: NewWorktreeModalProps) {
   const linear = useLinear();
+  const branchInputId = useId();
   const [selected, setSelected] = useState<LinearIssue | null>(null);
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
@@ -255,8 +256,11 @@ export function NewWorktreeModal({
             />
           ) : (
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-text-secondary">Branch name</label>
+              <label htmlFor={branchInputId} className="text-sm font-medium text-text-secondary">
+                Branch name
+              </label>
               <input
+                id={branchInputId}
                 className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors font-mono"
                 placeholder="feature/my-branch"
                 disabled={creating}

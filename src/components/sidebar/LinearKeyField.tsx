@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Button } from "../ui/Button";
 import { SuccessCircleIcon } from "../ui/Icons";
 
@@ -25,11 +26,15 @@ export function LinearKeyField({
   label = "Linear API key (optional)",
   autoFocus,
 }: LinearKeyFieldProps) {
+  const inputId = useId();
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-sm font-medium text-text-secondary">{label}</label>
+      <label htmlFor={inputId} className="text-sm font-medium text-text-secondary">
+        {label}
+      </label>
       <div className="flex gap-2">
         <input
+          id={inputId}
           className={`flex-1 rounded-lg border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none transition-colors focus:border-accent ${
             linearError ? "border-danger" : "border-border"
           }`}

@@ -66,7 +66,7 @@ export function WorkspaceRepoEditor({ repos, onChange, home }: WorkspaceRepoEdit
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm font-medium text-text-secondary">Repositories</label>
+      <p className="text-sm font-medium text-text-secondary">Repositories</p>
       {repos.length === 0 && (
         <p className="text-xs text-text-muted">
           Add one or more repos — they open together as one workspace.
