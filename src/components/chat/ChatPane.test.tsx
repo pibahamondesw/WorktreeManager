@@ -576,7 +576,7 @@ describe("ChatPane", () => {
 });
 
 it.each(["claude", "codex"] as const)(
-  "shows Claude usage only in Claude chat, current agent: %s",
+  "shows usage for the current chat agent: %s",
   async (agent) => {
     render(<ChatPane taskId="t1" agent={agent} folders={["/wt/a"]} />);
     await screen.findByRole("textbox", {
@@ -587,6 +587,8 @@ it.each(["claude", "codex"] as const)(
       expect(indicator).toBeInTheDocument();
       expect(mocks.invoke).toHaveBeenCalledWith("claude_cached_usage");
     } else {
+      expect(screen.getByRole("button", { name: "Codex usage and limits" })).toBeInTheDocument();
+      expect(mocks.invoke).toHaveBeenCalledWith("codex_cached_usage");
       expect(indicator).not.toBeInTheDocument();
       expect(mocks.invoke).not.toHaveBeenCalledWith("claude_cached_usage");
     }

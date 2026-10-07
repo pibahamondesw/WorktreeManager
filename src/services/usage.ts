@@ -37,3 +37,14 @@ export function formatReset(resetsAt: number, now = Date.now()): string {
   });
   return `Resets ${day}, ${time}`;
 }
+
+export const CODEX_PLAN_URL = "https://learn.chatgpt.com/docs/pricing";
+
+export function formatPlanName(plan: string): string {
+  const names: Record<string, string> = { prolite: "ProLite", promax: "ProMax" };
+  return plan
+    .trim()
+    .split(/[_\s-]+/)
+    .map((word) => names[word.toLowerCase()] ?? word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}

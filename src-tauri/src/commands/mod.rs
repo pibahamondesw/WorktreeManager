@@ -4,6 +4,7 @@ pub mod chat;
 pub mod claude_config;
 pub mod claude_usage;
 pub mod code_server;
+pub mod codex_usage;
 pub mod doctor;
 pub mod doppler;
 pub mod editor;

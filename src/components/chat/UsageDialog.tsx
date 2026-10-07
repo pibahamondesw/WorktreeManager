@@ -6,11 +6,12 @@ import { PlanUsage } from "../../services/usage";
 interface UsageDialogProps {
   open: boolean;
   usage: PlanUsage | null;
+  planUrl?: string;
   onRefresh: () => Promise<void>;
   onClose: () => void;
 }
 
-export function UsageDialog({ open, usage, onRefresh, onClose }: UsageDialogProps) {
+export function UsageDialog({ open, usage, planUrl, onRefresh, onClose }: UsageDialogProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,7 +23,7 @@ export function UsageDialog({ open, usage, onRefresh, onClose }: UsageDialogProp
   return (
     <Modal open={open} onClose={onClose} title="Plan usage">
       <div className="px-6 py-5">
-        <PlanUsageContent usage={usage} error={error} />
+        <PlanUsageContent usage={usage} error={error} planUrl={planUrl} />
       </div>
     </Modal>
   );

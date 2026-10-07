@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { formatReset, usageTone } from "./usage";
+import { formatPlanName, formatReset, usageTone } from "./usage";
 
 describe("usage", () => {
+  it.each([
+    ["self_serve_business_prolite", "Self Serve Business ProLite"],
+    ["self_serve_business_usage_based", "Self Serve Business Usage Based"],
+    ["plus", "Plus"],
+    ["pro", "Pro"],
+    ["new_plan", "New Plan"],
+  ])("formats plan %s for display", (plan, name) => {
+    expect(formatPlanName(plan)).toBe(name);
+  });
   it("warns from 80% and flags near-exhausted limits", () => {
     expect(usageTone(79)).toBe("normal");
     expect(usageTone(80)).toBe("warning");
