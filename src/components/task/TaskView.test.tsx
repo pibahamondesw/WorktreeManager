@@ -87,7 +87,7 @@ describe("TaskView", () => {
       onSwitchSurface: vi.fn(),
     };
     const view = render(<TaskView {...props} surface={{ kind: "terminal", agent: "claude" }} />);
-    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    expect(await screen.findByText("running")).toBeInTheDocument();
     view.rerender(<TaskView {...props} surface={{ kind: "terminal", agent: "codex" }} />);
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(
@@ -114,7 +114,7 @@ describe("TaskView", () => {
     });
     const onSwitchSurface = vi.fn();
     renderView(vi.fn(), onSwitchSurface);
-    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    expect(await screen.findByText("running")).toBeInTheDocument();
     const view = screen.getByRole("group", { name: "View" });
     fireEvent.click(within(view).getByRole("button", { name: "Chat" }));
     expect(mocks.invoke).toHaveBeenCalledWith("terminal_stop", { taskId: "t1", agent: "claude" });
@@ -135,7 +135,7 @@ describe("TaskView", () => {
     );
     const onSwitchSurface = vi.fn();
     renderView(vi.fn(), onSwitchSurface);
-    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    expect(await screen.findByText("running")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("could not stop");
     expect(onSwitchSurface).not.toHaveBeenCalled();
@@ -211,7 +211,7 @@ describe("TaskView", () => {
     renderView();
     expect(screen.getByText("WOR-87")).toBeInTheDocument();
     expect(screen.getByText("Embedded agent")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("running")).toBeInTheDocument());
+    expect(await screen.findByText("running")).toBeInTheDocument();
     const [command, args] = mocks.invoke.mock.calls[0];
     expect(command).toBe("terminal_open");
     expect(args).toMatchObject({
