@@ -51,6 +51,7 @@ pub struct DoctorReport {
     pub clis: Vec<CliProbe>,
     pub apps: Vec<AppProbe>,
     pub usage: RepoUsage,
+    pub github_authenticated: bool,
 }
 
 /// Probe the given CLIs and macOS apps, and report what the given repo clones need. Async so the
@@ -66,6 +67,7 @@ pub async fn doctor_probe(
         clis: probe_clis(&clis),
         apps: probe_apps(&apps),
         usage: scan_repos(&repo_paths),
+        github_authenticated: super::github::authenticated(),
     })
     .await
     .map_err(|e| format!("Doctor probe task failed: {e}"))

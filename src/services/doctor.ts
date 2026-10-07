@@ -37,6 +37,7 @@ export interface ProbeReport {
   clis: CliProbe[];
   apps: AppProbe[];
   usage: RepoUsage;
+  github_authenticated?: boolean;
 }
 
 // ---- Findings ----
@@ -112,7 +113,7 @@ const CLI_TOOLS: Record<string, ToolMeta> = {
   gh: {
     label: "GitHub CLI (gh)",
     reason:
-      "Optional. Installs the git credential helper that lets fetches from a GitHub HTTPS remote authenticate.",
+      "Optional. Shows pull request checks and reviews, marks drafts ready, and authenticates GitHub fetches.",
     install: "brew install gh",
     url: "https://cli.github.com",
   },
@@ -271,6 +272,21 @@ export async function runDoctor(
   const checks = [
     ...cliChecks(probe, requirements),
     ...appChecks(probe),
+    ...(probe.clis.some((cli) => cli.name === "gh" && cli.path && cli.version)
+      ? [
+          {
+            id: "github-auth",
+            label: "GitHub session",
+            scope: "app" as const,
+            status: probe.github_authenticated ? ("ok" as const) : ("broken" as const),
+            severity: probe.github_authenticated ? ("ok" as const) : ("warning" as const),
+            reason: "Shows pull request status and marks drafts ready.",
+            detail: probe.github_authenticated
+              ? "Authenticated"
+              : "Run gh auth login --hostname github.com, then recheck.",
+          },
+        ]
+      : []),
     ...(linear ? [linear] : []),
     ...(embedded ? [embedded] : []),
     ...vaultAgents,

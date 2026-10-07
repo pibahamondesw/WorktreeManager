@@ -5,6 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 function probeReport(overrides: Partial<ProbeReport> = {}): ProbeReport {
   return {
+    github_authenticated: true,
     clis: [],
     apps: [],
     usage: { package_managers: [], doppler: false },
@@ -306,6 +307,7 @@ describe("runDoctor", () => {
       "cli:pnpm",
       "cli:doppler",
       "cli:claude",
+      "github-auth",
     ]);
   });
 });
@@ -432,4 +434,23 @@ describe("runDoctor — Linear keys", () => {
     expect(linear?.status).toBe("unknown");
     expect(linear?.severity).toBe("warning");
   });
+});
+
+it.each([true, false])(
+  "reports GitHub authentication %s without blocking the app",
+  async (authenticated) => {
+    const report = await run(config(), healthyProbe({ github_authenticated: authenticated }));
+    expect(check(report, "github-auth")).toMatchObject({
+      status: authenticated ? "ok" : "broken",
+      severity: authenticated ? "ok" : "warning",
+    });
+    if (!authenticated) expect(check(report, "github-auth")?.detail).toContain("gh auth login");
+    expect(report.errors).toBe(0);
+  }
+);
+
+it("does not add an authentication check when gh is missing", async () => {
+  const report = await run(config(), healthyProbe({ clis: [found("git"), absent("gh")] }));
+  expect(check(report, "github-auth")).toBeUndefined();
+  expect(check(report, "cli:gh")?.severity).toBe("warning");
 });
