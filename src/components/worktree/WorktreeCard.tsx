@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo } from "react";
+import { useState, useEffect, useRef, memo, KeyboardEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "../ui/Badge";
 import {
@@ -54,6 +54,10 @@ interface WorktreeCardProps {
   repoSlugs: Record<string, string> | null;
   requestDelete?: boolean;
   onRequestDeleteHandled?: () => void;
+}
+
+function preservePrButtonActivation(event: KeyboardEvent<HTMLButtonElement>) {
+  if (event.key === "Enter" || event.key === " ") event.stopPropagation();
 }
 
 export const WorktreeCard = memo(function WorktreeCard({
@@ -410,8 +414,9 @@ export const WorktreeCard = memo(function WorktreeCard({
                       (memberPrs.length > 0 ? (
                         <PullRequestLinks prs={memberPrs} onOpenError={onOpenError} />
                       ) : (
-                        <span
-                          role="button"
+                        <button
+                          type="button"
+                          onKeyDown={preservePrButtonActivation}
                           onClick={(e) => {
                             e.stopPropagation();
                             void openCreatePr(task.branchName, m);
@@ -419,7 +424,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                           className="pointer-events-auto text-text-muted hover:text-accent transition-colors cursor-pointer"
                         >
                           Create PR
-                        </span>
+                        </button>
                       ))}
                   </div>
                 );
@@ -447,13 +452,14 @@ export const WorktreeCard = memo(function WorktreeCard({
                 {prs.length > 0 ? (
                   <PullRequestLinks prs={prs} onOpenError={onOpenError} />
                 ) : (
-                  <span
-                    role="button"
+                  <button
+                    type="button"
+                    onKeyDown={preservePrButtonActivation}
                     onClick={createPrForPrimaryRepo}
                     className="pointer-events-auto text-text-muted hover:text-accent transition-colors cursor-pointer"
                   >
                     Create PR
-                  </span>
+                  </button>
                 )}
               </div>
             )

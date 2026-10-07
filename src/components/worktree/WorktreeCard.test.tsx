@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -18,6 +27,7 @@ import {
   getTaskSetup,
   updateTaskSetup,
 } from "../../services/taskSetup";
+import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { WorktreeCard } from "./WorktreeCard";
 import { Task, VaultConfig, Workspace } from "../../types";
 
@@ -300,3 +310,64 @@ it("offers deleting without teardown after a teardown failure", async () => {
     })
   );
 });
+
+it.each([false, true])(
+  "offers a native PR button without opening the task for multiRepo=%s",
+  async (multiRepo) => {
+    vi.mocked(invoke).mockResolvedValue("https://github.com/example/api");
+    vi.mocked(openUrl).mockClear();
+    const onOpen = vi.fn();
+    const onOpenTask = vi.fn().mockResolvedValue(true);
+    renderHook(() =>
+      useWorktreeListKeyboardShortcuts({
+        workspace,
+        vault,
+        tasks: [task],
+        selectedTask: task,
+        showNew: false,
+        searchOpen: false,
+        taskOpen: false,
+        setShowNew: vi.fn(),
+        setSelectedIndex: vi.fn(),
+        jumpToIndex: vi.fn(),
+        setDeleteRequested: vi.fn(),
+        handleRefresh: vi.fn(),
+        showToast: vi.fn(),
+        onOpenTask,
+      })
+    );
+    const members = multiRepo
+      ? [
+          ...task.members,
+          { ...task.members[0], repoId: "r2", repoName: "web", localPath: "/web", path: "/wt-web" },
+        ]
+      : task.members;
+    render(
+      <WorktreeCard
+        task={{ ...task, members }}
+        workspace={workspace}
+        vault={vault}
+        onDelete={vi.fn()}
+        repoSlugs={{}}
+        onOpen={onOpen}
+      />
+    );
+    const buttons = screen.getAllByRole("button", { name: "Create PR" });
+    expect(buttons).toHaveLength(members.length);
+    buttons[0].focus();
+    expect(buttons[0]).toHaveFocus();
+    expect(buttons[0].tagName).toBe("BUTTON");
+    expect(buttons[0]).toHaveAttribute("type", "button");
+    for (const key of ["Enter", " "]) {
+      const event = createEvent.keyDown(buttons[0], { key, bubbles: true, cancelable: true });
+      fireEvent(buttons[0], event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(onOpenTask).not.toHaveBeenCalled();
+    }
+    fireEvent.click(buttons[0]);
+    await waitFor(() =>
+      expect(openUrl).toHaveBeenCalledWith("https://github.com/example/api/compare/feat/x?expand=1")
+    );
+    expect(onOpen).not.toHaveBeenCalled();
+  }
+);

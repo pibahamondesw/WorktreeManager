@@ -64,7 +64,7 @@ it("opens and closes on readiness while setup remains pending, without duplicate
       onOpenTask={onOpenTask}
     />
   );
-  const branch = screen.getByPlaceholderText("feature/my-branch");
+  const branch = screen.getByRole("textbox", { name: "Branch name" });
   fireEvent.change(branch, { target: { value: "feature" } });
   fireEvent.keyDown(branch, { key: "Enter" });
   fireEvent.keyDown(branch, { key: "Enter" });
@@ -98,7 +98,7 @@ it("shows completed and failed destinations for partial creation", async () => {
       onClose={vi.fn()}
     />
   );
-  fireEvent.change(screen.getByPlaceholderText("feature/my-branch"), {
+  fireEvent.change(screen.getByRole("textbox", { name: "Branch name" }), {
     target: { value: "feature" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -223,7 +223,7 @@ it("uses the manual branch after disabling issue creation and retains the issue 
   fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
   await screen.findByText("worktree failed");
   fireEvent.click(screen.getByLabelText("Also create Linear issue"));
-  fireEvent.change(screen.getByPlaceholderText("feature/my-branch"), {
+  fireEvent.change(screen.getByRole("textbox", { name: "Branch name" }), {
     target: { value: "manual-retry" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Create Task" }));

@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import vitest from "@vitest/eslint-plugin";
 import globals from "globals";
+import jsxA11y from "eslint-plugin-jsx-a11y";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import testingLibrary from "eslint-plugin-testing-library";
@@ -41,6 +42,20 @@ export default defineConfig([
       "@typescript-eslint/no-unsafe-call": "error",
       "@typescript-eslint/no-unsafe-member-access": "error",
       "@typescript-eslint/no-unsafe-return": "error",
+    },
+  },
+  {
+    files: ["src/**/*.tsx"],
+    ignores: ["src/**/*.test.tsx"],
+    plugins: { "jsx-a11y": jsxA11y },
+    settings: { "jsx-a11y": { components: { Button: "button", Input: "input" } } },
+    rules: {
+      "jsx-a11y/label-has-associated-control": "error",
+      "jsx-a11y/aria-props": "error",
+      "jsx-a11y/aria-proptypes": "error",
+      "jsx-a11y/aria-role": "error",
+      "jsx-a11y/aria-unsupported-elements": "error",
+      "jsx-a11y/interactive-supports-focus": "error",
     },
   },
   {
