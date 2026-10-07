@@ -6,10 +6,12 @@ import { PendingRequestCard } from "./PendingRequestCard";
 import { SessionList } from "./SessionList";
 import { TodoPanel } from "./TodoPanel";
 import { UsageDialog } from "./UsageDialog";
+import { CodexUsageIndicator } from "../usage/CodexUsageIndicator";
 import { ClaudeUsageIndicator } from "../usage/ClaudeUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { ChatImage, ChatStatus, isLive } from "../../services/chat";
+import { CODEX_PLAN_URL } from "../../services/usage";
 import { AgentId } from "../../types";
 
 interface ChatPaneProps {
@@ -64,7 +66,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   return (
     <div className="relative flex-1 min-h-0 flex flex-col bg-bg-primary">
       <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 px-3 py-1">
-        {agent === "claude" && <ClaudeUsageIndicator />}
+        {agent === "claude" ? <ClaudeUsageIndicator /> : <CodexUsageIndicator />}
         <Button variant="ghost" onClick={() => setSessionsOpen(true)} className="h-7 px-2 text-xs">
           Conversations
         </Button>
@@ -161,6 +163,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
       <UsageDialog
         open={usageOpen}
         usage={controls.usage}
+        planUrl={agent === "codex" ? CODEX_PLAN_URL : undefined}
         onRefresh={session.refreshUsage}
         onClose={() => setUsageOpen(false)}
       />

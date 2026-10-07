@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PlanUsage } from "../services/usage";
 
-export interface CachedClaudeUsage {
+export interface CachedUsage {
   usage: PlanUsage | null;
   updatedAt: number | null;
 }
 
-export function useClaudeUsage() {
-  const [snapshot, setSnapshot] = useState<CachedClaudeUsage | null>(null);
+export function useCachedUsage(command: "claude_cached_usage" | "codex_cached_usage") {
+  const [snapshot, setSnapshot] = useState<CachedUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
@@ -19,7 +19,7 @@ export function useClaudeUsage() {
     let pending: Promise<void> | null = null;
     const refresh = () => {
       if (pending) return pending;
-      pending = invoke<CachedClaudeUsage>("claude_cached_usage")
+      pending = invoke<CachedUsage>(command)
         .then((next) => {
           if (disposed) return;
           setSnapshot(next);
@@ -47,7 +47,7 @@ export function useClaudeUsage() {
       clearTimeout(timer);
       refreshRef.current = async () => undefined;
     };
-  }, []);
+  }, [command]);
 
   const refresh = useCallback(() => refreshRef.current(), []);
   return { snapshot, error, loading, refresh };

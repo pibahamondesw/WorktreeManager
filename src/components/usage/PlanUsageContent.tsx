@@ -1,4 +1,14 @@
-import { formatReset, PlanUsage, UsageTone, usageTone, UsageWindow } from "../../services/usage";
+import { useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { ExternalLinkIcon } from "../ui/Icons";
+import {
+  formatPlanName,
+  formatReset,
+  PlanUsage,
+  UsageTone,
+  usageTone,
+  UsageWindow,
+} from "../../services/usage";
 
 const BAR_TONE: Record<UsageTone, string> = {
   normal: "bg-accent",
@@ -9,9 +19,11 @@ const BAR_TONE: Record<UsageTone, string> = {
 interface PlanUsageContentProps {
   usage: PlanUsage | null;
   error?: string | null;
+  planUrl?: string;
 }
 
-export function PlanUsageContent({ usage, error }: PlanUsageContentProps) {
+export function PlanUsageContent({ usage, error, planUrl }: PlanUsageContentProps) {
+  const [linkError, setLinkError] = useState<string | null>(null);
   const failure = error ?? usage?.error;
   if (failure && !usage?.windows.length)
     return <p className="text-sm text-danger select-text whitespace-pre-wrap">{failure}</p>;
@@ -27,9 +39,36 @@ export function PlanUsageContent({ usage, error }: PlanUsageContentProps) {
       {failure && <p className="text-xs text-danger select-text whitespace-pre-wrap">{failure}</p>}
       {(usage.plan || usage.account) && (
         <div className="flex items-baseline justify-between gap-3 text-sm select-text">
-          <span className="text-text-primary capitalize">{usage.plan}</span>
+          {usage.plan && (
+            <span className="text-text-primary">
+              <span className="text-text-muted">Plan: </span>
+              {formatPlanName(usage.plan)}
+              {planUrl && (
+                <a
+                  href={planUrl}
+                  aria-label="More information about plans"
+                  title="More information about plans"
+                  className="inline-flex align-middle ml-1 text-text-muted hover:text-text-primary focus-visible:outline focus-visible:outline-accent"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    setLinkError(null);
+                    void openUrl(planUrl).catch(() =>
+                      setLinkError("Could not open plan information")
+                    );
+                  }}
+                >
+                  <ExternalLinkIcon size={12} />
+                </a>
+              )}
+            </span>
+          )}
           <span className="text-text-muted truncate">{usage.account}</span>
         </div>
+      )}
+      {linkError && (
+        <p role="alert" className="text-xs text-danger select-text">
+          {linkError}
+        </p>
       )}
       {usage.windows.length === 0 ? (
         <p className="text-sm text-text-muted">No rate limits reported for this plan.</p>
