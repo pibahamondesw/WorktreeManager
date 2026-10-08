@@ -18,7 +18,9 @@ export function Modal({ open, onClose, title, children, wide, size, onKeyDown }:
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+      if (dialogs.at(-1) !== overlayRef.current?.querySelector('[role="dialog"]')) return;
       e.preventDefault();
       e.stopPropagation();
       onClose();

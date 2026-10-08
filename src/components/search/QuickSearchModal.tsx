@@ -1,3 +1,9 @@
+import {
+  useShortcutActions,
+  useShortcutLabels,
+  useShortcutOverrides,
+  dispatchShortcut,
+} from "../../shortcuts/runtime";
 import { prKey, useGithubPrStatuses } from "../../services/github";
 import { useSearchPrNumbers } from "../../hooks/useSearchPrNumbers";
 import { ProjectFilter } from "../ui/ProjectFilter";
@@ -18,7 +24,7 @@ import {
   withoutScope,
   withoutActiveSession,
 } from "../../search/query";
-import { buildCommands, CommandShortcut, WorkspaceAction } from "../../search/commands";
+import { buildCommands, WorkspaceAction } from "../../search/commands";
 import { PaletteItem, searchPalette } from "../../search/searchPalette";
 import { activatePaletteItem, PaletteActionDeps } from "../../search/runCommand";
 import { EditorApp, PullRequestInfo, Task, Workspace } from "../../types";
@@ -78,6 +84,8 @@ export function QuickSearchModal({
   onNewTask,
 }: QuickSearchModalProps) {
   useEditorOcclusion(open);
+  const shortcutOverrides = useShortcutOverrides();
+  const label = useShortcutLabels();
   const [openedWith, setOpenedWith] = useState({ open, activities: agentActivities });
   if (openedWith.open !== open) setOpenedWith({ open, activities: agentActivities });
   const { prNumbersByTask, prsByTask } = useSearchPrNumbers(open, tasks, workspaces);
@@ -134,9 +142,19 @@ export function QuickSearchModal({
             themeId,
             editorApp,
             readyPrsByTask,
+            shortcutOverrides,
           })
         : [],
-    [open, workspaces, selectedWorkspaceId, tasks, themeId, editorApp, readyPrsByTask]
+    [
+      open,
+      workspaces,
+      selectedWorkspaceId,
+      tasks,
+      themeId,
+      editorApp,
+      readyPrsByTask,
+      shortcutOverrides,
+    ]
   );
 
   const results = useMemo(
@@ -176,34 +194,6 @@ export function QuickSearchModal({
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, results]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleTaskShortcut = (event: KeyboardEvent) => {
-      if (
-        !/^[0-9]$/.test(event.key) ||
-        !event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.shiftKey
-      )
-        return;
-      const taskIndexes = results
-        .map((result, index) => (result.kind === "task" ? index : -1))
-        .filter((index) => index >= 0);
-      const resultIndex = taskIndexes[Number(event.key)];
-      if (resultIndex === undefined) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setActiveIndex(resultIndex);
-      setRing((current) => ({ index: resultIndex, nonce: (current?.nonce ?? 0) + 1 }));
-      inputRef.current?.focus();
-    };
-    window.addEventListener("keydown", handleTaskShortcut, true);
-    return () => window.removeEventListener("keydown", handleTaskShortcut, true);
-  }, [open, results]);
-
-  if (!open) return null;
 
   const paletteInput = parsePaletteInput(query);
   const parsedQuery = parseQuery(paletteInput.query);
@@ -247,6 +237,8 @@ export function QuickSearchModal({
   const activate = (item: PaletteItem) => void activatePaletteItem(item, deps);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    dispatchShortcut(e.nativeEvent);
+    if (e.nativeEvent.defaultPrevented) return;
     if (e.key === "Escape") {
       e.preventDefault();
       // Don't let it reach Modal's document listener and close what's underneath too.
@@ -264,45 +256,89 @@ export function QuickSearchModal({
       setActiveIndex((i) => Math.max(i - 1, 0));
       return;
     }
-    const shortcutCommand = results.find(
-      (item) =>
-        item.kind === "command" &&
-        item.command.shortcut &&
-        commandShortcutMatches(e, item.command.shortcut) &&
-        (item.command.shortcut.meta || bareShortcutsEnabled)
-    );
-    if (shortcutCommand) {
+    if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey && active) {
       e.preventDefault();
-      activate(shortcutCommand);
+      activate(active);
       return;
-    }
-    if (e.key === "Enter" && active) {
-      e.preventDefault();
-      if (e.metaKey && active.kind === "task") {
-        onReveal(active.result.task);
-        onClose();
-      } else {
-        activate(active);
-      }
-      return;
-    }
-    if (
-      e.key === "l" &&
-      e.metaKey &&
-      active?.kind === "task" &&
-      active.result.task.linearIssueIdentifier
-    ) {
-      e.preventDefault();
-      openUrl(
-        linearIssueUrl(
-          active.result.task.linearIssueIdentifier,
-          active.result.workspace?.linearOrgUrlKey
-        )
-      )
-        .then(onClose)
-        .catch(() => showToast("Could not open Linear"));
     }
   };
+
+  useShortcutActions(
+    {
+      "palette.settings": {
+        handler: () => {
+          onClose();
+          onWorkspaceAction({ kind: "settings" });
+        },
+      },
+      "palette.new": {
+        handler: () => {
+          onClose();
+          onNewTask();
+        },
+        enabled:
+          !!currentWorkspace &&
+          results.some((item) => item.kind === "command" && item.command.id === "new-task"),
+        inTextFields: bareShortcutsEnabled,
+      },
+      "palette.linear": {
+        handler: () => {
+          if (active?.kind !== "task" || !active.result.task.linearIssueIdentifier) return;
+          void openUrl(
+            linearIssueUrl(
+              active.result.task.linearIssueIdentifier,
+              active.result.workspace?.linearOrgUrlKey
+            )
+          )
+            .then(onClose)
+            .catch(() => showToast("Could not open Linear"));
+        },
+        enabled: active?.kind === "task" && !!active.result.task.linearIssueIdentifier,
+      },
+      "palette.reveal": {
+        handler: () => {
+          if (active?.kind === "task") {
+            onReveal(active.result.task);
+            onClose();
+          }
+        },
+        enabled: active?.kind === "task",
+      },
+      ...Object.fromEntries(
+        Array.from({ length: 10 }, (_, i) => [
+          `palette.jump.${i}`,
+          {
+            handler: () => {
+              const index = taskResultIndexes[i];
+              setActiveIndex(index);
+              setRing((current) => ({ index, nonce: (current?.nonce ?? 0) + 1 }));
+              inputRef.current?.focus();
+            },
+            enabled: taskResultIndexes[i] !== undefined,
+          },
+        ])
+      ),
+      ...Object.fromEntries(
+        Array.from({ length: 10 }, (_, i) => [
+          `palette.workspace.${i}`,
+          {
+            handler: () => {
+              onSelectWorkspace(workspaces[i].id);
+              onClose();
+            },
+            enabled:
+              !!workspaces[i] &&
+              results.some(
+                (item) =>
+                  item.kind === "command" && item.command.id === `switch-ws:${workspaces[i].id}`
+              ),
+          },
+        ])
+      ),
+    },
+    open
+  );
+  if (!open) return null;
 
   const emptyMessage = commandsOnly
     ? "No commands match"
@@ -312,6 +348,9 @@ export function QuickSearchModal({
 
   return (
     <div
+      role="dialog"
+      aria-label="Search tasks"
+      data-shortcut-context="palette"
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 backdrop-blur-sm pt-[12vh] motion-fade"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -373,12 +412,12 @@ export function QuickSearchModal({
 
         <div className="flex-shrink-0 px-4 py-2 border-t border-border flex items-center gap-3 text-[0.625rem] text-text-muted font-mono flex-wrap">
           <Hint keys="↑↓">navigate</Hint>
-          {taskCount > 0 && <Hint keys="⌘0-9">jump</Hint>}
+          {taskCount > 0 && <Hint keys={label("palette.jump.0")}>jump to first</Hint>}
           <Hint keys="↵">{active?.kind === "command" ? "run" : "open"}</Hint>
           {active?.kind === "task" && (
             <>
-              <Hint keys="⌘↵">reveal</Hint>
-              <Hint keys="⌘L">linear</Hint>
+              <Hint keys={label("palette.reveal")}>reveal</Hint>
+              <Hint keys={label("palette.linear")}>linear</Hint>
             </>
           )}
           <Hint keys="esc">close</Hint>
@@ -401,19 +440,6 @@ export function QuickSearchModal({
 
       {toast && <WorktreeListToast message={toast} />}
     </div>
-  );
-}
-
-function commandShortcutMatches(
-  event: React.KeyboardEvent<HTMLInputElement>,
-  shortcut: CommandShortcut
-): boolean {
-  const metaPressed = event.metaKey || event.ctrlKey;
-  return (
-    event.key.toLowerCase() === shortcut.key.toLowerCase() &&
-    metaPressed === Boolean(shortcut.meta) &&
-    event.shiftKey === Boolean(shortcut.shift) &&
-    !event.altKey
   );
 }
 

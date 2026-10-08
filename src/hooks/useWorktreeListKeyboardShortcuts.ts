@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
+import { useShortcutActions } from "../shortcuts/runtime";
 import { Task, VaultConfig, Workspace } from "../types";
 import { OpenTaskOptions } from "./useOpenTask";
 import { ensureTaskNote, taskNoteUri } from "../services/notes";
@@ -39,27 +39,27 @@ export function useWorktreeListKeyboardShortcuts({
   onOpenTask,
   taskOpen,
 }: Params): void {
-  useKeyboardShortcuts(
+  useShortcutActions(
     {
-      n: { handler: () => setShowNew(true), enabled: !!workspace },
-      "meta+r": { handler: () => handleRefresh(), enabled: !!workspace },
-      ArrowDown: {
+      "list.new": { handler: () => setShowNew(true), enabled: !!workspace },
+      "list.refresh": { handler: () => handleRefresh(), enabled: !!workspace },
+      "list.down": {
         handler: () => setSelectedIndex((i) => Math.min(i + 1, tasks.length - 1)),
         enabled: tasks.length > 0,
       },
-      j: {
+      "list.next": {
         handler: () => setSelectedIndex((i) => Math.min(i + 1, tasks.length - 1)),
         enabled: tasks.length > 0,
       },
-      ArrowUp: {
+      "list.up": {
         handler: () => setSelectedIndex((i) => Math.max(i - 1, 0)),
         enabled: tasks.length > 0,
       },
-      k: {
+      "list.previous": {
         handler: () => setSelectedIndex((i) => Math.max(i - 1, 0)),
         enabled: tasks.length > 0,
       },
-      Enter: {
+      "list.open": {
         handler: () => {
           if (selectedTask) {
             void onOpenTask(selectedTask, { onMessage: showToast, onError: showToast });
@@ -67,8 +67,8 @@ export function useWorktreeListKeyboardShortcuts({
         },
         enabled: !!selectedTask,
       },
-      Escape: { handler: () => setSelectedIndex(-1) },
-      l: {
+      "list.clear": { handler: () => setSelectedIndex(-1) },
+      "list.linear": {
         handler: () => {
           if (selectedTask?.linearIssueIdentifier) {
             openUrl(
@@ -78,7 +78,7 @@ export function useWorktreeListKeyboardShortcuts({
         },
         enabled: !!selectedTask?.linearIssueIdentifier,
       },
-      o: {
+      "list.note": {
         handler: () => {
           if (!selectedTask || !workspace) return;
           void ensureTaskNote(vault, workspace, selectedTask).then((notePath) => {
@@ -91,11 +91,11 @@ export function useWorktreeListKeyboardShortcuts({
         },
         enabled: !!selectedTask && !!workspace && vault.enabled,
       },
-      "meta+d": {
+      "list.delete": {
         handler: () => setDeleteRequested(true),
         enabled: !!selectedTask && !!workspace,
       },
-      "meta+b": {
+      "list.branch": {
         handler: () => {
           if (selectedTask) {
             navigator.clipboard
@@ -106,7 +106,7 @@ export function useWorktreeListKeyboardShortcuts({
         },
         enabled: !!selectedTask,
       },
-      "meta+shift+c": {
+      "list.path": {
         handler: () => {
           if (selectedTask) {
             navigator.clipboard
@@ -119,11 +119,11 @@ export function useWorktreeListKeyboardShortcuts({
       },
       ...Object.fromEntries(
         Array.from({ length: 10 }, (_, i) => [
-          String(i),
+          `list.jump.${i}`,
           { handler: () => jumpToIndex(i), enabled: i < tasks.length },
         ])
       ),
     },
-    { enabled: !showNew && !searchOpen && !taskOpen }
+    !showNew && !searchOpen && !taskOpen
   );
 }

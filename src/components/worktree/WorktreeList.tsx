@@ -475,7 +475,7 @@ export function WorktreeList({
             )}
           </div>
 
-          {tasks.length > 0 && <WorktreeListKeyboardHints showNotes={vault.enabled} />}
+          <WorktreeListKeyboardHints showNotes={vault.enabled} />
         </div>
 
         {toast && <WorktreeListToast message={toast} />}

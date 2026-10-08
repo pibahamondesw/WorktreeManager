@@ -1,3 +1,4 @@
+import { setShortcutOverrides, syncNativeShortcuts } from "../shortcuts/runtime";
 import { VaultAgent } from "../services/vault";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { compareTaskPins } from "../utils";
@@ -84,7 +85,9 @@ export function useStore() {
       loadSidebarCollapsed(),
       loadAgentViews(),
     ])
-      .then(([s, editor, theme, custom, collapsed, views]) => {
+      .then(async ([s, editor, theme, custom, collapsed, views]) => {
+        await syncNativeShortcuts(s.shortcutOverrides ?? {});
+        setShortcutOverrides(s.shortcutOverrides ?? {});
         agentViewsRef.current = views;
         setAgentViews(views);
         commit(s);

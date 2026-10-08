@@ -268,3 +268,11 @@ it("filters cards and keyboard targets by project and restores all tasks", () =>
   fireEvent.change(filter, { target: { value: "" } });
   expect(screen.getByText("second")).toBeInTheDocument();
 });
+
+it("keeps shortcut help visible when the workspace has no tasks", () => {
+  const { setTasks } = fixture();
+  setTasks([]);
+  expect(screen.getByText("No active tasks")).toBeInTheDocument();
+  expect(screen.getByText(/palette/)).toBeInTheDocument();
+  expect(screen.getByText(/history/)).toBeInTheDocument();
+});

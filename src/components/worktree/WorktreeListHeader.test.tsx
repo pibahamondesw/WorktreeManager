@@ -50,18 +50,18 @@ it("places the project filter immediately to the left of the editor picker", () 
 describe("WorktreeListHeader sidebar toggle", () => {
   it("hides the expand button while the sidebar is visible", () => {
     renderHeader(false);
-    expect(screen.queryByTitle("Expand sidebar [")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Expand sidebar ([)")).not.toBeInTheDocument();
   });
 
   it("expands the sidebar when the button is clicked", () => {
     const { onExpandSidebar } = renderHeader(true);
-    fireEvent.click(screen.getByTitle("Expand sidebar ["));
+    fireEvent.click(screen.getByTitle("Expand sidebar ([)"));
     expect(onExpandSidebar).toHaveBeenCalledOnce();
   });
 
   it("places a separator between the expand button and history controls", () => {
     renderHeader(true);
-    const expandButton = screen.getByTitle("Expand sidebar [");
+    const expandButton = screen.getByTitle("Expand sidebar ([)");
     const separator = screen.getByRole("separator");
     const backButton = screen.getByTitle("Back (⌘←)");
 

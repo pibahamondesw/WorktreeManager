@@ -1,3 +1,4 @@
+import { useShortcutLabels } from "../../shortcuts/runtime";
 import { ReactNode } from "react";
 import { BranchIcon, ChevronLeftIcon, PullRequestIcon, SidebarIcon } from "../ui/Icons";
 import { GitStatus, IssueLinearInfo, Task } from "../../types";
@@ -46,6 +47,7 @@ export function TaskHeader({
   const status = statusLabel[sessionStatus.kind];
   const issueStatus = linearInfo?.status ?? null;
   const prs = task.linearIssueId ? (linearInfo?.prs ?? []) : [];
+  const label = useShortcutLabels();
   return (
     <div
       className="flex flex-wrap items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
@@ -58,7 +60,7 @@ export function TaskHeader({
             type="button"
             onClick={onExpandSidebar}
             className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-            title="Expand sidebar ["
+            title={`Expand sidebar (${label("app.sidebar")})`}
           >
             <SidebarIcon size={14} />
           </button>
@@ -72,8 +74,8 @@ export function TaskHeader({
       <button
         type="button"
         onClick={onBack}
-        aria-label="Back to tasks (⌘[)"
-        title="Back to tasks (⌘[)"
+        aria-label={`Back to tasks (${label("native.back")})`}
+        title={`Back to tasks (${label("native.back")})`}
         className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
       >
         <ChevronLeftIcon size={14} />

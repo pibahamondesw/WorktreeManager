@@ -122,3 +122,8 @@ describe("SettingsModal", () => {
     });
   });
 });
+
+it("places keyboard shortcuts last in settings navigation", () => {
+  renderSettings();
+  expect(screen.getAllByRole("tab").at(-1)).toHaveTextContent("Keyboard shortcuts");
+});

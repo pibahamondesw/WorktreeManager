@@ -1,3 +1,4 @@
+import { useShortcutActions } from "../shortcuts/runtime";
 import { useLayoutEffect, useState } from "react";
 
 const STORAGE_KEY = "worktreemanager.uiZoom";
@@ -30,21 +31,10 @@ export function useZoom() {
     };
   }, [zoom]);
 
-  useLayoutEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.isComposing) return;
-      const increase = event.key === "+" || event.key === "=";
-      const decrease = event.key === "-" || event.code === "NumpadSubtract";
-      if (!increase && !decrease) return;
-
-      // Capture also covers inputs and modals. Only zoom keys are consumed.
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setZoom((current) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current + (increase ? 10 : -10))));
-    };
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
+  useShortcutActions({
+    "zoom.in": { handler: () => setZoom((current) => Math.min(MAX_ZOOM, current + 10)) },
+    "zoom.out": { handler: () => setZoom((current) => Math.max(MIN_ZOOM, current - 10)) },
+  });
 
   return {
     zoom,

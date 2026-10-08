@@ -1,3 +1,4 @@
+import { useShortcutLabels } from "../../shortcuts/runtime";
 import { useState, useEffect, useRef, memo, KeyboardEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "../ui/Badge";
@@ -83,6 +84,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   requestDelete,
   onRequestDeleteHandled,
 }: WorktreeCardProps) {
+  const shortcutLabel = useShortcutLabels();
   const status = linearInfo?.status ?? null;
   // No Linear issue → no PR attachments will ever load; treat as "loaded, zero PRs"
   // so the Create PR links still render. undefined = still loading, hide PR slots.
@@ -276,7 +278,7 @@ export const WorktreeCard = memo(function WorktreeCard({
         {/* Index number */}
         {index !== undefined && index <= 9 && (
           <span className="text-xs font-mono text-text-muted/40 flex-shrink-0 w-4 pt-0.5 text-right">
-            {index}
+            {shortcutLabel(`list.jump.${index}`)}
           </span>
         )}
 
@@ -503,7 +505,7 @@ export const WorktreeCard = memo(function WorktreeCard({
             {menuOpen && (
               <div className="motion-rise absolute right-0 top-9 z-50 w-48 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
                 <MenuButton
-                  label="⌘B"
+                  label={shortcutLabel("list.branch")}
                   onClick={() => {
                     void handleMenuAction("copy-branch").catch(() =>
                       onOpenError?.("Could not complete the task action")
@@ -513,7 +515,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                   Copy branch name
                 </MenuButton>
                 <MenuButton
-                  label="⌘⇧C"
+                  label={shortcutLabel("list.path")}
                   onClick={() => {
                     void handleMenuAction("copy-path").catch(() =>
                       onOpenError?.("Could not complete the task action")
@@ -524,7 +526,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                 </MenuButton>
                 {vault.enabled && (
                   <MenuButton
-                    label="O"
+                    label={shortcutLabel("list.note")}
                     onClick={() => {
                       void handleMenuAction("open-notes").catch(() =>
                         onOpenError?.("Could not complete the task action")
@@ -546,7 +548,7 @@ export const WorktreeCard = memo(function WorktreeCard({
             className={`w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors cursor-pointer ${
               deleting ? "opacity-100" : "opacity-0 group-hover:opacity-100"
             }`}
-            title="Delete task (⌘D)"
+            title={`Delete task (${shortcutLabel("list.delete")})`}
           >
             {deleting ? <SpinnerIcon size={16} /> : <TrashIcon />}
           </button>

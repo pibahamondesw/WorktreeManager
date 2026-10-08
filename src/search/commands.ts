@@ -1,3 +1,10 @@
+import {
+  bindingById,
+  effectiveBindings,
+  formatShortcut,
+  preferredShortcut,
+  type ShortcutOverrides,
+} from "../shortcuts/catalog";
 import { CUSTOM_THEME_ID, themes } from "../themes";
 import { EditorApp, EDITOR_APPS, PullRequestInfo, Task, Workspace } from "../types";
 
@@ -22,7 +29,7 @@ export type CommandAction =
 
 type CommandGroup = "workspace" | "settings" | "action";
 
-export interface CommandShortcut {
+interface CommandShortcut {
   key: string;
   label: string;
   meta?: boolean;
@@ -43,7 +50,21 @@ export interface PaletteCommand {
   action: CommandAction;
 }
 
+function commandShortcut(id: string, overrides: ShortcutOverrides): CommandShortcut | undefined {
+  const values = effectiveBindings(bindingById.get(id)!, overrides);
+  const first = preferredShortcut(values);
+  return first
+    ? {
+        key: first.key,
+        label: formatShortcut(first),
+        ...(first.modifiers.includes("meta") ? { meta: true } : {}),
+        ...(first.modifiers.includes("shift") ? { shift: true } : {}),
+      }
+    : undefined;
+}
+
 interface BuildCommandsArgs {
+  shortcutOverrides?: ShortcutOverrides;
   workspaces: Workspace[];
   selectedWorkspaceId: string | null;
   tasks: Task[];
@@ -72,6 +93,7 @@ export function buildCommands({
   themeId,
   editorApp,
   readyPrsByTask = {},
+  shortcutOverrides = {},
 }: BuildCommandsArgs): PaletteCommand[] {
   const commands: PaletteCommand[] = [];
   const workspaceById = new Map(workspaces.map((w) => [w.id, w]));
@@ -84,7 +106,7 @@ export function buildCommands({
       group: "action",
       keywords: `new task create ${current.name}`.toLowerCase(),
       emptyVisible: true,
-      shortcut: { key: "n", label: "N" },
+      shortcut: commandShortcut("palette.new", shortcutOverrides),
       action: { type: "new-task" },
     });
   }
@@ -99,9 +121,7 @@ export function buildCommands({
       keywords: `switch workspace change ${workspace.name}`.toLowerCase(),
       emptyVisible: !isCurrent,
       shortcut:
-        index <= 9
-          ? { key: String(index), label: `⌘⇧${index}`, meta: true, shift: true }
-          : undefined,
+        index <= 9 ? commandShortcut(`palette.workspace.${index}`, shortcutOverrides) : undefined,
       action: { type: "select-workspace", workspaceId: workspace.id },
     });
     commands.push({
@@ -130,7 +150,7 @@ export function buildCommands({
     group: "settings",
     keywords: "settings preferences theme obsidian vault dependencies agent alerts",
     emptyVisible: true,
-    shortcut: { key: "s", label: "⌘S", meta: true },
+    shortcut: commandShortcut("palette.settings", shortcutOverrides),
     action: { type: "workspace", action: { kind: "settings" } },
   });
 

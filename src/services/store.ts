@@ -1,3 +1,4 @@
+import { normalizeOverrides } from "../shortcuts/catalog";
 import { load, Store } from "@tauri-apps/plugin-store";
 import {
   AgentView,
@@ -206,6 +207,7 @@ export async function loadState(
 ): Promise<AppState> {
   const s = await getStore();
   const rawSetup = await s.get<unknown>("setup");
+  const shortcutOverrides = normalizeOverrides(await s.get<unknown>("shortcutOverrides"));
   const schemaVersion = (await s.get<number>("schemaVersion")) ?? 0;
   const rawWorkspaces = await s.get<unknown[]>("workspaces");
   const setup = normalizeSetup(rawSetup);
@@ -270,6 +272,7 @@ export async function loadState(
 
     return {
       setup: setupWithSecret(setup, secrets),
+      shortcutOverrides,
       vault,
       workspaces: workspacesWithSecrets(workspaces, secrets),
       tasks,
@@ -310,6 +313,7 @@ export async function loadState(
 
   return {
     setup,
+    shortcutOverrides,
     vault: DEFAULT_STATE.vault,
     workspaces,
     tasks,

@@ -1,3 +1,4 @@
+import { useShortcutLabels } from "../../shortcuts/runtime";
 import { ReactNode } from "react";
 import { Button } from "../ui/Button";
 import { EditorPicker } from "../ui/EditorPicker";
@@ -48,6 +49,7 @@ export function WorktreeListHeader({
   onGoBack,
   onGoForward,
 }: WorktreeListHeaderProps) {
+  const shortcutLabel = useShortcutLabels();
   return (
     <>
       <div
@@ -61,7 +63,7 @@ export function WorktreeListHeader({
                 type="button"
                 onClick={onExpandSidebar}
                 className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-                title="Expand sidebar ["
+                title={`Expand sidebar (${shortcutLabel("app.sidebar")})`}
               >
                 <SidebarIcon size={14} />
               </button>
@@ -73,10 +75,18 @@ export function WorktreeListHeader({
             </>
           )}
           <div className="flex items-center gap-0.5">
-            <HistoryButton title="Back (⌘←)" disabled={!canGoBack} onClick={onGoBack}>
+            <HistoryButton
+              title={`Back (${shortcutLabel("app.history.back")})`}
+              disabled={!canGoBack}
+              onClick={onGoBack}
+            >
               <ChevronLeftIcon size={14} />
             </HistoryButton>
-            <HistoryButton title="Forward (⌘→)" disabled={!canGoForward} onClick={onGoForward}>
+            <HistoryButton
+              title={`Forward (${shortcutLabel("app.history.forward")})`}
+              disabled={!canGoForward}
+              onClick={onGoForward}
+            >
               <ChevronRightIcon size={14} />
             </HistoryButton>
           </div>
@@ -89,7 +99,7 @@ export function WorktreeListHeader({
             type="button"
             onClick={onOpenSearch}
             className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-            title="Search tasks and commands (⌘K — ⌘F for this workspace)"
+            title={`Search tasks and commands (${shortcutLabel("app.search")} — ${shortcutLabel("app.search.workspace")} for this workspace)`}
           >
             <SearchIcon />
           </button>
@@ -101,14 +111,16 @@ export function WorktreeListHeader({
             type="button"
             onClick={onRefresh}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-            title="Refresh Linear info (⌘R)"
+            title={`Refresh Linear info (${shortcutLabel("list.refresh")})`}
           >
             <RefreshIcon className={refreshing ? "motion-spin-steps" : ""} />
           </button>
           <Button onClick={onNewTask} className="h-8 text-xs">
             <PlusIcon />
             New Task
-            <kbd className="ml-1 text-[0.625rem] opacity-50 font-mono">N</kbd>
+            <kbd className="ml-1 text-[0.625rem] opacity-50 font-mono">
+              {shortcutLabel("list.new")}
+            </kbd>
           </Button>
         </div>
       </div>

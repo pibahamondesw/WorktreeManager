@@ -8,7 +8,7 @@ import { EditorPane } from "../editor/EditorPane";
 import { editorClose } from "../../services/codeEditor";
 import { chatStop } from "../../services/chat";
 import { terminalStop } from "../../services/terminal";
-import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+import { useShortcutActions } from "../../shortcuts/runtime";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { GitStatus, IssueLinearInfo, Task, TaskSurface } from "../../types";
 import { AgentActivity } from "../../services/agentActivity";
@@ -83,14 +83,15 @@ export function TaskView({
     }
   };
 
-  useKeyboardShortcuts({
-    "meta+[": { handler: onBack, inTextFields: true },
-    Escape: { handler: onBack },
+  useShortcutActions({
+    "native.back": { handler: onBack, inTextFields: true },
+    "task.close": { handler: onBack },
   });
 
   return (
     <div
       className="flex-1 flex flex-col min-h-0 min-w-0"
+      data-shortcut-context="task"
       data-attention={agentActivity?.state === "waiting" ? "" : undefined}
     >
       <TaskHeader
