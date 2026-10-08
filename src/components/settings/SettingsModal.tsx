@@ -1,3 +1,5 @@
+import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
+import type { Operations } from "../../services/operations";
 import { useEffect, useRef } from "react";
 import { Modal } from "../ui/Modal";
 import { BellIcon, NotebookIcon, SunIcon, WrenchIcon } from "../ui/Icons";
@@ -10,16 +12,21 @@ import { VaultConfig } from "../../types";
 import { AgentAlertSettings } from "../../services/agentActivity";
 import { CheckSeverity, DoctorReport } from "../../services/doctor";
 
-export type SettingsSection = "theme" | "vault" | "dependencies" | "alerts";
+export type SettingsSection = "theme" | "vault" | "dependencies" | "alerts" | "shortcuts";
 
 const SECTIONS = [
   { id: "theme", label: "Theme", icon: SunIcon },
   { id: "vault", label: "Obsidian vault", icon: NotebookIcon },
   { id: "dependencies", label: "Dependencies", icon: WrenchIcon },
   { id: "alerts", label: "Agent alerts", icon: BellIcon },
+  { id: "shortcuts", label: "Keyboard shortcuts", icon: WrenchIcon },
 ] as const;
 
 interface SettingsModalProps {
+  shortcutOperations?: Pick<Operations, "updateShortcut" | "resetShortcuts">;
+  workspaceCount?: number;
+  taskCount?: number;
+  paletteTaskCount?: number;
   section: SettingsSection | null;
   onSectionChange: (section: SettingsSection) => void;
   onClose: () => void;
@@ -138,6 +145,14 @@ export function SettingsModal(props: SettingsModalProps) {
                 tabIndex={0}
               >
                 <h3 className="px-6 pt-5 text-sm font-semibold text-text-primary">{label}</h3>
+                {id === "shortcuts" && section === id && props.shortcutOperations && (
+                  <KeyboardShortcutsSettings
+                    operations={props.shortcutOperations}
+                    workspaceCount={props.workspaceCount ?? 0}
+                    taskCount={props.taskCount ?? 0}
+                    paletteTaskCount={props.paletteTaskCount}
+                  />
+                )}
                 {id === "theme" && (
                   <ThemeSettings
                     currentThemeId={props.themeId}

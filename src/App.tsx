@@ -498,6 +498,10 @@ function App() {
         onNewTask={() => setNewTaskRequested(true)}
       />
       <SettingsModal
+        shortcutOperations={operations}
+        workspaceCount={state.workspaces.length}
+        taskCount={selectedTasks.length}
+        paletteTaskCount={state.tasks.length}
         section={settingsSection}
         onSectionChange={setSettingsSection}
         onClose={() => setSettingsSection(null)}
