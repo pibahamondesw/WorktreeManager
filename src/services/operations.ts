@@ -34,7 +34,6 @@ import {
   getTaskSetup,
   updateTaskSetup,
   updateSetupStep,
-  updateRepoSetup,
   planRepoSetup,
   beginSetupRun,
   endSetupRun,
@@ -43,7 +42,6 @@ import {
 import {
   PhaseScript,
   ResolvedScripts,
-  SCRIPT_SOURCE_LABELS,
   approveScripts,
   isScriptTrusted,
   phaseScript,
@@ -88,7 +86,7 @@ export interface DeleteOptions {
 }
 
 /** How a repository's setup should run again after the task exists. */
-export type SetupRetry = "retry" | "approve" | "detected";
+export type SetupRetry = "retry" | "detected";
 
 const TEARDOWN_TIMEOUT_SECS = 300;
 
@@ -643,7 +641,7 @@ export class Operations {
 
   /**
    * Prepare one repository after its worktree exists: its declared setup script when there is
-   * one (once approved), otherwise the detected Doppler, Node and Python steps.
+   * one, otherwise the detected Doppler, Node and Python steps.
    */
   private async runRepoSetup(
     task: Task,
@@ -670,15 +668,6 @@ export class Operations {
       return;
     }
     planRepoSetup(task.id, member.repoId, ["script"], script.source);
-    if (choice === "approve" && script.hash) await approveScripts(member.localPath, [script.hash]);
-    if (!(await isScriptTrusted(member.localPath, script))) {
-      const message = `Review the setup script from ${SCRIPT_SOURCE_LABELS[script.source]} before it runs.`;
-      warnings.push({ stage: "script", repoId: member.repoId, message });
-      steps.push({ stage: "script", status: "needs_approval" });
-      updateSetupStep(task.id, member.repoId, "script", "needs_approval", warnings);
-      updateRepoSetup(task.id, member.repoId, (repo) => ({ ...repo, approval: script }));
-      return;
-    }
     progress(`${member.repoName} · ${SETUP_STAGES.script}…`);
     const session = scriptSession("setup", member.repoId);
     updateSetupStep(task.id, member.repoId, "script", "running", warnings);
@@ -747,8 +736,7 @@ export class Operations {
   }
 
   /**
-   * Run one repository's setup again: re-read its scripts (so edits apply), approve the shown
-   * script first, or fall back to detected setup.
+   * Run one repository's setup again: re-read its scripts or fall back to detected setup.
    */
   async rerunRepoSetup(
     taskId: string,

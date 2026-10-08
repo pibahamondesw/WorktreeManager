@@ -32,7 +32,6 @@ export function TaskSetupProgress({
   const setup = useSyncExternalStore(subscribeTaskSetup, () => getTaskSetup(taskId));
   const steps = setup?.repos.flatMap((repo) => repo.steps) ?? [];
   const hasErrors = steps.some((step) => step.status === "error");
-  const awaitingApproval = !!setup?.repos.some((repo) => repo.approval);
   const ranScript = steps.some((step) => isScriptStage(step) && step.status !== "pending");
   const completedSuccessfully = !!setup && !setup.active && !hasErrors && !setup.warnings.length;
   const autoDismiss =
@@ -53,11 +52,9 @@ export function TaskSetupProgress({
       ? setup.opened
         ? "Workspace opened · Setup running"
         : "Setup running"
-      : awaitingApproval
-        ? "Setup waiting for approval"
-        : setup.warnings.length
-          ? "Setup completed with warnings"
-          : "Setup completed";
+      : setup.warnings.length
+        ? "Setup completed with warnings"
+        : "Setup completed";
 
   return (
     <div
@@ -65,7 +62,7 @@ export function TaskSetupProgress({
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <details className="min-w-0 flex-1" open={awaitingApproval || undefined}>
+      <details className="min-w-0 flex-1">
         <summary
           className="cursor-pointer"
           onClick={(event) => {
@@ -193,24 +190,13 @@ function ScriptStep({
           Stop
         </StepAction>
       )}
-      {controls && isSetup && !running && step.status !== "needs_approval" && (
-        <StepAction onClick={() => rerun("retry")}>Run again</StepAction>
+      {controls && isSetup && !running && (
+        <>
+          <StepAction onClick={() => rerun("retry")}>Run again</StepAction>
+          <StepAction onClick={() => rerun("detected")}>Use detected setup</StepAction>
+        </>
       )}
       {step.message && <p className="whitespace-pre-wrap break-words">{step.message}</p>}
-      {repo.approval && isSetup && (
-        <div className="mt-1 space-y-1 text-text-secondary">
-          <p>{SCRIPT_SOURCE_LABELS[repo.approval.source]} wants to run this in the new worktree:</p>
-          <pre className="max-h-40 overflow-auto rounded-md border border-border bg-bg-tertiary p-2 font-mono whitespace-pre-wrap">
-            {repo.approval.script}
-          </pre>
-          {controls && (
-            <p>
-              <StepAction onClick={() => rerun("approve")}>Approve and run</StepAction>
-              <StepAction onClick={() => rerun("detected")}>Use detected setup</StepAction>
-            </p>
-          )}
-        </div>
-      )}
       {actionError && <p className="text-danger">{actionError}</p>}
       {showOutput && step.run !== undefined && (
         <div className="mt-1">

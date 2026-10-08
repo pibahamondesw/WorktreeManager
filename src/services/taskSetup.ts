@@ -1,6 +1,6 @@
 import { Task } from "../types";
 import type { OperationWarning } from "./operations";
-import type { PhaseScript, ScriptSource } from "./repoScripts";
+import type { ScriptSource } from "./repoScripts";
 
 export const SETUP_STAGES = {
   config: "Copying local configuration",
@@ -17,22 +17,13 @@ export const DETECTED_STAGES: SetupStage[] = [
   "install_node_deps",
   "install_python_deps",
 ];
-export type SetupStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "skipped"
-  | "error"
-  | "needs_approval"
-  | "cancelled";
+export type SetupStatus = "pending" | "running" | "completed" | "skipped" | "error" | "cancelled";
 
 export interface RepoSetupState {
   repoId: string;
   repoName: string;
   /** Where the setup comes from; absent while resolving and for detected setup. */
   source?: ScriptSource;
-  /** A repository script waiting for the user to approve it. */
-  approval?: PhaseScript;
   steps: SetupStep[];
 }
 
@@ -90,7 +81,7 @@ export function initializeTaskSetup(task: Task, warnings: OperationWarning[]) {
   });
 }
 
-/** Mark the task busy for a retry, approval or teardown; pairs with `endSetupRun`. */
+/** Mark the task busy for a retry or teardown; pairs with `endSetupRun`. */
 export function beginSetupRun(task: Task) {
   runs.set(task.id, (runs.get(task.id) ?? 0) + 1);
   const state = states.get(task.id);
@@ -146,7 +137,6 @@ export function planRepoSetup(
   updateRepoSetup(taskId, repoId, (repo) => ({
     ...repo,
     source,
-    approval: undefined,
     steps: [
       ...repo.steps.filter((step) => step.stage === "config"),
       ...pendingSteps(stages).map((step) => {

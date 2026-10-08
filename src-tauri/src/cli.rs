@@ -40,7 +40,7 @@ Omit repoIds to include all repositories. Creation waits for setup and does not
 open editors or modify Linear. Warnings indicate setup steps needing attention.
 Repositories declare setup and teardown scripts in .worktreemanager.toml (or
 Conductor, Superset or Cursor config); without one the app detects Doppler, Node
-and Python. Scripts from a repository run only after approval in the app.
+and Python. Setup scripts run automatically; repository teardown needs app approval.
 
 Examples:
   wtm
