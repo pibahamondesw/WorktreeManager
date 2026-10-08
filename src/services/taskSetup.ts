@@ -114,7 +114,7 @@ export function endSetupRun(taskId: string, warnings?: OperationWarning[]) {
   });
 }
 
-export function updateRepoSetup(
+function updateRepoSetup(
   taskId: string,
   repoId: string,
   update: (repo: RepoSetupState) => RepoSetupState
