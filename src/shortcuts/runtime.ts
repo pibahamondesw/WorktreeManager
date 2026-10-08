@@ -46,9 +46,7 @@ export function useShortcutLabels() {
   const values = useShortcutOverrides();
   return (id: string) => shortcutLabel(id, values);
 }
-export function currentContext(
-  eventTarget: EventTarget | null = document.activeElement
-): ShortcutContext {
+function currentContext(eventTarget: EventTarget | null = document.activeElement): ShortcutContext {
   const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).filter(
     (e) => !e.closest("[hidden]")
   );

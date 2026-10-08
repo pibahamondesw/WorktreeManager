@@ -29,7 +29,7 @@ export type CommandAction =
 
 type CommandGroup = "workspace" | "settings" | "action";
 
-export interface CommandShortcut {
+interface CommandShortcut {
   key: string;
   label: string;
   meta?: boolean;

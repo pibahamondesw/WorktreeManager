@@ -293,7 +293,7 @@ export function effectiveBindings(entry: Binding, overrides: ShortcutOverrides):
   return (overrides[entry.id] ?? entry.defaults).filter((value) => !isBareNumber(value));
 }
 const modifierOrder: Modifier[] = ["ctrl", "alt", "shift", "meta"];
-export function canonical(value: Shortcut): Shortcut {
+function canonical(value: Shortcut): Shortcut {
   return {
     key: value.key.length === 1 ? value.key.toLowerCase() : value.key,
     modifiers: modifierOrder.filter((m) => value.modifiers.includes(m)),
