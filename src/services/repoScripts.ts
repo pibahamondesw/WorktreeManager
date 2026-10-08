@@ -62,7 +62,7 @@ function loadApprovals() {
   return approvals;
 }
 
-/** Overrides are the user's own; repository scripts run once their exact content is approved. */
+/** Overrides are the user's own; repository teardown requires approval of its exact content. */
 export async function isScriptTrusted(localPath: string, script: PhaseScript) {
   if (script.source === "local") return true;
   return !!script.hash && (await loadApprovals())[localPath]?.includes(script.hash) === true;

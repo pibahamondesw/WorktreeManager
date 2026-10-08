@@ -678,8 +678,7 @@ describe("repository scripts", () => {
       .mock.calls.filter(([name]) => name === command)
       .map(([name, args]) => [name, args as Record<string, unknown> | undefined] as const);
 
-  it("runs an approved repository setup instead of detected steps and passes context as env", async () => {
-    vi.mocked(loadScriptApprovals).mockResolvedValue({ "/repos/api": ["setup-hash"] });
+  it("runs repository setup automatically instead of detected steps and passes context as env", async () => {
     withScripts(declared({ setup: "pnpm install", setupHash: "setup-hash" }));
     const { operations } = fixture();
     const result = await operations.createTask(input);
@@ -729,24 +728,41 @@ describe("repository scripts", () => {
     expect(paths("/repos/web")).toContain(".env");
   });
 
-  it("waits for approval of unknown repository scripts, then runs them once approved", async () => {
+  it.each(["worktreemanager", "conductor", "superset", "cursor"] as const)(
+    "runs new and changed %s setup scripts without approval",
+    async (source) => {
+      withScripts(declared({ source, setup: "make setup", setupHash: "setup-hash" }));
+      const { operations } = fixture();
+      const result = await operations.createTask(input);
+      expect(calls("run_task_script")).toHaveLength(1);
+      expect(result.setup?.[0].steps).toContainEqual({ stage: "script", status: "completed" });
+      expect(result.warnings).toEqual([]);
+      expect(getTaskSetup(result.data.id)?.repos[0].source).toBe(source);
+
+      withScripts(declared({ source, setup: "make new-setup", setupHash: "changed-hash" }));
+      const rerun = await operations.rerunRepoSetup(result.data.id, "api");
+      expect(calls("run_task_script")).toHaveLength(2);
+      expect(calls("run_task_script")[1][1]?.script).toBe("make new-setup");
+      expect(loadScriptApprovals).not.toHaveBeenCalled();
+      expect(persist).not.toHaveBeenCalled();
+      expect(rerun.data.steps).toEqual([{ stage: "script", status: "completed" }]);
+      expect(getTaskSetup(result.data.id)).toMatchObject({ active: false, warnings: [] });
+    }
+  );
+
+  it("prefers the app override over repository setup", async () => {
     withScripts(declared({ setup: "make setup", setupHash: "setup-hash" }));
     const { operations } = fixture();
+    await operations.updateWorkspace("w1", {
+      repos: workspace.repos.map((repo) =>
+        repo.id === "api" ? { ...repo, scripts: { setup: "make local-setup" } } : repo
+      ),
+    });
     const result = await operations.createTask(input);
-    expect(calls("run_task_script")).toEqual([]);
-    expect(result.setup?.[0].steps).toContainEqual({ stage: "script", status: "needs_approval" });
-    expect(result.warnings).toContainEqual(
-      expect.objectContaining({ stage: "script", repoId: "api" })
-    );
-    const repo = getTaskSetup(result.data.id)!.repos[0];
-    expect(repo.approval).toMatchObject({ script: "make setup", hash: "setup-hash" });
-
-    const rerun = await operations.rerunRepoSetup(result.data.id, "api", "approve");
-    expect(persist).toHaveBeenCalledWith([["scriptApprovals", { "/repos/api": ["setup-hash"] }]]);
     expect(calls("run_task_script")).toHaveLength(1);
-    expect(rerun.data.steps).toEqual([{ stage: "script", status: "completed" }]);
-    expect(getTaskSetup(result.data.id)).toMatchObject({ active: false, warnings: [] });
-    expect(getTaskSetup(result.data.id)?.repos[0].approval).toBeUndefined();
+    expect(calls("run_task_script")[0][1]?.script).toBe("make local-setup");
+    expect(getTaskSetup(result.data.id)?.repos[0].source).toBe("local");
+    expect(result.warnings).toEqual([]);
   });
 
   it("can fall back to detected setup instead of a repository script", async () => {

@@ -8,7 +8,6 @@ import {
   initializeTaskSetup,
   getTaskSetup,
   planRepoSetup,
-  updateRepoSetup,
   updateSetupStep,
   updateTaskSetup,
 } from "../../services/taskSetup";
@@ -198,7 +197,7 @@ it("cancels an active countdown if an error arrives", () => {
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 });
 
-it("shows a repository script waiting for approval and runs the chosen option", async () => {
+it("offers retry and detected setup after a repository script finishes", () => {
   const rerun = vi.fn().mockResolvedValue(undefined);
   render(<TaskSetupProgress taskId="progress-test" controls={{ rerun, cancel: vi.fn() }} />);
   act(() => {
@@ -207,20 +206,16 @@ it("shows a repository script waiting for approval and runs the chosen option", 
       []
     );
     planRepoSetup("progress-test", "api", ["script"], "conductor");
-    updateSetupStep("progress-test", "api", "script", "needs_approval", []);
-    updateRepoSetup("progress-test", "api", (repo) => ({
-      ...repo,
-      approval: { source: "conductor", script: "npm ci", hash: "h" },
-    }));
+    updateSetupStep("progress-test", "api", "script", "completed", []);
     updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, active: false });
   });
-  expect(screen.getByRole("status")).toHaveTextContent("Setup waiting for approval");
-  expect(screen.getByText("npm ci")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Setup completed");
+  expect(screen.queryByRole("button", { name: "Approve and run" })).not.toBeInTheDocument();
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Use detected setup" }));
   expect(rerun).toHaveBeenCalledWith("progress-test", "api", "detected");
-  fireEvent.click(screen.getByRole("button", { name: "Approve and run" }));
-  expect(rerun).toHaveBeenLastCalledWith("progress-test", "api", "approve");
+  fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+  expect(rerun).toHaveBeenLastCalledWith("progress-test", "api", "retry");
 });
 
 it("offers stopping a running setup script and keeps finished script results visible", () => {
