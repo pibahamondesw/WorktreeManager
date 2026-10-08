@@ -1,3 +1,5 @@
+import { updateBinding, type Shortcut } from "../shortcuts/catalog";
+import { syncNativeShortcuts, setShortcutOverrides } from "../shortcuts/runtime";
 import {
   githubPrStatus,
   invalidateGithubRepo,
@@ -223,6 +225,36 @@ export class Operations {
 
   change(build: (state: AppState) => Partial<AppState>) {
     return this.enqueue(() => this.write(build(this.getState())));
+  }
+
+  updateShortcut(id: string, values: Shortcut[] | null, reassign = false) {
+    return this.enqueue(async () => {
+      const previous = this.getState().shortcutOverrides ?? {};
+      const next = updateBinding(previous, id, values, reassign);
+      if (JSON.stringify(previous) === JSON.stringify(next)) return;
+      await syncNativeShortcuts(next);
+      try {
+        await this.write({ shortcutOverrides: next });
+      } catch (error) {
+        await syncNativeShortcuts(previous);
+        throw error;
+      }
+      setShortcutOverrides(next);
+    });
+  }
+
+  resetShortcuts() {
+    return this.enqueue(async () => {
+      const previous = this.getState().shortcutOverrides ?? {};
+      await syncNativeShortcuts({});
+      try {
+        await this.write({ shortcutOverrides: {} });
+      } catch (error) {
+        await syncNativeShortcuts(previous);
+        throw error;
+      }
+      setShortcutOverrides({});
+    });
   }
 
   updateVault(vault: VaultConfig) {

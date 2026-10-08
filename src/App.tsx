@@ -9,7 +9,7 @@ import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
 import { enableVault, VaultAgent } from "./services/vault";
-import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { isShortcutCaptureActive, useShortcutActions } from "./shortcuts/runtime";
 import { useUpdater } from "./hooks/useUpdater";
 import { useLinearOrgKeyBackfill } from "./hooks/useLinearOrgKeyBackfill";
 import { useDoctor } from "./hooks/useDoctor";
@@ -122,7 +122,13 @@ function App() {
     [state.tasks, state.workspaces]
   );
 
-  const { recordTaskVisit, recordWorkspaceVisit, ...history } = useNavigationHistory({
+  const {
+    recordTaskVisit,
+    recordWorkspaceVisit,
+    back: goBack,
+    forward: goForward,
+    ...history
+  } = useNavigationHistory({
     isNavigable,
     onNavigate: (entry) => {
       if (entry.kind === "task") {
@@ -178,13 +184,16 @@ function App() {
 
   useEffect(() => {
     const unlisten = listen<string>("editor-navigate", ({ payload }) => {
+      if (isShortcutCaptureActive()) return;
       if (payload === "back") closeTask();
       if (payload === "search") openSearch(false);
+      if (payload === "history-back") goBack();
+      if (payload === "history-forward") goForward();
     });
     return () => {
       void unlisten.then((stop) => stop());
     };
-  }, [closeTask, openSearch]);
+  }, [closeTask, openSearch, goBack, goForward]);
 
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
@@ -269,21 +278,17 @@ function App() {
     .map((c) => c.label);
   const showDoctorAlert = missingDependencies.length > 0 && !doctorAlertDismissed;
 
-  useKeyboardShortcuts({
-    p: {
+  useShortcutActions({
+    "app.workspace.add": {
       handler: () => setShowAddWorkspace(true),
       enabled: state.setup.isComplete && !search.open,
     },
-    "meta+shift+r": { handler: () => window.location.reload() },
-    "[": {
+    "app.reload": { handler: () => window.location.reload() },
+    "app.sidebar": {
       handler: toggleSidebarCollapsed,
       enabled: state.setup.isComplete && !search.open,
     },
-    "{": {
-      handler: toggleSidebarCollapsed,
-      enabled: state.setup.isComplete && !search.open,
-    },
-    "meta+s": {
+    "app.settings": {
       handler: () => {
         setSearch((current) => ({ ...current, open: false }));
         setSettingsSection("theme");
@@ -291,27 +296,27 @@ function App() {
       enabled: state.setup.isComplete,
       inTextFields: search.open,
     },
-    "meta+k": {
+    "app.search": {
       handler: () => openSearch(false),
       enabled: state.setup.isComplete,
       inTextFields: true,
     },
-    "meta+f": {
+    "app.search.workspace": {
       handler: () => openSearch(true),
       enabled: state.setup.isComplete,
       inTextFields: true,
     },
-    "meta+ArrowLeft": {
-      handler: history.back,
+    "app.history.back": {
+      handler: goBack,
       enabled: state.setup.isComplete && !search.open && history.canGoBack,
     },
-    "meta+ArrowRight": {
-      handler: history.forward,
+    "app.history.forward": {
+      handler: goForward,
       enabled: state.setup.isComplete && !search.open && history.canGoForward,
     },
     ...Object.fromEntries(
       Array.from({ length: 10 }, (_, i) => [
-        `meta+${i}`,
+        `workspace.${i}`,
         {
           handler: () => handleSelectWorkspace(state.workspaces[i].id),
           enabled: state.setup.isComplete && !search.open && i < state.workspaces.length,
@@ -462,8 +467,8 @@ function App() {
             }}
             canGoBack={history.canGoBack}
             canGoForward={history.canGoForward}
-            onGoBack={history.back}
-            onGoForward={history.forward}
+            onGoBack={goBack}
+            onGoForward={goForward}
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={toggleSidebarCollapsed}
             requestNewTask={newTaskRequested}

@@ -1,7 +1,9 @@
+import { useShortcutLabels } from "../../shortcuts/runtime";
 import { useZoom } from "../../hooks/useZoom";
 
 /** Lives in the fixed native-titlebar strip, including during setup and in modals. */
 export function ZoomControls() {
+  const shortcutLabel = useShortcutLabels();
   const { zoom, zoomIn, zoomOut, resetZoom, canZoomIn, canZoomOut } = useZoom();
   const buttonClass =
     "px-1 rounded hover:bg-bg-hover hover:text-text-primary disabled:opacity-30 disabled:cursor-default cursor-pointer focus-visible:outline focus-visible:outline-accent";
@@ -19,7 +21,7 @@ export function ZoomControls() {
         onClick={zoomOut}
         disabled={!canZoomOut}
         aria-label="Zoom out"
-        title="Zoom out (⌘− / Ctrl−)"
+        title={`Zoom out (${shortcutLabel("zoom.out")})`}
       >
         −
       </button>
@@ -40,7 +42,7 @@ export function ZoomControls() {
         onClick={zoomIn}
         disabled={!canZoomIn}
         aria-label="Zoom in"
-        title="Zoom in (⌘+ / Ctrl+)"
+        title={`Zoom in (${shortcutLabel("zoom.in")})`}
       >
         +
       </button>

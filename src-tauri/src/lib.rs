@@ -42,6 +42,9 @@ pub fn run() {
         })
         .invoke_handler({
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                menu::set_shortcut_menu,
+                menu::set_shortcut_capture,
+                menu::set_shortcut_context,
                 automation::automation_register,
                 automation::automation_unregister,
                 automation::automation_progress,

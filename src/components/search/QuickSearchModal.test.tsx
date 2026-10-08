@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import "@testing-library/jest-dom/vitest";
 import { QuickSearchModal } from "./QuickSearchModal";
 import { Task, Workspace } from "../../types";
+import { setShortcutOverrides } from "../../shortcuts/runtime";
+import { shortcut } from "../../shortcuts/catalog";
 
 const linearMocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../../services/linear", () => ({
@@ -80,7 +82,10 @@ function renderModal(props: Partial<React.ComponentProps<typeof QuickSearchModal
   };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  setShortcutOverrides({});
+});
 
 describe("QuickSearchModal navigation", () => {
   it("opens the task when Enter is pressed", () => {
@@ -378,3 +383,16 @@ it("keeps ordinary task search working when fetching PRs fails", async () => {
   await waitFor(() => expect(linearMocks.fetch).toHaveBeenCalled());
   expect(screen.getByRole("button", { name: /feature\/ledger-sync/ })).toBeInTheDocument();
 });
+
+it.each(Array.from({ length: 10 }, (_, i) => String(i)))(
+  "allows %s as the first search character despite a saved numeric rebinding",
+  (key) => {
+    setShortcutOverrides({ "palette.new": [shortcut(key)] });
+    const { onNewTask } = renderModal({ initialQuery: "" });
+    const input = screen.getByRole("textbox");
+    expect(fireEvent.keyDown(input, { key })).toBe(true);
+    fireEvent.change(input, { target: { value: key } });
+    expect(input).toHaveValue(key);
+    expect(onNewTask).not.toHaveBeenCalled();
+  }
+);

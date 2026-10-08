@@ -120,7 +120,7 @@ describe("buildCommands", () => {
     });
     expect(commands.find((command) => command.id === "switch-ws:ws-2")?.shortcut).toEqual({
       key: "1",
-      label: "⌘⇧1",
+      label: "⇧⌘1",
       meta: true,
       shift: true,
     });
@@ -147,4 +147,20 @@ it("identifies ready actions by task, repo and PR number", () => {
   expect(new Set(ready.map((command) => command.id)).size).toBe(3);
   expect(ready[0].label).toContain("org/repo #1");
   expect(ready[0].action).toEqual({ type: "ready-pr", taskId: task.id, pr });
+});
+
+it("uses personal bindings in command badges and removes disabled defaults", () => {
+  const commands = buildCommands({
+    workspaces,
+    selectedWorkspaceId: "ws-1",
+    tasks: [task],
+    themeId: "default",
+    editorApp: "cursor",
+    shortcutOverrides: {
+      "palette.settings": [{ key: "y", modifiers: ["meta"] }],
+      "palette.new": [],
+    },
+  });
+  expect(commands.find((command) => command.id === "settings")?.shortcut?.label).toBe("⌘Y");
+  expect(commands.find((command) => command.id === "new-task")?.shortcut).toBeUndefined();
 });

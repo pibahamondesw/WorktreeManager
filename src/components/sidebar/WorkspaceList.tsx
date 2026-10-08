@@ -1,3 +1,4 @@
+import { useShortcutLabels } from "../../shortcuts/runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Task, VaultConfig, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
@@ -74,6 +75,7 @@ export function WorkspaceList({
   workspaceAction,
   onWorkspaceActionHandled,
 }: WorkspaceListProps) {
+  const shortcutLabel = useShortcutLabels();
   const [showAdd, setShowAdd] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [editWorkspace, setEditWorkspace] = useState<Workspace | null>(null);
@@ -175,7 +177,7 @@ export function WorkspaceList({
           <button
             onClick={onCollapse}
             className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-            title="Collapse sidebar ["
+            title={`Collapse sidebar (${shortcutLabel("app.sidebar")})`}
           >
             <SidebarIcon size={14} />
           </button>
@@ -267,9 +269,9 @@ export function WorkspaceList({
               {index <= 9 && (
                 <span
                   className="text-[0.625rem] font-mono text-text-muted/50 flex-shrink-0"
-                  title={`Switch with ⌘${index}`}
+                  title={`Switch with ${shortcutLabel(`workspace.${index}`)}`}
                 >
-                  ⌘{index}
+                  {shortcutLabel(`workspace.${index}`)}
                 </span>
               )}
 
@@ -299,11 +301,11 @@ export function WorkspaceList({
         <button
           onClick={onOpenSettings}
           className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
-          title="Settings (⌘S)"
+          title={`Settings (${shortcutLabel("app.settings")})`}
         >
           <GearIcon size={14} />
           Settings
-          <kbd className="ml-auto text-text-muted/50">⌘S</kbd>
+          <kbd className="ml-auto text-text-muted/50">{shortcutLabel("app.settings")}</kbd>
           {doctorSeverity && doctorSeverity !== "ok" && (
             <span
               className={`ml-auto w-1.5 h-1.5 rounded-full ${

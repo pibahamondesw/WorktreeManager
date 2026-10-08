@@ -1,3 +1,4 @@
+import { useShortcutLabels } from "../../shortcuts/runtime";
 import { taskProjectKey } from "../../search/projects";
 import { Badge } from "../ui/Badge";
 import { BranchIcon } from "../ui/Icons";
@@ -100,6 +101,7 @@ function TaskRow({
   onClick: () => void;
 }) {
   const { result } = item;
+  const label = useShortcutLabels();
   return (
     <button
       data-active={active ? "true" : undefined}
@@ -112,7 +114,7 @@ function TaskRow({
       )}
       {index <= 9 && (
         <span className="text-xs font-mono text-text-muted/40 flex-shrink-0 w-8 text-right">
-          ⌘{index}
+          {label(`palette.jump.${index}`)}
         </span>
       )}
       <div className="flex-1 min-w-0">

@@ -1,3 +1,4 @@
+import { useShortcutActions, useShortcutLabels, dispatchShortcut } from "../../shortcuts/runtime";
 import { ClipboardEvent, DragEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { ChevronDownIcon, CloseIcon } from "../ui/Icons";
@@ -46,7 +47,6 @@ interface ComposerProps {
   onError: (message: string | null) => void;
 }
 
-const PICKER_SHORTCUTS: Record<string, Picker> = { m: "mode", i: "model", e: "effort" };
 const PICKER_LABEL: Record<Picker, string> = {
   model: "Model",
   effort: "Reasoning effort",
@@ -280,14 +280,16 @@ export function Composer({
     return true;
   };
 
+  const shortcutLabel = useShortcutLabels();
+  useShortcutActions({
+    "chat.mode": { handler: () => openPicker("mode") },
+    "chat.model": { handler: () => openPicker("model") },
+    "chat.effort": { handler: () => openPicker("effort"), enabled: efforts.length > 0 },
+  });
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
-    const shortcut = e.metaKey && e.shiftKey && PICKER_SHORTCUTS[e.key.toLowerCase()];
-    if (shortcut) {
-      e.preventDefault();
-      if (shortcut !== "effort" || efforts.length) openPicker(shortcut);
-      return;
-    }
+    dispatchShortcut(e.nativeEvent);
+    if (e.nativeEvent.defaultPrevented) return;
     if (menuOpen) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -337,7 +339,7 @@ export function Composer({
         : `Message ${agentLabel} — / for commands, @ for files${canAttach ? ", paste images" : ""}`;
 
   return (
-    <div className="max-w-3xl mx-auto flex flex-col gap-1.5">
+    <div data-shortcut-context="chat" className="max-w-3xl mx-auto flex flex-col gap-1.5">
       <div className="relative">
         {menuOpen && (
           <OptionMenu
@@ -406,7 +408,7 @@ export function Composer({
             {controls.modes.length > 0 && (
               <Chip
                 label="Permissions"
-                shortcut="⌘⇧M"
+                shortcut={shortcutLabel("chat.mode")}
                 value={labelFor(controls.modes, controls.mode) ?? "Mode"}
                 highlighted={controls.mode === "plan"}
                 onClick={() => openPicker("mode")}
@@ -415,7 +417,7 @@ export function Composer({
             {controls.models.length > 0 && (
               <Chip
                 label="Model"
-                shortcut="⌘⇧I"
+                shortcut={shortcutLabel("chat.model")}
                 value={labelFor(controls.models, controls.model) ?? "Model"}
                 onClick={() => openPicker("model")}
               />
@@ -423,7 +425,7 @@ export function Composer({
             {efforts.length > 0 && (
               <Chip
                 label="Reasoning effort"
-                shortcut="⌘⇧E"
+                shortcut={shortcutLabel("chat.effort")}
                 value={controls.effort ?? "effort"}
                 onClick={() => openPicker("effort")}
               />

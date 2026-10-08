@@ -458,3 +458,13 @@ it("keeps agent usage out of the main app chrome", () => {
   expect(view.queryByRole("button", { name: "Codex usage and limits" })).toBeNull();
   expect(mocks.invoke).not.toHaveBeenCalledWith("codex_cached_usage");
 });
+
+it.each([
+  ["history-back", "historyBack"],
+  ["history-forward", "historyForward"],
+] as const)("handles native %s navigation", (payload, handler) => {
+  render(<App />);
+  const notify = mocks.listen.mock.calls.find(([event]) => event === "editor-navigate")![1];
+  act(() => notify({ payload }));
+  expect(mocks[handler]).toHaveBeenCalledOnce();
+});

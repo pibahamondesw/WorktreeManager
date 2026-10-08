@@ -1,7 +1,7 @@
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 import { Button } from "../ui/Button";
-import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+import { useShortcutActions } from "../../shortcuts/runtime";
 import { SessionStatus, useTerminalSession } from "../../hooks/useTerminalSession";
 import { AgentId } from "../../types";
 
@@ -13,7 +13,13 @@ interface TerminalPaneProps {
   onStatusChange?: (status: SessionStatus) => void;
 }
 
-export function TerminalPane({ taskId, agent, folders, branchName, onStatusChange }: TerminalPaneProps) {
+export function TerminalPane({
+  taskId,
+  agent,
+  folders,
+  branchName,
+  onStatusChange,
+}: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { status, error, restart } = useTerminalSession(containerRef, {
     taskId,
@@ -27,7 +33,7 @@ export function TerminalPane({ taskId, agent, folders, branchName, onStatusChang
     onStatusChange?.(status);
   }, [status, onStatusChange]);
 
-  useKeyboardShortcuts({ Enter: { handler: () => void restart(), enabled: exited } });
+  useShortcutActions({ "terminal.restart": { handler: () => void restart(), enabled: exited } });
 
   return (
     <div className="flex-1 min-h-0 relative bg-bg-primary">
