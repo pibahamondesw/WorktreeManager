@@ -491,3 +491,42 @@ describe("invalid persisted data", () => {
     }
   );
 });
+
+describe("shortcut configuration", () => {
+  it("loads missing overrides as defaults without persisting a catalog", async () => {
+    seed(STORE, {
+      schemaVersion: 4,
+      setup: { isComplete: true },
+      vault: { enabled: false, path: null },
+      workspaces: [],
+      tasks: [],
+    });
+    expect((await loadState()).shortcutOverrides).toEqual({});
+    expect(read(STORE)).not.toHaveProperty("shortcutOverrides");
+    expect(savedPaths.size).toBe(0);
+  });
+  it("retains disabled and unknown entries across reloads without rewriting malformed data", async () => {
+    const raw = {
+      "list.new": [],
+      "future.binding": [{ key: "Y", modifiers: ["meta"] }],
+      malformed: [{ key: "Cmd+K+R", modifiers: [] }],
+    };
+    seed(STORE, {
+      schemaVersion: 4,
+      setup: { isComplete: true },
+      vault: { enabled: false, path: null },
+      workspaces: [],
+      tasks: [],
+      shortcutOverrides: raw,
+    });
+    const first = await loadState();
+    const second = await loadState();
+    expect(first.shortcutOverrides).toEqual({
+      "list.new": [],
+      "future.binding": [{ key: "y", modifiers: ["meta"] }],
+    });
+    expect(second.shortcutOverrides).toEqual(first.shortcutOverrides);
+    expect(read(STORE).shortcutOverrides).toEqual(raw);
+    expect(savedPaths.size).toBe(0);
+  });
+});

@@ -1,3 +1,4 @@
+import type { ShortcutOverrides } from "./shortcuts/catalog";
 /** A peer repo that belongs to a Workspace. No member is privileged. */
 export interface WorkspaceRepo {
   id: string;
@@ -64,6 +65,7 @@ export interface VaultConfig {
 }
 
 export interface AppState {
+  shortcutOverrides?: ShortcutOverrides;
   setup: {
     linearApiKey: string | null;
     isComplete: boolean;
@@ -194,6 +196,7 @@ export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
 ];
 
 export const DEFAULT_STATE: AppState = {
+  shortcutOverrides: {},
   setup: {
     linearApiKey: null,
     isComplete: false,
