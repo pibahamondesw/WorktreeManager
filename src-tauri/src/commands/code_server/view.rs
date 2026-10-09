@@ -12,6 +12,8 @@ use super::{server, trust, Bounds, Slot};
 
 pub struct EditorView {
     pub webview: Webview,
+    #[cfg(target_os = "macos")]
+    _shortcuts: Arc<()>,
     unloaded: Arc<AtomicBool>,
     shutdown_url: String,
 }
@@ -120,8 +122,18 @@ pub fn create(
         let _ = view.close();
         return Err(error);
     }
+    #[cfg(target_os = "macos")]
+    let shortcuts = match crate::menu::editor::install(&view) {
+        Ok(shortcuts) => shortcuts,
+        Err(error) => {
+            let _ = view.close();
+            return Err(error);
+        }
+    };
     Ok(EditorView {
         webview: view,
+        #[cfg(target_os = "macos")]
+        _shortcuts: shortcuts,
         unloaded,
         shutdown_url,
     })

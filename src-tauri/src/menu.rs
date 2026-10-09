@@ -2,6 +2,10 @@ use serde::Deserialize;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
+#[cfg(target_os = "macos")]
+#[path = "menu/editor.rs"]
+pub mod editor;
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShortcutBinding {
@@ -131,6 +135,8 @@ fn apply_menu(
     }
     menu.append(&tasks).map_err(|e| e.to_string())?;
     app.set_menu(menu).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    editor::update_priority(bindings, capturing, context, editing);
     Ok(())
 }
 
