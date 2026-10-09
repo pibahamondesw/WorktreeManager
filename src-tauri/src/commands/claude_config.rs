@@ -450,4 +450,58 @@ mod tests {
             serde_json::to_string_pretty(&root).unwrap()
         );
     }
+
+    #[test]
+    fn commands_resolve_home_in_an_isolated_process() {
+        const CHILD_HOME: &str = "WTM_CLAUDE_CONFIG_TEST_CHILD_HOME";
+        if let Ok(home) = std::env::var(CHILD_HOME) {
+            assert_eq!(std::env::var("HOME").unwrap(), home);
+            let base = PathBuf::from(home).join("worktrees");
+            let requested = base.join("requested").to_string_lossy().into_owned();
+            let stale = base.join("stale").to_string_lossy().into_owned();
+            assert_eq!(
+                cleanup_claude_json(vec![requested.clone()]).unwrap(),
+                vec![requested]
+            );
+            assert_eq!(
+                cleanup_claude_json_stale(vec![base.to_string_lossy().into_owned()]).unwrap(),
+                vec![stale]
+            );
+            return;
+        }
+
+        let directory = TestDirectory::new();
+        let base = directory.0.join("worktrees");
+        let live = base.join("live");
+        fs::create_dir_all(&live).unwrap();
+        let live = live.to_string_lossy().into_owned();
+        let unrelated = directory.0.join("unrelated").to_string_lossy().into_owned();
+        let original = json!({
+            "numStartups": 3,
+            "projects": {
+                (base.join("requested").to_string_lossy().into_owned()): {},
+                (base.join("stale").to_string_lossy().into_owned()): {},
+                (live.clone()): { "keep": true },
+                (unrelated.clone()): { "keep": true }
+            }
+        });
+        fs::write(directory.config_path(), original.to_string()).unwrap();
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::claude_config::tests::commands_resolve_home_in_an_isolated_process",
+            ])
+            .env("HOME", &directory.0)
+            .env(CHILD_HOME, &directory.0)
+            .output()
+            .unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stderr}");
+        assert_eq!(
+            load_claude_json(&directory.config_path()).unwrap(),
+            json!({ "numStartups": 3, "projects": { (live): { "keep": true }, (unrelated): { "keep": true } } })
+        );
+    }
 }

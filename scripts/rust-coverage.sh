@@ -48,4 +48,8 @@ rustup run "$toolchain" cargo llvm-cov report --manifest-path src-tauri/Cargo.to
 rustup run "$toolchain" cargo llvm-cov report --manifest-path src-tauri/Cargo.toml \
   --json --summary-only --output-path "$report_dir/summary.json"
 
+diff-cover "$report_dir/lcov.info" --compare-branch="${COVERAGE_BASE:-origin/main}" \
+  --include 'src-tauri/src/**' --fail-under=100 \
+  --format "json:$report_dir/diff-coverage.json"
+
 exit "$test_status"
