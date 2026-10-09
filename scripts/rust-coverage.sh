@@ -12,7 +12,12 @@ toolchain=1.93.1
 test_filters='commands::claude_config::tests:: commands::github::tests:: commands::code_server::view::tests:: menu::'
 report_dir=coverage/rust/macos
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/worktreemanager-target}"
-export CARGO_LLVM_COV_TARGET_DIR="$CARGO_TARGET_DIR/llvm-cov-pilot"
+export CARGO_LLVM_COV_TARGET_DIR="${CARGO_LLVM_COV_TARGET_DIR:-$CARGO_TARGET_DIR/llvm-cov-pilot}"
+export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"
+case " ${RUSTFLAGS:-} " in
+  *' --remap-path-prefix=tests/../src=src '*) ;;
+  *) export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=tests/../src=src" ;;
+esac
 
 rm -rf "$report_dir"
 version=$(rustup run "$toolchain" cargo llvm-cov --version)
@@ -26,31 +31,44 @@ rustup run "$toolchain" rustc -Vv > "$report_dir/toolchain.txt"
 echo "$version" >> "$report_dir/toolchain.txt"
 echo "$test_filters --test menu" >> "$report_dir/toolchain.txt"
 
-run_tests() {
-  /usr/bin/time -p -o "$report_dir/$1-test.txt" sh -eu -c '
-    toolchain=$1
-    shift
-    for test_filter do
-      rustup run "$toolchain" cargo test --locked --manifest-path src-tauri/Cargo.toml --lib "$test_filter"
-    done
-    rustup run "$toolchain" cargo test --locked --manifest-path src-tauri/Cargo.toml --test menu
-  ' sh "$toolchain" $test_filters
-}
-
-/usr/bin/time -p -o "$report_dir/baseline-build.txt" \
-  rustup run "$toolchain" cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --test menu --no-run
-run_tests baseline
 rustup run "$toolchain" cargo llvm-cov clean --workspace --manifest-path src-tauri/Cargo.toml
-coverage_env=$(CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR" \
-  rustup run "$toolchain" cargo llvm-cov show-env --sh --manifest-path src-tauri/Cargo.toml)
+coverage_env=$(rustup run "$toolchain" cargo llvm-cov show-env --sh --manifest-path src-tauri/Cargo.toml)
 test_status=0
 (
   eval "$coverage_env"
-  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=tests/../src=src"
-  export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"
   /usr/bin/time -p -o "$report_dir/instrumented-build.txt" \
-    rustup run "$toolchain" cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --test menu --no-run || exit $?
-  run_tests instrumented
+    rustup run "$toolchain" cargo test --locked --manifest-path src-tauri/Cargo.toml \
+      --lib --test menu --no-run --message-format=json-render-diagnostics \
+      > "$report_dir/build.jsonl" || exit $?
+  /usr/bin/time -p -o "$report_dir/instrumented-test.txt" \
+    python3 - "$report_dir/build.jsonl" $test_filters <<'PY'
+import json
+import subprocess
+import sys
+
+executables = {}
+with open(sys.argv[1]) as messages:
+    for line in messages:
+        if not line.startswith("{"):
+            continue
+        message = json.loads(line)
+        if message.get("reason") != "compiler-artifact" or not message.get("executable"):
+            continue
+        target = message["target"]
+        if target["name"] == "app_lib" and message["profile"]["test"]:
+            executables["unit"] = message["executable"]
+        elif target["name"] == "menu" and target["kind"] == ["test"]:
+            executables["menu"] = message["executable"]
+
+if executables.keys() != {"unit", "menu"}:
+    sys.exit("Expected the app_lib unit tests and native menu test executable")
+
+statuses = [
+    subprocess.run([executables["unit"], *sys.argv[2:]], cwd="src-tauri").returncode,
+    subprocess.run([executables["menu"]], cwd="src-tauri").returncode,
+]
+sys.exit(next((status if status > 0 else 1 for status in statuses if status), 0))
+PY
 ) || test_status=$?
 
 rustup run "$toolchain" cargo llvm-cov report --manifest-path src-tauri/Cargo.toml \

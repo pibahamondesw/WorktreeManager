@@ -183,6 +183,9 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     runs-on: macos-14
     timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+      RUSTFLAGS: --remap-path-prefix=tests/../src=src
     permissions:
       contents: read
     steps:
@@ -216,13 +219,12 @@ jobs:
       - name: Cache Rust coverage build
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: src-tauri
-          key: coverage-macos
+          workspaces: src-tauri -> target/llvm-cov-pilot
+          key: coverage-macos-llvm-cov-0.9.1
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Measure focused Rust coverage
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
           COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: sh scripts/rust-coverage.sh
 
