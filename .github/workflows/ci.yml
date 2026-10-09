@@ -249,10 +249,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
-          manifest-path: src-tauri/Cargo.toml
-          rust-version: stable
+          toolchain: stable
+
+      - name: Install cargo-deny
+        run: |
+          archive="$RUNNER_TEMP/cargo-deny.tar.gz"
+          curl -fsSL https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz -o "$archive"
+          echo "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/dependency-policy-tools"
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP/dependency-policy-tools" cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny
+          echo "$RUNNER_TEMP/dependency-policy-tools" >> "$GITHUB_PATH"
+
+      - name: Check Rust dependency policy
+        run: cargo deny --log-level warn --manifest-path src-tauri/Cargo.toml --all-features check
 
   sast:
     name: Semgrep
