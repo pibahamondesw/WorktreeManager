@@ -132,6 +132,21 @@ Adding `-t timeAgo` to that preview failed the same thresholds; restoring the fu
 
 To roll back the CI integration, remove the `frontend-coverage` job from the [CI workflow](.github/workflows/ci.yml); ordinary tests remain available.
 
+### Rust coverage pilot
+
+```bash
+rustup toolchain install 1.93.1 --profile minimal --component llvm-tools-preview
+rustup run 1.93.1 cargo install cargo-llvm-cov --version 0.9.1 --locked
+python3 -m pip install -r scripts/coverage-requirements.txt
+pnpm run test:coverage:rust
+```
+
+Runs Claude config cleanup tests on macOS and exports LCOV, JSON and timings under `coverage/rust/macos/`. Includes inline test code; excludes dependencies, generated code and build scripts. Native macOS flows and branch coverage are not measured.
+
+Requires 100% coverage of new or modified Rust lines recorded in LCOV, using diff-cover against `origin/main` locally or the PR base in CI. Override `COVERAGE_BASE` for another base. Extend the focused test selection when changing other Rust modules. No changed executable lines means the check does not apply.
+
+CI publishes the `rust-coverage-macos` artifact for seven days and fails when the requirement is not met. Disable it by removing the `rust-coverage` job from the [CI workflow](.github/workflows/ci.yml).
+
 ## Releasing
 
 ```bash

@@ -29,6 +29,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage src/services/store.test.ts src/utils.test.ts src/services/operations.test.ts",
+    "test:coverage:rust": "sh scripts/rust-coverage.sh",
     "test:watch": "vitest",
     "release": "node scripts/bump-version.mjs"
   },
