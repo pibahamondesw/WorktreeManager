@@ -12,25 +12,24 @@ fn claude_json_path() -> PathBuf {
 /// Read and parse `~/.claude.json`. Returns `None` when the file is absent or malformed —
 /// both are treated as "nothing to do" so cleanup never blocks and never risks clobbering a
 /// config we can't understand.
-fn load_claude_json() -> Option<Value> {
-    let content = fs::read_to_string(claude_json_path()).ok()?;
+fn load_claude_json(config_path: &Path) -> Option<Value> {
+    let content = fs::read_to_string(config_path).ok()?;
     serde_json::from_str(&content).ok()
 }
 
 /// Write `root` back to `~/.claude.json` atomically (temp sibling + rename), matching the
 /// existing pretty-printed 2-space format so a concurrent Claude Code write can never observe
 /// a half-written file.
-fn write_claude_json(root: &Value) -> Result<(), String> {
-    let config_path = claude_json_path();
+fn write_claude_json(config_path: &Path, root: &Value) -> Result<(), String> {
     let out = serde_json::to_string_pretty(root)
         .map_err(|e| format!("Failed to serialize Claude config: {e}"))?;
     let tmp = {
-        let mut p = config_path.clone().into_os_string();
+        let mut p = config_path.as_os_str().to_os_string();
         p.push(".wm.tmp");
         PathBuf::from(p)
     };
     fs::write(&tmp, out).map_err(|e| format!("Failed to write Claude config: {e}"))?;
-    fs::rename(&tmp, &config_path).map_err(|e| format!("Failed to finalize Claude config: {e}"))?;
+    fs::rename(&tmp, config_path).map_err(|e| format!("Failed to finalize Claude config: {e}"))?;
     Ok(())
 }
 
@@ -94,14 +93,21 @@ fn entries_under_bases(root: &Value, base_paths: &[String]) -> Vec<String> {
 /// Returns the paths that were actually removed.
 #[tauri::command]
 pub fn cleanup_claude_json(paths: Vec<String>) -> Result<Vec<String>, String> {
-    let Some(mut root) = load_claude_json() else {
+    cleanup_claude_json_at_path(&claude_json_path(), &paths)
+}
+
+fn cleanup_claude_json_at_path(
+    config_path: &Path,
+    paths: &[String],
+) -> Result<Vec<String>, String> {
+    let Some(mut root) = load_claude_json(config_path) else {
         return Ok(Vec::new());
     };
-    let removed = prune_project_entries(&mut root, &paths, |p| Path::new(p).exists());
+    let removed = prune_project_entries(&mut root, paths, |p| Path::new(p).exists());
     if removed.is_empty() {
         return Ok(removed); // nothing changed → leave the file untouched
     }
-    write_claude_json(&root)?;
+    write_claude_json(config_path, &root)?;
     Ok(removed)
 }
 
@@ -115,15 +121,23 @@ pub fn cleanup_claude_json(paths: Vec<String>) -> Result<Vec<String>, String> {
 /// Returns the paths that were actually removed.
 #[tauri::command]
 pub fn cleanup_claude_json_stale(base_paths: Vec<String>) -> Result<Vec<String>, String> {
+    cleanup_claude_json_stale_at_path(&claude_json_path(), &base_paths)
+}
+
+fn cleanup_claude_json_stale_at_path(
+    config_path: &Path,
+    base_paths: &[String],
+) -> Result<Vec<String>, String> {
     let base_paths: Vec<String> = base_paths
-        .into_iter()
+        .iter()
         .filter(|b| !b.trim().is_empty())
+        .cloned()
         .collect();
     if base_paths.is_empty() {
         return Ok(Vec::new());
     }
 
-    let Some(mut root) = load_claude_json() else {
+    let Some(mut root) = load_claude_json(config_path) else {
         return Ok(Vec::new());
     };
     let candidates = entries_under_bases(&root, &base_paths);
@@ -131,7 +145,7 @@ pub fn cleanup_claude_json_stale(base_paths: Vec<String>) -> Result<Vec<String>,
     if removed.is_empty() {
         return Ok(removed);
     }
-    write_claude_json(&root)?;
+    write_claude_json(config_path, &root)?;
     Ok(removed)
 }
 
@@ -139,6 +153,27 @@ pub fn cleanup_claude_json_stale(base_paths: Vec<String>) -> Result<Vec<String>,
 mod tests {
     use super::*;
     use serde_json::json;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("wm-claude-config-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn config_path(&self) -> PathBuf {
+            self.0.join(".claude.json")
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn sample() -> Value {
         json!({
@@ -227,5 +262,192 @@ mod tests {
         let projects = root["projects"].as_object().unwrap();
         assert!(projects.contains_key("/wt/base/repo/live"));
         assert!(projects.contains_key("/elsewhere/repo/gone"));
+    }
+
+    #[test]
+    fn missing_config_is_not_created_by_cleanup() {
+        let directory = TestDirectory::new();
+        let config_path = directory.config_path();
+        let paths = vec![directory.0.join("gone").to_string_lossy().into_owned()];
+
+        assert!(cleanup_claude_json_at_path(&config_path, &paths)
+            .unwrap()
+            .is_empty());
+        assert!(cleanup_claude_json_stale_at_path(&config_path, &paths)
+            .unwrap()
+            .is_empty());
+        assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_malformed_configs_and_configs_without_a_projects_map() {
+        let directory = TestDirectory::new();
+        let config_path = directory.config_path();
+        let paths = vec![directory.0.join("gone").to_string_lossy().into_owned()];
+
+        for contents in [
+            "{invalid json",
+            "null",
+            "{\"numStartups\": 3}\n",
+            "{\"projects\": []}\n",
+        ] {
+            fs::write(&config_path, contents).unwrap();
+
+            assert!(cleanup_claude_json_at_path(&config_path, &paths)
+                .unwrap()
+                .is_empty());
+            assert!(cleanup_claude_json_stale_at_path(&config_path, &paths)
+                .unwrap()
+                .is_empty());
+            assert_eq!(fs::read_to_string(&config_path).unwrap(), contents);
+            assert!(!directory.0.join(".claude.json.wm.tmp").exists());
+        }
+    }
+
+    #[test]
+    fn cleanup_persists_only_requested_missing_projects_and_is_idempotent() {
+        let directory = TestDirectory::new();
+        let config_path = directory.config_path();
+        let live_path = directory.0.join("live");
+        fs::create_dir(&live_path).unwrap();
+        let live = live_path.to_string_lossy().into_owned();
+        let gone = directory.0.join("gone").to_string_lossy().into_owned();
+        let unrelated = directory.0.join("unrelated").to_string_lossy().into_owned();
+        let original = json!({
+            "numStartups": 3,
+            "settings": { "keep": true },
+            "projects": {
+                (live.clone()): { "hasTrustDialogAccepted": true },
+                (gone.clone()): { "hasTrustDialogAccepted": false },
+                (unrelated.clone()): { "customSetting": "keep" }
+            }
+        });
+        fs::write(&config_path, original.to_string()).unwrap();
+        let paths = vec![gone.clone(), live, "/not-in-config".into()];
+
+        assert_eq!(
+            cleanup_claude_json_at_path(&config_path, &paths).unwrap(),
+            vec![gone.clone()]
+        );
+        let mut expected = original;
+        expected["projects"].as_object_mut().unwrap().remove(&gone);
+        let persisted = fs::read_to_string(&config_path).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&persisted).unwrap(), expected);
+        assert_eq!(persisted, serde_json::to_string_pretty(&expected).unwrap());
+        assert!(!directory.0.join(".claude.json.wm.tmp").exists());
+
+        fs::create_dir(directory.0.join(".claude.json.wm.tmp")).unwrap();
+        assert!(cleanup_claude_json_at_path(&config_path, &paths)
+            .unwrap()
+            .is_empty());
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), persisted);
+    }
+
+    #[test]
+    fn stale_cleanup_preserves_live_projects_and_projects_outside_owned_bases() {
+        let directory = TestDirectory::new();
+        let config_path = directory.config_path();
+        let base_path = directory.0.join("worktrees");
+        let live_path = base_path.join("live");
+        fs::create_dir_all(&live_path).unwrap();
+        let base = base_path.to_string_lossy().into_owned();
+        let live = live_path.to_string_lossy().into_owned();
+        let gone = base_path.join("gone").to_string_lossy().into_owned();
+        let sibling = directory
+            .0
+            .join("worktrees-other/gone")
+            .to_string_lossy()
+            .into_owned();
+        let original = json!({
+            "numStartups": 3,
+            "projects": {
+                (base.clone()): { "keep": "base directory" },
+                (live): { "keep": "live worktree" },
+                (gone.clone()): {},
+                (sibling): { "keep": "unowned worktree" }
+            }
+        });
+        fs::write(&config_path, original.to_string()).unwrap();
+        let bases = vec!["".into(), "  \n".into(), format!("{base}/"), base];
+
+        assert_eq!(
+            cleanup_claude_json_stale_at_path(&config_path, &bases).unwrap(),
+            vec![gone.clone()]
+        );
+        let mut expected = original;
+        expected["projects"].as_object_mut().unwrap().remove(&gone);
+        let persisted = fs::read_to_string(&config_path).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&persisted).unwrap(), expected);
+        assert!(!directory.0.join(".claude.json.wm.tmp").exists());
+
+        fs::create_dir(directory.0.join(".claude.json.wm.tmp")).unwrap();
+        assert!(cleanup_claude_json_stale_at_path(&config_path, &bases)
+            .unwrap()
+            .is_empty());
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), persisted);
+    }
+
+    #[test]
+    fn stale_cleanup_with_no_valid_bases_leaves_config_untouched() {
+        let directory = TestDirectory::new();
+        let config_path = directory.config_path();
+        let contents = "{\"projects\": {\"/gone\": {}}}\n";
+        fs::write(&config_path, contents).unwrap();
+
+        for bases in [vec![], vec!["".into(), " \t\n".into()]] {
+            assert!(cleanup_claude_json_stale_at_path(&config_path, &bases)
+                .unwrap()
+                .is_empty());
+            assert_eq!(fs::read_to_string(&config_path).unwrap(), contents);
+        }
+    }
+
+    #[test]
+    fn failed_temporary_write_preserves_original_config() {
+        let directory = TestDirectory::new();
+        let config_path = directory.config_path();
+        let gone = directory.0.join("gone").to_string_lossy().into_owned();
+        let contents = json!({ "projects": { (gone.clone()): {} } }).to_string();
+        fs::write(&config_path, &contents).unwrap();
+        fs::create_dir(directory.0.join(".claude.json.wm.tmp")).unwrap();
+
+        let error = cleanup_claude_json_at_path(&config_path, &[gone]).unwrap_err();
+
+        assert!(error.starts_with("Failed to write Claude config:"));
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), contents);
+    }
+
+    #[test]
+    fn failed_stale_cleanup_write_preserves_original_config() {
+        let directory = TestDirectory::new();
+        let config_path = directory.config_path();
+        let base = directory.0.join("worktrees").to_string_lossy().into_owned();
+        let contents = json!({ "projects": { (format!("{base}/gone")): {} } }).to_string();
+        fs::write(&config_path, &contents).unwrap();
+        fs::create_dir(directory.0.join(".claude.json.wm.tmp")).unwrap();
+
+        let error = cleanup_claude_json_stale_at_path(&config_path, &[base]).unwrap_err();
+
+        assert!(error.starts_with("Failed to write Claude config:"));
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), contents);
+    }
+
+    #[test]
+    fn failed_rename_keeps_destination_directory_and_temporary_contents() {
+        let directory = TestDirectory::new();
+        let config_path = directory.config_path();
+        fs::create_dir(&config_path).unwrap();
+        let marker = config_path.join("preserve");
+        fs::write(&marker, "original").unwrap();
+        let root = json!({ "projects": {} });
+
+        let error = write_claude_json(&config_path, &root).unwrap_err();
+
+        assert!(error.starts_with("Failed to finalize Claude config:"));
+        assert_eq!(fs::read_to_string(marker).unwrap(), "original");
+        assert_eq!(
+            fs::read_to_string(directory.0.join(".claude.json.wm.tmp")).unwrap(),
+            serde_json::to_string_pretty(&root).unwrap()
+        );
     }
 }
