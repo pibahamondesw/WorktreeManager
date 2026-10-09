@@ -141,7 +141,9 @@ python3 -m pip install -r scripts/coverage-requirements.txt
 pnpm run test:coverage:rust
 ```
 
-Runs Claude config cleanup tests on macOS and exports LCOV, JSON and timings under `coverage/rust/macos/`. Includes inline test code; excludes dependencies, generated code and build scripts. Native macOS flows and branch coverage are not measured.
+Runs focused Claude config cleanup, GitHub, editor view and menu tests, including the native WebKit menu regression on macOS, and exports LCOV, JSON and timings under `coverage/rust/macos/`. Includes inline test code; excludes dependencies, generated code and build scripts. Branch coverage is not measured.
+
+Builds the instrumented test executables once and runs them directly, without a separate uninstrumented baseline. CI caches only the instrumented dependencies, keyed by the compiler flags and pinned coverage tool version.
 
 Requires 100% coverage of new or modified Rust lines recorded in LCOV, using diff-cover against `origin/main` locally or the PR base in CI. Override `COVERAGE_BASE` for another base. Extend the focused test selection when changing other Rust modules. No changed executable lines means the check does not apply.
 

@@ -431,6 +431,45 @@ pub fn vscode_list(registry: State<'_, EditorRegistry>) -> Vec<SessionInfo> {
         .collect()
 }
 
+#[cfg(all(test, target_os = "macos"))]
+#[allow(dead_code)]
+pub fn native_test_view(app: &AppHandle, label: &str) -> view::EditorView {
+    let root = std::env::temp_dir().join(runtime::random_id().unwrap());
+    let slot = Slot {
+        label: label.into(),
+        folders: vec![root.clone()],
+        closed: AtomicBool::new(false),
+        info: Mutex::new(SessionInfo {
+            task_id: "native-shortcuts".into(),
+            generation: "native-shortcuts".into(),
+            status: "starting".into(),
+            pid: None,
+            error: None,
+        }),
+        server: Arc::new(server::Server::new(&root, "native-shortcuts")),
+        session: session::Session::create(&root, "session", "native-shortcuts").unwrap(),
+        view: tokio::sync::Mutex::new(None),
+    };
+    let connection = server::Connection {
+        url: "http://127.0.0.1:9/".into(),
+        cookie: "test-session=native-shortcuts".into(),
+        pid: 0,
+    };
+    let editor = view::create(app, &slot, &connection, &root.join("test.code-workspace")).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    editor
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[allow(dead_code)]
+pub fn native_test_failed_view_cleanup(view: &tauri::Webview) {
+    assert_eq!(
+        view::close_on_error::<()>(view, Err("shortcut setup failed".into())),
+        Err("shortcut setup failed".into())
+    );
+    assert!(view.app_handle().get_webview(view.label()).is_none());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

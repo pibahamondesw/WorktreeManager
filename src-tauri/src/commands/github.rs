@@ -260,7 +260,7 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "cat; exit 1"]);
         assert_eq!(
-            run_process(&mut command, payload, Duration::from_secs(1), true).unwrap(),
+            run_process(&mut command, payload, Duration::from_secs(5), true).unwrap(),
             payload
         );
     }

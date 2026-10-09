@@ -12,6 +12,8 @@ use super::{server, trust, Bounds, Slot};
 
 pub struct EditorView {
     pub webview: Webview,
+    #[cfg(target_os = "macos")]
+    _shortcuts: Arc<()>,
     unloaded: Arc<AtomicBool>,
     shutdown_url: String,
 }
@@ -116,15 +118,23 @@ pub fn create(
         view.set_cookie(cookie).map_err(|error| error.to_string())?;
         view.navigate(initial).map_err(|error| error.to_string())
     })();
-    if let Err(error) = setup {
-        let _ = view.close();
-        return Err(error);
-    }
+    close_on_error(&view, setup)?;
+    #[cfg(target_os = "macos")]
+    let shortcuts = close_on_error(&view, crate::menu::editor::install(&view))?;
     Ok(EditorView {
         webview: view,
+        #[cfg(target_os = "macos")]
+        _shortcuts: shortcuts,
         unloaded,
         shutdown_url,
     })
+}
+
+pub(super) fn close_on_error<T>(view: &Webview, result: Result<T, String>) -> Result<T, String> {
+    if result.is_err() {
+        let _ = view.close();
+    }
+    result
 }
 
 fn allows_task_navigation(target: &tauri::Url, workspace: &str) -> bool {
