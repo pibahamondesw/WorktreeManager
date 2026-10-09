@@ -48,7 +48,7 @@ jobs:
             workflow_lint:
               - '{.github/workflows/**,.actionlint/**}'
             rust:
-              - '{src-tauri/**,deny.toml}'
+              - '{src-tauri/**,deny.toml,scripts/rust-coverage.sh}'
             vault_kit:
               - 'vault-kit/**'
             workflow:
@@ -176,6 +176,56 @@ jobs:
 
       - name: Test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  rust-coverage:
+    name: Rust coverage (macOS, pilot report)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    continue-on-error: true
+    runs-on: macos-14
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust and LLVM tools
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: 1.93.1
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        run: |
+          archive="$RUNNER_TEMP/cargo-llvm-cov.tar.gz"
+          curl -fsSL https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-aarch64-apple-darwin.tar.gz -o "$archive"
+          echo "7e821a6c90c0884f79f759f5d9be50799ade67bb82515186d922f26032ef43b8  $archive" | shasum -a 256 --check
+          mkdir -p "$RUNNER_TEMP/coverage-tools"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/coverage-tools" cargo-llvm-cov
+          echo "$RUNNER_TEMP/coverage-tools" >> "$GITHUB_PATH"
+
+      - name: Cache Rust coverage build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          key: coverage-macos
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Measure focused Rust coverage
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+        run: sh scripts/rust-coverage.sh
+
+      - name: Upload coverage and timing reports
+        if: ${{ !cancelled() && hashFiles('coverage/rust/macos/toolchain.txt') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rust-coverage-macos
+          path: coverage/rust/macos/
+          if-no-files-found: error
+          retention-days: 7
 
   dependency-policy:
     name: Rust dependency policy
