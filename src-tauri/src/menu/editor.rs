@@ -92,12 +92,15 @@ fn focused(view: &AnyObject) -> bool {
             return false;
         }
         let window: *mut AnyObject = msg_send![view, window];
-        let responder: *mut AnyObject = msg_send![window, firstResponder];
-        let Some(responder) = responder.as_ref() else {
+        let Some(window) = window.as_ref() else {
             return false;
         };
-        let is_view: bool = msg_send![responder, isKindOfClass: AnyClass::get(c"NSView").unwrap()];
-        is_view && msg_send![responder, isDescendantOf: view]
+        let responder: *mut AnyObject = msg_send![window, firstResponder];
+        responder.as_ref().is_some_and(|responder| {
+            let is_view: bool =
+                msg_send![responder, isKindOfClass: AnyClass::get(c"NSView").unwrap()];
+            is_view && msg_send![responder, isDescendantOf: view]
+        })
     }
 }
 
@@ -115,26 +118,39 @@ extern "C-unwind" fn perform_key_equivalent(
         if !editor || !focused(view) {
             return ORIGINAL_KEY_EQUIVALENT.get().unwrap()(view, selector, event);
         }
-        let characters: *mut AnyObject = msg_send![event, charactersIgnoringModifiers];
-        let flags: usize = msg_send![event, modifierFlags];
-        if let Some(characters) = characters.as_ref() {
-            let utf8: *const std::ffi::c_char = msg_send![characters, UTF8String];
-            if !utf8.is_null() {
-                let characters = CStr::from_ptr(utf8).to_string_lossy();
-                if system_shortcut(&characters, flags)
-                    || PRIORITY_BINDINGS
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .any(|binding| matches(binding, &characters, flags))
-                {
-                    return Bool::NO;
-                }
-            }
+        if priority_event(event) {
+            return Bool::NO;
         }
         let _: () = msg_send![view, keyDown: event];
         Bool::YES
     }
+}
+
+fn priority_event(event: *mut AnyObject) -> bool {
+    unsafe {
+        let characters: *mut AnyObject = msg_send![event, charactersIgnoringModifiers];
+        let flags: usize = msg_send![event, modifierFlags];
+        let Some(characters) = characters.as_ref() else {
+            return false;
+        };
+        let utf8: *const std::ffi::c_char = msg_send![characters, UTF8String];
+        if utf8.is_null() {
+            return false;
+        }
+        let characters = CStr::from_ptr(utf8).to_string_lossy();
+        system_shortcut(&characters, flags)
+            || PRIORITY_BINDINGS
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|binding| matches(binding, &characters, flags))
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub fn native_test_nontext_event(event: *mut AnyObject) {
+    assert!(!priority_event(event));
 }
 
 pub fn install(view: &tauri::Webview) -> Result<Arc<()>, String> {
@@ -198,6 +214,12 @@ mod tests {
             assert!(matches(&binding(key, &["meta"]), characters, COMMAND));
         }
         assert!(matches(&binding("+", &["meta"]), "+", COMMAND | SHIFT));
+        assert!(matches(
+            &binding("z", &["meta", "shift"]),
+            "Z",
+            COMMAND | SHIFT
+        ));
+        assert!(!matches(&binding("z", &["super"]), "z", COMMAND));
     }
 
     #[test]
