@@ -3,9 +3,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { MarkdownText } from "./ChatItemView";
+import { ChatItemView, MarkdownText } from "./ChatItemView";
+import { renderMermaid } from "./mermaid";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("./mermaid", () => ({ renderMermaid: vi.fn() }));
 
 beforeEach(() => vi.mocked(openUrl).mockReset().mockResolvedValue(undefined));
 afterEach(cleanup);
@@ -65,4 +67,48 @@ it("does not open unsafe URLs stripped by Markdown", () => {
 
   expect(fireEvent.click(screen.getByText("Unsafe"))).toBe(false);
   expect(openUrl).not.toHaveBeenCalled();
+});
+
+it("labels and highlights fenced code by language", () => {
+  render(<MarkdownText text={'```ruby\ndef hola\n  "hello"\nend\n```'} />);
+
+  expect(screen.getByRole("figure")).toHaveTextContent(/^ruby/);
+  expect(screen.getByText("def")).toHaveClass("hljs-keyword");
+  expect(screen.getByText('"hello"')).toHaveClass("hljs-string");
+});
+
+it("leaves unlabeled code blocks without a language header", () => {
+  render(<MarkdownText text={"```\nplain output\n```"} />);
+
+  expect(screen.getByRole("figure")).toHaveTextContent(/^plain output$/);
+});
+
+it("renders user messages as Markdown while keeping their line breaks", () => {
+  const { container } = render(
+    <ChatItemView
+      item={{ id: "u", kind: "user", text: 'First line\nsecond line\n```json\n{"a": 1}\n```' }}
+    />
+  );
+
+  expect(container.querySelector(".chat-user-message p")?.textContent).toBe(
+    "First line\nsecond line"
+  );
+  expect(screen.getByText('"a"')).toHaveClass("hljs-attr");
+});
+
+it("draws valid mermaid diagrams and keeps the source for invalid ones", async () => {
+  vi.mocked(renderMermaid).mockImplementation(async (source) =>
+    source.includes("A-->B") ? '<svg data-testid="diagram"></svg>' : null
+  );
+  const { rerender } = render(<MarkdownText text={"```mermaid\ngraph TD\nA-->B\n```"} />);
+
+  expect(await screen.findByRole("img", { name: "Mermaid diagram" })).toContainElement(
+    screen.getByTestId("diagram")
+  );
+
+  rerender(<MarkdownText text={"```mermaid\ngraph TD\nA-->\n```"} />);
+  expect(await screen.findByText(/A-->/)).toBeInTheDocument();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  expect(screen.queryByRole("img", { name: "Mermaid diagram" })).not.toBeInTheDocument();
+  expect(renderMermaid).toHaveBeenLastCalledWith("graph TD\nA-->\n");
 });

@@ -19,7 +19,7 @@ interface OptionMenuProps {
   onHover: (index: number) => void;
 }
 
-/** Listbox shown above the composer; keyboard navigation is driven by the composer's textarea. */
+/** Listbox shown above the composer; keyboard navigation is driven by the composer's editor. */
 export function OptionMenu({
   label,
   options,
