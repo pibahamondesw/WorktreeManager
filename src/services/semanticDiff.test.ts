@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { diffBlocks, DiffLine, lineSegments, semanticDiff } from "./semanticDiff";
+import { analyzeSource } from "./syntaxAnalysis";
 
 const changed = (line: DiffLine) =>
   line.changes.map((range) => line.text.slice(range.from, range.to));
@@ -88,5 +89,24 @@ describe("lineSegments", () => {
       { text: "1", className: "hljs-number", changed: true },
       { text: ";", className: undefined, changed: false },
     ]);
+  });
+});
+
+describe("analyzeSource", () => {
+  it("uses the language grammar for tokens and highlighting", async () => {
+    const text = 'const a => "two words";';
+
+    const analysis = await analyzeSource("src/example.ts", text);
+
+    const tokens = analysis.tokens.map((range) => text.slice(range.from, range.to));
+    expect(tokens).toEqual(["const", "a", "=>", '"', "two", "words", '"', ";"]);
+    expect(analysis.highlights).toContainEqual({ from: 0, to: 5, className: "hljs-keyword" });
+  });
+
+  it("falls back to word tokens for unknown files", async () => {
+    const analysis = await analyzeSource("notes.unknown-extension", "a-b");
+
+    expect(analysis.highlights).toEqual([]);
+    expect(analysis.tokens).toHaveLength(3);
   });
 });
