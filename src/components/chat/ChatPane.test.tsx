@@ -673,6 +673,86 @@ describe("ChatPane", () => {
       )
     );
   });
+
+  it("summarizes each turn per repository and reviews the conversation's changes", async () => {
+    const file = (folder: string, path: string, additions: number, deletions: number) => ({
+      folder,
+      path,
+      status: "modified",
+      additions,
+      deletions,
+      binary: false,
+    });
+    const turn = {
+      before: "b1",
+      after: "a1",
+      files: [file("/wt/a", "src/x.ts", 1, 1), file("/wt/b", "y.rb", 2, 0)],
+    };
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            items: [
+              { id: "u", kind: "user", text: "Fix the bug" },
+              { id: "a", kind: "assistant", text: "Fixed" },
+              { id: "u2", kind: "user", text: "Explain it" },
+              { id: "a2", kind: "assistant", text: "Sure" },
+            ],
+          })
+        );
+      if (command === "chat_changes")
+        return Promise.resolve({
+          turns: [
+            { items: ["u"], changes: turn },
+            { items: ["u2"], changes: { before: "a1", after: "a1", files: [] } },
+          ],
+          conversation: { ...turn, files: [file("/wt/a", "src/x.ts", 3, 1)] },
+        });
+      if (command === "chat_file_diff")
+        return Promise.resolve({
+          before: { kind: "text", text: "const a = 1;\n" },
+          after: { kind: "text", text: "const a = 2;\n" },
+        });
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a", "/wt/b"]} />);
+
+    const card = await screen.findByRole("button", { name: /Review 2 changed files/ });
+    expect(card).toHaveTextContent("a · 1 file changed+1 −1");
+    expect(card).toHaveTextContent("b · 1 file changed+2 −0");
+    expect(screen.getAllByRole("button", { name: /Review/ })).toHaveLength(1);
+    expect(screen.getByText("Fixed").compareDocumentPosition(card)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Changes +3 −1" }));
+    const panel = screen.getByRole("region", { name: "Changes" });
+    expect(within(panel).getByLabelText("Changes scope")).toHaveValue("conversation");
+    await within(panel).findByText("2", { selector: ".diff-changed" });
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_file_diff", {
+      taskId: "t1",
+      agent: "codex",
+      before: "b1",
+      after: "a1",
+      folder: "/wt/a",
+      path: "src/x.ts",
+      previousPath: null,
+    });
+
+    fireEvent.change(within(panel).getByLabelText("Changes scope"), { target: { value: "0" } });
+    const files = within(panel).getByRole("navigation", { name: "Changed files" });
+    expect(files).toHaveTextContent("a+1 −1Mx.ts src+1 −1b+2 −0My.rb+2 −0");
+    fireEvent.click(within(files).getByRole("button", { name: /y\.rb/ }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "chat_file_diff",
+        expect.objectContaining({ folder: "/wt/b", path: "y.rb" })
+      )
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Changes" })).toBeNull();
+  });
 });
 
 it.each(["claude", "codex"] as const)(
