@@ -433,6 +433,13 @@ impl Checkpoints {
         Ok(backup)
     }
 
+    fn read_stored(&self, folder: &str, file: &FileState) -> Result<Vec<u8>, String> {
+        match &file.git_blob {
+            Some(object) => checkpoint_git::read_blob(folder, object),
+            None => fs::read(self.dir.join("blobs").join(&file.blob)).map_err(|e| e.to_string()),
+        }
+    }
+
     fn prepare_restore(
         &self,
         target: &Checkpoint,
@@ -456,14 +463,7 @@ impl Checkpoints {
                 let file = target.files.get(name).cloned();
                 let bytes = file
                     .as_ref()
-                    .map(|f| {
-                        if let Some(object) = &f.git_blob {
-                            checkpoint_git::read_blob(&target.folder, object)
-                        } else {
-                            fs::read(self.dir.join("blobs").join(&f.blob))
-                                .map_err(|e| e.to_string())
-                        }
-                    })
+                    .map(|f| self.read_stored(&target.folder, f))
                     .transpose()?;
                 if let (Some(file), Some(bytes)) = (&file, &bytes) {
                     if hash(bytes) != file.blob {
