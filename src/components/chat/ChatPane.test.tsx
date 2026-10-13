@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import { EditorView } from "@codemirror/view";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -20,6 +21,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
 
 import { ChatPane } from "./ChatPane";
+
+const editorOf = (box: HTMLElement) => EditorView.findFromDOM(box)!;
+const composerText = (box: HTMLElement) => editorOf(box).state.doc.toString();
+const typeInto = (box: HTMLElement, value: string) =>
+  act(() =>
+    editorOf(box).dispatch({
+      changes: { from: 0, to: editorOf(box).state.doc.length, insert: value },
+      selection: { anchor: value.length },
+    })
+  );
 
 const snapshot = (overrides = {}) => ({
   generation: 3,
@@ -191,7 +202,7 @@ describe("ChatPane", () => {
   it("sends on Enter, streams the reply and ignores a stale generation", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     const box = await screen.findByRole("textbox", { name: "Message Claude" });
-    fireEvent.change(box, { target: { value: "Add tests" } });
+    typeInto(box, "Add tests");
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_send", {
@@ -201,7 +212,7 @@ describe("ChatPane", () => {
         images: [],
       })
     );
-    expect(box).toHaveValue("");
+    await waitFor(() => expect(composerText(box)).toBe(""));
 
     emit(3, { type: "status", status: { kind: "busy" } });
     emit(3, { type: "upsert", item: { id: "b", kind: "assistant", text: "Work" } });
@@ -209,7 +220,7 @@ describe("ChatPane", () => {
     emit(2, { type: "delta", id: "b", field: "text", delta: " STALE" });
     expect(screen.getByText("Working")).toBeInTheDocument();
 
-    fireEvent.change(box, { target: { value: "and add docs" } });
+    typeInto(box, "and add docs");
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_send", {
@@ -268,7 +279,7 @@ describe("ChatPane", () => {
     );
     render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
     const box = await screen.findByRole("textbox", { name: "Message Codex" });
-    expect(box.getAttribute("placeholder")).not.toContain("paste images");
+    expect(box.getAttribute("aria-placeholder")).not.toContain("paste images");
     fireEvent.paste(box, {
       clipboardData: { files: [new File(["hi"], "one.png", { type: "image/png" })] },
     });
@@ -354,11 +365,11 @@ describe("ChatPane", () => {
     );
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     const box = screen.getByRole("textbox", { name: "Message Claude" });
-    expect(box).toBeDisabled();
-    expect(box).toHaveAttribute("placeholder", "Starting Claude…");
+    expect(box).toHaveAttribute("aria-disabled", "true");
+    expect(box).toHaveAttribute("aria-placeholder", "Starting Claude…");
 
     await act(async () => resolveOpen(snapshot()));
-    expect(box).toBeEnabled();
+    expect(box).not.toHaveAttribute("aria-disabled");
     expect(box).toHaveFocus();
   });
 
@@ -378,7 +389,7 @@ describe("ChatPane", () => {
     await waitFor(() =>
       expect(onStatusChange).toHaveBeenLastCalledWith({ kind: "exited", code: null })
     );
-    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(screen.getByRole("button", { name: "Restart chat" }));
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(
@@ -403,7 +414,7 @@ describe("ChatPane", () => {
   it("opens the model picker from /model instead of sending it", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     const box = await screen.findByRole("textbox", { name: "Message Claude" });
-    fireEvent.change(box, { target: { value: "/mo", selectionStart: 3 } });
+    typeInto(box, "/mo");
     const commands = screen.getByRole("listbox", { name: "Commands" });
     expect(within(commands).getAllByRole("option")[0]).toHaveTextContent("/model");
     fireEvent.keyDown(box, { key: "Enter" });
@@ -428,7 +439,7 @@ describe("ChatPane", () => {
   it("handles typed UI commands and inserts pass-through ones", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     const box = await screen.findByRole("textbox", { name: "Message Claude" });
-    fireEvent.change(box, { target: { value: "/plan" } });
+    typeInto(box, "/plan");
     fireEvent.keyDown(box, { key: "Escape" });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() =>
@@ -439,9 +450,9 @@ describe("ChatPane", () => {
       })
     );
 
-    fireEvent.change(box, { target: { value: "/rev", selectionStart: 4 } });
+    typeInto(box, "/rev");
     fireEvent.keyDown(box, { key: "Tab" });
-    expect(box).toHaveValue("/review ");
+    expect(composerText(box)).toBe("/review ");
   });
 
   it("completes @ mentions from the task repositories", async () => {
@@ -453,14 +464,14 @@ describe("ChatPane", () => {
     });
     render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a", "/wt/b"]} />);
     const box = await screen.findByRole("textbox", { name: "Message Codex" });
-    fireEvent.change(box, { target: { value: "look at @chatp", selectionStart: 14 } });
+    typeInto(box, "look at @chatp");
     const option = await screen.findByRole("option", { name: /ChatPane.tsx/ });
     expect(mocks.invoke).toHaveBeenCalledWith("chat_file_search", {
       folders: ["/wt/a", "/wt/b"],
       query: "chatp",
     });
     fireEvent.mouseDown(option);
-    expect(box).toHaveValue("look at @src/chat/ChatPane.tsx ");
+    expect(composerText(box)).toBe("look at @src/chat/ChatPane.tsx ");
   });
 
   it("shows the composer controls, plan and context usage", async () => {
@@ -489,7 +500,7 @@ describe("ChatPane", () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     await screen.findByText("Fix the bug");
     const box = screen.getByRole("textbox", { name: "Message Claude" });
-    fireEvent.change(box, { target: { value: "/status" } });
+    typeInto(box, "/status");
     fireEvent.keyDown(box, { key: "Enter" });
     expect(await screen.findByText("Loading usage…")).toBeInTheDocument();
     expect(mocks.invoke).toHaveBeenCalledWith("chat_refresh_usage", {

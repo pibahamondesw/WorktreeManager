@@ -1,9 +1,10 @@
 import { useShortcutActions, useShortcutLabels, dispatchShortcut } from "../../shortcuts/runtime";
-import { ClipboardEvent, DragEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { DragEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { ChevronDownIcon, CloseIcon } from "../ui/Icons";
 import { ImageAttachment, imageFiles, oversizedImages, readImage } from "./composerImages";
 import { MenuOption, OptionMenu } from "./OptionMenu";
+import { ComposerEditor, ComposerEditorHandle } from "./ComposerEditor";
 import {
   filterCommands,
   insertMention,
@@ -66,7 +67,7 @@ export function Composer({
   actions,
   onError,
 }: ComposerProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<ComposerEditorHandle>(null);
   const [text, setText] = useState(() => promptMemory.draft(memoryKey));
   const [caret, setCaret] = useState(text.length);
   const [picker, setPicker] = useState<Picker | null>(null);
@@ -90,7 +91,7 @@ export function Composer({
   useEffect(() => promptMemory.saveDraft(memoryKey, text), [memoryKey, text]);
 
   useEffect(() => {
-    if (ready && nothingFocused()) textareaRef.current?.focus();
+    if (ready && nothingFocused()) editorRef.current?.focus();
   }, [ready]);
 
   useEffect(() => {
@@ -126,12 +127,7 @@ export function Composer({
   const activeIndex = Math.min(active, Math.max(0, options.length - 1));
 
   const focus = (nextCaret?: number) =>
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      el.focus();
-      if (nextCaret !== undefined) el.setSelectionRange(nextCaret, nextCaret);
-    });
+    requestAnimationFrame(() => editorRef.current?.focus(nextCaret));
 
   const update = (next: string, nextCaret = next.length) => {
     setText(next);
@@ -209,8 +205,8 @@ export function Composer({
     }
   };
 
-  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = imageFiles(e.clipboardData.files);
+  const onPaste = (e: ClipboardEvent) => {
+    const files = imageFiles(e.clipboardData?.files);
     if (!canAttach || !files.length) return;
     e.preventDefault();
     void attach(files);
@@ -286,10 +282,10 @@ export function Composer({
     "chat.model": { handler: () => openPicker("model") },
     "chat.effort": { handler: () => openPicker("effort"), enabled: efforts.length > 0 },
   });
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing) return;
-    dispatchShortcut(e.nativeEvent);
-    if (e.nativeEvent.defaultPrevented) return;
+  const onKeyDown = (e: KeyboardEvent, caretAt: number) => {
+    if (e.isComposing) return;
+    dispatchShortcut(e);
+    if (e.defaultPrevented) return;
     if (menuOpen) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -323,8 +319,8 @@ export function Composer({
     } else if (e.key === "Escape") {
       e.preventDefault();
       if (busy) void run(actions.interrupt);
-      else e.currentTarget.blur();
-    } else if (e.key === "ArrowUp" && e.currentTarget.selectionStart === 0 && !e.shiftKey) {
+      else editorRef.current?.blur();
+    } else if (e.key === "ArrowUp" && caretAt === 0 && !e.shiftKey) {
       if (recallHistory(-1)) e.preventDefault();
     } else if (e.key === "ArrowDown" && recall !== null && !e.shiftKey) {
       if (recallHistory(1)) e.preventDefault();
@@ -384,25 +380,23 @@ export function Composer({
               ))}
             </ul>
           )}
-          <textarea
-            ref={textareaRef}
-            aria-label={`Message ${agentLabel}`}
+          <ComposerEditor
+            ref={editorRef}
+            label={`Message ${agentLabel}`}
             value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              setCaret(e.target.selectionStart);
+            onChange={(value, nextCaret) => {
+              setText(value);
+              setCaret(nextCaret);
               setActive(0);
               setRecall(null);
               setDismissed(null);
             }}
-            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+            onSelect={setCaret}
             onBlur={() => setPicker(null)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             disabled={!ready}
-            rows={Math.min(10, Math.max(2, text.split("\n").length))}
             placeholder={placeholder}
-            className="block w-full resize-none bg-transparent px-3 pt-2 pb-1 text-sm text-text-primary placeholder:text-text-muted focus:outline-none disabled:opacity-50"
           />
           <div className="flex items-center gap-1 px-1.5 pb-1.5">
             {controls.modes.length > 0 && (
