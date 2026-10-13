@@ -106,6 +106,8 @@ pub fn run() {
                 commands::chat::chat_send,
                 commands::chat::history::chat_rewind_preview,
                 commands::chat::history::chat_history,
+                commands::chat::changes::chat_changes,
+                commands::chat::changes::chat_file_diff,
                 commands::chat::chat_interrupt,
                 commands::chat::chat_configure,
                 commands::chat::chat_compact,

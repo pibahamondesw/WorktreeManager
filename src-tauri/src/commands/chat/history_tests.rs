@@ -1002,3 +1002,75 @@ fn pending_claude_forks_remain_saved_when_the_resume_launch_fails() {
         Some(original)
     );
 }
+
+#[test]
+fn change_commands_read_turn_checkpoints_of_the_open_conversation() {
+    let fixture = Fixture::new();
+    let store = &fixture.repositories.store;
+    let turn = checkpoints::TurnCheckpoints {
+        before: store.find("parent", "u1").unwrap(),
+        after: store.find("parent", "u2").unwrap(),
+    };
+    store.bind_turn("parent", "u1", &turn).unwrap();
+    let changes = |task: &str| {
+        tauri::async_runtime::block_on(super::changes::chat_changes(
+            fixture.app.state(),
+            task.into(),
+            "codex".into(),
+        ))
+    };
+    let file_diff = || {
+        tauri::async_runtime::block_on(super::changes::chat_file_diff(
+            fixture.app.state(),
+            "task".into(),
+            "codex".into(),
+            turn.before.clone(),
+            turn.after.clone(),
+            fixture.repositories.folders[0].clone(),
+            "file.txt".into(),
+            None,
+        ))
+    };
+    assert!(changes("missing").unwrap_err().contains("No chat session"));
+    fixture.open("codex", OpenMode::Restart).unwrap();
+
+    let result = changes("task").unwrap();
+
+    assert_eq!(result.turns.len(), 1);
+    assert_eq!(result.turns[0].items, ["u1"]);
+    assert_eq!(
+        result
+            .conversation
+            .unwrap()
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["file.txt", "user.txt"]
+    );
+    let diff = file_diff().unwrap();
+    assert_eq!(
+        (diff.before, diff.after),
+        (
+            Some(super::changes::FileContent::Text {
+                text: "original".into()
+            }),
+            Some(super::changes::FileContent::Text {
+                text: "user baseline".into()
+            })
+        )
+    );
+    fixture
+        .app
+        .state::<ChatRegistry>()
+        .with_session("task", "codex", |session| {
+            session.shared.lock().unwrap().checkpoints = None;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        changes("task").unwrap(),
+        super::changes::ChatChanges::default()
+    );
+    assert!(file_diff().unwrap_err().contains("unavailable"));
+}

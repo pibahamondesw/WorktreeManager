@@ -90,7 +90,7 @@ pub struct FileComparison {
 
 type FileWrite = (PathBuf, Option<FileState>, Option<Vec<u8>>);
 
-fn hash(bytes: &[u8]) -> String {
+pub(super) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
@@ -133,7 +133,7 @@ impl Checkpoints {
         }
     }
 
-    fn save<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
+    pub(super) fn save<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
         fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
         let path = self.dir.join(name);
         let tmp = self.dir.join(format!("{}.tmp", uuid::Uuid::new_v4()));
@@ -142,7 +142,7 @@ impl Checkpoints {
         fs::rename(tmp, path).map_err(|e| e.to_string())
     }
 
-    fn read<T: serde::de::DeserializeOwned>(&self, name: &str) -> Result<T, String> {
+    pub(super) fn read<T: serde::de::DeserializeOwned>(&self, name: &str) -> Result<T, String> {
         serde_json::from_slice(&fs::read(self.dir.join(name)).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())
     }

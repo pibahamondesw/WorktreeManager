@@ -43,6 +43,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "b
 sha2 = "0.10"
 base64 = "0.22"
 toml = "0.9"
+similar = "2.7"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
