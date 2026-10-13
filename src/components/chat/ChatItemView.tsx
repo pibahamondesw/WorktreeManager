@@ -1,9 +1,11 @@
 import { useState } from "react";
-import Markdown from "react-markdown";
+import Markdown, { Options } from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { ChevronDownIcon } from "../ui/Icons";
 import { ChatItem, HistoryAction } from "../../services/chat";
 import { MarkdownLink } from "./MarkdownLink";
+import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { HistoryMenu } from "./HistoryMenu";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -20,10 +22,18 @@ const STATUS_LABEL: Record<string, string> = {
   declined: "rejected",
 };
 
+const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm];
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [[rehypeHighlight, { plainText: ["mermaid"] }]];
+const MARKDOWN_COMPONENTS: Options["components"] = { a: MarkdownLink, pre: MarkdownCodeBlock };
+
 export function MarkdownText({ text }: { text: string }) {
   return (
     <div className="chat-markdown text-sm text-text-primary select-text break-words">
-      <Markdown remarkPlugins={[remarkGfm]} components={{ a: MarkdownLink }}>
+      <Markdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        components={MARKDOWN_COMPONENTS}
+      >
         {text}
       </Markdown>
     </div>
@@ -118,8 +128,8 @@ export function ChatItemView({
     case "user":
       return (
         <div className="group relative self-end max-w-[85%]">
-          <div className="rounded-lg bg-bg-tertiary px-3 py-2 text-sm text-text-primary whitespace-pre-wrap select-text">
-            {item.text}
+          <div className="chat-user-message rounded-lg bg-bg-tertiary px-3 py-2">
+            <MarkdownText text={item.text} />
           </div>
           {onHistory && (
             <HistoryMenu
