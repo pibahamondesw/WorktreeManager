@@ -357,6 +357,46 @@ body,
   font-weight: 600;
 }
 
+.diff-code {
+  white-space: pre;
+}
+.diff-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff-added {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+.diff-removed {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+.diff-added .diff-changed {
+  background: color-mix(in srgb, var(--color-success) 38%, transparent);
+  border-radius: 2px;
+}
+.diff-removed .diff-changed {
+  background: color-mix(in srgb, var(--color-danger) 38%, transparent);
+  border-radius: 2px;
+}
+.diff-moved {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.diff-formatting {
+  background: color-mix(in srgb, var(--color-text-muted) 12%, transparent);
+}
+.diff-empty {
+  background: color-mix(in srgb, var(--color-bg-secondary) 70%, transparent);
+}
+.diff-gap {
+  background: var(--color-bg-secondary);
+  font-family: var(--font-code);
+}
+.diff-image-frame {
+  background-color: var(--color-bg-secondary);
+  background-image: repeating-conic-gradient(var(--color-bg-tertiary) 0 25%, transparent 0 50%);
+  background-size: 16px 16px;
+}
+
 @keyframes setup-countdown {
   from {
     transform: scaleX(1);
