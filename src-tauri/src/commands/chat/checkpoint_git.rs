@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::commands::git::git_command;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BaseFile {
     pub object: String,
     pub hash: String,
@@ -83,41 +83,11 @@ fn hash_objects(
         }
         Ok(())
     });
-    let result = (|| -> Result<_, String> {
-        let mut stdout = BufReader::new(child.stdout.take().ok_or("Git stdout is unavailable")?);
-        let mut hashes = BTreeMap::new();
-        for object in objects {
-            let mut header = String::new();
-            stdout.read_line(&mut header).map_err(|e| e.to_string())?;
-            let mut parts = header.split_whitespace();
-            if parts.next() != Some(object.as_str()) || parts.next() != Some("blob") {
-                return Err("Git checkpoint object is unavailable".into());
-            }
-            let size = parts
-                .next()
-                .ok_or("Git object has no size")?
-                .parse::<u64>()
-                .map_err(|e| e.to_string())?;
-            let mut hasher = Sha256::new();
-            let mut remaining = size;
-            let mut buffer = [0; 65536];
-            while remaining > 0 {
-                let count = remaining.min(buffer.len() as u64) as usize;
-                stdout
-                    .read_exact(&mut buffer[..count])
-                    .map_err(|e| e.to_string())?;
-                hasher.update(&buffer[..count]);
-                remaining -= count as u64;
-            }
-            let mut newline = [0];
-            stdout.read_exact(&mut newline).map_err(|e| e.to_string())?;
-            if newline != *b"\n" {
-                return Err("Invalid Git object separator".into());
-            }
-            hashes.insert(object, format!("{:x}", hasher.finalize()));
-        }
-        Ok(hashes)
-    })();
+    let result = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Git stdout is unavailable".to_string())
+        .and_then(|stdout| hash_reader(BufReader::new(stdout), objects));
     if result.is_err() {
         let _ = child.kill();
     }
@@ -143,4 +113,118 @@ pub fn read_blob(folder: &str, object: &str) -> Result<Vec<u8>, String> {
         return Err("Git checkpoint object is unavailable; no files were restored".into());
     }
     Ok(output.stdout)
+}
+
+fn hash_reader(
+    mut stdout: impl BufRead,
+    objects: BTreeSet<String>,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut hashes = BTreeMap::new();
+    for object in objects {
+        let mut header = String::new();
+        stdout.read_line(&mut header).map_err(|e| e.to_string())?;
+        let mut parts = header.split_whitespace();
+        if parts.next() != Some(object.as_str()) || parts.next() != Some("blob") {
+            return Err("Git checkpoint object is unavailable".into());
+        }
+        let size = parts
+            .next()
+            .ok_or("Git object has no size")?
+            .parse::<u64>()
+            .map_err(|e| e.to_string())?;
+        let mut hasher = Sha256::new();
+        let mut remaining = size;
+        let mut buffer = [0; 65536];
+        while remaining > 0 {
+            let count = remaining.min(buffer.len() as u64) as usize;
+            stdout
+                .read_exact(&mut buffer[..count])
+                .map_err(|e| e.to_string())?;
+            hasher.update(&buffer[..count]);
+            remaining -= count as u64;
+        }
+        let mut newline = [0];
+        stdout.read_exact(&mut newline).map_err(|e| e.to_string())?;
+        if newline != *b"\n" {
+            return Err("Invalid Git object separator".into());
+        }
+        hashes.insert(object, format!("{:x}", hasher.finalize()));
+    }
+    Ok(hashes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::chat::checkpoints::tests::Fixture;
+
+    #[test]
+    fn malformed_or_missing_objects_fail_without_accepting_partial_data() {
+        for output in [
+            "object missing\n",
+            "object blob\n",
+            "object blob invalid\n",
+            "object blob 4\nshort",
+            "object blob 3\nabc!",
+            "object blob 3\nab",
+        ] {
+            let objects = ["object".into()].into_iter().collect();
+            assert!(hash_reader(std::io::Cursor::new(output.as_bytes()), objects).is_err());
+        }
+        let objects = ["object".into()].into_iter().collect();
+        assert_eq!(
+            hash_reader(std::io::Cursor::new(b"object blob 3\nabc\n"), objects).unwrap()["object"],
+            format!("{:x}", Sha256::digest(b"abc"))
+        );
+    }
+
+    #[test]
+    fn missing_revisions_and_batch_failures_are_reported() {
+        let fixture = Fixture::new(1);
+        assert!(read_base(&fixture.folders[0], "missing").is_err());
+        assert!(hash_objects(
+            &fixture.folders[0],
+            ["deadbeef".into()].into_iter().collect()
+        )
+        .is_err());
+        assert!(hash_objects("/does-not-exist", BTreeSet::new()).is_err());
+    }
+
+    #[test]
+    fn gitlinks_are_not_treated_as_file_blobs() {
+        let fixture = Fixture::new(1);
+        let head = git_command()
+            .args(["-C", &fixture.folders[0], "rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let object = String::from_utf8(head.stdout).unwrap();
+        assert!(git_command()
+            .args([
+                "-C",
+                &fixture.folders[0],
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000",
+                object.trim(),
+                "submodule"
+            ])
+            .status()
+            .unwrap()
+            .success());
+        assert!(git_command()
+            .args([
+                "-C",
+                &fixture.folders[0],
+                "commit",
+                "-qm",
+                "gitlink fixture"
+            ])
+            .status()
+            .unwrap()
+            .success());
+        let base = read_base(&fixture.folders[0], "HEAD").unwrap();
+        assert!(!base.contains_key("submodule"));
+        assert!(base.contains_key("file.txt"));
+    }
 }

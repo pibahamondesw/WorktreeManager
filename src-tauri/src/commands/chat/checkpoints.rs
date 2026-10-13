@@ -67,6 +67,8 @@ pub struct Checkpoints {
     dir: PathBuf,
 }
 
+type FileWrite = (PathBuf, Option<FileState>, Option<Vec<u8>>);
+
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -426,6 +428,16 @@ impl Checkpoints {
         let backup = self.approved_backup(id, token)?;
         let target = self.load(id)?;
         let current = self.load(&backup)?;
+        let writes = self.prepare_restore(&target, &current)?;
+        self.write_files(writes, &backup)?;
+        Ok(backup)
+    }
+
+    fn prepare_restore(
+        &self,
+        target: &Checkpoint,
+        current: &Checkpoint,
+    ) -> Result<Vec<FileWrite>, String> {
         let mut writes = Vec::new();
         for (target, current) in target.repositories.iter().zip(&current.repositories) {
             for name in target
@@ -461,6 +473,10 @@ impl Checkpoints {
                 writes.push((path, file, bytes));
             }
         }
+        Ok(writes)
+    }
+
+    fn write_files(&self, writes: Vec<FileWrite>, backup: &str) -> Result<(), String> {
         for (path, file, bytes) in writes {
             let result = (|| -> std::io::Result<()> {
                 if let Some(file) = file {
@@ -485,7 +501,7 @@ impl Checkpoints {
                 ));
             }
         }
-        Ok(backup)
+        Ok(())
     }
 }
 
@@ -1030,5 +1046,150 @@ pub(super) mod tests {
             .store
             .validate(&first, &preview_second.token)
             .is_err());
+    }
+
+    #[test]
+    fn capture_refuses_invalid_roots_indexes_names_and_unreadable_files() {
+        use std::io::Write;
+        use std::process::Stdio;
+        let fixture = Fixture::new(1);
+        assert!(fixture
+            .store
+            .capture(&[fixture.dir.to_string_lossy().into_owned()])
+            .is_err());
+        let nested = fixture.file(0, "nested");
+        fs::create_dir(&nested).unwrap();
+        assert!(fixture
+            .store
+            .capture(&[nested.to_string_lossy().into_owned()])
+            .unwrap_err()
+            .contains("repository roots"));
+        fs::write(nested.join("file.txt"), "keep this").unwrap();
+        git(&fixture.folders[0], &["add", "."]).unwrap();
+        git(&fixture.folders[0], &["commit", "-qm", "nested fixture"]).unwrap();
+        fixture.store.capture(&fixture.folders).unwrap();
+        assert!(safe_path(&fixture.folders[0], "nested/file.txt").is_ok());
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o0)).unwrap();
+        assert!(fixture.store.capture(&fixture.folders).is_err());
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o755)).unwrap();
+        let object =
+            String::from_utf8(git(&fixture.folders[0], &["rev-parse", "HEAD:file.txt"]).unwrap())
+                .unwrap();
+        let mut index_writer = git_command()
+            .args([
+                "-C",
+                &fixture.folders[0],
+                "update-index",
+                "-z",
+                "--index-info",
+            ])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        index_writer
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(
+                &[
+                    format!("100644 {}\tx", object.trim()).into_bytes(),
+                    vec![255, 0],
+                ]
+                .concat(),
+            )
+            .unwrap();
+        assert!(index_writer.wait().unwrap().success());
+        assert!(fixture.store.capture(&fixture.folders).is_err());
+        let mut index_writer = git_command()
+            .args([
+                "-C",
+                &fixture.folders[0],
+                "update-index",
+                "-z",
+                "--index-info",
+            ])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        index_writer
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&[format!("0 {}\tx", object.trim()).into_bytes(), vec![255, 0]].concat())
+            .unwrap();
+        assert!(index_writer.wait().unwrap().success());
+        let index = fixture.file(0, ".git/index");
+        let contents = fs::read(&index).unwrap();
+        fs::write(&index, "broken index").unwrap();
+        assert!(fixture.store.capture(&fixture.folders).is_err());
+        fs::write(index, contents).unwrap();
+        fs::remove_file(fixture.file(0, "file.txt")).unwrap();
+        fs::create_dir(fixture.file(0, "file.txt")).unwrap();
+        assert!(fixture
+            .store
+            .capture(&fixture.folders)
+            .unwrap_err()
+            .contains("unsupported"));
+        assert_eq!(fs::read(nested.join("file.txt")).unwrap(), b"keep this");
+    }
+
+    #[test]
+    fn previews_and_partial_restore_failures_keep_recovery_data() {
+        let fixture = Fixture::new(1);
+        let checkpoint = fixture.store.capture(&fixture.folders).unwrap();
+        fs::write(fixture.file(0, "file.txt"), "user edits").unwrap();
+        let backup = fixture.store.capture(&fixture.folders).unwrap();
+        fs::set_permissions(&fixture.store.dir, fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(fixture.store.preview(&checkpoint).is_err());
+        fs::set_permissions(&fixture.store.dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let preview = fixture.store.preview(&checkpoint).unwrap();
+        fs::set_permissions(
+            Path::new(&fixture.folders[0]),
+            fs::Permissions::from_mode(0o555),
+        )
+        .unwrap();
+        let error = fixture
+            .store
+            .restore(&checkpoint, &preview.token)
+            .unwrap_err();
+        fs::set_permissions(
+            Path::new(&fixture.folders[0]),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        assert!(error.contains("Restore partially failed"));
+        assert!(error.contains(&backup));
+        assert_eq!(
+            fs::read(fixture.file(0, "file.txt")).unwrap(),
+            b"user edits"
+        );
+        assert!(fixture.store.load(&backup).is_ok());
+    }
+
+    #[test]
+    fn preflight_rejects_directories_and_mismatched_repository_counts() {
+        let fixture = Fixture::new(1);
+        let before = fixture.store.capture(&fixture.folders).unwrap();
+        fs::write(fixture.file(0, "file.txt"), "user edits").unwrap();
+        let after = fixture.store.capture(&fixture.folders).unwrap();
+        let target = fixture.store.load(&before).unwrap();
+        let current = fixture.store.load(&after).unwrap();
+        assert!(changes(
+            &target,
+            &Checkpoint {
+                repositories: Vec::new()
+            }
+        )
+        .unwrap_err()
+        .contains("repositories changed"));
+        fs::remove_file(fixture.file(0, "file.txt")).unwrap();
+        fs::create_dir(fixture.file(0, "file.txt")).unwrap();
+        assert!(fixture.store.prepare_restore(&target, &current).is_err());
+        let missing = fixture.file(0, "already-removed.txt");
+        fixture
+            .store
+            .write_files(vec![(missing.clone(), None, None)], &after)
+            .unwrap();
+        assert!(!missing.exists());
     }
 }

@@ -9,7 +9,7 @@ case "$(uname -s)" in
 esac
 
 toolchain=1.93.1
-test_filters='commands::claude_config::tests:: commands::github::tests:: commands::code_server::view::tests:: menu::'
+test_filters='commands::claude_config::tests:: commands::github::tests:: commands::code_server::view::tests:: commands::chat:: menu::'
 report_dir=coverage/rust/macos
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/worktreemanager-target}"
 export CARGO_LLVM_COV_TARGET_DIR="${CARGO_LLVM_COV_TARGET_DIR:-$CARGO_TARGET_DIR/llvm-cov-pilot}"
@@ -75,8 +75,12 @@ rustup run "$toolchain" cargo llvm-cov report --manifest-path src-tauri/Cargo.to
   --lcov --output-path "$report_dir/lcov.info"
 rustup run "$toolchain" cargo llvm-cov report --manifest-path src-tauri/Cargo.toml \
   --json --summary-only --output-path "$report_dir/summary.json"
+rustup run "$toolchain" cargo llvm-cov report --manifest-path src-tauri/Cargo.toml \
+  --json --output-path "$report_dir/raw.json"
+python3 scripts/rust-coverage-report.py "$report_dir" "${COVERAGE_BASE:-origin/main}"
 
-diff-cover "$report_dir/lcov.info" --compare-branch="${COVERAGE_BASE:-origin/main}" \
+diff-cover "$report_dir/diff-lcov.info" --compare-branch="${COVERAGE_BASE:-origin/main}" \
+  --diff-file="$report_dir/changes.diff" \
   --include 'src-tauri/src/**' --fail-under=100 \
   --format "json:$report_dir/diff-coverage.json"
 

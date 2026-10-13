@@ -4,11 +4,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 use super::{
     agent_alerts, blocking, checkpoints, claude, conversation_store, login_shell, model,
-    ChatRegistry, ChatSession, ChatStatus, Conversation, ConversationFork, ProviderOutput, Shared,
+    AgentRuntime, ChatRegistry, ChatSession, ChatStatus, Conversation, ConversationFork,
+    ProviderOutput, Shared,
 };
 
 pub(super) fn claude_fork_launch(
@@ -17,8 +18,9 @@ pub(super) fn claude_fork_launch(
     id: &str,
     source: &str,
     item_id: &str,
+    runtime: &AgentRuntime,
 ) -> Result<(Command, Vec<model::ChatItem>), String> {
-    let version = login_shell(cwd, "claude", &["--version".into()])
+    let version = login_shell(cwd, &runtime.claude, &["--version".into()])
         .output()
         .map_err(|e| e.to_string())?;
     if !version.status.success()
@@ -26,7 +28,7 @@ pub(super) fn claude_fork_launch(
     {
         return Err("Forking requires the verified Claude Code version 2.1.295".into());
     }
-    let (anchor, history) = claude::fork_point(cwd, source, item_id)?;
+    let (anchor, history) = claude::fork_point(runtime.home.as_deref(), cwd, source, item_id)?;
     let args = if let Some(anchor) = anchor {
         let mut args = claude::launch_args(source, true, extra_dirs);
         args.extend([
@@ -40,7 +42,7 @@ pub(super) fn claude_fork_launch(
     } else {
         claude::launch_args(id, false, extra_dirs)
     };
-    Ok((login_shell(cwd, "claude", &args), history))
+    Ok((login_shell(cwd, &runtime.claude, &args), history))
 }
 
 fn history_item(
@@ -104,8 +106,8 @@ impl Drop for HistoryGuard {
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn chat_history(
-    app: AppHandle,
+pub async fn chat_history<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
@@ -189,6 +191,7 @@ pub async fn chat_history(
     let mut replacement = None;
     if action != HistoryAction::Code {
         if agent == "codex" {
+            let timeout = registry.runtime.history_timeout;
             let (reply, receive) = std::sync::mpsc::channel();
             {
                 let mut state = shared.lock().unwrap();
@@ -199,7 +202,7 @@ pub async fn chat_history(
             }
             let result = blocking(move || {
                 receive
-                    .recv_timeout(Duration::from_secs(30))
+                    .recv_timeout(timeout)
                     .map_err(|_| "Timed out forking the conversation".to_string())?
             })
             .await;
@@ -225,15 +228,16 @@ pub async fn chat_history(
                 )
             };
             let cwd = folders.first().cloned().ok_or("No task folders")?;
-            let conversation = if claude::session_exists(&cwd, &conversation) {
-                conversation
-            } else {
-                conversation_store(&app)?
-                    .entry(&task_id, &agent, &cwd)
-                    .and_then(|entry| entry.fork)
-                    .map(|fork| fork.source)
-                    .unwrap_or(conversation)
-            };
+            let conversation =
+                if claude::session_exists(registry.runtime.home.as_deref(), &cwd, &conversation) {
+                    conversation
+                } else {
+                    conversation_store(&app)?
+                        .entry(&task_id, &agent, &cwd)
+                        .and_then(|entry| entry.fork)
+                        .map(|fork| fork.source)
+                        .unwrap_or(conversation)
+                };
             let fork_record = ConversationFork {
                 source: conversation.clone(),
                 item_id: item_id.clone(),
@@ -245,9 +249,16 @@ pub async fn chat_history(
             let fork_remember = remember.clone();
             let fork_generation = registry.generation.fetch_add(1, Ordering::SeqCst) + 1;
             let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            let agent_runtime = registry.runtime.clone();
             let new_session = blocking(move || {
-                let (mut command, mut history) =
-                    claude_fork_launch(&cwd, &folders[1..], &fork_id, &conversation, &item_id)?;
+                let (mut command, mut history) = claude_fork_launch(
+                    &cwd,
+                    &folders[1..],
+                    &fork_id,
+                    &conversation,
+                    &item_id,
+                    &agent_runtime,
+                )?;
                 command
                     .env(agent_alerts::TASK_ENV, &fork_task)
                     .env(agent_alerts::SURFACE_ENV, "chat");
@@ -258,7 +269,7 @@ pub async fn chat_history(
                     fork_remember,
                     fork_notify,
                 )?;
-                let deadline = Instant::now() + Duration::from_secs(30);
+                let deadline = Instant::now() + agent_runtime.history_timeout;
                 loop {
                     match session.status() {
                         ChatStatus::Idle => break,

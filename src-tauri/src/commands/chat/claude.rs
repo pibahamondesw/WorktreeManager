@@ -1070,30 +1070,25 @@ fn session_file(home: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-pub fn session_exists(cwd: &str, session_id: &str) -> bool {
-    std::env::var_os("HOME")
-        .and_then(|home| session_file(Path::new(&home), cwd, session_id))
+pub fn session_exists(home: Option<&Path>, cwd: &str, session_id: &str) -> bool {
+    home.and_then(|home| session_file(home, cwd, session_id))
         .is_some()
 }
 
-/// Rebuild the visible transcript from a Claude Code session file. Best effort: the file is an
-/// internal format, so unknown lines are skipped rather than failing the resume.
-pub fn history(cwd: &str, session_id: &str) -> Vec<ChatItem> {
-    let Some(path) =
-        std::env::var_os("HOME").and_then(|home| session_file(Path::new(&home), cwd, session_id))
-    else {
-        return Vec::new();
-    };
-    parse_history(&fs::read_to_string(path).unwrap_or_default())
+pub fn history(home: Option<&Path>, cwd: &str, session_id: &str) -> Vec<ChatItem> {
+    home.and_then(|home| session_file(home, cwd, session_id))
+        .map(|path| parse_history(&fs::read_to_string(path).unwrap_or_default()))
+        .unwrap_or_default()
 }
 
 pub fn fork_point(
+    home: Option<&Path>,
     cwd: &str,
     session_id: &str,
     item_id: &str,
 ) -> Result<(Option<String>, Vec<ChatItem>), String> {
-    let path = std::env::var_os("HOME")
-        .and_then(|home| session_file(Path::new(&home), cwd, session_id))
+    let path = home
+        .and_then(|home| session_file(home, cwd, session_id))
         .ok_or("Conversation transcript is unavailable")?;
     fork_point_in(
         &fs::read_to_string(path).map_err(|e| e.to_string())?,
@@ -1226,6 +1221,10 @@ mod tests {
         assert!(history.is_empty());
         assert!(fork_point_in(&text, "unknown").is_err());
         assert_eq!(parse_history(&text).len(), 3);
+        let unsafe_parent = text.replace("\"parentUuid\":\"a1-uuid\"", "\"parentUuid\":null");
+        assert!(fork_point_in(&unsafe_parent, "u2")
+            .unwrap_err()
+            .contains("safe fork point"));
     }
 
     #[test]
@@ -1237,11 +1236,11 @@ mod tests {
         let item = out
             .events
             .iter()
-            .find_map(|event| match event {
+            .filter_map(|event| match event {
                 ChatEvent::Upsert { item } => Some(item),
                 _ => None,
             })
-            .unwrap();
+            .collect::<Vec<_>>()[0];
         assert_eq!(message["uuid"], item.id);
         assert!(uuid::Uuid::parse_str(&item.id).is_ok());
     }
@@ -1270,6 +1269,26 @@ mod tests {
             event,
             ChatEvent::Status {
                 status: ChatStatus::Failed { .. }
+            }
+        )));
+    }
+
+    #[test]
+    fn successful_fork_initialization_releases_the_history_request() {
+        let mut provider = ClaudeProvider::new("fork".into()).forking();
+        let mut out = ProviderOutput::default();
+        provider.start(&mut out);
+        let request: Value = serde_json::from_str(&out.writes[0]).unwrap();
+        let mut initialized = ProviderOutput::default();
+        provider.handle_control_response(
+            &json!({"request_id":request["request_id"], "subtype":"success", "response":{}}),
+            &mut initialized,
+        );
+        assert_eq!(initialized.history_result, Some(Ok(())));
+        assert!(initialized.events.iter().any(|event| matches!(
+            event,
+            ChatEvent::Status {
+                status: ChatStatus::Idle
             }
         )));
     }

@@ -1535,6 +1535,11 @@ mod tests {
         feed(
             &mut provider,
             &mut snapshot,
+            json!({ "method": "turn/started", "params": { "threadId": "th1", "turn": { "id": "t1" } } }),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
             json!({ "method": "item/started", "params": { "threadId": "th1", "turnId": "t1", "item": { "type": "userMessage", "id": "u1", "content": [{ "type": "text", "text": "change it" }] } } }),
         );
         let mut out = ProviderOutput::default();
@@ -1559,6 +1564,25 @@ mod tests {
         assert_eq!(snapshot.items[0].id, "u0");
         assert_eq!(snapshot.status, ChatStatus::Idle);
         assert_eq!(provider.thread_id.as_deref(), Some("th2"));
+    }
+
+    #[test]
+    fn resumed_turns_skip_user_messages_without_a_persistent_id() {
+        let (mut provider, _) = resumed();
+        let mut out = ProviderOutput::default();
+        provider.adopt_thread(
+            &json!({"id":"th1", "turns":[{"id":"t0", "items":[{"type":"userMessage"}]}, {"items":[]}]}),
+            &mut out,
+        );
+        assert!(provider.user_turns.is_empty());
+        assert_eq!(provider.turns, ["t0"]);
+        let mut snapshot = ChatSnapshot::new(1);
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({"method":"turn/started", "params":{"threadId":"th1", "turn":{}}}),
+        );
+        assert!(provider.turn_id.is_none());
     }
 
     #[test]

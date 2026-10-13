@@ -12,6 +12,8 @@ pub use codex::purge_stale_chat_images;
 mod conversations;
 mod files;
 pub mod history;
+#[cfg(test)]
+mod history_tests;
 mod model;
 mod sessions;
 
@@ -30,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::agent_alerts;
 use super::git::GIT_ENV_SCRUB;
@@ -446,6 +448,7 @@ type OpenLock = Arc<tokio::sync::Mutex<()>>;
 
 #[derive(Default)]
 pub struct ChatRegistry {
+    runtime: AgentRuntime,
     sessions: Mutex<HashMap<(String, String), ChatSession>>,
     generation: AtomicU64,
     opening: Mutex<HashMap<SessionKey, OpenLock>>,
@@ -510,7 +513,7 @@ impl ChatRegistry {
     }
 }
 
-fn conversation_store(app: &AppHandle) -> Result<ConversationStore, String> {
+fn conversation_store<R: Runtime>(app: &AppHandle<R>) -> Result<ConversationStore, String> {
     app.path()
         .app_data_dir()
         .map(|dir| ConversationStore::new(&dir))
@@ -535,7 +538,11 @@ fn login_shell(cwd: &str, program: &str, args: &[String]) -> Command {
     command
         .args([
             "-lc",
-            &format!("{}; exec {program}{quoted}", claude_env_prelude()),
+            &format!(
+                "{}; exec {}{quoted}",
+                claude_env_prelude(),
+                shell_single_quoted(program)
+            ),
         ])
         .current_dir(cwd);
     command
@@ -547,6 +554,25 @@ struct Launch {
     history: Vec<model::ChatItem>,
 }
 
+#[derive(Clone)]
+struct AgentRuntime {
+    claude: String,
+    codex: String,
+    home: Option<PathBuf>,
+    history_timeout: Duration,
+}
+
+impl Default for AgentRuntime {
+    fn default() -> Self {
+        Self {
+            claude: "claude".into(),
+            codex: "codex".into(),
+            home: std::env::var_os("HOME").map(PathBuf::from),
+            history_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
 fn launch(
     agent: &str,
     cwd: &str,
@@ -554,14 +580,15 @@ fn launch(
     resume: Option<String>,
     pinned: bool,
     fork: Option<ConversationFork>,
+    runtime: &AgentRuntime,
 ) -> Result<Launch, String> {
     match agent {
         "codex" => {
-            if !cli_available("codex") {
+            if !cli_available(&runtime.codex) {
                 return Err("codex CLI not found on PATH (see Doctor)".into());
             }
             Ok(Launch {
-                command: login_shell(cwd, "codex", &["app-server".to_string()]),
+                command: login_shell(cwd, &runtime.codex, &["app-server".to_string()]),
                 provider: Box::new({
                     let provider = codex::CodexProvider::new(cwd.to_string(), extra_dirs, resume);
                     if pinned {
@@ -574,17 +601,18 @@ fn launch(
             })
         }
         "claude" => {
-            if !cli_available("claude") {
+            if !cli_available(&runtime.claude) {
                 return Err("claude CLI not found on PATH (see Doctor)".into());
             }
             if let (Some(id), Some(fork)) = (&resume, fork) {
-                if !claude::session_exists(cwd, id) {
+                if !claude::session_exists(runtime.home.as_deref(), cwd, id) {
                     let (command, history) = history::claude_fork_launch(
                         cwd,
                         &extra_dirs,
                         id,
                         &fork.source,
                         &fork.item_id,
+                        runtime,
                     )?;
                     return Ok(Launch {
                         command,
@@ -593,10 +621,12 @@ fn launch(
                     });
                 }
             }
-            let resume = claude_resume(resume, pinned, |id| claude::session_exists(cwd, id))?;
+            let resume = claude_resume(resume, pinned, |id| {
+                claude::session_exists(runtime.home.as_deref(), cwd, id)
+            })?;
             let history = resume
                 .as_deref()
-                .map(|id| claude::history(cwd, id))
+                .map(|id| claude::history(runtime.home.as_deref(), cwd, id))
                 .unwrap_or_default();
             let session_id = resume
                 .clone()
@@ -604,7 +634,7 @@ fn launch(
             Ok(Launch {
                 command: login_shell(
                     cwd,
-                    "claude",
+                    &runtime.claude,
                     &claude::launch_args(&session_id, resume.is_some(), &extra_dirs),
                 ),
                 provider: Box::new(claude::ClaudeProvider::new(session_id)),
@@ -637,8 +667,8 @@ pub enum OpenMode {
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn chat_open(
-    app: AppHandle,
+pub async fn chat_open<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
@@ -684,12 +714,21 @@ pub async fn chat_open(
     let expected_conversation = resume.clone();
 
     let (launch_cwd, launch_agent) = (cwd.clone(), agent.clone());
+    let agent_runtime = registry.runtime.clone();
     let Launch {
         mut command,
         provider,
         history,
     } = tauri::async_runtime::spawn_blocking(move || {
-        launch(&launch_agent, &launch_cwd, extra_dirs, resume, pinned, fork)
+        launch(
+            &launch_agent,
+            &launch_cwd,
+            extra_dirs,
+            resume,
+            pinned,
+            fork,
+            &agent_runtime,
+        )
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))??;
@@ -972,8 +1011,8 @@ pub async fn chat_stop(
 }
 
 #[tauri::command]
-pub async fn chat_close(
-    app: AppHandle,
+pub async fn chat_close<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, ChatRegistry>,
     task_id: String,
 ) -> Result<(), String> {
@@ -1045,7 +1084,7 @@ mod tests {
             _ => None,
         });
         let notify: Notify = Arc::new(|_, _| {});
-        shared.commit(out, &|_| {}, &notify);
+        shared.commit(out, &drop, &notify);
         item
     }
 
@@ -1055,7 +1094,7 @@ mod tests {
             .provider
             .handle_line(&line.to_string(), &shared.snapshot, &mut out);
         let notify: Notify = Arc::new(|_, _| {});
-        shared.commit(out, &|_| {}, &notify);
+        shared.commit(out, &drop, &notify);
     }
 
     impl ChatProvider for Echo {
@@ -1187,7 +1226,7 @@ mod tests {
             },
         });
         out.event(ChatEvent::Resolved { id: "q1".into() });
-        shared.commit(out, &|_| {}, &notify);
+        shared.commit(out, &drop, &notify);
         assert_eq!(
             *notified.lock().unwrap(),
             [
@@ -1384,7 +1423,7 @@ mod tests {
             items: shared.snapshot.items.clone(),
         });
         let notify: Notify = Arc::new(|_, _| {});
-        resumed.commit(history, &|_| {}, &notify);
+        resumed.commit(history, &drop, &notify);
         assert_eq!(resumed.last_checkpoint.as_ref(), Some(&second_turn.after));
         let next = send_checkpoint_message(&mut resumed, "after restart").unwrap();
         assert_eq!(
@@ -1479,7 +1518,7 @@ mod tests {
         let mut out = ProviderOutput::default();
         shared.provider.start(&mut out);
         let notify: Notify = Arc::new(|_, _| {});
-        shared.commit(out, &|_| {}, &notify);
+        shared.commit(out, &drop, &notify);
         feed_checkpoint_line(&mut shared, serde_json::json!({ "id": 1, "result": {} }));
         feed_checkpoint_line(
             &mut shared,
@@ -1533,8 +1572,136 @@ mod tests {
         fork.event(ChatEvent::Items {
             items: vec![shared.snapshot.item("user-1").unwrap().clone()],
         });
-        shared.commit(fork, &|_| {}, &notify);
+        shared.commit(fork, &drop, &notify);
         assert_eq!(fixture.store.find_turn("fork", "user-1"), Some(first));
+    }
+
+    #[test]
+    fn checkpoint_failures_do_not_invent_history_and_fork_copy_failures_keep_the_source() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = checkpoints::tests::Fixture::new(1);
+        let mut shared = checkpoint_session(
+            &fixture,
+            Box::new(claude::ClaudeProvider::new("conv".into())),
+        );
+        shared.folders = vec![fixture.dir.to_string_lossy().into_owned()];
+        let item = send_checkpoint_message(&mut shared, "without a checkpoint").unwrap();
+        assert!(shared.snapshot.item(&item).unwrap().checkpoint.is_none());
+        assert!(shared
+            .provider
+            .fork(&item, &mut ProviderOutput::default())
+            .is_err());
+        shared.folders = fixture.folders.clone();
+        feed_checkpoint_line(
+            &mut shared,
+            serde_json::json!({"type":"result", "is_error":false}),
+        );
+        let item = send_checkpoint_message(&mut shared, "checkpointed turn").unwrap();
+        let before = shared.turn_checkpoint.clone().unwrap();
+        let turn = checkpoints::TurnCheckpoints {
+            before: before.clone(),
+            after: before.clone(),
+        };
+        fixture.store.bind_turn("conv", &item, &turn).unwrap();
+        let directory = fixture.dir.join("app-data/chat-checkpoints");
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let notify: Notify = Arc::new(|_, _| {});
+        let mut duplicate = ProviderOutput::default();
+        duplicate.upsert(shared.snapshot.item(&item).unwrap().clone());
+        shared.commit(duplicate, &drop, &notify);
+        feed_checkpoint_line(
+            &mut shared,
+            serde_json::json!({"type":"result", "is_error":false}),
+        );
+        let mut fork = ProviderOutput {
+            conversation: Some("fork".into()),
+            ..Default::default()
+        };
+        fork.event(ChatEvent::Items {
+            items: vec![
+                ChatItem::new(&item, ItemKind::User, "checkpointed turn"),
+                ChatItem::new("unknown", ItemKind::User, "unmapped history"),
+            ],
+        });
+        shared.commit(fork, &drop, &notify);
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(fixture.store.find_turn("conv", &item), Some(turn));
+        assert!(fixture.store.find("fork", &item).is_none());
+        assert_eq!(
+            shared.snapshot.item(&item).unwrap().checkpoint.as_ref(),
+            Some(&before)
+        );
+        assert!(shared
+            .snapshot
+            .item("unknown")
+            .unwrap()
+            .checkpoint
+            .is_none());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        shared.history_reply = Some(sender);
+        shared.commit(
+            ProviderOutput {
+                history_result: Some(Ok(())),
+                ..Default::default()
+            },
+            &drop,
+            &notify,
+        );
+        assert_eq!(receiver.recv().unwrap(), Ok(()));
+        let mut initializing = checkpoint_session(
+            &fixture,
+            Box::new(claude::ClaudeProvider::new("conv".into())),
+        );
+        initializing.conversation_id = None;
+        let unbound =
+            send_checkpoint_message(&mut initializing, "initializing conversation").unwrap();
+        assert!(initializing
+            .snapshot
+            .item(&unbound)
+            .unwrap()
+            .checkpoint
+            .is_none());
+        feed_checkpoint_line(
+            &mut initializing,
+            serde_json::json!({"type":"result", "is_error":false}),
+        );
+        let mut replay = ProviderOutput::default();
+        replay.event(ChatEvent::Items {
+            items: vec![ChatItem::new(
+                "replayed",
+                ItemKind::User,
+                "existing history",
+            )],
+        });
+        initializing.commit(replay, &drop, &notify);
+        assert!(initializing
+            .snapshot
+            .item("replayed")
+            .unwrap()
+            .checkpoint
+            .is_none());
+    }
+
+    #[test]
+    fn stopped_sessions_ignore_late_agent_output() {
+        let fixture = checkpoints::tests::Fixture::new(1);
+        let ready = fixture.dir.join("ready");
+        let go = fixture.dir.join("go");
+        let script = format!(
+            "while [ ! -f {} ]; do sleep 0.01; done; echo late; touch {}; sleep 60",
+            shell_single_quoted(&go.to_string_lossy()),
+            shell_single_quoted(&ready.to_string_lossy())
+        );
+        let session = spawn(&script, Arc::default(), Arc::default());
+        session.shared.lock().unwrap().snapshot.status = ChatStatus::Exited { code: None };
+        std::fs::write(go, "go").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready.exists() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        session.terminate();
+        assert!(session.shared.lock().unwrap().snapshot.items.is_empty());
     }
 
     #[test]
@@ -1619,6 +1786,6 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        assert!(script.ends_with("exec claude '--add-dir' '/tmp/it'\\''s here'"));
+        assert!(script.ends_with("exec 'claude' '--add-dir' '/tmp/it'\\''s here'"));
     }
 }

@@ -26,6 +26,20 @@ beforeEach(() => {
   mkdirSync(join(directory, "scripts"));
   mkdirSync(join(directory, "src-tauri"));
   copyFileSync(resolve("scripts/rust-coverage.sh"), join(directory, "scripts/rust-coverage.sh"));
+  copyFileSync(
+    resolve("scripts/rust-coverage-report.py"),
+    join(directory, "scripts/rust-coverage-report.py")
+  );
+  executable(
+    "git",
+    `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.COVERAGE_LOG, JSON.stringify({tool:"git", args}) + "\\n");
+if (args[0] === "merge-base") console.log("fixture-ancestor");
+else if (args[0] === "ls-files" && process.env.TEST_UNTRACKED_FILE) process.stdout.write(process.env.TEST_UNTRACKED_FILE + "\\0");
+else if (args.includes("--no-index")) { process.stdout.write("new source patch\\n"); process.exit(1); }
+else if (args[0] === "diff") process.stdout.write("fixture patch\\n");`
+  );
   executable("uname", 'console.log(process.env.TEST_PLATFORM || "Darwin");');
   executable(
     "rustup",
@@ -60,7 +74,7 @@ if (args.includes("--version")) {
   }
   console.log(JSON.stringify({reason: "build-finished", success: true}));
 } else if (args.includes("report")) {
-  fs.writeFileSync(args[args.indexOf("--output-path") + 1], "report");
+  fs.writeFileSync(args[args.indexOf("--output-path") + 1], args.includes("--json") && !args.includes("--summary-only") ? '{"data":[{"functions":[]}]}' : "report");
 }
 `
   );
@@ -149,6 +163,7 @@ describe("Rust coverage pipeline", () => {
         "commands::claude_config::tests::",
         "commands::github::tests::",
         "commands::code_server::view::tests::",
+        "commands::chat::",
         "menu::",
       ]);
       expect(commands.find((call) => call.tool === "menu")?.args).toEqual([]);
@@ -160,6 +175,19 @@ describe("Rust coverage pipeline", () => {
       expect(tests.every((call) => call.profile?.endsWith("/test-%p.profraw"))).toBe(true);
       expect(commands.at(-1)?.args).toContain("--fail-under=100");
       expect(commands.at(-1)?.args).toContain("--compare-branch=fixture-base");
+      expect(commands.at(-1)?.args).toContain("--diff-file=coverage/rust/macos/changes.diff");
+      expect(readFileSync(join(directory, "coverage/rust/macos/changes.diff"), "utf8")).toBe(
+        "fixture patch\n"
+      );
+      expect(readFileSync(join(directory, "coverage/rust/macos/diff-lcov.info"), "utf8")).toBe(
+        "report"
+      );
+      expect(
+        commands.find((call) => call.tool === "git" && call.args[0] === "merge-base")?.args
+      ).toEqual(["merge-base", "fixture-base", "HEAD"]);
+      expect(commands.find((call) => call.tool === "git" && call.args[0] === "diff")?.args).toEqual(
+        ["diff", "fixture-ancestor", "--", "src-tauri/src"]
+      );
       expect(readFileSync(join(directory, "coverage/rust/macos/lcov.info"), "utf8")).toBe("report");
       expect(readFileSync(join(directory, "coverage/rust/macos/summary.json"), "utf8")).toBe(
         "report"
@@ -189,6 +217,17 @@ describe("Rust coverage pipeline", () => {
 
   it("fails the diff coverage gate", () => {
     expect(run({ DIFF_EXIT: "1" }).status).toBe(1);
+  });
+
+  it("includes untracked Rust source files in the current diff without staging them", () => {
+    const name = "src-tauri/src/new file.rs";
+    expect(run({ TEST_UNTRACKED_FILE: name }).status).toBe(0);
+    expect(
+      calls().find((call) => call.tool === "git" && call.args.includes("--no-index"))?.args
+    ).toEqual(["diff", "--no-index", "--", "/dev/null", name]);
+    expect(readFileSync(join(directory, "coverage/rust/macos/changes.diff"), "utf8")).toBe(
+      "fixture patch\nnew source patch\n"
+    );
   });
 
   it("rejects missing compiled targets before running partial coverage", () => {

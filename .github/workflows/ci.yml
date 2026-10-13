@@ -48,7 +48,7 @@ jobs:
             workflow_lint:
               - '{.github/workflows/**,.actionlint/**}'
             rust:
-              - '{src-tauri/**,deny.toml,scripts/rust-coverage.sh,scripts/coverage-requirements.txt}'
+              - '{src-tauri/**,deny.toml,scripts/rust-coverage.sh,scripts/rust-coverage-report.py,scripts/coverage-requirements.txt}'
             vault_kit:
               - 'vault-kit/**'
             workflow:
