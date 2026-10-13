@@ -46,6 +46,7 @@ fn base_commands() -> Vec<CommandOption> {
 }
 
 enum Call {
+    Fork(usize),
     Initialize,
     Account,
     Resume,
@@ -72,6 +73,8 @@ enum ServerRequest {
 }
 
 pub struct CodexProvider {
+    turns: Vec<String>,
+    user_turns: HashMap<String, String>,
     cwd: String,
     extra_dirs: Vec<String>,
     resume: Option<String>,
@@ -101,6 +104,8 @@ impl Drop for CodexProvider {
 impl CodexProvider {
     pub fn new(cwd: String, extra_dirs: Vec<String>, resume: Option<String>) -> Self {
         Self {
+            turns: Vec::new(),
+            user_turns: HashMap::new(),
             cwd,
             extra_dirs,
             resume,
@@ -354,6 +359,20 @@ impl CodexProvider {
             return;
         };
         self.thread_id = Some(id.to_string());
+        self.turns.clear();
+        self.user_turns.clear();
+        for turn in thread["turns"].as_array().into_iter().flatten() {
+            if let Some(id) = turn["id"].as_str() {
+                self.turns.push(id.to_string());
+                for item in turn["items"].as_array().into_iter().flatten() {
+                    if item["type"] == "userMessage" {
+                        if let Some(item_id) = item["id"].as_str() {
+                            self.user_turns.insert(item_id.to_string(), id.to_string());
+                        }
+                    }
+                }
+            }
+        }
         out.conversation = Some(id.to_string());
         let cwd = self.cwd.clone();
         self.call(out, Call::Skills, "skills/list", json!({ "cwds": [cwd] }));
@@ -364,9 +383,7 @@ impl CodexProvider {
             .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
             .filter_map(map_item)
             .collect::<Vec<_>>();
-        if !items.is_empty() {
-            out.event(ChatEvent::Items { items });
-        }
+        out.event(ChatEvent::Items { items });
         let active = thread["status"]["type"] == "active";
         self.busy = active;
         if active {
@@ -396,6 +413,31 @@ impl CodexProvider {
         };
         let result = &message["result"];
         match call {
+            Call::Fork(expected) => {
+                let result = match error {
+                    Some(error) => Err(format!("Could not fork the conversation: {error}")),
+                    None if result["thread"]["turns"].as_array().map(Vec::len)
+                        != Some(expected)
+                        || result["thread"]["id"].as_str().is_none()
+                        || result["thread"]["id"].as_str() == self.thread_id.as_deref() =>
+                    {
+                        Err(
+                            "This Codex version cannot fork at this message; update codex-cli"
+                                .into(),
+                        )
+                    }
+                    None => {
+                        self.adopt_thread(&result["thread"], out);
+                        self.controls.todos.clear();
+                        self.controls.context = None;
+                        out.controls(&self.controls);
+                        Ok(())
+                    }
+                };
+                self.busy = false;
+                out.status(ChatStatus::Idle);
+                out.history_result = Some(result);
+            }
             Call::Initialize => match error {
                 Some(error) => fail(out, format!("Codex did not start: {error}")),
                 None => {
@@ -470,6 +512,7 @@ impl CodexProvider {
             },
             Call::Turn | Call::Review => match error {
                 Some(error) => {
+                    out.completes_turn = true;
                     let item = self.error_item(error);
                     out.upsert(item);
                     self.turn_id = None;
@@ -539,10 +582,16 @@ impl CodexProvider {
         match method {
             "turn/started" => {
                 self.turn_id = params["turn"]["id"].as_str().map(String::from);
+                if let Some(id) = &self.turn_id {
+                    if !self.turns.contains(id) {
+                        self.turns.push(id.clone());
+                    }
+                }
                 self.busy = true;
                 out.status(ChatStatus::Busy);
             }
             "turn/completed" => {
+                out.completes_turn = true;
                 self.turn_id = None;
                 self.busy = false;
                 if let Some(message) = params["turn"]["error"]["message"].as_str() {
@@ -553,6 +602,11 @@ impl CodexProvider {
             }
             "item/started" | "item/completed" => {
                 if let Some(item) = map_item(&params["item"]) {
+                    if item.kind == ItemKind::User {
+                        if let Some(turn) = params["turnId"].as_str().or(self.turn_id.as_deref()) {
+                            self.user_turns.insert(item.id.clone(), turn.to_string());
+                        }
+                    }
                     out.upsert(item);
                 }
                 if method == "item/completed" {
@@ -767,6 +821,32 @@ impl CodexProvider {
 }
 
 impl ChatProvider for CodexProvider {
+    fn fork(&mut self, item_id: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        if self.busy {
+            return Err("Stop the agent before forking".into());
+        }
+        let turn = self
+            .user_turns
+            .get(item_id)
+            .ok_or("This message has no fork point")?;
+        let index = self
+            .turns
+            .iter()
+            .position(|id| id == turn)
+            .ok_or("Unknown turn")?;
+        let mut params = self.thread_params();
+        let method = if index == 0 {
+            "thread/start"
+        } else {
+            params["threadId"] = json!(self.thread_id);
+            params["lastTurnId"] = json!(self.turns[index - 1]);
+            "thread/fork"
+        };
+        self.call(out, Call::Fork(index), method, params);
+        self.busy = true;
+        out.status(ChatStatus::Busy);
+        Ok(())
+    }
     fn start(&mut self, out: &mut ProviderOutput) {
         self.call(
             out,
@@ -831,6 +911,7 @@ impl ChatProvider for CodexProvider {
         params.insert("threadId".into(), json!(thread_id));
         params.insert("input".into(), json!(input));
         self.call(out, Call::Turn, "turn/start", Value::Object(params));
+        out.starts_turn = true;
         self.busy = true;
         out.status(ChatStatus::Busy);
         Ok(())
@@ -898,6 +979,7 @@ impl ChatProvider for CodexProvider {
             "review/start",
             json!({ "threadId": thread_id, "target": target, "delivery": "inline" }),
         );
+        out.starts_turn = true;
         self.busy = true;
         out.status(ChatStatus::Busy);
         Ok(())
@@ -1440,6 +1522,79 @@ mod tests {
         let (_, snapshot) = resumed();
         let texts: Vec<_> = snapshot.items.iter().map(|i| i.text.as_str()).collect();
         assert_eq!(texts, ["hi", "hello"]);
+    }
+
+    #[test]
+    fn forks_before_the_selected_turn_and_adopts_only_a_verified_truncated_thread() {
+        let (mut provider, mut snapshot) = resumed();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "turn/started", "params": { "threadId": "th1", "turn": { "id": "t1" } } }),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "item/started", "params": { "threadId": "th1", "turnId": "t1", "item": { "type": "userMessage", "id": "u1", "content": [{ "type": "text", "text": "change it" }] } } }),
+        );
+        let mut out = ProviderOutput::default();
+        assert!(provider.fork("u1", &mut out).is_err());
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t1" } } }),
+        );
+        provider.fork("u1", &mut out).unwrap();
+        let fork = request(&out, "thread/fork");
+        assert_eq!(fork["params"]["threadId"], "th1");
+        assert_eq!(fork["params"]["lastTurnId"], "t0");
+        let result = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": fork["id"], "result": { "thread": { "id": "th2", "turns": [{ "id": "t0", "items": [{ "type": "userMessage", "id": "u0", "content": [{ "type": "text", "text": "hi" }] }] }] } } }),
+        );
+        assert_eq!(result.history_result, Some(Ok(())));
+        assert_eq!(result.conversation.as_deref(), Some("th2"));
+        assert_eq!(snapshot.items.len(), 1);
+        assert_eq!(snapshot.items[0].id, "u0");
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        assert_eq!(provider.thread_id.as_deref(), Some("th2"));
+    }
+
+    #[test]
+    fn the_first_message_forks_to_an_empty_conversation_and_keeps_the_original() {
+        let (mut provider, mut snapshot) = resumed();
+        let mut out = ProviderOutput::default();
+        provider.fork("u0", &mut out).unwrap();
+        let fork = request(&out, "thread/start");
+        let result = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": fork["id"], "result": { "thread": { "id": "empty-fork", "turns": [] } } }),
+        );
+        assert_eq!(result.history_result, Some(Ok(())));
+        assert!(snapshot.items.is_empty());
+        assert_eq!(result.conversation.as_deref(), Some("empty-fork"));
+    }
+
+    #[test]
+    fn unsupported_or_untruncated_forks_do_not_switch_the_conversation() {
+        for reply in [
+            json!({ "error": { "code": -32601, "message": "unsupported" } }),
+            json!({ "result": { "thread": { "id": "wrong", "turns": [{ "id": "t0", "items": [] }] } } }),
+        ] {
+            let (mut provider, mut snapshot) = resumed();
+            let mut out = ProviderOutput::default();
+            provider.fork("u0", &mut out).unwrap();
+            let mut reply = reply;
+            reply["id"] = request(&out, "thread/start")["id"].clone();
+            let result = feed(&mut provider, &mut snapshot, reply);
+            assert!(result.history_result.unwrap().is_err());
+            assert!(result.conversation.is_none());
+            assert_eq!(provider.thread_id.as_deref(), Some("th1"));
+            assert_eq!(snapshot.items.len(), 2);
+            assert_eq!(snapshot.status, ChatStatus::Idle);
+        }
     }
 
     #[test]

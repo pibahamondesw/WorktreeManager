@@ -13,12 +13,22 @@ use serde::{Deserialize, Serialize};
 pub struct Conversation {
     pub conversation_id: String,
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<ConversationFork>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationFork {
+    pub source: String,
+    pub item_id: String,
 }
 
 pub struct ConversationStore {
     path: PathBuf,
-    lock: Mutex<()>,
 }
+
+static STORE_LOCK: Mutex<()> = Mutex::new(());
 
 fn key(task_id: &str, agent: &str) -> String {
     format!("{task_id}:{agent}")
@@ -28,7 +38,6 @@ impl ConversationStore {
     pub fn new(dir: &Path) -> Self {
         Self {
             path: dir.join("chat-conversations.json"),
-            lock: Mutex::new(()),
         }
     }
 
@@ -50,21 +59,33 @@ impl ConversationStore {
     }
 
     pub fn get(&self, task_id: &str, agent: &str, cwd: &str) -> Option<String> {
-        let _guard = self.lock.lock().unwrap();
+        self.entry(task_id, agent, cwd)
+            .map(|conversation| conversation.conversation_id)
+    }
+
+    pub fn entry(&self, task_id: &str, agent: &str, cwd: &str) -> Option<Conversation> {
+        let _guard = STORE_LOCK.lock().unwrap();
         self.read()
             .remove(&key(task_id, agent))
             .filter(|conversation| conversation.cwd == cwd)
-            .map(|conversation| conversation.conversation_id)
     }
 
     pub fn remember(
         &self,
         task_id: &str,
         agent: &str,
-        conversation: Conversation,
+        mut conversation: Conversation,
     ) -> Result<(), String> {
-        let _guard = self.lock.lock().unwrap();
+        let _guard = STORE_LOCK.lock().unwrap();
         let mut map = self.read();
+        if let Some(previous) = map.get(&key(task_id, agent)) {
+            if previous.conversation_id == conversation.conversation_id
+                && previous.cwd == conversation.cwd
+                && conversation.fork.is_none()
+            {
+                conversation.fork = previous.fork.clone();
+            }
+        }
         if map.get(&key(task_id, agent)) == Some(&conversation) {
             return Ok(());
         }
@@ -73,7 +94,7 @@ impl ConversationStore {
     }
 
     pub fn forget_task(&self, task_id: &str) -> Result<(), String> {
-        let _guard = self.lock.lock().unwrap();
+        let _guard = STORE_LOCK.lock().unwrap();
         let mut map = self.read();
         let prefix = format!("{task_id}:");
         let before = map.len();
@@ -99,6 +120,7 @@ mod tests {
         Conversation {
             conversation_id: id.into(),
             cwd: cwd.into(),
+            fork: None,
         }
     }
 
@@ -134,5 +156,74 @@ mod tests {
             .remember("t1", "codex", conversation("c1", "/wt"))
             .unwrap();
         assert_eq!(store.get("t1", "codex", "/wt").as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn pending_forks_survive_reload_and_resume_without_changing_other_task_agents() {
+        let store = store("pending-fork");
+        store
+            .remember("t1", "codex", conversation("codex-thread", "/wt"))
+            .unwrap();
+        let mut fork = conversation("new-session", "/wt");
+        fork.fork = Some(ConversationFork {
+            source: "parent-session".into(),
+            item_id: "selected-user".into(),
+        });
+        store.remember("t1", "claude", fork.clone()).unwrap();
+        let reloaded = ConversationStore::new(store.path.parent().unwrap());
+        assert_eq!(reloaded.entry("t1", "claude", "/wt"), Some(fork.clone()));
+        reloaded
+            .remember("t1", "claude", conversation("new-session", "/wt"))
+            .unwrap();
+        assert_eq!(reloaded.entry("t1", "claude", "/wt"), Some(fork));
+        assert_eq!(
+            reloaded.get("t1", "codex", "/wt").as_deref(),
+            Some("codex-thread")
+        );
+        reloaded
+            .remember("t1", "claude", conversation("another-session", "/wt"))
+            .unwrap();
+        assert_eq!(reloaded.entry("t1", "claude", "/wt").unwrap().fork, None);
+    }
+
+    #[test]
+    fn legacy_mappings_without_fork_metadata_remain_readable() {
+        let store = store("legacy-mapping");
+        fs::create_dir_all(store.path.parent().unwrap()).unwrap();
+        fs::write(
+            &store.path,
+            r#"{"t1:claude":{"conversationId":"legacy","cwd":"/wt"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            store.entry("t1", "claude", "/wt"),
+            Some(conversation("legacy", "/wt"))
+        );
+    }
+
+    #[test]
+    fn concurrent_store_instances_preserve_both_agent_mappings() {
+        let store = store("parallel-mappings");
+        std::thread::scope(|scope| {
+            for agent in ["claude", "codex"] {
+                let dir = store.path.parent().unwrap();
+                scope.spawn(move || {
+                    let writer = ConversationStore::new(dir);
+                    for i in 0..20 {
+                        writer
+                            .remember("task", agent, conversation(&format!("{agent}-{i}"), "/wt"))
+                            .unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(
+            store.get("task", "claude", "/wt").as_deref(),
+            Some("claude-19")
+        );
+        assert_eq!(
+            store.get("task", "codex", "/wt").as_deref(),
+            Some("codex-19")
+        );
     }
 }
