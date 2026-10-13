@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentId } from "../types";
 import {
   ChatImage,
+  chatHistory,
+  chatRewindPreview,
+  HistoryAction,
   applyChatEvent,
   chatCompact,
   chatReview,
@@ -47,6 +50,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     let generation = 0;
 
     const open = async (mode: OpenMode, conversation?: string) => {
+      if (disposed) return;
       const early: { generation: number; apply: (s: ChatSnapshot) => ChatSnapshot }[] = [];
       let ready = false;
       setError(null);
@@ -113,6 +117,13 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     (requestId: string, response: ChatResponse) => chatRespond(taskId, agent, requestId, response),
     [taskId, agent]
   );
+  const previewRewind = (itemId: string) =>
+    chatRewindPreview(taskId, agent, snapshot.generation, itemId);
+  const changeHistory = async (itemId: string, action: HistoryAction, confirmation?: string) => {
+    const open = openRef.current;
+    await chatHistory(taskId, agent, snapshot.generation, itemId, action, confirmation);
+    if (action !== "code") await open("attach");
+  };
 
   return {
     snapshot,
@@ -127,5 +138,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     compact,
     review,
     refreshUsage,
+    previewRewind,
+    changeHistory,
   };
 }

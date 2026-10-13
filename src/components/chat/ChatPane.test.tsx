@@ -82,6 +82,95 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ChatPane", () => {
+  it.each([
+    ["Rewind code to here", "code"],
+    ["Fork conversation and rewind code", "both"],
+  ])("previews and confirms files after selecting %s", async (label, action) => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            items: [{ id: "u", kind: "user", text: "Fix the bug", checkpoint: "checkpoint" }],
+          })
+        );
+      if (command === "chat_rewind_preview")
+        return Promise.resolve({ token: "confirmation", files: ["/wt/a/x.ts"] });
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rewind or fork" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: label }));
+    await screen.findByRole("list", { name: "Files to restore" });
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "chat_history")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm restore" }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_history", {
+        taskId: "t1",
+        agent: "codex",
+        generation: 3,
+        itemId: "u",
+        action,
+        confirmation: "confirmation",
+      })
+    );
+  });
+
+  it("forks from a user message and attaches to the replacement conversation", async () => {
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rewind or fork" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Fork conversation from here" }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_history", {
+        taskId: "t1",
+        agent: "codex",
+        generation: 3,
+        itemId: "u",
+        action: "conversation",
+        confirmation: undefined,
+      })
+    );
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.filter(([command]) => command === "chat_open")).toHaveLength(2)
+    );
+    expect(mocks.invoke).toHaveBeenLastCalledWith(
+      "chat_open",
+      expect.objectContaining({ mode: "attach" })
+    );
+  });
+
+  it("disables history actions while the agent works or waits for approval", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? snapshot({ status: { kind: "busy" } }) : undefined)
+    );
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    expect(await screen.findByRole("button", { name: "Rewind or fork" })).toBeDisabled();
+  });
+
+  it("does not reattach the wrong task when a fork completes after switching tasks", async () => {
+    let finishFork: () => void = () => undefined;
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_history")
+        return new Promise<void>((resolve) => {
+          finishFork = resolve;
+        });
+      return Promise.resolve(undefined);
+    });
+    const view = render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rewind or fork" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Fork conversation from here" }));
+    view.rerender(<ChatPane taskId="t2" agent="claude" folders={["/wt/b"]} />);
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "chat_open",
+        expect.objectContaining({ taskId: "t2" })
+      )
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await act(async () => finishFork());
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "chat_open")).toHaveLength(2);
+  });
+
   it("restores the transcript and expands file diffs", async () => {
     render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a", "/wt/b"]} />);
     await screen.findByText("Fix the bug");

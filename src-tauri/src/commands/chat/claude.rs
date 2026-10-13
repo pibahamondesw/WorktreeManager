@@ -4,7 +4,7 @@
 //! `--resume` pin the conversation. The CLI does not replay history on resume, so the transcript
 //! is read back from its session file.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -29,8 +29,10 @@ enum Control {
 }
 
 pub struct ClaudeProvider {
+    fork_start: bool,
     session_id: String,
     turns: u32,
+    queued: VecDeque<QueuedMessage>,
     controls: ChatControls,
     calls: HashMap<String, Control>,
     blocks: HashMap<u64, String>,
@@ -39,12 +41,16 @@ pub struct ClaudeProvider {
     resolved_models: Vec<(String, String)>,
     command_list: Value,
     terminal_commands: Value,
-    user_messages: u64,
     errors: u64,
     control_ids: u64,
     usage: PlanUsage,
     usage_in_flight: bool,
     last_event_usage_request: Option<Instant>,
+}
+
+struct QueuedMessage {
+    item: ChatItem,
+    content: Value,
 }
 
 const UNSUPPORTED_CONTROL: &str = "Unsupported control request";
@@ -80,8 +86,10 @@ pub fn launch_args(session_id: &str, resume: bool, extra_dirs: &[String]) -> Vec
 impl ClaudeProvider {
     pub fn new(session_id: String) -> Self {
         Self {
+            fork_start: false,
             session_id,
             turns: 0,
+            queued: VecDeque::new(),
             controls: ChatControls::default(),
             calls: HashMap::new(),
             blocks: HashMap::new(),
@@ -90,13 +98,29 @@ impl ClaudeProvider {
             resolved_models: Vec::new(),
             command_list: Value::Null,
             terminal_commands: Value::Null,
-            user_messages: 0,
             errors: 0,
             control_ids: 0,
             usage: PlanUsage::default(),
             usage_in_flight: false,
             last_event_usage_request: None,
         }
+    }
+
+    pub fn forking(mut self) -> Self {
+        self.fork_start = true;
+        self
+    }
+
+    fn begin_turn(&mut self, message: QueuedMessage, out: &mut ProviderOutput) {
+        out.starts_turn = true;
+        out.write(json!({
+            "type": "user", "uuid": message.item.id,
+            "message": { "role": "user", "content": message.content },
+            "parent_tool_use_id": null, "session_id": self.session_id,
+        }));
+        out.upsert(message.item);
+        self.turns = 1;
+        out.status(ChatStatus::Busy);
     }
 
     fn control(&mut self, out: &mut ProviderOutput, call: Control, request: Value) {
@@ -114,6 +138,15 @@ impl ClaudeProvider {
             return;
         };
         if response["subtype"] != "success" {
+            if matches!(call, Control::Initialize) && self.fork_start {
+                let message = response["error"]
+                    .as_str()
+                    .unwrap_or("Claude could not start the fork")
+                    .to_string();
+                out.history_result = Some(Err(message.clone()));
+                out.status(ChatStatus::Failed { message });
+                return;
+            }
             if let Control::Usage = call {
                 self.usage_in_flight = false;
                 let error = response["error"]
@@ -142,6 +175,10 @@ impl ClaudeProvider {
         let body = &response["response"];
         match call {
             Control::Initialize => {
+                if self.fork_start {
+                    out.status(ChatStatus::Idle);
+                    out.history_result = Some(Ok(()));
+                }
                 self.controls.models = body["models"]
                     .as_array()
                     .into_iter()
@@ -444,7 +481,9 @@ impl ClaudeProvider {
 
 impl ChatProvider for ClaudeProvider {
     fn start(&mut self, out: &mut ProviderOutput) {
-        out.conversation = Some(self.session_id.clone());
+        if !self.fork_start {
+            out.conversation = Some(self.session_id.clone());
+        }
         self.control(out, Control::Initialize, json!({ "subtype": "initialize" }));
         self.control(out, Control::Settings, json!({ "subtype": "get_settings" }));
         self.control(
@@ -452,7 +491,11 @@ impl ChatProvider for ClaudeProvider {
             Control::ContextUsage,
             json!({ "subtype": "get_context_usage", "detail": "summary" }),
         );
-        out.status(ChatStatus::Idle);
+        out.status(if self.fork_start {
+            ChatStatus::Starting
+        } else {
+            ChatStatus::Idle
+        });
     }
 
     fn handle_line(&mut self, line: &str, snapshot: &ChatSnapshot, out: &mut ProviderOutput) {
@@ -501,6 +544,7 @@ impl ChatProvider for ClaudeProvider {
                 self.request_usage(out)
             }
             Some("result") => {
+                out.completes_turn = true;
                 self.turns = self.turns.saturating_sub(1);
                 if message["is_error"] == true {
                     let text = message["result"]
@@ -526,7 +570,11 @@ impl ChatProvider for ClaudeProvider {
                     json!({ "subtype": "get_context_usage", "detail": "summary" }),
                 );
                 if self.turns == 0 {
-                    out.status(ChatStatus::Idle);
+                    if let Some(message) = self.queued.pop_front() {
+                        self.begin_turn(message, out);
+                    } else {
+                        out.status(ChatStatus::Idle);
+                    }
                 }
             }
             _ => {}
@@ -540,20 +588,22 @@ impl ChatProvider for ClaudeProvider {
         images: &[ChatImage],
         out: &mut ProviderOutput,
     ) -> Result<(), String> {
-        self.user_messages += 1;
-        out.upsert(ChatItem::new(
-            format!("local-user-{}", self.user_messages),
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let item = ChatItem::new(
+            &message_id,
             ItemKind::User,
             user_display_text(text, images.len()),
-        ));
-        out.write(json!({
-            "type": "user",
-            "message": { "role": "user", "content": user_content(text, images) },
-            "parent_tool_use_id": null,
-            "session_id": self.session_id,
-        }));
-        self.turns += 1;
-        out.status(ChatStatus::Busy);
+        );
+        let message = QueuedMessage {
+            item,
+            content: user_content(text, images),
+        };
+        if self.turns > 0 {
+            out.upsert(message.item.clone().with_status("queued"));
+            self.queued.push_back(message);
+        } else {
+            self.begin_turn(message, out);
+        }
         Ok(())
     }
 
@@ -1020,21 +1070,48 @@ fn session_file(home: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-pub fn session_exists(cwd: &str, session_id: &str) -> bool {
-    std::env::var_os("HOME")
-        .and_then(|home| session_file(Path::new(&home), cwd, session_id))
+pub fn session_exists(home: Option<&Path>, cwd: &str, session_id: &str) -> bool {
+    home.and_then(|home| session_file(home, cwd, session_id))
         .is_some()
 }
 
-/// Rebuild the visible transcript from a Claude Code session file. Best effort: the file is an
-/// internal format, so unknown lines are skipped rather than failing the resume.
-pub fn history(cwd: &str, session_id: &str) -> Vec<ChatItem> {
-    let Some(path) =
-        std::env::var_os("HOME").and_then(|home| session_file(Path::new(&home), cwd, session_id))
-    else {
-        return Vec::new();
-    };
-    parse_history(&fs::read_to_string(path).unwrap_or_default())
+pub fn history(home: Option<&Path>, cwd: &str, session_id: &str) -> Vec<ChatItem> {
+    home.and_then(|home| session_file(home, cwd, session_id))
+        .map(|path| parse_history(&fs::read_to_string(path).unwrap_or_default()))
+        .unwrap_or_default()
+}
+
+pub fn fork_point(
+    home: Option<&Path>,
+    cwd: &str,
+    session_id: &str,
+    item_id: &str,
+) -> Result<(Option<String>, Vec<ChatItem>), String> {
+    let path = home
+        .and_then(|home| session_file(home, cwd, session_id))
+        .ok_or("Conversation transcript is unavailable")?;
+    fork_point_in(
+        &fs::read_to_string(path).map_err(|e| e.to_string())?,
+        item_id,
+    )
+}
+
+fn fork_point_in(text: &str, item_id: &str) -> Result<(Option<String>, Vec<ChatItem>), String> {
+    let history = parse_history(text);
+    let index = history
+        .iter()
+        .position(|item| item.id == item_id && item.kind == ItemKind::User)
+        .ok_or("This message is no longer in the conversation")?;
+    let target = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|entry| entry["uuid"] == item_id)
+        .ok_or("Unknown message")?;
+    let parent = target["parentUuid"].as_str().map(String::from);
+    if index > 0 && parent.is_none() {
+        return Err("This transcript has no safe fork point".into());
+    }
+    Ok((parent, history[..index].to_vec()))
 }
 
 fn parse_history(text: &str) -> Vec<ChatItem> {
@@ -1072,10 +1149,7 @@ fn parse_history(text: &str) -> Vec<ChatItem> {
                                 if !text.starts_with('<') {
                                     snapshot.apply(&ChatEvent::Upsert {
                                         item: ChatItem::new(
-                                            format!(
-                                                "{}:text",
-                                                entry["uuid"].as_str().unwrap_or_default()
-                                            ),
+                                            entry["uuid"].as_str().unwrap_or_default(),
                                             ItemKind::User,
                                             text,
                                         ),
@@ -1125,6 +1199,99 @@ fn user_content(text: &str, images: &[ChatImage]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_points_cut_before_the_user_message_and_leave_the_original_intact() {
+        let text = [
+            json!({ "type": "user", "uuid": "u1", "parentUuid": null, "message": { "content": "first" } }),
+            json!({ "type": "assistant", "uuid": "a1-uuid", "parentUuid": "u1", "message": { "id": "a1", "content": [{ "type": "text", "text": "answer" }] } }),
+            json!({ "type": "user", "uuid": "u2", "parentUuid": "a1-uuid", "message": { "content": [{ "type": "text", "text": "second" }] } }),
+        ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        let (anchor, history) = fork_point_in(&text, "u2").unwrap();
+        assert_eq!(anchor.as_deref(), Some("a1-uuid"));
+        assert_eq!(
+            history
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "answer"]
+        );
+        let (anchor, history) = fork_point_in(&text, "u1").unwrap();
+        assert!(anchor.is_none());
+        assert!(history.is_empty());
+        assert!(fork_point_in(&text, "unknown").is_err());
+        assert_eq!(parse_history(&text).len(), 3);
+        let unsafe_parent = text.replace("\"parentUuid\":\"a1-uuid\"", "\"parentUuid\":null");
+        assert!(fork_point_in(&unsafe_parent, "u2")
+            .unwrap_err()
+            .contains("safe fork point"));
+    }
+
+    #[test]
+    fn sent_messages_use_a_persistent_uuid_for_checkpoint_and_resume() {
+        let (mut provider, _) = started();
+        let mut out = ProviderOutput::default();
+        provider.send("hello", &[], &mut out).unwrap();
+        let message: Value = serde_json::from_str(&out.writes[0]).unwrap();
+        let item = out
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                ChatEvent::Upsert { item } => Some(item),
+                _ => None,
+            })
+            .collect::<Vec<_>>()[0];
+        assert_eq!(message["uuid"], item.id);
+        assert!(uuid::Uuid::parse_str(&item.id).is_ok());
+    }
+
+    #[test]
+    fn a_fork_waits_for_initialization_and_does_not_persist_a_failed_launch() {
+        let mut provider = ClaudeProvider::new("fork".into()).forking();
+        let mut out = ProviderOutput::default();
+        provider.start(&mut out);
+        assert!(out.conversation.is_none());
+        assert!(out.events.iter().any(|event| matches!(
+            event,
+            ChatEvent::Status {
+                status: ChatStatus::Starting
+            }
+        )));
+        let request: Value = serde_json::from_str(&out.writes[0]).unwrap();
+        let mut failed = ProviderOutput::default();
+        provider.handle_control_response(&json!({ "request_id": request["request_id"], "subtype": "error", "error": "unknown resume flag" }), &mut failed);
+        assert!(failed.conversation.is_none());
+        assert_eq!(
+            failed.history_result,
+            Some(Err("unknown resume flag".into()))
+        );
+        assert!(failed.events.iter().any(|event| matches!(
+            event,
+            ChatEvent::Status {
+                status: ChatStatus::Failed { .. }
+            }
+        )));
+    }
+
+    #[test]
+    fn successful_fork_initialization_releases_the_history_request() {
+        let mut provider = ClaudeProvider::new("fork".into()).forking();
+        let mut out = ProviderOutput::default();
+        provider.start(&mut out);
+        let request: Value = serde_json::from_str(&out.writes[0]).unwrap();
+        let mut initialized = ProviderOutput::default();
+        provider.handle_control_response(
+            &json!({"request_id":request["request_id"], "subtype":"success", "response":{}}),
+            &mut initialized,
+        );
+        assert_eq!(initialized.history_result, Some(Ok(())));
+        assert!(initialized.events.iter().any(|event| matches!(
+            event,
+            ChatEvent::Status {
+                status: ChatStatus::Idle
+            }
+        )));
+    }
 
     fn feed(
         provider: &mut ClaudeProvider,
@@ -1206,7 +1373,11 @@ mod tests {
         }
         let mut queued = ProviderOutput::default();
         provider.send("again", &[], &mut queued).unwrap();
-        assert_eq!(written(&queued)[0]["message"]["content"], "again");
+        assert!(queued.writes.is_empty());
+        assert!(!queued.starts_turn);
+        for event in &queued.events {
+            snapshot.apply(event);
+        }
 
         let events = [
             json!({ "type": "stream_event", "event": { "type": "message_start", "message": { "id": "m1" } } }),
@@ -1233,7 +1404,7 @@ mod tests {
             json!({ "type": "result", "is_error": false }),
         );
         let texts: Vec<_> = snapshot.items.iter().map(|i| i.text.as_str()).collect();
-        assert_eq!(texts, ["hi", "hmm.", "Hello."]);
+        assert_eq!(texts, ["hi", "again", "hmm.", "Hello."]);
         assert_eq!(snapshot.status, ChatStatus::Busy);
         let out = feed(
             &mut provider,

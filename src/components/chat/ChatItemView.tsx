@@ -2,8 +2,9 @@ import { useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDownIcon } from "../ui/Icons";
-import { ChatItem } from "../../services/chat";
+import { ChatItem, HistoryAction } from "../../services/chat";
 import { MarkdownLink } from "./MarkdownLink";
+import { HistoryMenu } from "./HistoryMenu";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted animate-pulse",
@@ -104,12 +105,29 @@ function Activity({ item }: { item: ChatItem }) {
   );
 }
 
-export function ChatItemView({ item }: { item: ChatItem }) {
+export function ChatItemView({
+  item,
+  onHistory,
+  historyDisabled,
+}: {
+  item: ChatItem;
+  onHistory?: (action: HistoryAction) => void;
+  historyDisabled?: boolean;
+}) {
   switch (item.kind) {
     case "user":
       return (
-        <div className="self-end max-w-[85%] rounded-lg bg-bg-tertiary px-3 py-2 text-sm text-text-primary whitespace-pre-wrap select-text">
-          {item.text}
+        <div className="group relative self-end max-w-[85%]">
+          <div className="rounded-lg bg-bg-tertiary px-3 py-2 text-sm text-text-primary whitespace-pre-wrap select-text">
+            {item.text}
+          </div>
+          {onHistory && (
+            <HistoryMenu
+              onPick={onHistory}
+              disabled={historyDisabled}
+              canRewind={!!item.checkpoint}
+            />
+          )}
         </div>
       );
     case "assistant":

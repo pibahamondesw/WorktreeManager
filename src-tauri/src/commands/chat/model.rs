@@ -48,6 +48,8 @@ pub struct ChatItem {
     pub detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<String>,
 }
 
 impl ChatItem {
@@ -59,6 +61,7 @@ impl ChatItem {
             title: None,
             detail: None,
             status: None,
+            checkpoint: None,
         }
     }
 
@@ -404,6 +407,9 @@ pub struct ProviderOutput {
     pub events: Vec<ChatEvent>,
     pub writes: Vec<String>,
     pub conversation: Option<String>,
+    pub history_result: Option<Result<(), String>>,
+    pub starts_turn: bool,
+    pub completes_turn: bool,
 }
 
 impl ProviderOutput {
@@ -452,6 +458,9 @@ pub fn user_display_text(text: &str, image_count: usize) -> String {
 /// steer or queue the message rather than refusing it. The session owns the process and threading; the
 /// provider only sees lines and user actions. `snapshot` is the state before this input.
 pub trait ChatProvider: Send {
+    fn fork(&mut self, _item_id: &str, _out: &mut ProviderOutput) -> Result<(), String> {
+        Err("This agent cannot fork a running conversation".into())
+    }
     fn start(&mut self, out: &mut ProviderOutput);
     fn handle_line(&mut self, line: &str, snapshot: &ChatSnapshot, out: &mut ProviderOutput);
     fn send(
