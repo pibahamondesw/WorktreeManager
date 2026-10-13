@@ -6,11 +6,12 @@ import { PendingRequestCard } from "./PendingRequestCard";
 import { SessionList } from "./SessionList";
 import { TodoPanel } from "./TodoPanel";
 import { UsageDialog } from "./UsageDialog";
+import { HistoryDialog } from "./HistoryDialog";
 import { CodexUsageIndicator } from "../usage/CodexUsageIndicator";
 import { ClaudeUsageIndicator } from "../usage/ClaudeUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
 import { SessionStatus } from "../../hooks/useTerminalSession";
-import { ChatImage, ChatStatus, isLive } from "../../services/chat";
+import { ChatImage, ChatItem, ChatStatus, HistoryAction, isLive } from "../../services/chat";
 import { CODEX_PLAN_URL } from "../../services/usage";
 import { AgentId } from "../../types";
 
@@ -36,6 +37,13 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   const [actionError, setActionError] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [historyPending, setHistoryPending] = useState<string | null>(null);
+  const [historyItem, setHistoryItem] = useState<{
+    item: ChatItem;
+    generation: number;
+    sessionKey: string;
+    action: Exclude<HistoryAction, "conversation">;
+  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const { status, items, pending, controls } = snapshot;
@@ -61,6 +69,18 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   const send = async (text: string, images: ChatImage[]) => {
     stickRef.current = true;
     await session.send(text, images);
+  };
+
+  const pickHistory = (item: ChatItem, action: HistoryAction) => {
+    const sessionKey = `${taskId}:${agent}`;
+    if (action === "conversation") {
+      setHistoryPending(sessionKey);
+      void run(() => session.changeHistory(item.id, action)).finally(() => {
+        setHistoryPending((current) => (current === sessionKey ? null : current));
+      });
+    } else {
+      setHistoryItem({ item, action, generation: snapshot.generation, sessionKey });
+    }
   };
 
   return (
@@ -104,7 +124,16 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
             </p>
           )}
           {items.map((item) => (
-            <ChatItemView key={item.id} item={item} />
+            <ChatItemView
+              key={item.id}
+              item={item}
+              historyDisabled={
+                status.kind !== "idle" ||
+                pending.length > 0 ||
+                historyPending === `${taskId}:${agent}`
+              }
+              onHistory={item.kind === "user" ? (action) => pickHistory(item, action) : undefined}
+            />
           ))}
           {pending.map((request, index) => (
             <PendingRequestCard
@@ -167,6 +196,21 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
         onRefresh={session.refreshUsage}
         onClose={() => setUsageOpen(false)}
       />
+      {historyItem &&
+        historyItem.generation === snapshot.generation &&
+        historyItem.sessionKey === `${taskId}:${agent}` && (
+          <HistoryDialog
+            key={`${historyItem.generation}:${historyItem.item.id}:${historyItem.action}`}
+            item={historyItem.item}
+            action={historyItem.action}
+            disabled={status.kind !== "idle" || pending.length > 0}
+            onPreview={() => session.previewRewind(historyItem.item.id)}
+            onApply={(action, confirmation) =>
+              session.changeHistory(historyItem.item.id, action, confirmation)
+            }
+            onClose={() => setHistoryItem(null)}
+          />
+        )}
     </div>
   );
 }

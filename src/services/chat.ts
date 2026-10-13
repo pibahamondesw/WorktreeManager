@@ -28,6 +28,7 @@ export interface ChatItem {
   title?: string;
   detail?: string;
   status?: string;
+  checkpoint?: string;
 }
 
 export interface ChatQuestion {
@@ -251,6 +252,29 @@ export const chatSessionArchive = (taskId: string, agent: AgentId, folders: stri
 
 export const chatSend = (taskId: string, agent: AgentId, text: string, images: ChatImage[] = []) =>
   invoke<void>("chat_send", { taskId, agent, text, images });
+
+export type HistoryAction = "code" | "conversation" | "both";
+
+export interface RewindPreview {
+  token: string;
+  files: string[];
+}
+
+export const chatRewindPreview = (
+  taskId: string,
+  agent: AgentId,
+  generation: number,
+  itemId: string
+) => invoke<RewindPreview>("chat_rewind_preview", { taskId, agent, generation, itemId });
+
+export const chatHistory = (
+  taskId: string,
+  agent: AgentId,
+  generation: number,
+  itemId: string,
+  action: HistoryAction,
+  confirmation?: string
+) => invoke<void>("chat_history", { taskId, agent, generation, itemId, action, confirmation });
 
 export const chatConfigure = (taskId: string, agent: AgentId, setting: ChatSetting) =>
   invoke<void>("chat_configure", { taskId, agent, setting });
