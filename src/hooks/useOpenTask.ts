@@ -91,9 +91,14 @@ export function useOpenTask({
     [recordTaskVisit, showTask]
   );
 
-  const closeTask = useCallback(() => {
-    if (openedTask) transitionTaskView(openedTask.taskId, () => setOpenedTask(null));
-  }, [openedTask]);
+  const closeTask = useCallback(
+    ({ animate = true }: { animate?: boolean } = {}) => {
+      if (!openedTask) return;
+      if (animate) transitionTaskView(openedTask.taskId, () => setOpenedTask(null));
+      else setOpenedTask(null);
+    },
+    [openedTask]
+  );
   const restoreTask = useCallback(
     (task: Task) => {
       const surface = taskSurfaceFor(editorApp, agentViews);

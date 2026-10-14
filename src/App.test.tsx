@@ -5,6 +5,7 @@ import App from "./App";
 import { ZoomControls } from "./components/ui/ZoomControls";
 import { DEFAULT_STATE, Task, Workspace } from "./types";
 import type { useStore } from "./hooks/useStore";
+import { useState } from "react";
 
 vi.mock("./hooks/useTaskProjects", () => ({ useTaskProjects: vi.fn() }));
 
@@ -84,15 +85,18 @@ vi.mock("./components/sidebar/WorkspaceList", () => ({
 vi.mock("./components/worktree/WorktreeList", () => ({
   WorktreeList: ({
     tasks,
+    workspace,
     openedTask,
     onOpenTask,
   }: {
     tasks: Task[];
+    workspace: Workspace;
     openedTask: { taskId: string } | null;
     onOpenTask: (task: Task) => Promise<boolean>;
   }) => (
     <>
       <div>{openedTask ? "Task surface" : "Tasks"}</div>
+      <div>Current workspace: {workspace.name}</div>
       {tasks[0] && <button onClick={() => void onOpenTask(tasks[0])}>Open task</button>}
     </>
   ),
@@ -129,7 +133,10 @@ beforeEach(() => {
     selectWorkspace: mocks.selectWorkspace,
   });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  delete (document as Partial<Document>).startViewTransition;
+});
 
 describe("unified settings", () => {
   it("opens with Cmd+S while the sidebar is collapsed and closes with Escape", () => {
@@ -240,6 +247,51 @@ describe("workspace task-surface navigation", () => {
     members: [],
     createdAt: "2026-09-24T00:00:00Z",
   };
+
+  it.each(["click", "keyboard command", "history"])(
+    "opens another workspace without a return-to-task animation on %s",
+    async (source) => {
+      const store = mocks.useStore();
+      mocks.useStore.mockImplementation(function useTestStore() {
+        const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("second");
+        return {
+          ...store,
+          state: { ...store.state, selectedWorkspaceId, tasks: [task] },
+          selectedWorkspace: workspaces.find((workspace) => workspace.id === selectedWorkspaceId),
+          selectedTasks: selectedWorkspaceId === task.workspaceId ? [task] : [],
+          editorApp: "vscode-web",
+          selectWorkspace: (workspaceId) => {
+            mocks.selectWorkspace(workspaceId);
+            void Promise.resolve().then(() => setSelectedWorkspaceId(workspaceId));
+          },
+        };
+      });
+      const view = render(<App />);
+      fireEvent.click(view.getByRole("button", { name: "Open task" }));
+      expect(view.getByText("Task surface")).toBeTruthy();
+      const startViewTransition = vi.fn(() => ({ finished: Promise.resolve() }) as ViewTransition);
+      document.startViewTransition = startViewTransition;
+      mocks.recordWorkspaceVisit.mockClear();
+
+      if (source === "click") {
+        fireEvent.click(view.getByRole("button", { name: "Workspace First" }));
+      } else if (source === "keyboard command") {
+        fireEvent.keyDown(window, { key: "0", code: "Digit0", metaKey: true });
+      } else {
+        act(() =>
+          mocks.historyParams.onNavigate({ kind: "workspace", workspaceId: "first", at: "" })
+        );
+      }
+
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(await view.findByText("Current workspace: First")).toBeTruthy();
+      expect(view.getByText("Tasks")).toBeTruthy();
+      expect(mocks.selectWorkspace).toHaveBeenCalledExactlyOnceWith("first");
+      if (source === "history") expect(mocks.recordWorkspaceVisit).not.toHaveBeenCalled();
+      else expect(mocks.recordWorkspaceVisit).toHaveBeenCalledExactlyOnceWith("first");
+      expect(mocks.invoke).not.toHaveBeenCalledWith("vscode_close", expect.anything());
+    }
+  );
 
   it.each(["click", "keyboard command"])(
     "returns to tasks and records history on current-workspace %s",
