@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeUsageIndicator } from "./ClaudeUsageIndicator";
 import { CodexUsageIndicator } from "./CodexUsageIndicator";
 import { CachedUsage } from "../../hooks/useCachedUsage";
+import { UsageIndicator } from "./UsageIndicator";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -218,5 +219,64 @@ describe.each([
     await act(async () => resolve(snapshot()));
     await act(async () => vi.advanceTimersByTimeAsync(4000));
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores refresh errors from a closed panel after reopening", async () => {
+    let rejectRefresh: (reason: Error) => void = () => undefined;
+    const pendingRefresh = new Promise<void>((_, reject) => {
+      rejectRefresh = reject;
+    });
+    const onRefresh = vi.fn().mockReturnValueOnce(pendingRefresh).mockResolvedValue(undefined);
+    render(
+      <UsageIndicator
+        agentLabel={agentLabel}
+        label={label}
+        usage={snapshot().usage}
+        primaryWindows={[]}
+        onRefresh={onRefresh}
+      />
+    );
+    const trigger = screen.getByRole("button", { name: `${agentLabel} usage and limits` });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: `Close ${agentLabel} usage` }));
+    await act(async () => fireEvent.click(trigger));
+    await act(async () => rejectRefresh(new Error("Stale refresh error")));
+    expect(screen.queryByText("Error: Stale refresh error")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: `${agentLabel} usage` })).toBeInTheDocument();
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: `Close ${agentLabel} usage` }));
+    onRefresh.mockRejectedValueOnce(new Error("Current refresh error"));
+    await act(async () => fireEvent.click(trigger));
+    expect(screen.getByText("Error: Current refresh error")).toBeInTheDocument();
+  });
+
+  it("preserves focus when the refresh callback changes and cleans up panel listeners", async () => {
+    const props = {
+      agentLabel,
+      label,
+      usage: snapshot().usage,
+      primaryWindows: [],
+    };
+    const { rerender, unmount } = render(
+      <UsageIndicator {...props} onRefresh={vi.fn().mockResolvedValue(undefined)} />
+    );
+    const trigger = screen.getByRole("button", { name: `${agentLabel} usage and limits` });
+    await act(async () => fireEvent.click(trigger));
+    trigger.focus();
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    await act(async () => rerender(<UsageIndicator {...props} onRefresh={onRefresh} />));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(trigger).toHaveFocus();
+
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(fireEvent.keyDown(document, { key: "Tab" })).toBe(true);
+    expect(fireEvent.keyDown(document, { key: "Escape" })).toBe(true);
+
+    await act(async () => fireEvent.click(trigger));
+    unmount();
+    expect(fireEvent.keyDown(document, { key: "Tab" })).toBe(true);
+    expect(fireEvent.keyDown(document, { key: "Escape" })).toBe(true);
   });
 });
