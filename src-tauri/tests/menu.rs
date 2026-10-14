@@ -332,6 +332,9 @@ fn main() {
     menu::set_shortcut_context(app.handle().clone(), "task".into(), false, app.state()).unwrap();
     assert_key_routing(&main, "z", 1 << 20, 6, false);
     assert_key_routing(&editor, "k", 1 << 20, 40, false);
+    for (key, key_code) in [("c", 8), ("v", 9), ("x", 7)] {
+        assert_key_routing(&editor, key, 1 << 20, key_code, false);
+    }
     for (key, modifiers, key_code, expected) in [
         ("z", 1 << 20, 6, "key:z"),
         ("Z", (1 << 20) | (1 << 17), 6, "key:Z"),
