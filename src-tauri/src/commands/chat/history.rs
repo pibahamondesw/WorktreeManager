@@ -64,7 +64,7 @@ fn history_item(
         .ok_or("Unknown user message".into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_rewind_preview(
     registry: State<'_, ChatRegistry>,
     task_id: String,

@@ -801,7 +801,7 @@ pub async fn chat_open<R: Runtime>(
     Ok(snapshot)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_send(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -822,7 +822,7 @@ pub fn chat_send(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_configure(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -834,7 +834,7 @@ pub fn chat_configure(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_compact(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -845,7 +845,7 @@ pub fn chat_compact(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_review(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -857,7 +857,7 @@ pub fn chat_review(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_refresh_usage(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -878,7 +878,7 @@ pub async fn chat_file_search(
         .map_err(|e| format!("Task failed: {e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_interrupt(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -892,7 +892,7 @@ pub fn chat_interrupt(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_respond(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -907,7 +907,7 @@ pub fn chat_respond(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_detach(
     registry: State<'_, ChatRegistry>,
     task_id: String,
@@ -1032,7 +1032,7 @@ pub async fn chat_close<R: Runtime>(
     .map_err(|e| format!("Task failed: {e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_list(registry: State<'_, ChatRegistry>) -> Vec<ChatInfo> {
     registry
         .sessions
