@@ -135,7 +135,7 @@ function App() {
         const task = state.tasks.find((t) => t.id === entry.taskId);
         if (task) restoreTask(task);
       } else {
-        closeTask();
+        closeTask({ animate: entry.workspaceId === state.selectedWorkspaceId });
         if (entry.workspaceId !== state.selectedWorkspaceId) selectWorkspace(entry.workspaceId);
       }
     },
@@ -199,7 +199,7 @@ function App() {
     (workspaceId: string) => {
       const isCurrentWorkspace = workspaceId === state.selectedWorkspaceId;
       if (isCurrentWorkspace && !openedTask) return;
-      closeTask();
+      closeTask({ animate: isCurrentWorkspace });
       if (!isCurrentWorkspace) selectWorkspace(workspaceId);
       recordWorkspaceVisit(workspaceId);
     },
