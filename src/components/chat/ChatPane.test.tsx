@@ -199,6 +199,46 @@ describe("ChatPane", () => {
     expect(screen.getByText("+added")).toHaveClass("text-success");
   });
 
+  it("shows the message while the turn is prepared and restores it if sending fails", async () => {
+    const sends: { resolve: () => void; reject: (e: string) => void }[] = [];
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot({ items: [] }));
+      if (command === "chat_send")
+        return new Promise<void>((resolve, reject) => sends.push({ resolve, reject }));
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    const box = await screen.findByRole("textbox", { name: "Message Codex" });
+    typeInto(box, "Add tests");
+    fireEvent.keyDown(box, { key: "Enter" });
+
+    await waitFor(() => expect(sends).toHaveLength(1));
+    expect(composerText(box)).toBe("");
+    expect(screen.getByLabelText("Sending message")).toHaveTextContent("Add tests");
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing…");
+    typeInto(box, "again");
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(sends).toHaveLength(1);
+
+    emit(3, { type: "status", status: { kind: "busy" } });
+    await act(async () => sends[0].resolve());
+    expect(screen.queryByText("Preparing…")).toBeNull();
+    expect(screen.getByText("Codex is working…")).toBeInTheDocument();
+    expect(screen.getByLabelText("Sending message")).toBeInTheDocument();
+    emit(3, { type: "upsert", item: { id: "u1", kind: "user", text: "Add tests" } });
+    expect(screen.queryByLabelText("Sending message")).toBeNull();
+
+    emit(3, { type: "status", status: { kind: "idle" } });
+    typeInto(box, "");
+    typeInto(box, "Fails");
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(sends).toHaveLength(2));
+    await act(async () => sends[1].reject("Agent unavailable"));
+    expect(composerText(box)).toBe("Fails");
+    expect(screen.queryByLabelText("Sending message")).toBeNull();
+    expect(screen.getByText("Agent unavailable")).toBeInTheDocument();
+  });
+
   it("sends on Enter, streams the reply and ignores a stale generation", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     const box = await screen.findByRole("textbox", { name: "Message Claude" });

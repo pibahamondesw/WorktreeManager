@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -23,6 +24,59 @@ impl PartialEq for FileState {
     fn eq(&self, other: &Self) -> bool {
         self.blob == other.blob && self.mode == other.mode && self.link == other.link
     }
+}
+
+const RACY_WINDOW_NS: i64 = 2_000_000_000;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct FileStamp {
+    size: u64,
+    mtime: i64,
+    ctime: i64,
+    inode: u64,
+    mode: u32,
+}
+
+impl FileStamp {
+    fn of(metadata: &fs::Metadata) -> Self {
+        Self {
+            size: metadata.size(),
+            mtime: metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec(),
+            ctime: metadata.ctime() * 1_000_000_000 + metadata.ctime_nsec(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+        }
+    }
+}
+
+/// Content hashes from the previous scan of a folder. A hash is reused only while the file's
+/// stamp is unchanged and its last change predates that scan by more than the racy window, so
+/// writes landing within the timestamp granularity of the scan are always read again.
+#[derive(Default, Serialize, Deserialize)]
+struct StampCache {
+    scanned_at: i64,
+    files: BTreeMap<String, (FileStamp, String)>,
+}
+
+impl StampCache {
+    fn blob(&self, path: &str, stamp: &FileStamp) -> Option<&str> {
+        self.files
+            .get(path)
+            .filter(|(cached, _)| {
+                cached == stamp && stamp.ctime.max(stamp.mtime) < self.scanned_at - RACY_WINDOW_NS
+            })
+            .map(|(_, blob)| blob.as_str())
+    }
+}
+
+fn now_ns() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as i64)
+}
+
+fn stamp_cache_name(folder: &str) -> String {
+    format!("stamps-{}.json", hash(folder.as_bytes()))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -258,6 +312,13 @@ impl Checkpoints {
             {
                 paths.extend(repository.files.keys().cloned());
             }
+            let cache = self
+                .read::<StampCache>(&stamp_cache_name(folder))
+                .unwrap_or_default();
+            let mut stamps = StampCache {
+                scanned_at: now_ns(),
+                files: BTreeMap::new(),
+            };
             let mut files = BTreeMap::new();
             for relative in paths {
                 let relative = relative.as_str();
@@ -274,29 +335,46 @@ impl Checkpoints {
                         path.display()
                     ));
                 }
-                let bytes = if link {
-                    fs::read_link(&path)
-                        .map_err(|e| e.to_string())?
-                        .as_os_str()
-                        .as_bytes()
-                        .to_vec()
-                } else {
-                    fs::read(&path).map_err(|e| e.to_string())?
+                let git_object = |blob: &str| {
+                    base.get(relative)
+                        .filter(|file| file.hash == blob)
+                        .map(|file| file.object.clone())
                 };
-                let blob = hash(&bytes);
-                let git_blob = base
-                    .get(relative)
-                    .filter(|file| file.hash == blob)
-                    .map(|file| file.object.clone());
-                let destination = self.dir.join("blobs").join(&blob);
-                if git_blob.is_none() && save_blobs && !destination.exists() {
-                    let tmp = self
-                        .dir
-                        .join("blobs")
-                        .join(format!("{}.tmp", uuid::Uuid::new_v4()));
-                    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
-                    fs::rename(tmp, destination).map_err(|e| e.to_string())?;
-                }
+                let stored = |blob: &str| {
+                    !save_blobs
+                        || git_object(blob).is_some()
+                        || self.dir.join("blobs").join(blob).exists()
+                };
+                let stamp = FileStamp::of(&metadata);
+                let blob = match cache.blob(relative, &stamp).filter(|blob| stored(blob)) {
+                    Some(blob) => blob.to_string(),
+                    None => {
+                        let bytes = if link {
+                            fs::read_link(&path)
+                                .map_err(|e| e.to_string())?
+                                .as_os_str()
+                                .as_bytes()
+                                .to_vec()
+                        } else {
+                            fs::read(&path).map_err(|e| e.to_string())?
+                        };
+                        let blob = hash(&bytes);
+                        if !stored(&blob) {
+                            let tmp = self
+                                .dir
+                                .join("blobs")
+                                .join(format!("{}.tmp", uuid::Uuid::new_v4()));
+                            fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+                            fs::rename(tmp, self.dir.join("blobs").join(&blob))
+                                .map_err(|e| e.to_string())?;
+                        }
+                        blob
+                    }
+                };
+                let git_blob = git_object(&blob);
+                stamps
+                    .files
+                    .insert(relative.to_string(), (stamp, blob.clone()));
                 files.insert(
                     relative.to_string(),
                     FileState {
@@ -307,6 +385,7 @@ impl Checkpoints {
                     },
                 );
             }
+            let _ = self.save(&stamp_cache_name(folder), &stamps);
             repositories.push(Repository {
                 folder: folder.clone(),
                 head,
@@ -670,6 +749,84 @@ pub(super) mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.dir);
         }
+    }
+
+    fn blob_of(store: &Checkpoints, id: &str, name: &str) -> String {
+        store.load(id).unwrap().repositories[0].files[name]
+            .blob
+            .clone()
+    }
+
+    fn forge_stamp_cache(fixture: &Fixture, name: &str, contents: &str, scanned_at: i64) {
+        let store = &fixture.store;
+        let cache_name = stamp_cache_name(&fixture.folders[0]);
+        let mut cache: StampCache = store.read(&cache_name).unwrap();
+        cache.scanned_at = scanned_at;
+        cache.files.get_mut(name).unwrap().1 = hash(contents.as_bytes());
+        fs::write(
+            store.dir.join("blobs").join(hash(contents.as_bytes())),
+            contents,
+        )
+        .unwrap();
+        store.save(&cache_name, &cache).unwrap();
+    }
+
+    fn set_mtime(path: &Path, stamp: &FileStamp) {
+        let times = [
+            libc::timespec {
+                tv_sec: stamp.mtime / 1_000_000_000,
+                tv_nsec: stamp.mtime % 1_000_000_000,
+            },
+            libc::timespec {
+                tv_sec: stamp.mtime / 1_000_000_000,
+                tv_nsec: stamp.mtime % 1_000_000_000,
+            },
+        ];
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(
+            unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) },
+            0
+        );
+    }
+
+    #[test]
+    fn unchanged_files_reuse_hashes_while_racy_or_rewritten_files_are_read_again() {
+        let fixture = Fixture::new(1);
+        let store = &fixture.store;
+        let file = fixture.file(0, "notes.txt");
+        fs::write(&file, "draft").unwrap();
+        store.capture(&fixture.folders).unwrap();
+        let future = now_ns() + 3_600_000_000_000;
+
+        forge_stamp_cache(&fixture, "notes.txt", "cached", future);
+        let reused = store.capture(&fixture.folders).unwrap();
+        assert_eq!(blob_of(store, &reused, "notes.txt"), hash(b"cached"));
+
+        let stamp = FileStamp::of(&fs::symlink_metadata(&file).unwrap());
+        forge_stamp_cache(&fixture, "notes.txt", "cached", stamp.ctime);
+        let racy = store.capture(&fixture.folders).unwrap();
+        assert_eq!(blob_of(store, &racy, "notes.txt"), hash(b"draft"));
+
+        forge_stamp_cache(&fixture, "notes.txt", "cached", future);
+        fs::write(&file, "final").unwrap();
+        set_mtime(&file, &stamp);
+        let rewritten = FileStamp::of(&fs::symlink_metadata(&file).unwrap());
+        assert_eq!((rewritten.size, rewritten.mtime), (stamp.size, stamp.mtime));
+        let changed = store.capture(&fixture.folders).unwrap();
+        assert_eq!(blob_of(store, &changed, "notes.txt"), hash(b"final"));
+
+        forge_stamp_cache(&fixture, "notes.txt", "missing", future);
+        fs::remove_file(store.dir.join("blobs").join(hash(b"missing"))).unwrap();
+        let unstored = store.capture(&fixture.folders).unwrap();
+        assert_eq!(blob_of(store, &unstored, "notes.txt"), hash(b"final"));
+
+        fs::write(
+            store.dir.join(stamp_cache_name(&fixture.folders[0])),
+            "corrupt",
+        )
+        .unwrap();
+        let rescanned = store.capture(&fixture.folders).unwrap();
+        assert_eq!(blob_of(store, &rescanned, "notes.txt"), hash(b"final"));
     }
 
     #[test]
