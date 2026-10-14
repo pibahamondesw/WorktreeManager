@@ -68,6 +68,7 @@ export function Composer({
   onError,
 }: ComposerProps) {
   const editorRef = useRef<ComposerEditorHandle>(null);
+  const sendingRef = useRef(false);
   const [text, setText] = useState(() => promptMemory.draft(memoryKey));
   const [caret, setCaret] = useState(text.length);
   const [picker, setPicker] = useState<Picker | null>(null);
@@ -249,17 +250,24 @@ export function Composer({
       else void run(actions.startFresh);
       return;
     }
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     onError(null);
+    const draft = { text, images };
+    if (message) promptMemory.remember(memoryKey, message);
+    setImages([]);
+    update("");
     try {
       await actions.send(
         message,
         attached.map(({ mediaType, data }) => ({ mediaType, data }))
       );
-      if (message) promptMemory.remember(memoryKey, message);
-      setImages([]);
-      update("");
     } catch (e) {
+      setText((current) => current || draft.text);
+      setImages((current) => (current.length ? current : draft.images));
       onError(String(e));
+    } finally {
+      sendingRef.current = false;
     }
   };
 

@@ -73,12 +73,24 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   } | null>(null);
   const changes = useChatChanges(taskId, agent, snapshot);
   const [changesScope, setChangesScope] = useState<ChangesScope | null>(null);
+  const [outgoing, setOutgoing] = useState<{
+    text: string;
+    generation: number;
+    users: number;
+    sent: boolean;
+  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const { status, items, pending, controls } = snapshot;
   const busy = status.kind === "busy";
   const live = isLive(status);
   const ends = turnEnds(items, changes);
+  const users = items.filter((item) => item.kind === "user").length;
+  const showOutgoing =
+    outgoing !== null &&
+    outgoing.generation === snapshot.generation &&
+    users <= outgoing.users &&
+    (!outgoing.sent || busy);
   const conversationFiles = changes?.conversation?.files ?? [];
 
   useEffect(() => onStatusChange?.(sessionStatus(status)), [status, onStatusChange]);
@@ -86,7 +98,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [items, pending]);
+  }, [items, pending, outgoing]);
 
   const run = async (action: () => Promise<void>) => {
     setActionError(null);
@@ -99,7 +111,15 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
 
   const send = async (text: string, images: ChatImage[]) => {
     stickRef.current = true;
-    await session.send(text, images);
+    const message = { text, generation: snapshot.generation, users, sent: false };
+    setOutgoing(message);
+    try {
+      await session.send(text, images);
+      setOutgoing((current) => (current === message ? { ...message, sent: true } : current));
+    } catch (e) {
+      setOutgoing((current) => (current === message ? null : current));
+      throw e;
+    }
   };
 
   const pickHistory = (item: ChatItem, action: HistoryAction) => {
@@ -193,10 +213,22 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
               onRespond={(response) => run(() => respond(request.id, response))}
             />
           ))}
-          {busy && pending.length === 0 && (
-            <p className="text-xs text-text-muted animate-pulse">
-              {AGENT_LABEL[agent]} is working…
+          {showOutgoing && (
+            <div aria-label="Sending message" className="flex flex-col opacity-60">
+              <ChatItemView item={{ id: "outgoing", kind: "user", text: outgoing.text }} />
+            </div>
+          )}
+          {showOutgoing && !outgoing.sent ? (
+            <p role="status" className="text-xs text-text-muted animate-pulse">
+              Preparing…
             </p>
+          ) : (
+            busy &&
+            pending.length === 0 && (
+              <p className="text-xs text-text-muted animate-pulse">
+                {AGENT_LABEL[agent]} is working…
+              </p>
+            )
           )}
           {!live && (
             <div role="status" className="flex flex-col items-center gap-3 py-6">
