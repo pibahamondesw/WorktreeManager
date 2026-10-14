@@ -60,6 +60,13 @@ export function UsageIndicator({
     void onRefresh().catch((e: unknown) => {
       if (!disposed) setRefreshError(String(e));
     });
+    return () => {
+      disposed = true;
+    };
+  }, [open, onRefresh]);
+
+  useEffect(() => {
+    if (!open) return;
     closeRef.current?.focus();
     const outside = (event: MouseEvent) => {
       if (event.target instanceof Node && !containerRef.current?.contains(event.target)) {
@@ -85,11 +92,10 @@ export function UsageIndicator({
     document.addEventListener("mousedown", outside);
     document.addEventListener("keydown", keyboard);
     return () => {
-      disposed = true;
       document.removeEventListener("mousedown", outside);
       document.removeEventListener("keydown", keyboard);
     };
-  }, [open, onRefresh]);
+  }, [open]);
 
   return (
     <div ref={containerRef} className="relative" data-no-drag>
