@@ -14,12 +14,14 @@ beforeEach(() => {
   mermaid.render.mockReset();
 });
 
+const SVG = '<svg viewBox="-8 -8 320 640"></svg>';
+
 it("renders valid diagrams with a strict, once-initialized mermaid", async () => {
   mermaid.parse.mockResolvedValue({ diagramType: "flowchart" });
-  mermaid.render.mockResolvedValue({ svg: "<svg></svg>" });
+  mermaid.render.mockResolvedValue({ svg: SVG });
 
-  expect(await renderMermaid("graph TD\nA-->B")).toBe("<svg></svg>");
-  expect(await renderMermaid("graph TD\nB-->C")).toBe("<svg></svg>");
+  expect(await renderMermaid("graph TD\nA-->B")).toEqual({ svg: SVG, width: 320, height: 640 });
+  expect(await renderMermaid("graph TD\nB-->C")).toEqual({ svg: SVG, width: 320, height: 640 });
 
   expect(mermaid.initialize).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ startOnLoad: false, securityLevel: "strict" })
@@ -34,4 +36,11 @@ it("skips rendering diagrams that do not parse", async () => {
   expect(await renderMermaid("graph TD\nA-->")).toBeNull();
   expect(mermaid.parse).toHaveBeenCalledWith("graph TD\nA-->", { suppressErrors: true });
   expect(mermaid.render).not.toHaveBeenCalled();
+});
+
+it("skips diagrams without a measurable viewBox", async () => {
+  mermaid.parse.mockResolvedValue({ diagramType: "flowchart" });
+  mermaid.render.mockResolvedValue({ svg: '<svg viewBox="0 0 0 0"></svg>' });
+
+  expect(await renderMermaid("graph TD\nA-->B")).toBeNull();
 });

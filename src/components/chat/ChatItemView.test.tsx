@@ -96,9 +96,11 @@ it("renders user messages as Markdown while keeping their line breaks", () => {
   expect(screen.getByText('"a"')).toHaveClass("hljs-attr");
 });
 
+const DIAGRAM = { svg: '<svg data-testid="diagram"></svg>', width: 300, height: 600 };
+
 it("draws valid mermaid diagrams and keeps the source for invalid ones", async () => {
   vi.mocked(renderMermaid).mockImplementation(async (source) =>
-    source.includes("A-->B") ? '<svg data-testid="diagram"></svg>' : null
+    source.includes("A-->B") ? DIAGRAM : null
   );
   const { rerender } = render(<MarkdownText text={"```mermaid\ngraph TD\nA-->B\n```"} />);
 
@@ -111,4 +113,13 @@ it("draws valid mermaid diagrams and keeps the source for invalid ones", async (
   await new Promise((resolve) => setTimeout(resolve, 200));
   expect(screen.queryByRole("img", { name: "Mermaid diagram" })).not.toBeInTheDocument();
   expect(renderMermaid).toHaveBeenLastCalledWith("graph TD\nA-->\n");
+});
+
+it("sizes mermaid diagrams to their aspect ratio without upscaling them", async () => {
+  vi.mocked(renderMermaid).mockResolvedValue(DIAGRAM);
+  render(<MarkdownText text={"```mermaid\ngraph TD\nA-->B\n```"} />);
+
+  const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
+  expect(diagram.style.aspectRatio).toBe("300 / 600");
+  expect(diagram.style.width).toBe("min(300px, 90%, calc(var(--chat-diagram-max-height) * 0.5))");
 });

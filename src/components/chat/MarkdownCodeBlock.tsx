@@ -1,6 +1,6 @@
 import { ComponentProps, ReactNode, useEffect, useState } from "react";
 import { ExtraProps } from "react-markdown";
-import { renderMermaid } from "./mermaid";
+import { RenderedDiagram, renderMermaid } from "./mermaid";
 
 type HastElement = NonNullable<ExtraProps["node"]>;
 type HastChild = HastElement["children"][number];
@@ -40,13 +40,15 @@ export function MarkdownCodeBlock({ node, children }: ComponentProps<"pre"> & Ex
 }
 
 function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactNode }) {
-  const [rendered, setRendered] = useState<{ source: string; svg: string } | null>(null);
+  const [rendered, setRendered] = useState<{ source: string; diagram: RenderedDiagram } | null>(
+    null
+  );
 
   useEffect(() => {
     let stale = false;
     const timer = setTimeout(() => {
       renderMermaid(source)
-        .then((svg) => !stale && setRendered(svg ? { source, svg } : null))
+        .then((diagram) => !stale && setRendered(diagram ? { source, diagram } : null))
         .catch(() => !stale && setRendered(null));
     }, MERMAID_SETTLE_MS);
     return () => {
@@ -56,12 +58,19 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
   }, [source]);
 
   if (rendered?.source !== source) return fallback;
+  const { svg, width, height } = rendered.diagram;
   return (
-    <div
-      role="img"
-      aria-label="Mermaid diagram"
-      className="chat-mermaid"
-      dangerouslySetInnerHTML={{ __html: rendered.svg }}
-    />
+    <figure className="chat-mermaid">
+      <div
+        role="img"
+        aria-label="Mermaid diagram"
+        className="chat-mermaid-diagram"
+        style={{
+          width: `min(${width}px, 90%, calc(var(--chat-diagram-max-height) * ${width / height}))`,
+          aspectRatio: `${width} / ${height}`,
+        }}
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    </figure>
   );
 }

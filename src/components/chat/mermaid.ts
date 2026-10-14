@@ -20,14 +20,32 @@ const loadMermaid = () =>
         tertiaryColor: "#12121a",
         lineColor: "#8888a0",
         textColor: "#e8e8ed",
+        fontSize: "14px",
       },
     });
     return mermaid;
   }));
 
-export async function renderMermaid(source: string): Promise<string | null> {
+export interface RenderedDiagram {
+  svg: string;
+  width: number;
+  height: number;
+}
+
+function viewBoxSize(svg: string) {
+  const viewBox = /viewBox="([^"]+)"/.exec(svg)?.[1];
+  const [, , width, height] =
+    viewBox
+      ?.trim()
+      .split(/[\s,]+/)
+      .map(Number) ?? [];
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+export async function renderMermaid(source: string): Promise<RenderedDiagram | null> {
   const mermaid = await loadMermaid();
   if (!(await mermaid.parse(source, { suppressErrors: true }))) return null;
   const { svg } = await mermaid.render(`chat-mermaid-${++diagramCount}`, source);
-  return svg;
+  const size = viewBoxSize(svg);
+  return size && { svg, ...size };
 }
