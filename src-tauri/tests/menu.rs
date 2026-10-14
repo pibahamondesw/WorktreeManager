@@ -335,6 +335,7 @@ fn main() {
     for (key, key_code) in [("c", 8), ("v", 9), ("x", 7)] {
         assert_key_routing(&editor, key, 1 << 20, key_code, false);
     }
+    assert_key_routing(&editor, " ", (1 << 20) | (1 << 18), 49, false);
     for (key, modifiers, key_code, expected) in [
         ("z", 1 << 20, 6, "key:z"),
         ("Z", (1 << 20) | (1 << 17), 6, "key:Z"),
