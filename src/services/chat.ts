@@ -276,6 +276,78 @@ export const chatHistory = (
   confirmation?: string
 ) => invoke<void>("chat_history", { taskId, agent, generation, itemId, action, confirmation });
 
+export interface FileChange {
+  folder: string;
+  path: string;
+  previousPath?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface ChangeSet {
+  before: string;
+  after: string;
+  files: FileChange[];
+}
+
+export interface ChatChanges {
+  turns: { items: string[]; changes: ChangeSet }[];
+  conversation: ChangeSet | null;
+}
+
+export type FileContent =
+  | { kind: "text"; text: string }
+  | { kind: "image"; mime: string; data: string }
+  | { kind: "binary"; size: number };
+
+export interface FileDiff {
+  before: FileContent | null;
+  after: FileContent | null;
+}
+
+const folderName = (folder: string) => folder.split("/").filter(Boolean).pop() ?? folder;
+
+export function totals(files: FileChange[]) {
+  return files.reduce(
+    (sum, file) => ({
+      additions: sum.additions + file.additions,
+      deletions: sum.deletions + file.deletions,
+    }),
+    { additions: 0, deletions: 0 }
+  );
+}
+
+export function byRepository(files: FileChange[]) {
+  const groups = new Map<string, FileChange[]>();
+  for (const file of files) groups.set(file.folder, [...(groups.get(file.folder) ?? []), file]);
+  return [...groups].map(([folder, repositoryFiles]) => ({
+    folder,
+    name: folderName(folder),
+    files: repositoryFiles,
+  }));
+}
+
+export const chatChanges = (taskId: string, agent: AgentId) =>
+  invoke<ChatChanges>("chat_changes", { taskId, agent });
+
+export const chatFileDiff = (
+  taskId: string,
+  agent: AgentId,
+  changes: ChangeSet,
+  file: FileChange
+) =>
+  invoke<FileDiff>("chat_file_diff", {
+    taskId,
+    agent,
+    before: changes.before,
+    after: changes.after,
+    folder: file.folder,
+    path: file.path,
+    previousPath: file.previousPath ?? null,
+  });
+
 export const chatConfigure = (taskId: string, agent: AgentId, setting: ChatSetting) =>
   invoke<void>("chat_configure", { taskId, agent, setting });
 

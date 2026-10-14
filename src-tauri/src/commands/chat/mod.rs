@@ -3,6 +3,7 @@
 //! attaching again returns a snapshot plus live events from the same generation. Separate from
 //! `terminal` on purpose — this layer speaks structured events, not a byte stream.
 
+pub mod changes;
 mod checkpoint_git;
 mod checkpoints;
 mod claude;

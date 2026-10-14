@@ -63,13 +63,34 @@ pub struct RewindPreview {
     pub files: Vec<String>,
 }
 
+#[derive(Clone)]
 pub struct Checkpoints {
     dir: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+pub struct StoredFile {
+    folder: String,
+    state: FileState,
+}
+
+impl StoredFile {
+    pub fn blob(&self) -> &str {
+        &self.state.blob
+    }
+}
+
+#[derive(Debug)]
+pub struct FileComparison {
+    pub folder: String,
+    pub path: String,
+    pub before: Option<StoredFile>,
+    pub after: Option<StoredFile>,
+}
+
 type FileWrite = (PathBuf, Option<FileState>, Option<Vec<u8>>);
 
-fn hash(bytes: &[u8]) -> String {
+pub(super) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
@@ -112,7 +133,7 @@ impl Checkpoints {
         }
     }
 
-    fn save<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
+    pub(super) fn save<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
         fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
         let path = self.dir.join(name);
         let tmp = self.dir.join(format!("{}.tmp", uuid::Uuid::new_v4()));
@@ -121,7 +142,7 @@ impl Checkpoints {
         fs::rename(tmp, path).map_err(|e| e.to_string())
     }
 
-    fn read<T: serde::de::DeserializeOwned>(&self, name: &str) -> Result<T, String> {
+    pub(super) fn read<T: serde::de::DeserializeOwned>(&self, name: &str) -> Result<T, String> {
         serde_json::from_slice(&fs::read(self.dir.join(name)).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())
     }
@@ -433,6 +454,77 @@ impl Checkpoints {
         Ok(backup)
     }
 
+    fn read_stored(&self, folder: &str, file: &FileState) -> Result<Vec<u8>, String> {
+        match &file.git_blob {
+            Some(object) => checkpoint_git::read_blob(folder, object),
+            None => fs::read(self.dir.join("blobs").join(&file.blob)).map_err(|e| e.to_string()),
+        }
+    }
+
+    pub fn read_file(&self, file: &StoredFile) -> Result<Vec<u8>, String> {
+        let bytes = self.read_stored(&file.folder, &file.state)?;
+        if hash(&bytes) != file.state.blob {
+            return Err("Checkpoint data is damaged".into());
+        }
+        Ok(bytes)
+    }
+
+    pub fn stored_file(
+        &self,
+        id: &str,
+        folder: &str,
+        path: &str,
+    ) -> Result<Option<StoredFile>, String> {
+        Ok(self
+            .load(id)?
+            .repositories
+            .into_iter()
+            .find(|repository| repository.folder == folder)
+            .and_then(|mut repository| repository.files.remove(path))
+            .map(|state| StoredFile {
+                folder: folder.to_string(),
+                state,
+            }))
+    }
+
+    pub fn compare(&self, before: &str, after: &str) -> Result<Vec<FileComparison>, String> {
+        let before = self.load(before)?;
+        let after = self.load(after)?;
+        let mut comparisons = Vec::new();
+        for repository in after.repositories {
+            let mut previous = before
+                .repositories
+                .iter()
+                .find(|r| r.folder == repository.folder)
+                .map(|r| r.files.clone())
+                .unwrap_or_default();
+            let names = previous
+                .keys()
+                .chain(repository.files.keys())
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let mut current = repository.files;
+            for name in names {
+                let old = previous.remove(&name);
+                let new = current.remove(&name);
+                if old == new {
+                    continue;
+                }
+                let stored = |state| StoredFile {
+                    folder: repository.folder.clone(),
+                    state,
+                };
+                comparisons.push(FileComparison {
+                    folder: repository.folder.clone(),
+                    path: name,
+                    before: old.map(stored),
+                    after: new.map(stored),
+                });
+            }
+        }
+        Ok(comparisons)
+    }
+
     fn prepare_restore(
         &self,
         target: &Checkpoint,
@@ -456,14 +548,7 @@ impl Checkpoints {
                 let file = target.files.get(name).cloned();
                 let bytes = file
                     .as_ref()
-                    .map(|f| {
-                        if let Some(object) = &f.git_blob {
-                            checkpoint_git::read_blob(&target.folder, object)
-                        } else {
-                            fs::read(self.dir.join("blobs").join(&f.blob))
-                                .map_err(|e| e.to_string())
-                        }
-                    })
+                    .map(|f| self.read_stored(&target.folder, f))
                     .transpose()?;
                 if let (Some(file), Some(bytes)) = (&file, &bytes) {
                     if hash(bytes) != file.blob {
