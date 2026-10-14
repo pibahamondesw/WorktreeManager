@@ -1,5 +1,7 @@
 import { ComponentProps, ReactNode, useEffect, useState } from "react";
 import { ExtraProps } from "react-markdown";
+import { ExpandIcon } from "../ui/Icons";
+import { DiagramViewer } from "./DiagramViewer";
 import { RenderedDiagram, renderMermaid } from "./mermaid";
 
 type HastElement = NonNullable<ExtraProps["node"]>;
@@ -43,6 +45,7 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
   const [rendered, setRendered] = useState<{ source: string; diagram: RenderedDiagram } | null>(
     null
   );
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     let stale = false;
@@ -59,6 +62,7 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
 
   if (rendered?.source !== source) return fallback;
   const { svg, width, height } = rendered.diagram;
+  const openPreview = () => setPreviewOpen(true);
   return (
     <figure className="chat-mermaid">
       <div
@@ -69,8 +73,26 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
           width: `min(${width}px, 90%, calc(var(--chat-diagram-max-height) * ${width / height}))`,
           aspectRatio: `${width} / ${height}`,
         }}
+        onClick={openPreview}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
+      <button
+        type="button"
+        className="chat-mermaid-expand"
+        onClick={openPreview}
+        aria-label="Open diagram preview"
+        title="Open preview"
+      >
+        <ExpandIcon />
+      </button>
+      {previewOpen && (
+        <DiagramViewer
+          svg={svg}
+          size={{ width, height }}
+          label="Mermaid diagram preview"
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
     </figure>
   );
 }

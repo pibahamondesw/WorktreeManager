@@ -8,6 +8,7 @@ import { renderMermaid } from "./mermaid";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("./mermaid", () => ({ renderMermaid: vi.fn() }));
+vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
 
 beforeEach(() => vi.mocked(openUrl).mockReset().mockResolvedValue(undefined));
 afterEach(cleanup);
@@ -122,4 +123,44 @@ it("sizes mermaid diagrams to their aspect ratio without upscaling them", async 
   const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
   expect(diagram.style.aspectRatio).toBe("300 / 600");
   expect(diagram.style.width).toBe("min(300px, 90%, calc(var(--chat-diagram-max-height) * 0.5))");
+});
+
+it("opens mermaid diagrams in a zoomable preview and closes it with Escape", async () => {
+  vi.mocked(renderMermaid).mockResolvedValue(DIAGRAM);
+  render(<MarkdownText text={"```mermaid\ngraph TD\nA-->B\n```"} />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open diagram preview" }));
+  const preview = screen.getByRole("dialog", { name: "Mermaid diagram preview" });
+  expect(preview).toHaveFocus();
+  expect(preview).toContainElement(screen.getAllByTestId("diagram")[1]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Actual size" }));
+  expect(screen.getByRole("status")).toHaveTextContent("100%");
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  expect(screen.getByRole("status")).toHaveTextContent("125%");
+  fireEvent.keyDown(preview, { key: "-" });
+  expect(screen.getByRole("status")).toHaveTextContent("100%");
+  fireEvent.change(screen.getByRole("slider", { name: "Zoom level" }), { target: { value: "2" } });
+  expect(screen.getByRole("status")).toHaveTextContent("400%");
+
+  fireEvent.keyDown(preview, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("zooms the preview with pinch gestures and limits each mouse wheel step", async () => {
+  vi.mocked(renderMermaid).mockResolvedValue(DIAGRAM);
+  render(<MarkdownText text={"```mermaid\ngraph TD\nA-->B\n```"} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open diagram preview" }));
+  const preview = screen.getByRole("dialog", { name: "Mermaid diagram preview" });
+  fireEvent.click(screen.getByRole("button", { name: "Actual size" }));
+
+  fireEvent.wheel(preview, { deltaY: -100, metaKey: true });
+  expect(screen.getByRole("status")).toHaveTextContent("122%");
+
+  fireEvent(preview, new Event("gesturestart", { cancelable: true }));
+  fireEvent(preview, Object.assign(new Event("gesturechange", { cancelable: true }), { scale: 2 }));
+  expect(screen.getByRole("status")).toHaveTextContent("244%");
+
+  fireEvent.wheel(preview, { deltaY: 100 });
+  expect(screen.getByRole("status")).toHaveTextContent("244%");
 });

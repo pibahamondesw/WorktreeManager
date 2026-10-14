@@ -485,3 +485,60 @@ export function PinIcon({ size = 16, className = "" }: IconProps) {
     </svg>
   );
 }
+
+export function ExpandIcon({ size = 14, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+    </svg>
+  );
+}
+
+export function FitIcon({ size = 14, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" />
+    </svg>
+  );
+}
+
+export function FitWidthIcon({ size = 14, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3 4v16M21 4v16M7 12h10M10 9l-3 3 3 3M14 9l3 3-3 3" />
+    </svg>
+  );
+}

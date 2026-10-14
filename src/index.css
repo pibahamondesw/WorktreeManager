@@ -285,12 +285,41 @@ body,
 }
 .chat-mermaid-diagram {
   margin-inline: auto;
+  cursor: zoom-in;
 }
-.chat-mermaid-diagram svg {
+.chat-mermaid-diagram svg,
+.diagram-viewer-content svg {
   display: block;
   width: 100%;
   height: 100%;
   max-width: none;
+}
+.diagram-zoom-slider {
+  accent-color: var(--color-accent);
+}
+.chat-mermaid-expand {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  padding: 0.375rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.chat-mermaid:hover .chat-mermaid-expand,
+.chat-mermaid-expand:focus-visible {
+  opacity: 1;
+}
+.chat-mermaid-expand:hover {
+  color: var(--color-text-primary);
+}
+.chat-mermaid-expand:focus-visible {
+  outline: 1px solid var(--color-accent);
 }
 .chat-user-message p {
   white-space: pre-wrap;
