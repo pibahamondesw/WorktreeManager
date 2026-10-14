@@ -78,9 +78,9 @@ fn matches(binding: &ShortcutBinding, characters: &str, flags: usize) -> bool {
 fn system_shortcut(characters: &str, flags: usize) -> bool {
     let modifiers = flags & MODIFIERS;
     match characters.to_ascii_lowercase().as_str() {
-        "q" | "m" => modifiers == COMMAND,
+        "q" | "m" | "c" | "v" | "x" => modifiers == COMMAND,
         "h" => modifiers == COMMAND || modifiers == COMMAND | OPTION,
-        "f" => modifiers == COMMAND | CONTROL,
+        "f" | " " => modifiers == COMMAND | CONTROL,
         _ => false,
     }
 }
@@ -259,6 +259,12 @@ mod tests {
         assert!(system_shortcut("h", COMMAND | OPTION));
         assert!(system_shortcut("m", COMMAND));
         assert!(system_shortcut("f", COMMAND | CONTROL));
+        assert!(system_shortcut(" ", COMMAND | CONTROL));
+        assert!(!system_shortcut(" ", COMMAND));
+        for key in ["c", "v", "x", "C"] {
+            assert!(system_shortcut(key, COMMAND));
+            assert!(!system_shortcut(key, COMMAND | SHIFT));
+        }
         for key in ["z", "k", "p", "[", "\u{f702}", "\u{f703}"] {
             assert!(!system_shortcut(key, COMMAND));
         }
