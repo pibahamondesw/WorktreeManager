@@ -273,9 +273,63 @@ body,
   font-size: 0.6875rem;
   color: var(--color-text-secondary);
 }
-.chat-mermaid svg {
-  max-width: 100%;
-  height: auto;
+.chat-scroll {
+  container-type: size;
+}
+.chat-mermaid {
+  --chat-diagram-max-height: 90cqh;
+  position: relative;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--color-bg-secondary);
+}
+.chat-mermaid-diagram {
+  margin-inline: auto;
+  cursor: zoom-in;
+}
+.chat-mermaid-diagram svg,
+.diagram-viewer-content svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+}
+.diagram-zoom-slider {
+  accent-color: var(--color-accent);
+}
+.chat-mermaid-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.chat-mermaid:hover .chat-mermaid-actions,
+.chat-mermaid-actions:focus-within,
+.chat-mermaid-actions[data-active] {
+  opacity: 1;
+}
+.chat-mermaid-action {
+  display: flex;
+  padding: 0.375rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.chat-mermaid-action:hover {
+  color: var(--color-text-primary);
+}
+.chat-mermaid-action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.chat-mermaid-action:focus-visible {
+  outline: 1px solid var(--color-accent);
 }
 .chat-user-message p {
   white-space: pre-wrap;

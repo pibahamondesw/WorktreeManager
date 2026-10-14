@@ -173,7 +173,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
           const el = e.currentTarget;
           stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }}
-        className="flex-1 min-h-0 overflow-y-auto"
+        className="chat-scroll flex-1 min-h-0 overflow-y-auto"
       >
         <div className="max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
           {items.length === 0 && live && (
