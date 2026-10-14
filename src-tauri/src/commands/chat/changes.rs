@@ -513,6 +513,7 @@ mod tests {
         assert!(change_set(checkpoints, &before, &after)
             .unwrap_err()
             .contains("damaged"));
+        assert_eq!(collect(checkpoints, "conv", &[]), ChatChanges::default());
         let turn = checkpoints::TurnCheckpoints { before, after };
         checkpoints.bind_turn("conv", "user", &turn).unwrap();
         assert_eq!(
