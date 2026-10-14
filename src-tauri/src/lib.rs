@@ -72,6 +72,7 @@ pub fn run() {
                 commands::python_deps::install_python_deps,
                 commands::editor::open_editor,
                 commands::editor::check_app_installed,
+                commands::export::save_png,
                 commands::workspace::delete_workspace_file,
                 commands::workspace::prepare_task_workspace,
                 commands::notes::ensure_task_note,

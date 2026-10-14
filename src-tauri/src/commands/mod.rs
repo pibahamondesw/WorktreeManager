@@ -8,6 +8,7 @@ pub mod codex_usage;
 pub mod doctor;
 pub mod doppler;
 pub mod editor;
+pub mod export;
 pub mod git;
 pub mod github;
 pub mod keychain;

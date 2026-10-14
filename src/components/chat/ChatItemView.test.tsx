@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChatItemView, MarkdownText } from "./ChatItemView";
 import { renderMermaid } from "./mermaid";
+import { saveDiagramPng } from "./diagramExport";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("./mermaid", () => ({ renderMermaid: vi.fn() }));
+vi.mock("./diagramExport", () => ({ saveDiagramPng: vi.fn() }));
 vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
 
 beforeEach(() => vi.mocked(openUrl).mockReset().mockResolvedValue(undefined));
@@ -163,4 +165,43 @@ it("zooms the preview with pinch gestures and limits each mouse wheel step", asy
 
   fireEvent.wheel(preview, { deltaY: 100 });
   expect(screen.getByRole("status")).toHaveTextContent("244%");
+});
+
+it("copies the diagram source from the chat", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  vi.mocked(renderMermaid).mockResolvedValue(DIAGRAM);
+  render(<MarkdownText text={"```mermaid\ngraph TD\nA-->B\n```"} />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Copy Mermaid source" }));
+
+  expect(writeText).toHaveBeenCalledExactlyOnceWith("graph TD\nA-->B\n");
+  expect(await screen.findByRole("button", { name: "Mermaid source copied" })).toBeInTheDocument();
+  vi.unstubAllGlobals();
+});
+
+it("downloads the diagram from the preview and reports failures", async () => {
+  vi.mocked(renderMermaid).mockResolvedValue(DIAGRAM);
+  vi.mocked(saveDiagramPng).mockResolvedValueOnce(true).mockRejectedValueOnce(new Error("disk"));
+  render(<MarkdownText text={"```mermaid\ngraph TD\nA-->B\n```"} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open diagram preview" }));
+  const preview = within(screen.getByRole("dialog"));
+
+  fireEvent.click(preview.getByRole("button", { name: "Download as PNG" }));
+  expect(await preview.findByRole("button", { name: "Image saved" })).toBeInTheDocument();
+  expect(saveDiagramPng).toHaveBeenCalledWith("graph TD\nA-->B\n");
+
+  fireEvent.click(preview.getByRole("button", { name: "Image saved" }));
+  expect(await preview.findByRole("alert")).toHaveTextContent("Could not save the image");
+});
+
+it("stays idle when the save dialog is cancelled", async () => {
+  vi.mocked(renderMermaid).mockResolvedValue(DIAGRAM);
+  vi.mocked(saveDiagramPng).mockResolvedValueOnce(false);
+  render(<MarkdownText text={"```mermaid\ngraph TD\nA-->B\n```"} />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Download as PNG" }));
+
+  expect(await screen.findByRole("button", { name: "Download as PNG" })).toBeEnabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

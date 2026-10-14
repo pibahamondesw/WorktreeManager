@@ -1,6 +1,7 @@
 import { ComponentProps, ReactNode, useEffect, useState } from "react";
 import { ExtraProps } from "react-markdown";
 import { ExpandIcon } from "../ui/Icons";
+import { DiagramActions } from "./DiagramActions";
 import { DiagramViewer } from "./DiagramViewer";
 import { RenderedDiagram, renderMermaid } from "./mermaid";
 
@@ -76,17 +77,24 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
         onClick={openPreview}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
-      <button
-        type="button"
-        className="chat-mermaid-expand"
-        onClick={openPreview}
-        aria-label="Open diagram preview"
-        title="Open preview"
+      <DiagramActions
+        source={source}
+        className="chat-mermaid-actions"
+        buttonClassName="chat-mermaid-action"
       >
-        <ExpandIcon />
-      </button>
+        <button
+          type="button"
+          className="chat-mermaid-action"
+          onClick={openPreview}
+          aria-label="Open diagram preview"
+          title="Open preview"
+        >
+          <ExpandIcon />
+        </button>
+      </DiagramActions>
       {previewOpen && (
         <DiagramViewer
+          source={source}
           svg={svg}
           size={{ width, height }}
           label="Mermaid diagram preview"

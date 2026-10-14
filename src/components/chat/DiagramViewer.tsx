@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import { CloseIcon, FitIcon, FitWidthIcon } from "../ui/Icons";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
+import { DiagramActions } from "./DiagramActions";
 import {
   MAX_SCALE,
   MIN_SCALE,
@@ -51,11 +52,13 @@ const fitToWindow = (size: Size) => fitView(size, windowSize(), FIT_PADDING);
 const fitWidthToWindow = (size: Size) => fitWidthView(size, windowSize(), FIT_PADDING);
 
 export function DiagramViewer({
+  source,
   svg,
   size,
   label,
   onClose,
 }: {
+  source: string;
   svg: string;
   size: Size;
   label: string;
@@ -222,15 +225,22 @@ export function DiagramViewer({
         }}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Close diagram preview"
-        title="Close (Esc)"
-        className={`${toolbarButton} absolute top-10 right-4 bg-bg-secondary border border-border shadow-lg`}
+      <DiagramActions
+        source={source}
+        className="absolute top-10 right-4 flex items-center gap-0.5 p-1 rounded-lg bg-bg-secondary border border-border shadow-lg cursor-default"
+        buttonClassName={toolbarButton}
       >
-        <CloseIcon size={14} />
-      </button>
+        <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close diagram preview"
+          title="Close (Esc)"
+          className={toolbarButton}
+        >
+          <CloseIcon size={14} />
+        </button>
+      </DiagramActions>
       <div
         role="toolbar"
         aria-label="Diagram zoom"

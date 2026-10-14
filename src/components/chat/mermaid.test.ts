@@ -1,13 +1,13 @@
 import { beforeEach, expect, it, vi } from "vitest";
 
 const mermaid = vi.hoisted(() => ({
-  initialize: vi.fn(),
+  initialize: vi.fn<(config: { htmlLabels?: boolean }) => void>(),
   parse: vi.fn(),
   render: vi.fn<(id: string, source: string) => Promise<{ svg: string }>>(),
 }));
 vi.mock("mermaid", () => ({ default: mermaid }));
 
-import { renderMermaid } from "./mermaid";
+import { renderMermaid, renderMermaidForImage } from "./mermaid";
 
 beforeEach(() => {
   mermaid.parse.mockReset();
@@ -43,4 +43,23 @@ it("skips diagrams without a measurable viewBox", async () => {
   mermaid.render.mockResolvedValue({ svg: '<svg viewBox="0 0 0 0"></svg>' });
 
   expect(await renderMermaid("graph TD\nA-->B")).toBeNull();
+});
+
+it("renders image exports without HTML labels, one configuration at a time", async () => {
+  mermaid.initialize.mockClear();
+  mermaid.parse.mockResolvedValue({ diagramType: "flowchart" });
+  mermaid.render.mockResolvedValue({ svg: SVG });
+
+  await Promise.all([renderMermaidForImage("graph TD\nA-->B"), renderMermaid("graph TD\nA-->B")]);
+
+  expect(mermaid.initialize.mock.calls.map(([config]) => config.htmlLabels)).toEqual([
+    false,
+    undefined,
+  ]);
+  expect(mermaid.initialize.mock.invocationCallOrder[0]).toBeLessThan(
+    mermaid.render.mock.invocationCallOrder[0]
+  );
+  expect(mermaid.initialize.mock.invocationCallOrder[1]).toBeGreaterThan(
+    mermaid.render.mock.invocationCallOrder[0]
+  );
 });
