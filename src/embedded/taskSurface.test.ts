@@ -11,6 +11,12 @@ describe("taskSurfaceFor", () => {
     expect(taskSurfaceFor("codex", views)).toEqual({ kind: "chat", agent: "codex" });
   });
 
+  it("opens the embedded editors inside the app", () => {
+    expect(taskSurfaceFor("vscode-web")).toEqual({ kind: "editor" });
+    expect(taskSurfaceFor("opencode-web")).toEqual({ kind: "opencode" });
+    expect(isEmbedded(taskSurfaceFor("opencode-web"))).toBe(true);
+  });
+
   it("keeps every other editor external", () => {
     for (const editor of ["cursor", "vscode", "zed", "opencode"] as const) {
       expect(taskSurfaceFor(editor)).toEqual({ kind: "external" });

@@ -206,6 +206,40 @@ describe("TaskView", () => {
     finishClose?.();
     await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
   });
+  it("opens every task folder in OpenCode and closes its server before leaving", async () => {
+    let finishClose: (() => void) | undefined;
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "opencode_open") return new Promise(() => undefined);
+      if (command === "opencode_close")
+        return new Promise<void>((resolve) => {
+          finishClose = resolve;
+        });
+      return Promise.resolve();
+    });
+    const onBack = vi.fn();
+    render(
+      <TaskView
+        task={task}
+        surface={{ kind: "opencode" }}
+        sidebarCollapsed={false}
+        onExpandSidebar={vi.fn()}
+        onBack={onBack}
+        onSwitchSurface={vi.fn()}
+      />
+    );
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("opencode_open", {
+        taskId: task.id,
+        folders: ["/wt/a", "/wt/b"],
+      })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    expect(mocks.invoke).toHaveBeenCalledWith("opencode_close", { taskId: task.id });
+    expect(onBack).not.toHaveBeenCalled();
+    finishClose?.();
+    await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
+  });
+
   it("shows the task header and attaches to the task terminal", async () => {
     mocks.invoke.mockResolvedValue({ created: true, status: { kind: "running" }, replay: "old" });
     renderView();

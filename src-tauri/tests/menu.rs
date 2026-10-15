@@ -373,6 +373,7 @@ fn main() {
     drop(created_editor);
     assert_key_routing(&editor, "z", 1 << 20, 6, false);
     commands::code_server::native_test_failed_view_cleanup(&editor);
+    commands::opencode::native_test_lifecycle(app.handle());
     main.close().unwrap();
     window.close().unwrap();
     println!("menu regression passed: no native close command; other actions preserved");

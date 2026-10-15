@@ -162,6 +162,12 @@ const CLI_TOOLS: Record<string, ToolMeta> = {
     install: "brew install --cask codex",
     url: "https://developers.openai.com/codex/cli",
   },
+  opencode: {
+    label: "OpenCode CLI",
+    reason: "Runs the OpenCode embedded editor option inside the app.",
+    install: "brew install opencode",
+    url: "https://opencode.ai/docs",
+  },
   zed: {
     label: "Zed CLI",
     reason:

@@ -5,7 +5,9 @@ import { TerminalPane } from "../terminal/TerminalPane";
 import { ChatPane } from "../chat/ChatPane";
 import { AgentSurfaceSwitcher } from "./AgentSurfaceSwitcher";
 import { EditorPane } from "../editor/EditorPane";
+import { OpenCodePane } from "../editor/OpenCodePane";
 import { editorClose } from "../../services/codeEditor";
+import { openCodeClose } from "../../services/opencode";
 import { chatStop } from "../../services/chat";
 import { terminalStop } from "../../services/terminal";
 import { useShortcutActions } from "../../shortcuts/runtime";
@@ -51,6 +53,7 @@ export function TaskView({
   /** Ends the running surface's process; agent sessions keep their conversation for resuming. */
   const stopSurface = () => {
     if (surface.kind === "editor") return editorClose(task.id);
+    if (surface.kind === "opencode") return openCodeClose(task.id);
     if (surface.kind === "chat") return chatStop(task.id, surface.agent);
     if (surface.kind === "terminal") return terminalStop(task.id, surface.agent);
     return Promise.resolve();
@@ -146,6 +149,15 @@ function TaskSurfaceView({
       return (
         <EditorPane
           workspaceId={task.workspaceId}
+          taskId={task.id}
+          folders={task.members.map((member) => member.path)}
+          closing={closing}
+          onStatusChange={onStatusChange}
+        />
+      );
+    case "opencode":
+      return (
+        <OpenCodePane
           taskId={task.id}
           folders={task.members.map((member) => member.path)}
           closing={closing}

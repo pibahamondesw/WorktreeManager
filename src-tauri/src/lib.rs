@@ -132,6 +132,9 @@ pub fn run() {
                 commands::code_server::vscode_present,
                 commands::code_server::vscode_close,
                 commands::code_server::vscode_list,
+                commands::opencode::opencode_open,
+                commands::opencode::opencode_close,
+                commands::opencode::opencode_list,
             ];
             move |invoke| {
                 if invoke.message.webview_ref().label() != "main" {
