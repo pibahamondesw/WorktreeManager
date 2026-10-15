@@ -9,7 +9,7 @@ case "$(uname -s)" in
 esac
 
 toolchain=1.93.1
-test_filters='commands::claude_config::tests:: commands::export::tests:: commands::github::tests:: commands::code_server::view::tests:: commands::code_server::tests:: commands::editor::tests:: commands::opencode:: commands::chat:: menu::'
+test_filters='commands::claude_config::tests:: commands::export::tests:: commands::github::tests:: commands::code_server::view::tests:: commands::code_server::tests:: commands::embedded:: commands::editor::tests:: commands::opencode:: commands::chat:: menu::'
 report_dir=coverage/rust/macos
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/worktreemanager-target}"
 export CARGO_LLVM_COV_TARGET_DIR="${CARGO_LLVM_COV_TARGET_DIR:-$CARGO_TARGET_DIR/llvm-cov-pilot}"
