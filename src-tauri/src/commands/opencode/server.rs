@@ -2,18 +2,15 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc, Mutex,
-};
-use std::time::{Duration, Instant};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use base64::Engine;
 use serde_json::{json, Value};
 
 use crate::commands::code_server::runtime::random_id;
+use crate::commands::embedded::{loopback_client, poll_until_ready, ServerProcess};
 use crate::commands::git::GIT_ENV_SCRUB;
-use crate::commands::process::OwnedProcess;
 use crate::commands::shell_env::{claude_env_prelude, login_shell, shell_single_quoted};
 
 pub const USERNAME: &str = "opencode";
@@ -28,12 +25,7 @@ pub struct Connection {
 
 impl Connection {
     pub fn client(&self, timeout: Option<Duration>) -> reqwest::blocking::Client {
-        reqwest::blocking::Client::builder()
-            .no_proxy()
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap_or_default()
+        loopback_client(timeout)
     }
 
     fn healthy(&self) -> bool {
@@ -69,95 +61,61 @@ impl Connection {
     }
 }
 
-#[derive(Default)]
-pub struct Server {
-    stopped: AtomicBool,
-    process: Mutex<Option<OwnedProcess>>,
-}
-
-impl Server {
-    pub fn stopped(&self) -> bool {
-        self.stopped.load(Ordering::SeqCst)
+/// Starts `opencode serve` in the task's primary folder with a database of its own, so its
+/// sessions stay apart from other worktrees of the same repository.
+pub fn start(
+    server: &ServerProcess,
+    program: &str,
+    data: &Path,
+    folders: &[PathBuf],
+) -> Result<Connection, String> {
+    std::fs::create_dir_all(data).map_err(|error| error.to_string())?;
+    let log = data.join("server.log");
+    let output = File::create(&log).map_err(|error| error.to_string())?;
+    let password = random_id()?;
+    let mut command = login_shell(&format!(
+        "{}; exec {} serve --hostname 127.0.0.1 --port 0",
+        claude_env_prelude(),
+        shell_single_quoted(program)
+    ));
+    command
+        .current_dir(&folders[0])
+        .stdout(Stdio::piped())
+        .stderr(output)
+        .stdin(Stdio::null())
+        .env("OPENCODE_SERVER_PASSWORD", &password)
+        .env_remove("OPENCODE_SERVER_USERNAME")
+        .env("OPENCODE_DB", data.join("opencode.db"))
+        .env(
+            "OPENCODE_CONFIG_CONTENT",
+            task_config(&folders[1..]).to_string(),
+        )
+        .env_remove(crate::commands::agent_alerts::TASK_ENV)
+        .env_remove(crate::commands::agent_alerts::SURFACE_ENV);
+    for variable in GIT_ENV_SCRUB {
+        command.env_remove(variable);
     }
-
-    pub fn stop(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
-        if let Some(mut process) = self.process.lock().unwrap().take() {
-            process.terminate();
+    let (pid, stdout) = server.spawn(&mut command)?;
+    let port = announced_port(stdout);
+    let mut origin = None;
+    let ready = poll_until_ready(server, || {
+        if origin.is_none() {
+            origin = port
+                .try_recv()
+                .ok()
+                .map(|port| format!("http://127.0.0.1:{port}"));
         }
-    }
-
-    pub fn running(&self) -> bool {
-        !self.stopped()
-            && self
-                .process
-                .lock()
-                .unwrap()
-                .as_mut()
-                .is_some_and(|process| matches!(process.poll(), Ok(None)))
-    }
-
-    /// Starts `opencode serve` in the task's primary folder with a database of its own, so its
-    /// sessions stay apart from other worktrees of the same repository.
-    pub fn start(
-        &self,
-        program: &str,
-        data: &Path,
-        folders: &[PathBuf],
-    ) -> Result<Connection, String> {
-        std::fs::create_dir_all(data).map_err(|error| error.to_string())?;
-        let log = data.join("server.log");
-        let output = File::create(&log).map_err(|error| error.to_string())?;
-        let password = random_id()?;
-        let mut command = login_shell(&format!(
-            "{}; exec {} serve --hostname 127.0.0.1 --port 0",
-            claude_env_prelude(),
-            shell_single_quoted(program)
-        ));
-        command
-            .current_dir(&folders[0])
-            .stdout(Stdio::piped())
-            .stderr(output)
-            .stdin(Stdio::null())
-            .env("OPENCODE_SERVER_PASSWORD", &password)
-            .env_remove("OPENCODE_SERVER_USERNAME")
-            .env("OPENCODE_DB", data.join("opencode.db"))
-            .env(
-                "OPENCODE_CONFIG_CONTENT",
-                task_config(&folders[1..]).to_string(),
-            )
-            .env_remove(crate::commands::agent_alerts::TASK_ENV)
-            .env_remove(crate::commands::agent_alerts::SURFACE_ENV);
-        for variable in GIT_ENV_SCRUB {
-            command.env_remove(variable);
-        }
-        let mut child = OwnedProcess::spawn(&mut command)?;
-        let port = announced_port(child.child_mut().stdout.take());
-        let pid = child.id();
-        *self.process.lock().unwrap() = Some(child);
-        let deadline = Instant::now() + Duration::from_secs(60);
-        let mut origin = None;
-        loop {
-            origin = origin.or_else(|| {
-                port.try_recv()
-                    .ok()
-                    .map(|port| format!("http://127.0.0.1:{port}"))
-            });
-            let connection = origin.as_ref().map(|origin| Connection {
-                origin: origin.clone(),
-                password: password.clone(),
-                pid,
-            });
-            if let Some(connection) = connection.filter(Connection::healthy) {
-                return Ok(connection);
-            }
-            if !self.running() || Instant::now() > deadline {
-                self.stop();
-                return Err(format!("OpenCode did not start. See {}", log.display()));
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    }
+        let connection = origin.as_ref().map(|origin| Connection {
+            origin: origin.clone(),
+            password: password.clone(),
+            pid,
+        });
+        Ok(connection.filter(Connection::healthy))
+    })?;
+    ready.ok_or_else(|| {
+        server.stop();
+        format!("OpenCode did not start. See {}", log.display())
+    })
 }
 
 /// Reads the listening port from the server's output, then keeps draining it so the server never

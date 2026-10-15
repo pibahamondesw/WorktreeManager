@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -5,23 +6,26 @@ use std::sync::{
 use std::time::Duration;
 
 use tauri::webview::{Cookie, NewWindowResponse, WebviewBuilder};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl};
+use tauri::{AppHandle, WebviewUrl};
 use tauri_plugin_opener::OpenerExt;
 
-use super::{server, trust, Bounds, Slot};
+use super::{server, trust, EditorRequest};
+use crate::commands::embedded::{attach_hidden, HiddenView, SessionInfo, View};
 
 pub struct EditorView {
-    pub webview: Webview,
-    #[cfg(target_os = "macos")]
-    _shortcuts: Arc<()>,
+    pub view: HiddenView,
     unloaded: Arc<AtomicBool>,
     shutdown_url: String,
 }
 
-impl EditorView {
-    pub async fn shutdown(&self) {
+impl View for EditorView {
+    fn close(&self) -> Result<(), String> {
+        self.view.close()
+    }
+
+    async fn shutdown(&self) {
         self.unloaded.store(false, Ordering::SeqCst);
-        let _ = self.webview.eval(format!(
+        let _ = self.view.webview.eval(format!(
             "Promise.resolve().then(() => globalThis.__wtmShutdown?.()).finally(() => location.replace({}))",
             serde_json::json!(self.shutdown_url)
         ));
@@ -36,17 +40,16 @@ impl EditorView {
 
 pub fn create(
     app: &AppHandle,
-    slot: &Slot,
+    label: &str,
+    info: &SessionInfo,
+    request: &EditorRequest,
     connection: &server::Connection,
-    workspace: &std::path::Path,
+    workspace: &Path,
 ) -> Result<EditorView, String> {
-    let label = &slot.label;
-    let info = slot.info.lock().unwrap().clone();
     let task_id = &info.task_id;
-    let folders = &slot.folders;
-    let url = &connection.url;
-    let cookie = &connection.cookie;
-    let origin = url
+    let folders: &[PathBuf] = &request.folders;
+    let origin = connection
+        .url
         .parse::<tauri::Url>()
         .map_err(|error| error.to_string())?;
     let mut initial = origin.clone();
@@ -59,7 +62,7 @@ pub fn create(
     let browser_store = md5::compute(format!(
         "{}:workspace:{}",
         app.config().identifier,
-        slot.server.workspace_id
+        request.workspace_id
     ))
     .0;
     let trust = trust::Bridge::new(&origin, task_id, label)?;
@@ -74,10 +77,7 @@ pub fn create(
     let shutdown_url = format!("about:blank#wtm-closed-{}", info.generation);
     let navigation_shutdown_url = shutdown_url.clone();
     let builder = WebviewBuilder::new(label, WebviewUrl::External("about:blank".parse().unwrap()))
-        .focused(false)
-        .disable_drag_drop_handler()
         .data_store_identifier(browser_store)
-        .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
         .initialization_script(&session_script)
         .initialization_script(&trust_script)
         .on_navigation(move |target| {
@@ -101,40 +101,19 @@ pub fn create(
             open_external(&popup_app, &target);
             NewWindowResponse::Deny
         });
-    let window = app.get_window("main").ok_or("Main window is unavailable")?;
-    let view = window
-        .add_child(
-            builder,
-            LogicalPosition::new(-10000.0, -10000.0),
-            LogicalSize::new(1.0, 1.0),
-        )
-        .map_err(|error| error.to_string())?;
-    let setup = (|| {
-        view.hide().map_err(|error| error.to_string())?;
-        let mut cookie = Cookie::parse(cookie.to_owned())
+    let view = attach_hidden(app, builder, |view| {
+        let mut cookie = Cookie::parse(connection.cookie.clone())
             .map_err(|error| error.to_string())?
             .into_owned();
         cookie.set_domain("127.0.0.1");
         view.set_cookie(cookie).map_err(|error| error.to_string())?;
         view.navigate(initial).map_err(|error| error.to_string())
-    })();
-    close_on_error(&view, setup)?;
-    #[cfg(target_os = "macos")]
-    let shortcuts = close_on_error(&view, crate::menu::editor::install(&view))?;
+    })?;
     Ok(EditorView {
-        webview: view,
-        #[cfg(target_os = "macos")]
-        _shortcuts: shortcuts,
+        view,
         unloaded,
         shutdown_url,
     })
-}
-
-pub(crate) fn close_on_error<T>(view: &Webview, result: Result<T, String>) -> Result<T, String> {
-    if result.is_err() {
-        let _ = view.close();
-    }
-    result
 }
 
 fn allows_task_navigation(target: &tauri::Url, workspace: &str) -> bool {
@@ -152,19 +131,6 @@ pub(crate) fn open_external(app: &AppHandle, url: &tauri::Url) {
     if matches!(url.scheme(), "http" | "https" | "mailto") {
         let _ = app.opener().open_url(url.as_str(), None::<&str>);
     }
-}
-
-pub fn show(view: &Webview, bounds: Bounds, focus: bool) -> Result<(), String> {
-    view.set_bounds(tauri::Rect {
-        position: LogicalPosition::new(bounds.x, bounds.y).into(),
-        size: LogicalSize::new(bounds.width, bounds.height).into(),
-    })
-    .map_err(|error| error.to_string())?;
-    view.show().map_err(|error| error.to_string())?;
-    if focus {
-        view.set_focus().map_err(|error| error.to_string())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

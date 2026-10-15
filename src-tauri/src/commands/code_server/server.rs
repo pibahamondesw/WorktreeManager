@@ -1,14 +1,11 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Mutex,
-};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use super::{adapter, profile, runtime};
-use crate::commands::process::OwnedProcess;
+use crate::commands::embedded::{loopback_client, poll_until_ready, ServerProcess};
 
 #[derive(Clone)]
 pub struct Connection {
@@ -20,9 +17,8 @@ pub struct Connection {
 pub struct Server {
     pub workspace_id: String,
     pub control: PathBuf,
-    stopped: AtomicBool,
+    pub process: ServerProcess,
     startup: Mutex<Option<Connection>>,
-    process: Mutex<Option<OwnedProcess>>,
 }
 
 impl Server {
@@ -33,36 +29,14 @@ impl Server {
                 .join("workspaces")
                 .join(profile::key(workspace_id))
                 .join("control"),
-            stopped: AtomicBool::new(false),
+            process: ServerProcess::default(),
             startup: Mutex::new(None),
-            process: Mutex::new(None),
         }
-    }
-
-    pub fn stopped(&self) -> bool {
-        self.stopped.load(Ordering::SeqCst)
-    }
-
-    pub fn stop(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
-        if let Some(mut process) = self.process.lock().unwrap().take() {
-            process.terminate();
-        }
-    }
-
-    pub fn running(&self) -> bool {
-        !self.stopped()
-            && self
-                .process
-                .lock()
-                .unwrap()
-                .as_mut()
-                .is_some_and(|process| matches!(process.poll(), Ok(None)))
     }
 
     pub fn connection(&self, root: &Path) -> Result<Connection, String> {
         let mut connection = self.startup.lock().unwrap();
-        if self.stopped() {
+        if self.process.stopped() {
             return Err("The shared editor server has stopped. Restart the editor.".into());
         }
         if let Some(connection) = connection.as_ref() {
@@ -75,7 +49,7 @@ impl Server {
                 Ok(started)
             }
             Err(error) => {
-                self.stop();
+                self.process.stop();
                 Err(error)
             }
         }
@@ -104,65 +78,47 @@ impl Server {
             .env_remove("WTM_EDITOR_SESSION")
             .env(crate::commands::agent_alerts::SURFACE_ENV, "editor")
             .env("WTM_EDITOR_CONTROL", &self.control);
-        let pid = {
-            let mut process = self.process.lock().unwrap();
-            if self.stopped() {
-                return Err("The editor was closed".into());
+        let (pid, _) = self.process.spawn(&mut command)?;
+        let client = loopback_client(Some(Duration::from_secs(2)));
+        let ready = poll_until_ready(&self.process, || {
+            let Some(url) = server_url(&std::fs::read_to_string(&log).unwrap_or_default()) else {
+                return Ok(None);
+            };
+            if !client
+                .get(format!("{url}/healthz"))
+                .send()
+                .is_ok_and(|response| response.status().is_success())
+            {
+                return Ok(None);
             }
-            let child = OwnedProcess::spawn(&mut command)?;
-            let pid = child.id();
-            *process = Some(child);
-            pid
-        };
-        let client = reqwest::blocking::Client::builder()
-            .no_proxy()
-            .timeout(Duration::from_secs(2))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| error.to_string())?;
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while Instant::now() < deadline && !self.stopped() {
-            if !self.running() {
-                return Err(format!(
-                    "code-server exited during startup. See {}",
-                    log.display()
-                ));
-            }
-            if let Some(url) = server_url(&std::fs::read_to_string(&log).unwrap_or_default()) {
-                if client
-                    .get(format!("{url}/healthz"))
-                    .send()
-                    .is_ok_and(|response| response.status().is_success())
-                {
-                    let response = client
-                        .post(format!("{url}/login"))
-                        .header("Content-Type", "application/x-www-form-urlencoded")
-                        .body(format!("password={}", profile.password))
-                        .send()
-                        .map_err(|error| error.to_string())?;
-                    if !response.status().is_redirection() {
-                        return Err("Local editor authentication failed".into());
-                    }
-                    let cookie = response
-                        .headers()
-                        .get(reqwest::header::SET_COOKIE)
-                        .ok_or("The editor did not provide its session cookie")?
-                        .to_str()
-                        .map_err(|error| error.to_string())?
-                        .to_string();
-                    let port = url.rsplit(':').next().ok_or("Editor port is missing")?;
-                    std::fs::write(profile.directory.join("port"), port)
-                        .map_err(|error| error.to_string())?;
-                    return Ok(Connection { url, cookie, pid });
-                }
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        Err(format!(
-            "Editor startup cancelled or timed out. See {}",
-            log.display()
-        ))
+            let cookie = login(&client, &url, &profile.password)?;
+            let port = url.rsplit(':').next().ok_or("Editor port is missing")?;
+            std::fs::write(profile.directory.join("port"), port)
+                .map_err(|error| error.to_string())?;
+            Ok(Some(Connection { url, cookie, pid }))
+        })?;
+        ready.ok_or_else(|| format!("code-server did not start. See {}", log.display()))
     }
+}
+
+/// Signs in with the profile's password and returns the session cookie for the editor's view.
+fn login(client: &reqwest::blocking::Client, url: &str, password: &str) -> Result<String, String> {
+    let response = client
+        .post(format!("{url}/login"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(format!("password={password}"))
+        .send()
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_redirection() {
+        return Err("Local editor authentication failed".into());
+    }
+    Ok(response
+        .headers()
+        .get(reqwest::header::SET_COOKIE)
+        .ok_or("The editor did not provide its session cookie")?
+        .to_str()
+        .map_err(|error| error.to_string())?
+        .to_string())
 }
 
 fn server_url(log: &str) -> Option<String> {

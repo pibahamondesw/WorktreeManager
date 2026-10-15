@@ -86,6 +86,27 @@ fn replace_once(source: &str, before: &str, after: &str) -> Result<String, Strin
     Ok(source.replacen(before, after, 1))
 }
 
+#[cfg(all(test, target_os = "macos"))]
+pub fn install_fake_runtime(root: &Path, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let binary = runtime::binary(root).unwrap();
+    let original = binary.parent().unwrap().parent().unwrap();
+    fs::create_dir_all(binary.parent().unwrap()).unwrap();
+    fs::write(&binary, script).unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    for file in [WORKBENCH, PTY_HOST, "lib/vscode/out/server-main.js"] {
+        let path = original.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let source = PATCHES
+            .iter()
+            .filter(|(target, _, _)| *target == file)
+            .map(|(_, before, _)| *before)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(path, source).unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -224,9 +224,10 @@ fn predefined_items(items: Vec<MenuItemKind<tauri::Wry>>) -> Vec<String> {
 
 #[cfg(target_os = "macos")]
 fn main() {
-    let app = tauri::Builder::default()
-        .build(tauri::generate_context!())
-        .unwrap();
+    let mut context = tauri::generate_context!();
+    let app_data = std::env::temp_dir().join(format!("wtm-menu-{}", std::process::id()));
+    context.config_mut().identifier = app_data.to_string_lossy().into_owned();
+    let app = tauri::Builder::default().build(context).unwrap();
     let default_menu = Menu::default(app.handle()).unwrap();
     let close_text = PredefinedMenuItem::close_window(&app, None)
         .unwrap()
@@ -311,7 +312,7 @@ fn main() {
     };
     let main = create_view("shortcut-main");
     let created_editor = commands::code_server::native_test_view(app.handle(), "shortcut-editor");
-    let editor = created_editor.webview.clone();
+    let editor = created_editor.view.webview.clone();
     editor.show().unwrap();
     editor.set_focus().unwrap();
     editor
@@ -373,7 +374,7 @@ fn main() {
     drop(created_editor);
     assert_key_routing(&editor, "z", 1 << 20, 6, false);
     commands::code_server::native_test_failed_view_cleanup(&editor);
-    commands::opencode::native_test_lifecycle(app.handle());
+    commands::embedded::native_test_lifecycle(app.handle());
     main.close().unwrap();
     window.close().unwrap();
     println!("menu regression passed: no native close command; other actions preserved");
