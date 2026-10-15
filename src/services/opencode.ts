@@ -11,7 +11,6 @@ export interface OpenCodeActivity {
   at: number;
 }
 
-export const openCodeProbe = () => invoke<boolean>("opencode_probe");
 export const openCodeOpen = (taskId: string, folders: string[]) =>
   invoke<OpenCodeSession>("opencode_open", { taskId, folders });
 export const openCodeClose = (taskId: string) => invoke<void>("opencode_close", { taskId });

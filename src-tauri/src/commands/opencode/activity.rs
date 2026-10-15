@@ -76,36 +76,24 @@ impl Activity {
 /// the server is still running.
 pub fn watch(app: AppHandle, slot: Arc<Slot>, connection: Connection) {
     std::thread::spawn(move || {
-        let Ok(client) = connection.client(None) else {
-            return;
-        };
+        let client = connection.client(None);
+        let task_id = slot.info.lock().unwrap().task_id.clone();
         let mut activity = Activity::default();
         while !slot.closed.load(Ordering::SeqCst) && slot.server.running() {
-            if let Ok(response) = connection.get(&client, "/global/event").send() {
-                for line in BufReader::new(response).lines() {
-                    let Ok(line) = line else { break };
-                    if slot.closed.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    let Some(data) = line.strip_prefix("data: ") else {
-                        continue;
-                    };
-                    let Ok(event) = serde_json::from_str::<Value>(data) else {
-                        continue;
-                    };
-                    if let Some(state) = activity.apply(&event["payload"]) {
-                        let task_id = slot.info.lock().unwrap().task_id.clone();
-                        let _ = app.emit_to(
-                            "main",
-                            EVENT,
-                            ActivityEvent {
-                                task_id,
-                                state,
-                                at: now_millis(),
-                            },
-                        );
-                    }
-                }
+            let lines = connection
+                .get(&client, "/global/event")
+                .send()
+                .into_iter()
+                .flat_map(|response| BufReader::new(response).lines())
+                .map_while(Result::ok)
+                .take_while(|_| !slot.closed.load(Ordering::SeqCst));
+            let events = lines.filter_map(|line| {
+                serde_json::from_str::<Value>(line.strip_prefix("data: ")?).ok()
+            });
+            for state in events.filter_map(|event| activity.apply(&event["payload"])) {
+                let at = now_millis();
+                let task_id = task_id.clone();
+                let _ = app.emit_to("main", EVENT, ActivityEvent { task_id, state, at });
             }
             std::thread::sleep(Duration::from_secs(1));
         }

@@ -130,7 +130,7 @@ pub fn create(
     })
 }
 
-pub(super) fn close_on_error<T>(view: &Webview, result: Result<T, String>) -> Result<T, String> {
+pub(crate) fn close_on_error<T>(view: &Webview, result: Result<T, String>) -> Result<T, String> {
     if result.is_err() {
         let _ = view.close();
     }
@@ -148,7 +148,7 @@ fn allows_task_navigation(target: &tauri::Url, workspace: &str) -> bool {
     target.path() != "/" || has_workspace
 }
 
-fn open_external(app: &AppHandle, url: &tauri::Url) {
+pub(crate) fn open_external(app: &AppHandle, url: &tauri::Url) {
     if matches!(url.scheme(), "http" | "https" | "mailto") {
         let _ = app.opener().open_url(url.as_str(), None::<&str>);
     }

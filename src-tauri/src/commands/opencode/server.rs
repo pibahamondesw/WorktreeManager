@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use crate::commands::code_server::runtime::random_id;
 use crate::commands::git::GIT_ENV_SCRUB;
 use crate::commands::process::OwnedProcess;
-use crate::commands::shell_env::{claude_env_prelude, login_shell};
+use crate::commands::shell_env::{claude_env_prelude, login_shell, shell_single_quoted};
 
 pub const USERNAME: &str = "opencode";
 const LISTENING: &str = "opencode server listening on http://127.0.0.1:";
@@ -27,13 +27,19 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn client(&self, timeout: Option<Duration>) -> Result<reqwest::blocking::Client, String> {
+    pub fn client(&self, timeout: Option<Duration>) -> reqwest::blocking::Client {
         reqwest::blocking::Client::builder()
             .no_proxy()
             .timeout(timeout)
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map_err(|error| error.to_string())
+            .unwrap_or_default()
+    }
+
+    fn healthy(&self) -> bool {
+        self.get(&self.client(Some(Duration::from_secs(2))), "/global/health")
+            .send()
+            .is_ok_and(|response| response.status().is_success())
     }
 
     pub fn get(
@@ -93,18 +99,23 @@ impl Server {
 
     /// Starts `opencode serve` in the task's primary folder with a database of its own, so its
     /// sessions stay apart from other worktrees of the same repository.
-    pub fn start(&self, data: &Path, folders: &[PathBuf]) -> Result<Connection, String> {
-        let primary = folders.first().ok_or("No folders to open")?;
+    pub fn start(
+        &self,
+        program: &str,
+        data: &Path,
+        folders: &[PathBuf],
+    ) -> Result<Connection, String> {
         std::fs::create_dir_all(data).map_err(|error| error.to_string())?;
         let log = data.join("server.log");
         let output = File::create(&log).map_err(|error| error.to_string())?;
         let password = random_id()?;
         let mut command = login_shell(&format!(
-            "{}; exec opencode serve --hostname 127.0.0.1 --port 0",
-            claude_env_prelude()
+            "{}; exec {} serve --hostname 127.0.0.1 --port 0",
+            claude_env_prelude(),
+            shell_single_quoted(program)
         ));
         command
-            .current_dir(primary)
+            .current_dir(&folders[0])
             .stdout(Stdio::piped())
             .stderr(output)
             .stdin(Stdio::null())
@@ -120,72 +131,48 @@ impl Server {
         for variable in GIT_ENV_SCRUB {
             command.env_remove(variable);
         }
-        let (port, pid) = {
-            let mut process = self.process.lock().unwrap();
-            if self.stopped() {
-                return Err("OpenCode was closed".into());
-            }
-            let mut child = OwnedProcess::spawn(&mut command)?;
-            let stdout = child
-                .child_mut()
-                .stdout
-                .take()
-                .ok_or("OpenCode has no output")?;
-            let pid = child.id();
-            *process = Some(child);
-            (announced_port(stdout), pid)
-        };
+        let mut child = OwnedProcess::spawn(&mut command)?;
+        let port = announced_port(child.child_mut().stdout.take());
+        let pid = child.id();
+        *self.process.lock().unwrap() = Some(child);
         let deadline = Instant::now() + Duration::from_secs(60);
-        let origin = loop {
-            if self.stopped() {
-                return Err("OpenCode was closed during startup".into());
-            }
-            if !self.running() {
-                return Err(format!(
-                    "OpenCode exited during startup. See {}",
-                    log.display()
-                ));
-            }
-            if Instant::now() > deadline {
-                return Err(format!("OpenCode startup timed out. See {}", log.display()));
-            }
-            if let Ok(port) = port.recv_timeout(Duration::from_millis(100)) {
-                break format!("http://127.0.0.1:{port}");
-            }
-        };
-        let connection = Connection {
-            origin,
-            password,
-            pid,
-        };
-        let client = connection.client(Some(Duration::from_secs(2)))?;
-        while Instant::now() < deadline && self.running() {
-            if connection
-                .get(&client, "/global/health")
-                .send()
-                .is_ok_and(|response| response.status().is_success())
-            {
+        let mut origin = None;
+        loop {
+            origin = origin.or_else(|| {
+                port.try_recv()
+                    .ok()
+                    .map(|port| format!("http://127.0.0.1:{port}"))
+            });
+            let connection = origin.as_ref().map(|origin| Connection {
+                origin: origin.clone(),
+                password: password.clone(),
+                pid,
+            });
+            if let Some(connection) = connection.filter(Connection::healthy) {
                 return Ok(connection);
+            }
+            if !self.running() || Instant::now() > deadline {
+                self.stop();
+                return Err(format!("OpenCode did not start. See {}", log.display()));
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        Err(format!(
-            "OpenCode did not become ready. See {}",
-            log.display()
-        ))
     }
 }
 
 /// Reads the listening port from the server's output, then keeps draining it so the server never
 /// blocks on a full pipe.
-fn announced_port(stdout: std::process::ChildStdout) -> mpsc::Receiver<u16> {
+fn announced_port(stdout: Option<std::process::ChildStdout>) -> mpsc::Receiver<u16> {
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
-            if let Some(port) = listening_port(&line) {
-                let _ = sender.send(port);
-            }
+        let lines = stdout
+            .into_iter()
+            .flat_map(|stdout| BufReader::new(stdout).lines());
+        for port in lines
+            .map_while(Result::ok)
+            .filter_map(|line| listening_port(&line))
+        {
+            let _ = sender.send(port);
         }
     });
     receiver
@@ -217,7 +204,7 @@ fn directory_slug(directory: &Path) -> String {
 
 /// The task's most recent session, or a new one when its database has none yet.
 pub fn task_session(connection: &Connection, directory: &Path) -> Result<String, String> {
-    let client = connection.client(Some(Duration::from_secs(10)))?;
+    let client = connection.client(Some(Duration::from_secs(10)));
     let directory_header = directory.to_string_lossy().to_string();
     let sessions: Value = connection
         .get(&client, "/session")

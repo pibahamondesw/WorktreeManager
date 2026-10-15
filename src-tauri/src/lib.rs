@@ -20,7 +20,6 @@ pub fn run() {
         .manage(commands::claude_usage::ClaudeUsageCache::default())
         .manage(commands::codex_usage::CodexUsageCache::default())
         .manage(commands::code_server::EditorRegistry::default())
-        .manage(commands::opencode::OpenCodeRegistry::default())
         .setup(|app| {
             std::thread::spawn(commands::chat::purge_stale_chat_images);
             #[cfg(unix)]
@@ -133,7 +132,6 @@ pub fn run() {
                 commands::code_server::vscode_present,
                 commands::code_server::vscode_close,
                 commands::code_server::vscode_list,
-                commands::opencode::opencode_probe,
                 commands::opencode::opencode_open,
                 commands::opencode::opencode_close,
                 commands::opencode::opencode_list,
@@ -154,8 +152,6 @@ pub fn run() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 app.state::<commands::code_server::EditorRegistry>()
-                    .shutdown_all();
-                app.state::<commands::opencode::OpenCodeRegistry>()
                     .shutdown_all();
                 app.state::<commands::terminal::TerminalRegistry>()
                     .shutdown_all();

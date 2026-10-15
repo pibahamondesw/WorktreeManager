@@ -9,7 +9,7 @@ export type AgentActivityState = "working" | "waiting" | "done";
 export type AgentSurfaceKind = "chat" | "terminal" | "editor" | "opencode" | "external";
 
 /** Agents whose activity is tracked: the CLI agents, and OpenCode embedded. */
-export type ActivityAgent = AgentId | "opencode";
+type ActivityAgent = AgentId | "opencode";
 
 export interface AgentActivity {
   state: AgentActivityState;

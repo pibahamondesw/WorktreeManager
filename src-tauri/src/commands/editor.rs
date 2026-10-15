@@ -214,3 +214,21 @@ fn escape_applescript_string(s: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opencode_embedded_runs_inside_the_app_and_needs_its_cli() {
+        let opened = open_editor_blocking("opencode-web".into(), vec!["/tmp".into()], None, None);
+        assert_eq!(
+            opened.err().as_deref(),
+            Some("OpenCode runs embedded; use opencode_open")
+        );
+        assert_eq!(
+            check_app_installed("opencode-web".into()),
+            Ok(shell_env::cli_available("opencode"))
+        );
+    }
+}

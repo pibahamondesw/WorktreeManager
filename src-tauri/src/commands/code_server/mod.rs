@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub(crate) use profile::{canonical_folders, key as task_key};
+pub(crate) use view::{close_on_error, open_external};
+
+use crate::commands::opencode::OpenCodeRegistry;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 pub struct Bounds {
@@ -113,11 +116,21 @@ pub struct EditorRegistry {
     installation: tokio::sync::Mutex<()>,
     installer: Arc<runtime::Installation>,
     shutting_down: AtomicBool,
+    pub(crate) opencode: OpenCodeRegistry,
 }
 
 impl EditorRegistry {
+    #[cfg(test)]
+    pub(crate) fn with_opencode(opencode: OpenCodeRegistry) -> Self {
+        Self {
+            opencode,
+            ..Default::default()
+        }
+    }
+
     pub fn shutdown_all(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
+        self.opencode.shutdown_all();
         self.installer.cancel();
         let sessions: Vec<_> = self
             .sessions
@@ -218,10 +231,10 @@ impl EditorRegistry {
             .filter(|slot| {
                 !slot.closed.load(Ordering::SeqCst) && slot.info.lock().unwrap().status == "running"
             });
-        let opencode = state.task_id.as_ref().and_then(|id| {
-            app.try_state::<crate::commands::opencode::OpenCodeRegistry>()
-                .and_then(|registry| registry.running_label(id))
-        });
+        let opencode = state
+            .task_id
+            .as_ref()
+            .and_then(|id| self.opencode.running_label(id));
         let label = selected
             .as_ref()
             .map(|slot| slot.label.as_str())

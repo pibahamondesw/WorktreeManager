@@ -164,6 +164,9 @@ describe("Rust coverage pipeline", () => {
         "commands::export::tests::",
         "commands::github::tests::",
         "commands::code_server::view::tests::",
+        "commands::code_server::tests::",
+        "commands::editor::tests::",
+        "commands::opencode::",
         "commands::chat::",
         "menu::",
       ]);
