@@ -795,6 +795,99 @@ describe("ChatPane", () => {
   });
 });
 
+describe("Markdown previews", () => {
+  const plan =
+    "# Ship previews\n\nCards first.\n\n## Steps\n\n1. Build\n2. Test\n3. Ship\n4. Celebrate\n\n## Risks\n\nNone.";
+
+  it("shows a card for referenced Markdown files and opens the rich preview over the chat", async () => {
+    mocks.invoke.mockImplementation((command: string, args: { path?: string }) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            items: [
+              {
+                id: "a",
+                kind: "assistant",
+                text: "Wrote [the plan](docs/plan.md); `missing.md` is next.",
+              },
+            ],
+          })
+        );
+      if (command === "chat_read_markdown")
+        return args.path === "docs/plan.md"
+          ? Promise.resolve({ path: "/wt/a/docs/plan.md", text: plan })
+          : Promise.reject("File not found: missing.md");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+
+    const card = await screen.findByRole("button", { name: "Preview Ship previews" });
+    expect(card).toHaveTextContent("docs/plan.md");
+    expect(card).toHaveTextContent("Cards first.Steps1. Build2. Test3. Ship");
+    expect(card).not.toHaveTextContent("Celebrate");
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_read_markdown", {
+      folders: ["/wt/a"],
+      path: "missing.md",
+    });
+    expect(screen.getAllByRole("button", { name: /^Preview / })).toHaveLength(1);
+
+    fireEvent.click(card);
+    const panel = await screen.findByRole("region", { name: "Preview of Ship previews" });
+    expect(within(panel).getByRole("heading", { level: 2, name: "Steps" })).toBeInTheDocument();
+    expect(within(panel).getByRole("navigation", { name: "Outline" })).toHaveTextContent(
+      "Ship previewsStepsRisks"
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: "the plan" }));
+    expect(await screen.findByRole("region", { name: "Preview of Ship previews" })).toBeVisible();
+  });
+
+  it("previews a pending plan and approves it from the preview", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open"
+        ? Promise.resolve(
+            snapshot({
+              items: [{ id: "p", kind: "notice", title: "Plan", text: plan }],
+              pending: [
+                {
+                  id: "r1",
+                  title: "Claude's plan is ready",
+                  detail: plan,
+                  format: "markdown",
+                  kind: "approval",
+                  decisions: [
+                    { id: "allow", label: "Approve plan" },
+                    { id: "deny", label: "Keep planning" },
+                  ],
+                },
+              ],
+            })
+          )
+        : Promise.resolve(undefined)
+    );
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+
+    const cards = await screen.findAllByRole("button", { name: "Preview Ship previews" });
+    expect(cards).toHaveLength(1);
+    fireEvent.click(cards[0]);
+    const panel = screen.getByRole("region", { name: "Preview of Ship previews" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Approve plan" }));
+
+    expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull();
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        taskId: "t1",
+        agent: "claude",
+        requestId: "r1",
+        response: { decision: "allow" },
+      })
+    );
+  });
+});
+
 it.each(["claude", "codex"] as const)(
   "shows usage for the current chat agent: %s",
   async (agent) => {
