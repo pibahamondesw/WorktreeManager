@@ -369,6 +369,14 @@ export const chatRefreshUsage = (taskId: string, agent: AgentId) =>
 export const chatFileSearch = (folders: string[], query: string) =>
   invoke<FileMatch[]>("chat_file_search", { folders, query });
 
+export interface MarkdownDocument {
+  path: string;
+  text: string;
+}
+
+export const chatReadMarkdown = (folders: string[], path: string) =>
+  invoke<MarkdownDocument>("chat_read_markdown", { folders, path });
+
 export const chatInterrupt = (taskId: string, agent: AgentId) =>
   invoke<void>("chat_interrupt", { taskId, agent });
 
