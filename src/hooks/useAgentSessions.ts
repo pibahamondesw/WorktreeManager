@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { onTerminalExit, terminalList, TerminalInfo, TerminalStatus } from "../services/terminal";
 import { editorList, onEditorSession, EditorSession } from "../services/codeEditor";
+import { onOpenCodeSession, openCodeList } from "../services/opencode";
 import { chatList, ChatInfo, ChatStatus, isLive, onChatStatus } from "../services/chat";
 
 const chatSessionStatus = (status: ChatStatus): TerminalStatus =>
@@ -15,7 +16,30 @@ const chatSessionStatus = (status: ChatStatus): TerminalStatus =>
 export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStatus> {
   const [sessions, setSessions] = useState<TerminalInfo[]>([]);
   const [editors, setEditors] = useState<Record<string, EditorSession>>({});
+  const [openCodes, setOpenCodes] = useState<Record<string, EditorSession>>({});
   const [chats, setChats] = useState<ChatInfo[]>([]);
+
+  useEffect(() => {
+    let stale = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      const stop = await onOpenCodeSession((session) => {
+        if (!stale) setOpenCodes((previous) => ({ ...previous, [session.taskId]: session }));
+      });
+      if (stale) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+      const list = await openCodeList();
+      if (!stale)
+        setOpenCodes(Object.fromEntries(list.map((session) => [session.taskId, session])));
+    })().catch(() => undefined);
+    return () => {
+      stale = true;
+      unlisten?.();
+    };
+  }, [taskOpen]);
 
   useEffect(() => {
     let stale = false;
@@ -105,7 +129,7 @@ export function useAgentSessions(taskOpen: boolean): Record<string, TerminalStat
   for (const session of agentSessions) {
     if (combined[session.taskId]?.kind !== "running") combined[session.taskId] = session.status;
   }
-  for (const editor of Object.values(editors)) {
+  for (const editor of [...Object.values(editors), ...Object.values(openCodes)]) {
     if (editor.status === "running" || editor.status === "starting")
       combined[editor.taskId] = { kind: "running" };
     else if (editor.status === "exited" && !combined[editor.taskId])

@@ -14,6 +14,7 @@ pub mod github;
 pub mod keychain;
 pub mod node_deps;
 pub mod notes;
+pub mod opencode;
 pub mod process;
 pub mod python_deps;
 pub mod scripts;

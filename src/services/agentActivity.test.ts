@@ -241,4 +241,17 @@ describe("alert settings", () => {
     expect(embeddedSurface({ ...target, surface: "editor" })).toEqual({ kind: "editor" });
     expect(embeddedSurface({ ...target, surface: "external" })).toBeNull();
   });
+
+  it("names OpenCode in its alerts and reopens its embedded surface", () => {
+    const notification = notificationFor(task("t1", []), {
+      state: "waiting",
+      agent: "opencode",
+      surface: "opencode",
+    });
+    expect(notification).toMatchObject({
+      title: "OpenCode needs your input",
+      target: { taskId: "t1", surface: "opencode", agent: "opencode" },
+    });
+    expect(embeddedSurface(notification.target)).toEqual({ kind: "opencode" });
+  });
 });

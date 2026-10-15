@@ -6,11 +6,14 @@ import { ChatInfo, isLive } from "./chat";
 export type AgentActivityState = "working" | "waiting" | "done";
 
 /** Where the agent runs: an embedded surface, or outside the app (Cursor, a terminal). */
-export type AgentSurfaceKind = "chat" | "terminal" | "editor" | "external";
+export type AgentSurfaceKind = "chat" | "terminal" | "editor" | "opencode" | "external";
+
+/** Agents whose activity is tracked: the CLI agents, and OpenCode embedded. */
+export type ActivityAgent = AgentId | "opencode";
 
 export interface AgentActivity {
   state: AgentActivityState;
-  agent: AgentId;
+  agent: ActivityAgent;
   surface: AgentSurfaceKind;
   /** A finished or waiting agent stays unread until its task is opened. */
   unread: boolean;
@@ -24,7 +27,7 @@ export type AgentActivities = Record<string, AgentActivity>;
 
 export interface AgentEvent {
   state: AgentActivityState;
-  agent: AgentId;
+  agent: ActivityAgent;
   cwd?: string;
   at: number;
   /** Set by embedded sessions, which know their task; external agents are matched by cwd. */
@@ -36,7 +39,12 @@ export interface AgentEvent {
   asyncQuestion?: boolean;
 }
 
-export const EMBEDDED_SURFACES: readonly AgentSurfaceKind[] = ["chat", "terminal", "editor"];
+export const EMBEDDED_SURFACES: readonly AgentSurfaceKind[] = [
+  "chat",
+  "terminal",
+  "editor",
+  "opencode",
+];
 
 export const AGENT_ACTIVITY_STATES: readonly AgentActivityState[] = ["working", "waiting", "done"];
 
@@ -267,16 +275,21 @@ export const INDICATOR_LABELS: Record<TaskIndicator, string> = {
   ended: "Agent session ended",
 };
 
-const AGENT_NAMES: Record<AgentId, string> = { claude: "Claude", codex: "Codex" };
+const AGENT_NAMES: Record<ActivityAgent, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  opencode: "OpenCode",
+};
 
 export interface NotificationTarget {
   taskId: string;
   surface: AgentSurfaceKind;
-  agent: AgentId;
+  agent: ActivityAgent;
 }
 
 export function embeddedSurface(target: NotificationTarget): TaskSurface | null {
-  if (target.surface === "chat" || target.surface === "terminal")
+  if (target.surface === "opencode") return { kind: "opencode" };
+  if ((target.surface === "chat" || target.surface === "terminal") && target.agent !== "opencode")
     return { kind: target.surface, agent: target.agent };
   if (target.surface === "editor") return { kind: "editor" };
   return null;

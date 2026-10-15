@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ editor: vi.fn(), terminal: vi.fn(), chat: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  editor: vi.fn(),
+  opencode: vi.fn(),
+  terminal: vi.fn(),
+  chat: vi.fn(),
+}));
 vi.mock("./codeEditor", () => ({ editorClose: mocks.editor }));
+vi.mock("./opencode", () => ({ openCodeClose: mocks.opencode }));
 vi.mock("./terminal", () => ({ terminalClose: mocks.terminal }));
 vi.mock("./chat", () => ({ chatClose: mocks.chat }));
 import { closeTaskSessions } from "./taskSessions";
@@ -10,9 +16,11 @@ describe("task deletion session cleanup", () => {
     mocks.editor.mockRejectedValueOnce(new Error("still closing"));
     mocks.terminal.mockResolvedValue(undefined);
     mocks.chat.mockResolvedValue(undefined);
+    mocks.opencode.mockResolvedValue(undefined);
     await expect(closeTaskSessions("a")).rejects.toThrow("still closing");
     expect(mocks.terminal).toHaveBeenCalledWith("a");
     expect(mocks.chat).toHaveBeenCalledWith("a");
+    expect(mocks.opencode).toHaveBeenCalledWith("a");
     mocks.editor.mockResolvedValue(undefined);
     await expect(closeTaskSessions("a")).resolves.toBeUndefined();
   });

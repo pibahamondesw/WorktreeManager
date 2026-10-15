@@ -19,6 +19,7 @@ import {
   pendingInputCount,
 } from "../services/agentActivity";
 import { ChatInfo, chatList, onChatStatus } from "../services/chat";
+import { onOpenCodeActivity } from "../services/opencode";
 import { TerminalStatus } from "../services/terminal";
 import { loadAgentAlerts, persist } from "../services/store";
 
@@ -141,6 +142,16 @@ export function useAgentActivity({
     return () => {
       stale = true;
       unlisten?.();
+    };
+  }, [record]);
+
+  useEffect(() => {
+    const unlisten = onOpenCodeActivity(({ taskId, state, at }) => {
+      const task = latest.current.tasks.find((t) => t.id === taskId);
+      if (task) record(task, { state, agent: "opencode", surface: "opencode", at });
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
     };
   }, [record]);
 

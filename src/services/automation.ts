@@ -170,7 +170,10 @@ function agentEvent(params: Record<string, unknown>): AgentEvent {
   if (params.taskId !== undefined || params.surface !== undefined) {
     const surface = text(params.surface);
     if (!EMBEDDED_SURFACES.includes(surface as AgentSurfaceKind))
-      throw new OperationError("invalid_params", "surface must be chat, terminal or editor.");
+      throw new OperationError(
+        "invalid_params",
+        "surface must be chat, terminal, editor or opencode."
+      );
     event.taskId = text(params.taskId);
     event.surface = surface as AgentSurfaceKind;
   }

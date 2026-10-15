@@ -19,6 +19,7 @@ export function taskSurfaceFor(
   views: AgentViews = DEFAULT_AGENT_VIEWS
 ): TaskSurface {
   if (editor === "vscode-web") return { kind: "editor" };
+  if (editor === "opencode-web") return { kind: "opencode" };
   const agent = EDITOR_AGENTS[editor];
   return agent ? agentSurface(agent, views) : { kind: "external" };
 }

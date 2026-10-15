@@ -115,6 +115,7 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
       );
     case "codex":
     case "opencode":
+    case "opencode-web":
       return (
         <svg
           width={s}
