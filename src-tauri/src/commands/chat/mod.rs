@@ -15,6 +15,7 @@ mod files;
 pub mod history;
 #[cfg(test)]
 mod history_tests;
+mod markdown;
 mod model;
 mod sessions;
 
@@ -876,6 +877,19 @@ pub async fn chat_file_search(
     tauri::async_runtime::spawn_blocking(move || files::search(&folders, &query))
         .await
         .map_err(|e| format!("Task failed: {e}"))
+}
+
+#[tauri::command]
+pub async fn chat_read_markdown(
+    folders: Vec<String>,
+    path: String,
+) -> Result<markdown::MarkdownDocument, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        markdown::read(&folders, &path, home.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[tauri::command(async)]

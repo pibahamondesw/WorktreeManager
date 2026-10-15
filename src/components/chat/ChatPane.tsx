@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { ChatItemView } from "./ChatItemView";
 import { Composer } from "./Composer";
@@ -8,6 +8,9 @@ import { TodoPanel } from "./TodoPanel";
 import { UsageDialog } from "./UsageDialog";
 import { HistoryDialog } from "./HistoryDialog";
 import { ChangeSummaryCard, ChangesPanel, ChangesScope, LineCounts } from "./ChangesPanel";
+import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
+import { MarkdownPreviewContext, MarkdownPreviewRequest } from "./markdownPreviewContext";
+import { isPlanItem } from "./markdownDocument";
 import { CodexUsageIndicator } from "../usage/CodexUsageIndicator";
 import { ClaudeUsageIndicator } from "../usage/ClaudeUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
@@ -73,6 +76,8 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   } | null>(null);
   const changes = useChatChanges(taskId, agent, snapshot);
   const [changesScope, setChangesScope] = useState<ChangesScope | null>(null);
+  const [preview, setPreview] = useState<MarkdownPreviewRequest | null>(null);
+  const previewContext = useMemo(() => ({ folders, open: setPreview }), [folders]);
   const [outgoing, setOutgoing] = useState<{
     text: string;
     generation: number;
@@ -92,6 +97,14 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
     users <= outgoing.users &&
     (!outgoing.sent || busy);
   const conversationFiles = changes?.conversation?.files ?? [];
+  const pendingPlans = new Set(
+    pending.flatMap((request) =>
+      request.format === "markdown" && request.detail ? [request.detail] : []
+    )
+  );
+  const previewRequest = preview?.requestId
+    ? pending.find((request) => request.id === preview.requestId)
+    : undefined;
 
   useEffect(() => onStatusChange?.(sessionStatus(status)), [status, onStatusChange]);
 
@@ -135,176 +148,207 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   };
 
   return (
-    <div className="relative flex-1 min-h-0 flex flex-col bg-bg-primary">
-      <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 px-3 py-1">
-        {conversationFiles.length > 0 && (
+    <MarkdownPreviewContext.Provider value={previewContext}>
+      <div className="relative flex-1 min-h-0 flex flex-col bg-bg-primary">
+        <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 px-3 py-1">
+          {conversationFiles.length > 0 && (
+            <Button
+              variant="ghost"
+              onClick={() => setChangesScope("conversation")}
+              className="h-7 px-2 text-xs"
+            >
+              Changes <LineCounts {...totals(conversationFiles)} />
+            </Button>
+          )}
+          {agent === "claude" ? <ClaudeUsageIndicator /> : <CodexUsageIndicator />}
           <Button
             variant="ghost"
-            onClick={() => setChangesScope("conversation")}
+            onClick={() => setSessionsOpen(true)}
             className="h-7 px-2 text-xs"
           >
-            Changes <LineCounts {...totals(conversationFiles)} />
+            Conversations
           </Button>
-        )}
-        {agent === "claude" ? <ClaudeUsageIndicator /> : <CodexUsageIndicator />}
-        <Button variant="ghost" onClick={() => setSessionsOpen(true)} className="h-7 px-2 text-xs">
-          Conversations
-        </Button>
-      </div>
-      <SessionList
-        open={sessionsOpen}
-        taskId={taskId}
-        agent={agent}
-        agentLabel={AGENT_LABEL[agent]}
-        folders={folders}
-        onClose={() => setSessionsOpen(false)}
-        onPick={(id) => {
-          setSessionsOpen(false);
-          void session.resume(id);
-        }}
-        onNew={() => {
-          setSessionsOpen(false);
-          void session.startFresh();
-        }}
-      />
-      <div
-        ref={scrollRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-        }}
-        className="chat-scroll flex-1 min-h-0 overflow-y-auto"
-      >
-        <div className="max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
-          {items.length === 0 && live && (
-            <p className="text-sm text-text-muted text-center py-8">
-              {status.kind === "starting"
-                ? `Starting ${AGENT_LABEL[agent]}…`
-                : `Ask ${AGENT_LABEL[agent]} to work on this task.`}
-            </p>
-          )}
-          {items.map((item, index) => {
-            const turn = ends.get(index);
-            const turnChanges = turn === undefined ? undefined : changes?.turns[turn]?.changes;
-            return (
-              <Fragment key={item.id}>
-                <ChatItemView
-                  item={item}
-                  historyDisabled={
-                    status.kind !== "idle" ||
-                    pending.length > 0 ||
-                    historyPending === `${taskId}:${agent}`
-                  }
-                  onHistory={
-                    item.kind === "user" ? (action) => pickHistory(item, action) : undefined
-                  }
-                />
-                {turn !== undefined && turnChanges && turnChanges.files.length > 0 && (
-                  <ChangeSummaryCard changes={turnChanges} onOpen={() => setChangesScope(turn)} />
-                )}
-              </Fragment>
-            );
-          })}
-          {pending.map((request, index) => (
-            <PendingRequestCard
-              key={request.id}
-              request={request}
-              focused={index === 0}
-              onRespond={(response) => run(() => respond(request.id, response))}
-            />
-          ))}
-          {showOutgoing && (
-            <div aria-label="Sending message" className="flex flex-col opacity-60">
-              <ChatItemView item={{ id: "outgoing", kind: "user", text: outgoing.text }} />
-            </div>
-          )}
-          {showOutgoing && !outgoing.sent ? (
-            <p role="status" className="text-xs text-text-muted animate-pulse">
-              Preparing…
-            </p>
-          ) : (
-            busy &&
-            pending.length === 0 && (
-              <p className="text-xs text-text-muted animate-pulse">
-                {AGENT_LABEL[agent]} is working…
-              </p>
-            )
-          )}
-          {!live && (
-            <div role="status" className="flex flex-col items-center gap-3 py-6">
-              <span className="text-sm text-text-secondary select-text whitespace-pre-wrap text-center">
-                {error ??
-                  (status.kind === "failed"
-                    ? status.message
-                    : `Session ended${status.kind === "exited" && status.code !== null ? ` (exit ${status.code})` : ""}`)}
-              </span>
-              <Button onClick={() => void restart()} className="h-8 text-xs">
-                Restart chat
-              </Button>
-            </div>
-          )}
         </div>
-      </div>
-      <div className="border-t border-border px-4 py-3">
-        <TodoPanel todos={controls.todos} />
-        {actionError && (
-          <p role="alert" className="max-w-3xl mx-auto mb-1.5 text-xs text-danger select-text">
-            {actionError}
-          </p>
-        )}
-        <Composer
-          key={`${taskId}:${agent}`}
-          memoryKey={`${taskId}:${agent}`}
-          agentLabel={AGENT_LABEL[agent]}
-          status={status}
-          controls={controls}
-          folders={folders}
-          actions={{
-            send,
-            interrupt: session.interrupt,
-            configure: session.configure,
-            compact: session.compact,
-            review: session.review,
-            startFresh: session.startFresh,
-            showUsage: () => setUsageOpen(true),
-          }}
-          onError={setActionError}
-        />
-      </div>
-      {changesScope !== null && changes && (
-        <ChangesPanel
+        <SessionList
+          open={sessionsOpen}
           taskId={taskId}
           agent={agent}
-          changes={changes}
-          prompts={Object.fromEntries(
-            items.filter((item) => item.kind === "user").map((item) => [item.id, item.text])
-          )}
-          scope={changesScope}
-          onClose={() => setChangesScope(null)}
+          agentLabel={AGENT_LABEL[agent]}
+          folders={folders}
+          onClose={() => setSessionsOpen(false)}
+          onPick={(id) => {
+            setSessionsOpen(false);
+            void session.resume(id);
+          }}
+          onNew={() => {
+            setSessionsOpen(false);
+            void session.startFresh();
+          }}
         />
-      )}
-      <UsageDialog
-        open={usageOpen}
-        usage={controls.usage}
-        planUrl={agent === "codex" ? CODEX_PLAN_URL : undefined}
-        onRefresh={session.refreshUsage}
-        onClose={() => setUsageOpen(false)}
-      />
-      {historyItem &&
-        historyItem.generation === snapshot.generation &&
-        historyItem.sessionKey === `${taskId}:${agent}` && (
-          <HistoryDialog
-            key={`${historyItem.generation}:${historyItem.item.id}:${historyItem.action}`}
-            item={historyItem.item}
-            action={historyItem.action}
-            disabled={status.kind !== "idle" || pending.length > 0}
-            onPreview={() => session.previewRewind(historyItem.item.id)}
-            onApply={(action, confirmation) =>
-              session.changeHistory(historyItem.item.id, action, confirmation)
-            }
-            onClose={() => setHistoryItem(null)}
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+          }}
+          className="chat-scroll flex-1 min-h-0 overflow-y-auto"
+        >
+          <div className="max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
+            {items.length === 0 && live && (
+              <p className="text-sm text-text-muted text-center py-8">
+                {status.kind === "starting"
+                  ? `Starting ${AGENT_LABEL[agent]}…`
+                  : `Ask ${AGENT_LABEL[agent]} to work on this task.`}
+              </p>
+            )}
+            {items.map((item, index) => {
+              if (isPlanItem(item) && pendingPlans.has(item.text)) return null;
+              const turn = ends.get(index);
+              const turnChanges = turn === undefined ? undefined : changes?.turns[turn]?.changes;
+              return (
+                <Fragment key={item.id}>
+                  <ChatItemView
+                    item={item}
+                    historyDisabled={
+                      status.kind !== "idle" ||
+                      pending.length > 0 ||
+                      historyPending === `${taskId}:${agent}`
+                    }
+                    onHistory={
+                      item.kind === "user" ? (action) => pickHistory(item, action) : undefined
+                    }
+                  />
+                  {turn !== undefined && turnChanges && turnChanges.files.length > 0 && (
+                    <ChangeSummaryCard changes={turnChanges} onOpen={() => setChangesScope(turn)} />
+                  )}
+                </Fragment>
+              );
+            })}
+            {pending.map((request, index) => (
+              <PendingRequestCard
+                key={request.id}
+                request={request}
+                focused={index === 0}
+                onRespond={(response) => run(() => respond(request.id, response))}
+              />
+            ))}
+            {showOutgoing && (
+              <div aria-label="Sending message" className="flex flex-col opacity-60">
+                <ChatItemView item={{ id: "outgoing", kind: "user", text: outgoing.text }} />
+              </div>
+            )}
+            {showOutgoing && !outgoing.sent ? (
+              <p role="status" className="text-xs text-text-muted animate-pulse">
+                Preparing…
+              </p>
+            ) : (
+              busy &&
+              pending.length === 0 && (
+                <p className="text-xs text-text-muted animate-pulse">
+                  {AGENT_LABEL[agent]} is working…
+                </p>
+              )
+            )}
+            {!live && (
+              <div role="status" className="flex flex-col items-center gap-3 py-6">
+                <span className="text-sm text-text-secondary select-text whitespace-pre-wrap text-center">
+                  {error ??
+                    (status.kind === "failed"
+                      ? status.message
+                      : `Session ended${status.kind === "exited" && status.code !== null ? ` (exit ${status.code})` : ""}`)}
+                </span>
+                <Button onClick={() => void restart()} className="h-8 text-xs">
+                  Restart chat
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="border-t border-border px-4 py-3">
+          <TodoPanel todos={controls.todos} />
+          {actionError && (
+            <p role="alert" className="max-w-3xl mx-auto mb-1.5 text-xs text-danger select-text">
+              {actionError}
+            </p>
+          )}
+          <Composer
+            key={`${taskId}:${agent}`}
+            memoryKey={`${taskId}:${agent}`}
+            agentLabel={AGENT_LABEL[agent]}
+            status={status}
+            controls={controls}
+            folders={folders}
+            actions={{
+              send,
+              interrupt: session.interrupt,
+              configure: session.configure,
+              compact: session.compact,
+              review: session.review,
+              startFresh: session.startFresh,
+              showUsage: () => setUsageOpen(true),
+            }}
+            onError={setActionError}
+          />
+        </div>
+        {changesScope !== null && changes && (
+          <ChangesPanel
+            taskId={taskId}
+            agent={agent}
+            changes={changes}
+            prompts={Object.fromEntries(
+              items.filter((item) => item.kind === "user").map((item) => [item.id, item.text])
+            )}
+            scope={changesScope}
+            onClose={() => setChangesScope(null)}
           />
         )}
-    </div>
+        {preview && (
+          <MarkdownPreviewPanel
+            key={JSON.stringify(preview.source)}
+            request={preview}
+            folders={folders}
+            onClose={() => setPreview(null)}
+            footer={
+              previewRequest?.kind === "approval" &&
+              previewRequest.decisions.map((decision, index) => (
+                <Button
+                  key={decision.id}
+                  variant={index === 0 ? "primary" : "secondary"}
+                  className="h-7 px-3 text-xs"
+                  onClick={() => {
+                    setPreview(null);
+                    void run(() => respond(previewRequest.id, { decision: decision.id }));
+                  }}
+                >
+                  {decision.label}
+                </Button>
+              ))
+            }
+          />
+        )}
+        <UsageDialog
+          open={usageOpen}
+          usage={controls.usage}
+          planUrl={agent === "codex" ? CODEX_PLAN_URL : undefined}
+          onRefresh={session.refreshUsage}
+          onClose={() => setUsageOpen(false)}
+        />
+        {historyItem &&
+          historyItem.generation === snapshot.generation &&
+          historyItem.sessionKey === `${taskId}:${agent}` && (
+            <HistoryDialog
+              key={`${historyItem.generation}:${historyItem.item.id}:${historyItem.action}`}
+              item={historyItem.item}
+              action={historyItem.action}
+              disabled={status.kind !== "idle" || pending.length > 0}
+              onPreview={() => session.previewRewind(historyItem.item.id)}
+              onApply={(action, confirmation) =>
+                session.changeHistory(historyItem.item.id, action, confirmation)
+              }
+              onClose={() => setHistoryItem(null)}
+            />
+          )}
+      </div>
+    </MarkdownPreviewContext.Provider>
   );
 }

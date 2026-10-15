@@ -960,6 +960,12 @@ fn assistant_block(message_id: &str, index: usize, block: &Value) -> Option<Chat
             block["thinking"].as_str().unwrap_or_default(),
         ),
         "tool_use" if block["name"] == TODO_TOOL => return None,
+        "tool_use" if block["name"] == EXIT_PLAN_TOOL => ChatItem::new(
+            block["id"].as_str()?,
+            ItemKind::Notice,
+            block["input"]["plan"].as_str().unwrap_or_default(),
+        )
+        .titled("Plan"),
         "tool_use" => {
             let tool = block["name"].as_str().unwrap_or("tool");
             let input = &block["input"];
@@ -1838,6 +1844,22 @@ mod tests {
             .map(|t| t.status.as_str())
             .collect();
         assert_eq!(statuses, ["completed", "inProgress"]);
+    }
+
+    #[test]
+    fn plans_are_kept_in_the_transcript_as_markdown() {
+        let (mut provider, mut snapshot) = started();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [
+                { "type": "tool_use", "id": "t1", "name": "ExitPlanMode", "input": { "plan": "# Plan\n\n1. Ship" } },
+            ] } }),
+        );
+        let item = &snapshot.items[0];
+        assert_eq!(item.kind, ItemKind::Notice);
+        assert_eq!(item.title.as_deref(), Some("Plan"));
+        assert_eq!(item.text, "# Plan\n\n1. Ship");
     }
 
     #[test]

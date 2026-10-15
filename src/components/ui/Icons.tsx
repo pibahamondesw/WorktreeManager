@@ -561,3 +561,23 @@ export function DownloadIcon({ size = 14, className = "" }: IconProps) {
     </svg>
   );
 }
+
+export function DocumentIcon({ size = 16, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5M9 13h6M9 17h4" />
+    </svg>
+  );
+}

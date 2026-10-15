@@ -117,6 +117,7 @@ pub fn run() {
                 commands::claude_usage::claude_cached_usage,
                 commands::codex_usage::codex_cached_usage,
                 commands::chat::chat_file_search,
+                commands::chat::chat_read_markdown,
                 commands::chat::chat_respond,
                 commands::chat::chat_detach,
                 commands::chat::chat_close,

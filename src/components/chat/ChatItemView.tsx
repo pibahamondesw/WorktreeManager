@@ -7,6 +7,9 @@ import { ChatItem, HistoryAction } from "../../services/chat";
 import { MarkdownLink } from "./MarkdownLink";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { HistoryMenu } from "./HistoryMenu";
+import { PlanCard, ReferencedDocuments } from "./MarkdownPreviewCard";
+import { useMarkdownPreview } from "./markdownPreviewContext";
+import { isPlanItem } from "./markdownDocument";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted animate-pulse",
@@ -26,9 +29,15 @@ const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm];
 const REHYPE_PLUGINS: Options["rehypePlugins"] = [[rehypeHighlight, { plainText: ["mermaid"] }]];
 const MARKDOWN_COMPONENTS: Options["components"] = { a: MarkdownLink, pre: MarkdownCodeBlock };
 
-export function MarkdownText({ text }: { text: string }) {
+export function MarkdownText({
+  text,
+  className = "text-sm",
+}: {
+  text: string;
+  className?: string;
+}) {
   return (
-    <div className="chat-markdown text-sm text-text-primary select-text break-words">
+    <div className={`chat-markdown ${className} text-text-primary select-text break-words`}>
       <Markdown
         remarkPlugins={REMARK_PLUGINS}
         rehypePlugins={REHYPE_PLUGINS}
@@ -124,6 +133,7 @@ export function ChatItemView({
   onHistory?: (action: HistoryAction) => void;
   historyDisabled?: boolean;
 }) {
+  const preview = useMarkdownPreview();
   switch (item.kind) {
     case "user":
       return (
@@ -141,7 +151,12 @@ export function ChatItemView({
         </div>
       );
     case "assistant":
-      return <MarkdownText text={item.text} />;
+      return (
+        <>
+          <MarkdownText text={item.text} />
+          <ReferencedDocuments text={item.text} />
+        </>
+      );
     case "reasoning":
       return item.text ? (
         <p className="text-xs italic text-text-muted whitespace-pre-wrap select-text">
@@ -155,6 +170,7 @@ export function ChatItemView({
         </p>
       );
     case "notice":
+      if (isPlanItem(item) && preview) return <PlanCard text={item.text} />;
       return (
         <div className="text-xs text-text-muted select-text">
           {item.title && <span className="font-medium">{item.title}: </span>}

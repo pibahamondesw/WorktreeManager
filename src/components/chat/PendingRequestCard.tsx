@@ -1,6 +1,8 @@
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { DiffText, MarkdownText } from "./ChatItemView";
+import { PlanCard } from "./MarkdownPreviewCard";
+import { useMarkdownPreview } from "./markdownPreviewContext";
 import { ChatQuestion, ChatResponse, PendingRequest } from "../../services/chat";
 
 interface PendingRequestCardProps {
@@ -16,6 +18,7 @@ interface PendingRequestCardProps {
 export function PendingRequestCard({ request, focused, onRespond }: PendingRequestCardProps) {
   const [sending, setSending] = useState(false);
   const cardRef = useRef<HTMLElement>(null);
+  const preview = useMarkdownPreview();
 
   useEffect(() => {
     if (focused && request.kind === "approval") cardRef.current?.focus();
@@ -60,6 +63,8 @@ export function PendingRequestCard({ request, focused, onRespond }: PendingReque
       {request.detail &&
         (request.format === "diff" ? (
           <DiffText text={request.detail} />
+        ) : request.format === "markdown" && preview ? (
+          <PlanCard text={request.detail} requestId={request.id} />
         ) : request.format === "markdown" ? (
           <div className="max-h-96 overflow-y-auto">
             <MarkdownText text={request.detail} />
