@@ -6,8 +6,8 @@
 pub mod changes;
 mod checkpoint_git;
 mod checkpoints;
-mod claude;
-mod codex;
+pub(crate) mod claude;
+pub(crate) mod codex;
 
 pub use codex::purge_stale_chat_images;
 mod conversations;
@@ -19,9 +19,9 @@ mod markdown;
 mod model;
 mod sessions;
 
-pub(crate) use claude::{unix_seconds, usage_windows};
-pub(crate) use codex::window_label;
+pub(crate) use conversations::ConversationFork;
 pub(crate) use model::{PlanUsage, UsageWindow};
+pub(crate) use sessions::{exchange, truncate, SessionList, SessionSummary, LIST_LIMIT};
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -37,10 +37,11 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::agent_alerts;
+use super::agents::{Agents, ChatRequest};
 use super::git::GIT_ENV_SCRUB;
 use super::process::OwnedProcess;
-use super::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
-use conversations::{Conversation, ConversationFork, ConversationStore};
+use super::shell_env::{claude_env_prelude, shell_single_quoted};
+use conversations::{Conversation, ConversationStore};
 use model::{
     ChatEvent, ChatImage, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus,
     ProviderOutput, ReviewTarget,
@@ -448,12 +449,22 @@ fn wait_for_exit(process: &Mutex<Option<OwnedProcess>>) -> Option<i32> {
 type SessionKey = (String, String);
 type OpenLock = Arc<tokio::sync::Mutex<()>>;
 
-#[derive(Default)]
 pub struct ChatRegistry {
-    runtime: AgentRuntime,
+    history_timeout: Duration,
     sessions: Mutex<HashMap<(String, String), ChatSession>>,
     generation: AtomicU64,
     opening: Mutex<HashMap<SessionKey, OpenLock>>,
+}
+
+impl Default for ChatRegistry {
+    fn default() -> Self {
+        Self {
+            history_timeout: Duration::from_secs(30),
+            sessions: Mutex::default(),
+            generation: AtomicU64::default(),
+            opening: Mutex::default(),
+        }
+    }
 }
 
 impl ChatRegistry {
@@ -531,7 +542,7 @@ fn canonical(path: &str) -> String {
 
 /// GUI launches get a minimal PATH, so the agent runs through the same login-shell prelude as the
 /// embedded terminals. Arguments are quoted into the script; stdio stays piped to us.
-fn login_shell(cwd: &str, program: &str, args: &[String]) -> Command {
+pub(crate) fn login_shell(cwd: &str, program: &str, args: &[String]) -> Command {
     let quoted: String = args
         .iter()
         .map(|arg| format!(" {}", shell_single_quoted(arg)))
@@ -550,112 +561,10 @@ fn login_shell(cwd: &str, program: &str, args: &[String]) -> Command {
     command
 }
 
-struct Launch {
-    command: Command,
-    provider: Box<dyn ChatProvider>,
-    history: Vec<model::ChatItem>,
-}
-
-#[derive(Clone)]
-struct AgentRuntime {
-    claude: String,
-    codex: String,
-    home: Option<PathBuf>,
-    history_timeout: Duration,
-}
-
-impl Default for AgentRuntime {
-    fn default() -> Self {
-        Self {
-            claude: "claude".into(),
-            codex: "codex".into(),
-            home: std::env::var_os("HOME").map(PathBuf::from),
-            history_timeout: Duration::from_secs(30),
-        }
-    }
-}
-
-fn launch(
-    agent: &str,
-    cwd: &str,
-    extra_dirs: Vec<String>,
-    resume: Option<String>,
-    pinned: bool,
-    fork: Option<ConversationFork>,
-    runtime: &AgentRuntime,
-) -> Result<Launch, String> {
-    match agent {
-        "codex" => {
-            if !cli_available(&runtime.codex) {
-                return Err("codex CLI not found on PATH (see Doctor)".into());
-            }
-            Ok(Launch {
-                command: login_shell(cwd, &runtime.codex, &["app-server".to_string()]),
-                provider: Box::new({
-                    let provider = codex::CodexProvider::new(cwd.to_string(), extra_dirs, resume);
-                    if pinned {
-                        provider.pinned()
-                    } else {
-                        provider
-                    }
-                }),
-                history: Vec::new(),
-            })
-        }
-        "claude" => {
-            if !cli_available(&runtime.claude) {
-                return Err("claude CLI not found on PATH (see Doctor)".into());
-            }
-            if let (Some(id), Some(fork)) = (&resume, fork) {
-                if !claude::session_exists(runtime.home.as_deref(), cwd, id) {
-                    let (command, history) = history::claude_fork_launch(
-                        cwd,
-                        &extra_dirs,
-                        id,
-                        &fork.source,
-                        &fork.item_id,
-                        runtime,
-                    )?;
-                    return Ok(Launch {
-                        command,
-                        provider: Box::new(claude::ClaudeProvider::new(id.clone()).forking()),
-                        history,
-                    });
-                }
-            }
-            let resume = claude_resume(resume, pinned, |id| {
-                claude::session_exists(runtime.home.as_deref(), cwd, id)
-            })?;
-            let history = resume
-                .as_deref()
-                .map(|id| claude::history(runtime.home.as_deref(), cwd, id))
-                .unwrap_or_default();
-            let session_id = resume
-                .clone()
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            Ok(Launch {
-                command: login_shell(
-                    cwd,
-                    &runtime.claude,
-                    &claude::launch_args(&session_id, resume.is_some(), &extra_dirs),
-                ),
-                provider: Box::new(claude::ClaudeProvider::new(session_id)),
-                history,
-            })
-        }
-        other => Err(format!("Unknown agent: {other}")),
-    }
-}
-
-fn claude_resume(
-    resume: Option<String>,
-    pinned: bool,
-    exists: impl Fn(&str) -> bool,
-) -> Result<Option<String>, String> {
-    match resume {
-        Some(id) if !exists(&id) && pinned => Err("That conversation no longer exists".into()),
-        resume => Ok(resume.filter(|id| exists(id))),
-    }
+pub(crate) struct Launch {
+    pub command: Command,
+    pub provider: Box<dyn ChatProvider>,
+    pub history: Vec<model::ChatItem>,
 }
 
 /// Attach to the running session, restart it on the same conversation, or start a fresh one.
@@ -679,6 +588,7 @@ pub async fn chat_open<R: Runtime>(
     conversation: Option<String>,
     on_event: Channel<LiveEvent>,
 ) -> Result<ChatSnapshot, String> {
+    let adapter = Agents::of(&app).get(&agent)?;
     let key = (task_id.clone(), agent.clone());
     let open_lock = registry.open_lock(&key);
     let _opening = open_lock.lock().await;
@@ -715,25 +625,20 @@ pub async fn chat_open<R: Runtime>(
         .and_then(|entry| entry.fork);
     let expected_conversation = resume.clone();
 
-    let (launch_cwd, launch_agent) = (cwd.clone(), agent.clone());
-    let agent_runtime = registry.runtime.clone();
+    let request = ChatRequest {
+        cwd: cwd.clone(),
+        extra_dirs,
+        resume,
+        pinned,
+        fork,
+    };
     let Launch {
         mut command,
         provider,
         history,
-    } = tauri::async_runtime::spawn_blocking(move || {
-        launch(
-            &launch_agent,
-            &launch_cwd,
-            extra_dirs,
-            resume,
-            pinned,
-            fork,
-            &agent_runtime,
-        )
-    })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))??;
+    } = tauri::async_runtime::spawn_blocking(move || adapter.chat_launch(request))
+        .await
+        .map_err(|e| format!("Task failed: {e}"))??;
 
     let remember: Arc<dyn Fn(String) + Send + Sync> = {
         let (store, task_id, agent, cwd) =
@@ -950,22 +855,23 @@ async fn blocking<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn chat_sessions(
-    app: AppHandle,
+pub async fn chat_sessions<R: Runtime>(
+    app: AppHandle<R>,
     task_id: String,
     agent: String,
     folders: Vec<String>,
-) -> Result<sessions::SessionList, String> {
+) -> Result<SessionList, String> {
+    let adapter = Agents::of(&app).get(&agent)?;
     let cwd = primary_folder(&folders)?;
     let current = conversation_store(&app)?.get(&task_id, &agent, &cwd);
-    blocking(move || sessions::list(&agent, &cwd, current.as_deref())).await
+    blocking(move || adapter.sessions(&cwd, current.as_deref())).await
 }
 
 /// A live session owns its transcript, so it is renamed through its own process rather than by
 /// resuming the same conversation concurrently.
 #[tauri::command]
-pub async fn chat_session_rename(
-    app: AppHandle,
+pub async fn chat_session_rename<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
@@ -973,32 +879,38 @@ pub async fn chat_session_rename(
     id: String,
     title: String,
 ) -> Result<(), String> {
+    let adapter = Agents::of(&app).get(&agent)?;
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("The name cannot be empty".into());
+    }
     let cwd = primary_folder(&folders)?;
     let current = conversation_store(&app)?.get(&task_id, &agent, &cwd);
-    if agent == "claude" && current.as_deref() == Some(id.as_str()) {
+    if adapter.live_session_renames_itself() && current.as_deref() == Some(id.as_str()) {
         let live = registry
             .with_session(&task_id, &agent, |session| {
                 if !session.status().is_live() {
                     return Err("not live".to_string());
                 }
-                session.with_provider(|provider, _, out| provider.rename(title.trim(), out))
+                session.with_provider(|provider, _, out| provider.rename(&title, out))
             })
             .is_ok();
         if live {
             return Ok(());
         }
     }
-    blocking(move || sessions::rename(&agent, &cwd, &id, &title)).await
+    blocking(move || adapter.rename_session(&cwd, &id, &title)).await
 }
 
 #[tauri::command]
-pub async fn chat_session_archive(
-    app: AppHandle,
+pub async fn chat_session_archive<R: Runtime>(
+    app: AppHandle<R>,
     task_id: String,
     agent: String,
     folders: Vec<String>,
     id: String,
 ) -> Result<(), String> {
+    let adapter = Agents::of(&app).get(&agent)?;
     let cwd = primary_folder(&folders)?;
     if conversation_store(&app)?
         .get(&task_id, &agent, &cwd)
@@ -1007,7 +919,7 @@ pub async fn chat_session_archive(
     {
         return Err("The current conversation cannot be archived".into());
     }
-    blocking(move || sessions::archive(&agent, &cwd, &id)).await
+    blocking(move || adapter.archive_session(&cwd, &id)).await
 }
 
 /// Stop one agent's chat but keep its conversation mapping, for the chat/terminal switch.
@@ -1775,17 +1687,6 @@ mod tests {
             .is_ok());
         drop(held);
         assert!(registry.open_lock(&key).try_lock().is_ok());
-    }
-
-    #[test]
-    fn picked_claude_conversation_must_exist() {
-        let exists = |id: &str| id == "known";
-        assert!(claude_resume(Some("gone".into()), true, exists).is_err());
-        assert_eq!(claude_resume(Some("gone".into()), false, exists), Ok(None));
-        assert_eq!(
-            claude_resume(Some("known".into()), true, exists),
-            Ok(Some("known".into()))
-        );
     }
 
     #[test]

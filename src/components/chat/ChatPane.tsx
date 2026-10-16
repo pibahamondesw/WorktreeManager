@@ -11,8 +11,7 @@ import { ChangeSummaryCard, ChangesPanel, ChangesScope, LineCounts } from "./Cha
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 import { MarkdownPreviewContext, MarkdownPreviewRequest } from "./markdownPreviewContext";
 import { isPlanItem } from "./markdownDocument";
-import { CodexUsageIndicator } from "../usage/CodexUsageIndicator";
-import { ClaudeUsageIndicator } from "../usage/ClaudeUsageIndicator";
+import { AgentUsageIndicator } from "../usage/AgentUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
 import { useChatChanges } from "../../hooks/useChatChanges";
 import { SessionStatus } from "../../hooks/useTerminalSession";
@@ -25,7 +24,7 @@ import {
   isLive,
   totals,
 } from "../../services/chat";
-import { CODEX_PLAN_URL } from "../../services/usage";
+import { AGENTS } from "../../services/agents";
 import { AgentId } from "../../types";
 
 interface ChatPaneProps {
@@ -34,8 +33,6 @@ interface ChatPaneProps {
   folders: string[];
   onStatusChange?: (status: SessionStatus) => void;
 }
-
-const AGENT_LABEL: Record<AgentId, string> = { claude: "Claude", codex: "Codex" };
 
 function sessionStatus(status: ChatStatus): SessionStatus {
   if (status.kind === "starting") return { kind: "connecting" };
@@ -160,7 +157,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
               Changes <LineCounts {...totals(conversationFiles)} />
             </Button>
           )}
-          {agent === "claude" ? <ClaudeUsageIndicator /> : <CodexUsageIndicator />}
+          <AgentUsageIndicator agent={agent} />
           <Button
             variant="ghost"
             onClick={() => setSessionsOpen(true)}
@@ -173,7 +170,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
           open={sessionsOpen}
           taskId={taskId}
           agent={agent}
-          agentLabel={AGENT_LABEL[agent]}
+          agentLabel={AGENTS[agent].label}
           folders={folders}
           onClose={() => setSessionsOpen(false)}
           onPick={(id) => {
@@ -197,8 +194,8 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
             {items.length === 0 && live && (
               <p className="text-sm text-text-muted text-center py-8">
                 {status.kind === "starting"
-                  ? `Starting ${AGENT_LABEL[agent]}…`
-                  : `Ask ${AGENT_LABEL[agent]} to work on this task.`}
+                  ? `Starting ${AGENTS[agent].label}…`
+                  : `Ask ${AGENTS[agent].label} to work on this task.`}
               </p>
             )}
             {items.map((item, index) => {
@@ -245,7 +242,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
               busy &&
               pending.length === 0 && (
                 <p className="text-xs text-text-muted animate-pulse">
-                  {AGENT_LABEL[agent]} is working…
+                  {AGENTS[agent].label} is working…
                 </p>
               )
             )}
@@ -274,7 +271,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
           <Composer
             key={`${taskId}:${agent}`}
             memoryKey={`${taskId}:${agent}`}
-            agentLabel={AGENT_LABEL[agent]}
+            agentLabel={AGENTS[agent].label}
             status={status}
             controls={controls}
             folders={folders}
@@ -329,7 +326,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
         <UsageDialog
           open={usageOpen}
           usage={controls.usage}
-          planUrl={agent === "codex" ? CODEX_PLAN_URL : undefined}
+          planUrl={AGENTS[agent].planUrl}
           onRefresh={session.refreshUsage}
           onClose={() => setUsageOpen(false)}
         />

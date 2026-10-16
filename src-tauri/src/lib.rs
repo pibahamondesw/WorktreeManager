@@ -17,8 +17,6 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(commands::terminal::TerminalRegistry::default())
         .manage(commands::chat::ChatRegistry::default())
-        .manage(commands::claude_usage::ClaudeUsageCache::default())
-        .manage(commands::codex_usage::CodexUsageCache::default())
         .manage(commands::code_server::EditorRegistry::default())
         .setup(|app| {
             std::thread::spawn(commands::chat::purge_stale_chat_images);
@@ -114,8 +112,7 @@ pub fn run() {
                 commands::chat::chat_compact,
                 commands::chat::chat_review,
                 commands::chat::chat_refresh_usage,
-                commands::claude_usage::claude_cached_usage,
-                commands::codex_usage::codex_cached_usage,
+                commands::agent_usage::agent_cached_usage,
                 commands::chat::chat_file_search,
                 commands::chat::chat_read_markdown,
                 commands::chat::chat_respond,

@@ -56,24 +56,29 @@ struct QueuedMessage {
 const UNSUPPORTED_CONTROL: &str = "Unsupported control request";
 const EVENT_USAGE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Claude Code over stdio: one stream-json message per line in both directions.
+pub(crate) const HEADLESS_ARGS: [&str; 6] = [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+];
+
 pub fn launch_args(session_id: &str, resume: bool, extra_dirs: &[String]) -> Vec<String> {
-    let mut args: Vec<String> = [
-        "-p",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--include-partial-messages",
-        "--permission-prompt-tool",
-        "stdio",
-        "--permission-mode",
-        "auto",
-        "--allow-dangerously-skip-permissions",
-    ]
-    .iter()
-    .map(|arg| arg.to_string())
-    .collect();
+    let mut args: Vec<String> = HEADLESS_ARGS
+        .iter()
+        .chain(&[
+            "--include-partial-messages",
+            "--permission-prompt-tool",
+            "stdio",
+            "--permission-mode",
+            "auto",
+            "--allow-dangerously-skip-permissions",
+        ])
+        .map(|arg| arg.to_string())
+        .collect();
     args.push(if resume { "--resume" } else { "--session-id" }.to_string());
     args.push(session_id.to_string());
     for dir in extra_dirs {
@@ -1059,8 +1064,8 @@ fn resolve_project_dir(home: &Path, cwd: &str) -> Option<PathBuf> {
         .find(|dir| transcript_cwd(dir).is_some_and(|found| canonical(&found) == wanted))
 }
 
-pub fn projects_dir(cwd: &str) -> Option<PathBuf> {
-    std::env::var_os("HOME").and_then(|home| resolve_project_dir(Path::new(&home), cwd))
+pub fn projects_dir(home: Option<&Path>, cwd: &str) -> Option<PathBuf> {
+    home.and_then(|home| resolve_project_dir(home, cwd))
 }
 
 fn session_file(home: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
