@@ -129,7 +129,7 @@ pub fn run() {
                 commands::code_server::vscode_install,
                 commands::code_server::vscode_install_status,
                 commands::code_server::vscode_open,
-                commands::code_server::vscode_present,
+                commands::embedded::vscode_present,
                 commands::code_server::vscode_close,
                 commands::code_server::vscode_list,
                 commands::opencode::opencode_open,

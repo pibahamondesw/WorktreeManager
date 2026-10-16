@@ -12,8 +12,8 @@ describe("editor presentation", () => {
       .fn<(state: EditorPresentation) => Promise<void>>()
       .mockResolvedValue(undefined);
     const controller = new EditorPresentationController(dispatch);
-    const first = controller.attach("a", bounds, vi.fn());
-    controller.attach("b", bounds, vi.fn());
+    const first = controller.attach("a", "editor", bounds, vi.fn());
+    controller.attach("b", "editor", bounds, vi.fn());
     first.release();
     first.update({ ...bounds, width: 1 });
     expect(dispatch).toHaveBeenCalledTimes(2);
@@ -30,10 +30,10 @@ describe("editor presentation", () => {
       .fn<(state: EditorPresentation) => Promise<void>>()
       .mockResolvedValue(undefined);
     const controller = new EditorPresentationController(dispatch);
-    controller.attach("a", bounds, vi.fn());
+    controller.attach("a", "editor", bounds, vi.fn());
     const closeFirst = controller.suppress();
     const closeSecond = controller.suppress();
-    controller.attach("b", bounds, vi.fn());
+    controller.attach("b", "editor", bounds, vi.fn());
     closeFirst();
     expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({
       taskId: "b",
@@ -48,14 +48,27 @@ describe("editor presentation", () => {
     });
   });
 
+  it("presents the surface the task pane selected", () => {
+    const dispatch = vi
+      .fn<(state: EditorPresentation) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const controller = new EditorPresentationController(dispatch);
+    controller.attach("a", "opencode", bounds, vi.fn());
+    expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: "a", surface: "opencode" });
+    controller.attach("a", "editor", bounds, vi.fn());
+    expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: "a", surface: "editor" });
+    controller.reset();
+    expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: null, surface: null });
+  });
+
   it("returning to the list only clears presentation", () => {
     const dispatch = vi
       .fn<(state: EditorPresentation) => Promise<void>>()
       .mockResolvedValue(undefined);
     const controller = new EditorPresentationController(dispatch);
-    controller.attach("a", bounds, vi.fn()).release();
+    controller.attach("a", "editor", bounds, vi.fn()).release();
     expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: null });
-    controller.attach("a", bounds, vi.fn());
+    controller.attach("a", "editor", bounds, vi.fn());
     expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: "a" });
     controller.reset();
     expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: null });

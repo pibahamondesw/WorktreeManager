@@ -8,6 +8,7 @@ use serde_json::json;
 use tauri::{AppHandle, Manager};
 
 use super::{profile, runtime};
+use crate::commands::embedded::EditorRegistry;
 
 const BRIDGE_PATH: &str = "/__worktreemanager_trust";
 static STORAGE_LOCK: Mutex<()> = Mutex::new(());
@@ -48,7 +49,7 @@ struct Snapshot {
 }
 
 #[derive(Serialize)]
-struct Workspace {
+pub(super) struct Workspace {
     workspace: std::path::PathBuf,
     folders: Vec<std::path::PathBuf>,
 }
@@ -63,19 +64,17 @@ fn generated_workspace(root: &Path, value: &str) -> bool {
             .is_some_and(|parent| parent == root.join("sessions"))
 }
 
-fn active_workspaces(app: &AppHandle, root: &Path) -> Vec<Workspace> {
-    app.state::<super::EditorRegistry>()
-        .sessions
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(_, slot)| !slot.closed.load(std::sync::atomic::Ordering::SeqCst))
-        .map(|(task, slot)| Workspace {
+pub(super) fn active_workspaces(app: &AppHandle, root: &Path) -> Vec<Workspace> {
+    app.state::<EditorRegistry>()
+        .editor
+        .open_slots()
+        .into_iter()
+        .map(|slot| Workspace {
             workspace: root
                 .join("sessions")
-                .join(profile::key(task))
+                .join(profile::key(&slot.info().task_id))
                 .join("task.code-workspace"),
-            folders: slot.folders.clone(),
+            folders: slot.request.folders.clone(),
         })
         .collect()
 }

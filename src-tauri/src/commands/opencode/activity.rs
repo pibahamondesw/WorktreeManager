@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,7 +8,8 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
 use super::server::Connection;
-use super::Slot;
+use super::OpenCode;
+use crate::commands::embedded::Slot;
 
 pub const EVENT: &str = "opencode-activity";
 
@@ -74,19 +74,19 @@ impl Activity {
 
 /// Follows the server's global event stream until the task's OpenCode closes, reconnecting while
 /// the server is still running.
-pub fn watch(app: AppHandle, slot: Arc<Slot>, connection: Connection) {
+pub fn watch(app: AppHandle, slot: Arc<Slot<OpenCode>>, connection: Connection) {
     std::thread::spawn(move || {
         let client = connection.client(None);
-        let task_id = slot.info.lock().unwrap().task_id.clone();
+        let task_id = slot.info().task_id;
         let mut activity = Activity::default();
-        while !slot.closed.load(Ordering::SeqCst) && slot.server.running() {
+        while slot.is_open() && slot.lease.running() {
             let lines = connection
                 .get(&client, "/global/event")
                 .send()
                 .into_iter()
                 .flat_map(|response| BufReader::new(response).lines())
                 .map_while(Result::ok)
-                .take_while(|_| !slot.closed.load(Ordering::SeqCst));
+                .take_while(|_| slot.is_open());
             let events = lines.filter_map(|line| {
                 serde_json::from_str::<Value>(line.strip_prefix("data: ")?).ok()
             });

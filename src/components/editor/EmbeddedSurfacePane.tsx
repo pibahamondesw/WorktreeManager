@@ -1,30 +1,30 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { editorPresentation } from "../../services/codeEditor";
-import {
-  onOpenCodeSession,
-  openCodeClose,
-  openCodeOpen,
-  OpenCodeSession,
-} from "../../services/opencode";
+import { editorPresentation, EditorSession } from "../../services/codeEditor";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { Button } from "../ui/Button";
+import { EmbeddedSurface } from "./embeddedSurfaces";
 
-interface OpenCodePaneProps {
+interface EmbeddedSurfacePaneProps {
+  surface: EmbeddedSurface;
   taskId: string;
+  workspaceId: string;
   folders: string[];
   closing?: boolean;
   onStatusChange: (status: SessionStatus) => void;
 }
 
-/** Reserves the task pane for the task's OpenCode webview, which the backend draws over it. */
-export function OpenCodePane({
+/** Reserves the task pane for the surface's webview, which the backend draws over it. */
+export function EmbeddedSurfacePane({
+  surface,
   taskId,
+  workspaceId,
   folders,
   closing = false,
   onStatusChange,
-}: OpenCodePaneProps) {
+}: EmbeddedSurfacePaneProps) {
   const pane = useRef<HTMLDivElement>(null);
   const [attempt, setAttempt] = useState(0);
+  const [needsInstall, setNeedsInstall] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ended, setEnded] = useState(false);
   const foldersKey = JSON.stringify(folders);
@@ -36,7 +36,7 @@ export function OpenCodePane({
       const rect = element.getBoundingClientRect();
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     };
-    const lease = editorPresentation.attach(taskId, bounds(), setError);
+    const lease = editorPresentation.attach(taskId, surface.kind, bounds(), setError);
     const resize = () => lease.update(bounds());
     const observer = new ResizeObserver(resize);
     observer.observe(element);
@@ -46,17 +46,18 @@ export function OpenCodePane({
       window.removeEventListener("resize", resize);
       lease.release();
     };
-  }, [taskId, attempt]);
+  }, [taskId, surface.kind, attempt]);
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let generation: string | undefined;
-    const pending = new Map<string, OpenCodeSession>();
+    const pending = new Map<string, EditorSession>();
     setError(null);
     setEnded(false);
+    setNeedsInstall(false);
     onStatusChange({ kind: "connecting" });
-    const update = (session: OpenCodeSession) => {
+    const update = (session: EditorSession) => {
       if (
         cancelled ||
         session.taskId !== taskId ||
@@ -71,7 +72,7 @@ export function OpenCodePane({
       }
     };
     void (async () => {
-      const stop = await onOpenCodeSession((session) => {
+      const stop = await surface.onSession((session) => {
         if (session.taskId !== taskId || cancelled) return;
         pending.set(session.generation, session);
         if (generation === session.generation) update(session);
@@ -81,7 +82,13 @@ export function OpenCodePane({
         return;
       }
       unlisten = stop;
-      const session = await openCodeOpen(taskId, JSON.parse(foldersKey) as string[]);
+      if (surface.install && (await surface.install.needed())) {
+        if (!cancelled) setNeedsInstall(true);
+        return;
+      }
+      if (cancelled) return;
+      const folders = JSON.parse(foldersKey) as string[];
+      const session = await surface.open({ taskId, workspaceId, folders });
       generation = session.generation;
       update(pending.get(session.generation) ?? session);
     })().catch((error: unknown) => {
@@ -95,27 +102,33 @@ export function OpenCodePane({
       cancelled = true;
       unlisten?.();
     };
-  }, [taskId, foldersKey, attempt, onStatusChange]);
+  }, [surface, taskId, workspaceId, foldersKey, attempt, onStatusChange]);
 
   const restart = async () => {
     try {
-      await openCodeClose(taskId);
+      await surface.close(taskId);
       setAttempt((value) => value + 1);
     } catch (error) {
       setError(String(error));
     }
   };
 
+  const install = surface.install;
   return (
     <div
       ref={pane}
-      data-testid="opencode-pane"
+      data-testid={surface.testId}
       className="flex-1 min-h-0 min-w-0 flex flex-col items-center justify-center gap-3 p-4 text-sm text-text-muted"
     >
-      {ended ? (
-        <Button onClick={() => void restart()}>Restart OpenCode</Button>
+      {needsInstall && install ? (
+        <>
+          <p>{install.prompt}</p>
+          <install.Setup onReady={() => setAttempt((value) => value + 1)} />
+        </>
+      ) : ended ? (
+        <Button onClick={() => void restart()}>{surface.restartLabel}</Button>
       ) : (
-        <p>{closing ? "Closing OpenCode…" : "Opening OpenCode…"}</p>
+        <p>{closing ? `Closing ${surface.name}…` : `Opening ${surface.name}…`}</p>
       )}
       {error && (
         <p role="alert" className="max-w-xl text-danger select-text break-words">

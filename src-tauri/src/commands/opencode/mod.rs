@@ -1,94 +1,33 @@
 //! OpenCode embedded: one `opencode serve` per task, with a database of its own, shown in a child
-//! webview of the main window. Like VS Code embedded, switching tasks only hides the view;
-//! closing the task's OpenCode ends its server.
+//! webview of the main window.
 
 mod activity;
 mod server;
 mod view;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
-};
-use std::time::Duration;
+use std::sync::Arc;
 
-use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State, Wry};
 
-use super::code_server::{self, runtime::random_id, EditorRegistry};
+use super::code_server::{self, task_key};
+use super::embedded::{Adapter, EditorRegistry, HiddenView, ServerProcess, SessionInfo, Slot};
 use super::shell_env::cli_available;
 
-const SESSION_EVENT: &str = "opencode-session";
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionInfo {
-    pub task_id: String,
-    pub generation: String,
-    pub status: String,
-    pub pid: Option<u32>,
-    pub error: Option<String>,
-}
-
-pub struct Slot {
-    label: String,
-    folders: Vec<PathBuf>,
-    closed: AtomicBool,
-    info: Mutex<SessionInfo>,
-    server: server::Server,
-    view: tokio::sync::Mutex<Option<view::OpenCodeView>>,
-}
-
-impl Slot {
-    fn update(&self, app: &AppHandle, status: &str, error: Option<String>) -> SessionInfo {
-        let mut info = self.info.lock().unwrap();
-        info.status = status.into();
-        info.error = error;
-        let _ = app.emit_to("main", SESSION_EVENT, &*info);
-        info.clone()
-    }
-
-    fn running(&self) -> bool {
-        !self.closed.load(Ordering::SeqCst) && self.info.lock().unwrap().status == "running"
-    }
-
-    /// Starts the task's server and resolves the session its view opens on.
-    fn start(
-        &self,
-        program: &str,
-        data: &Path,
-    ) -> Result<(server::Connection, tauri::Url), String> {
-        if !cli_available(program) {
-            return Err("opencode CLI not found on PATH (see Doctor)".into());
-        }
-        let connection = self.server.start(program, data, &self.folders)?;
-        self.info.lock().unwrap().pid = Some(connection.pid);
-        let session = server::task_session(&connection, &self.folders[0])?;
-        let url = connection.session_url(&self.folders[0], &session)?;
-        Ok((connection, url))
-    }
-}
-
-pub struct OpenCodeRegistry {
-    sessions: Mutex<HashMap<String, Arc<Slot>>>,
-    shutting_down: AtomicBool,
+pub struct OpenCode {
     program: String,
     data_root: Option<PathBuf>,
 }
 
-impl Default for OpenCodeRegistry {
+impl Default for OpenCode {
     fn default() -> Self {
         Self::launching("opencode", None)
     }
 }
 
-impl OpenCodeRegistry {
+impl OpenCode {
     pub(crate) fn launching(program: &str, data_root: Option<PathBuf>) -> Self {
         Self {
-            sessions: Mutex::default(),
-            shutting_down: AtomicBool::new(false),
             program: program.into(),
             data_root,
         }
@@ -102,185 +41,112 @@ impl OpenCodeRegistry {
             .clone()
             .map_or_else(default_root, Ok)
             .map_err(|error| error.to_string())?;
-        Ok(root.join("tasks").join(code_server::task_key(task_id)))
+        Ok(root.join("tasks").join(task_key(task_id)))
+    }
+}
+
+pub struct TaskConnection {
+    server: server::Connection,
+    session_url: tauri::Url,
+}
+
+impl Adapter for OpenCode {
+    type Runtime = Wry;
+    type Request = Vec<PathBuf>;
+    type Lease = ServerProcess;
+    type Connection = TaskConnection;
+    type View = HiddenView;
+    const EVENT: &'static str = "opencode-session";
+    const LABEL: &'static str = "opencode-";
+    const NAME: &'static str = "OpenCode";
+    const ENDED: &'static str = "OpenCode ended. Restart to resume this task's session.";
+
+    fn lease(&self, _: &str, _: &str, _: &Vec<PathBuf>) -> Result<ServerProcess, String> {
+        Ok(ServerProcess::default())
     }
 
-    pub fn shutdown_all(&self) {
-        self.shutting_down.store(true, Ordering::SeqCst);
-        for (_, slot) in self.sessions.lock().unwrap().drain() {
-            slot.closed.store(true, Ordering::SeqCst);
-            slot.server.stop();
+    /// Starts the task's server and resolves the session its view opens on.
+    fn connect(&self, app: &AppHandle, slot: &Slot<Self>) -> Result<TaskConnection, String> {
+        if !cli_available(&self.program) {
+            return Err("opencode CLI not found on PATH (see Doctor)".into());
         }
+        let folders = &slot.request;
+        let data = self.task_data(app, &slot.info().task_id)?;
+        let server = server::start(&slot.lease, &self.program, &data, folders)?;
+        let session_url = resolve_session_url(&server, &folders[0])?;
+        Ok(TaskConnection {
+            server,
+            session_url,
+        })
     }
 
-    /// The webview to present for a task, when its OpenCode is up.
-    pub fn running_label(&self, task_id: &str) -> Option<String> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(task_id)
-            .filter(|slot| slot.running())
-            .map(|slot| slot.label.clone())
+    fn pid(connection: &TaskConnection) -> u32 {
+        connection.server.pid
     }
 
-    fn reserve(&self, task_id: &str, folders: Vec<PathBuf>) -> Result<Arc<Slot>, String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if self.shutting_down.load(Ordering::SeqCst) {
-            return Err("The app is shutting down".into());
-        }
-        if let Some(slot) = sessions.get(task_id) {
-            if slot.closed.load(Ordering::SeqCst) {
-                return Err("OpenCode is closing. Try again when it finishes.".into());
-            }
-            if slot.folders != folders {
-                return Err("This task already has OpenCode open with different folders.".into());
-            }
-            return Ok(slot.clone());
-        }
-        let generation = random_id()?;
-        let slot = Arc::new(Slot {
-            label: format!(
-                "editor-opencode-{}-{generation}",
-                code_server::task_key(task_id)
-            ),
-            folders,
-            closed: AtomicBool::new(false),
-            server: server::Server::default(),
-            view: tokio::sync::Mutex::new(None),
-            info: Mutex::new(SessionInfo {
-                task_id: task_id.into(),
-                generation,
-                status: "starting".into(),
-                pid: None,
-                error: None,
-            }),
-        });
-        sessions.insert(task_id.into(), slot.clone());
-        Ok(slot)
+    fn view(
+        &self,
+        app: &AppHandle,
+        slot: &Slot<Self>,
+        connection: &TaskConnection,
+    ) -> Result<HiddenView, String> {
+        view::create(app, &slot.label, connection.session_url.clone())
     }
 
-    fn release(&self, task_id: &str, slot: &Arc<Slot>) {
-        let mut sessions = self.sessions.lock().unwrap();
-        if sessions
-            .get(task_id)
-            .is_some_and(|current| Arc::ptr_eq(current, slot))
-        {
-            sessions.remove(task_id);
-        }
+    fn opened(&self, app: &AppHandle, slot: &Arc<Slot<Self>>, connection: TaskConnection) {
+        activity::watch(app.clone(), slot.clone(), connection.server);
     }
+}
+
+fn resolve_session_url(
+    connection: &server::Connection,
+    directory: &Path,
+) -> Result<tauri::Url, String> {
+    let session = server::task_session(connection, directory)?;
+    connection.session_url(directory, &session)
 }
 
 #[tauri::command]
 pub async fn opencode_open(
     app: AppHandle,
-    registry: State<'_, EditorRegistry>,
+    surfaces: State<'_, EditorRegistry>,
     task_id: String,
     folders: Vec<String>,
 ) -> Result<SessionInfo, String> {
-    let opencode = &registry.opencode;
-    let slot = opencode.reserve(&task_id, code_server::canonical_folders(folders)?)?;
-    let mut view = slot.view.lock().await;
-    if view.is_some() || slot.closed.load(Ordering::SeqCst) {
-        return Ok(slot.info.lock().unwrap().clone());
-    }
-    let (worker, program) = (slot.clone(), opencode.program.clone());
-    let data = opencode.task_data(&app, &task_id)?;
-    let opened = tauri::async_runtime::spawn_blocking(move || worker.start(&program, &data))
-        .await
-        .map_err(|error| error.to_string())
-        .and_then(|started| started)
-        .and_then(|(connection, url)| {
-            view::create(&app, &slot.label, url).map(|view| (view, connection))
-        });
-    match opened {
-        Ok((opened, connection)) => {
-            *view = Some(opened);
-            let info = slot.update(&app, "running", None);
-            registry.present_current(&app, true)?;
-            activity::watch(app.clone(), slot.clone(), connection);
-            monitor(app.clone(), slot.clone());
-            Ok(info)
-        }
-        Err(error) => {
-            slot.closed.store(true, Ordering::SeqCst);
-            slot.server.stop();
-            opencode.release(&task_id, &slot);
-            slot.update(&app, "exited", Some(error.clone()));
-            Err(error)
-        }
-    }
-}
-
-fn monitor(app: AppHandle, slot: Arc<Slot>) {
-    std::thread::spawn(move || {
-        while !slot.closed.load(Ordering::SeqCst) {
-            if !slot.server.running() {
-                slot.closed.store(true, Ordering::SeqCst);
-                slot.server.stop();
-                if let Some(view) = app.get_webview(&slot.label) {
-                    let _ = view.hide();
-                }
-                slot.update(
-                    &app,
-                    "exited",
-                    Some("OpenCode ended. Restart to resume this task's session.".into()),
-                );
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(300));
-        }
-    });
+    let folders = code_server::canonical_folders(folders)?;
+    let info = surfaces.opencode.open(&app, &task_id, folders).await?;
+    surfaces.present_current(&app, true)?;
+    Ok(info)
 }
 
 #[tauri::command]
 pub async fn opencode_close(
     app: AppHandle,
-    registry: State<'_, EditorRegistry>,
+    surfaces: State<'_, EditorRegistry>,
     task_id: String,
 ) -> Result<(), String> {
-    let registry = &registry.opencode;
-    let slot = registry.sessions.lock().unwrap().get(&task_id).cloned();
-    let Some(slot) = slot else {
-        return Ok(());
-    };
-    slot.closed.store(true, Ordering::SeqCst);
-    app.get_webview(&slot.label)
-        .map_or(Ok(()), |view| view.hide())
-        .map_err(|error| error.to_string())?;
-    let worker = slot.clone();
-    tauri::async_runtime::spawn_blocking(move || worker.server.stop())
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut view = slot.view.lock().await;
-    view.take()
-        .map_or(Ok(()), |opencode| opencode.webview.close())
-        .map_err(|error| error.to_string())?;
-    registry.release(&task_id, &slot);
-    slot.update(&app, "closed", None);
-    Ok(())
+    surfaces.opencode.close(&app, &task_id).await
 }
 
 #[tauri::command]
-pub fn opencode_list(registry: State<'_, EditorRegistry>) -> Vec<SessionInfo> {
-    registry
-        .opencode
-        .sessions
-        .lock()
-        .unwrap()
-        .values()
-        .map(|slot| slot.info.lock().unwrap().clone())
-        .collect()
+pub fn opencode_list(surfaces: State<'_, EditorRegistry>) -> Vec<SessionInfo> {
+    surfaces.opencode.list()
 }
 
 #[cfg(all(test, target_os = "macos"))]
-mod native {
+pub(crate) mod native {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::os::unix::fs::PermissionsExt;
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    use std::time::Duration;
+
     use tauri::Listener;
 
     use super::*;
+    use crate::commands::embedded;
 
     const SESSION: &str = r#"{"id":"ses_native","time":{"updated":1}}"#;
     const EVENTS: [&str; 7] = [
@@ -363,8 +229,7 @@ mod native {
     }
 
     /// Opens, presents, follows, loses and closes a task's OpenCode against a stub server.
-    pub fn lifecycle(app: &AppHandle) {
-        let root = std::env::temp_dir().join(random_id().unwrap());
+    pub fn lifecycle(app: &AppHandle, root: &Path) {
         let folders: Vec<String> = ["primary", "peer"]
             .iter()
             .map(|name| {
@@ -373,10 +238,6 @@ mod native {
             })
             .collect();
         let program = root.join("opencode");
-        app.manage(EditorRegistry::with_opencode(OpenCodeRegistry::launching(
-            &program.to_string_lossy(),
-            Some(root.join("data")),
-        )));
         let states = Arc::new(Mutex::new(Vec::<String>::new()));
         let recorded = states.clone();
         app.listen_any(activity::EVENT, move |event| {
@@ -412,12 +273,13 @@ mod native {
             .opencode
             .running_label("task")
             .unwrap();
-        tauri::async_runtime::block_on(code_server::vscode_present(
+        tauri::async_runtime::block_on(embedded::vscode_present(
             app.clone(),
             app.state(),
             u64::MAX,
             Some("task".into()),
-            code_server::Bounds {
+            Some(embedded::SurfaceKind::Opencode),
+            embedded::Bounds {
                 x: 0.0,
                 y: 0.0,
                 width: 200.0,
@@ -464,56 +326,5 @@ mod native {
         assert!(list().is_empty());
         app.get_webview(&label).unwrap().close().unwrap();
         std::fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[cfg(all(test, target_os = "macos"))]
-#[allow(dead_code)]
-pub fn native_test_lifecycle(app: &AppHandle) {
-    native::lifecycle(app);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn each_task_reserves_its_own_server_and_view() {
-        let registry = OpenCodeRegistry::default();
-        let first = registry.reserve("a", vec!["/a".into()]).unwrap();
-        assert!(Arc::ptr_eq(
-            &first,
-            &registry.reserve("a", vec!["/a".into()]).unwrap()
-        ));
-        assert!(registry.reserve("a", vec!["/b".into()]).is_err());
-        let second = registry.reserve("b", vec!["/b".into()]).unwrap();
-        assert_ne!(first.label, second.label);
-        assert!(first.label.starts_with("editor-opencode-"));
-        assert!(!std::ptr::eq(&first.server, &second.server));
-    }
-
-    #[test]
-    fn only_a_running_task_is_presented() {
-        let registry = OpenCodeRegistry::default();
-        let slot = registry.reserve("a", vec!["/a".into()]).unwrap();
-        assert_eq!(registry.running_label("a"), None);
-        slot.info.lock().unwrap().status = "running".into();
-        assert_eq!(registry.running_label("a"), Some(slot.label.clone()));
-        slot.closed.store(true, Ordering::SeqCst);
-        assert_eq!(registry.running_label("a"), None);
-    }
-
-    #[test]
-    fn a_closing_task_cannot_reopen_until_released_and_shutdown_refuses_new_ones() {
-        let registry = OpenCodeRegistry::default();
-        let slot = registry.reserve("a", vec!["/a".into()]).unwrap();
-        slot.closed.store(true, Ordering::SeqCst);
-        assert!(registry.reserve("a", vec!["/a".into()]).is_err());
-        registry.release("a", &slot);
-        let reopened = registry.reserve("a", vec!["/a".into()]).unwrap();
-        assert!(!Arc::ptr_eq(&slot, &reopened));
-        registry.shutdown_all();
-        assert!(reopened.server.stopped());
-        assert!(registry.reserve("b", vec!["/b".into()]).is_err());
     }
 }
