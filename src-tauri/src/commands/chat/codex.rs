@@ -848,15 +848,7 @@ impl ChatProvider for CodexProvider {
         Ok(())
     }
     fn start(&mut self, out: &mut ProviderOutput) {
-        self.call(
-            out,
-            Call::Initialize,
-            "initialize",
-            json!({
-                "clientInfo": { "name": "worktreemanager", "title": "WorktreeManager", "version": env!("CARGO_PKG_VERSION") },
-                "capabilities": { "experimentalApi": true, "requestAttestation": false },
-            }),
-        );
+        self.call(out, Call::Initialize, "initialize", initialize_params());
     }
 
     fn handle_line(&mut self, line: &str, snapshot: &ChatSnapshot, out: &mut ProviderOutput) {
@@ -1048,6 +1040,14 @@ fn usage_window(id: &str, window: &Value) -> Option<UsageWindow> {
         label: window_label(window["windowDurationMins"].as_u64()),
         used_percent: window["usedPercent"].as_f64()?,
         resets_at: window["resetsAt"].as_i64(),
+    })
+}
+
+/// How WorktreeManager introduces itself to `codex app-server`.
+pub(crate) fn initialize_params() -> Value {
+    json!({
+        "clientInfo": { "name": "worktreemanager", "title": "WorktreeManager", "version": env!("CARGO_PKG_VERSION") },
+        "capabilities": { "experimentalApi": true, "requestAttestation": false },
     })
 }
 

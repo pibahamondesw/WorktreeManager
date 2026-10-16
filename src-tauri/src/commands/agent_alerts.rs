@@ -8,7 +8,9 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
+
+use super::agents::Agents;
 
 const LOCAL_PROFILE: &str = "com.worktreemanager.dev.local";
 const OWNED_COMMAND_MARKER: &str = " agent event ";
@@ -17,116 +19,30 @@ pub const NOTIFICATION_OPEN_EVENT: &str = "agent-notification-open";
 pub const TASK_ENV: &str = "WTM_TASK_ID";
 pub const SURFACE_ENV: &str = "WTM_SURFACE";
 
-struct HookSpec {
-    event: &'static str,
-    matcher: Option<&'static str>,
-    state: &'static str,
+pub(crate) struct HookSpec {
+    pub event: &'static str,
+    pub matcher: Option<&'static str>,
+    pub state: &'static str,
 }
 
-const CLAUDE_HOOKS: &[HookSpec] = &[
-    HookSpec {
-        event: "UserPromptSubmit",
-        matcher: None,
-        state: "working",
-    },
-    HookSpec {
-        event: "PostToolUse",
-        matcher: None,
-        state: "working",
-    },
-    HookSpec {
-        event: "PreToolUse",
-        matcher: Some("^AskUserQuestion$"),
-        state: "waiting",
-    },
-    HookSpec {
-        event: "Notification",
-        matcher: Some("permission_prompt|elicitation_dialog"),
-        state: "waiting",
-    },
-    HookSpec {
-        event: "Stop",
-        matcher: None,
-        state: "done",
-    },
-];
-
-const CODEX_HOOKS: &[HookSpec] = &[
-    HookSpec {
-        event: "UserPromptSubmit",
-        matcher: None,
-        state: "working",
-    },
-    HookSpec {
-        event: "PostToolUse",
-        matcher: None,
-        state: "working",
-    },
-    HookSpec {
-        event: "PreToolUse",
-        matcher: Some("request_user_input"),
-        state: "waiting",
-    },
-    HookSpec {
-        event: "PermissionRequest",
-        matcher: None,
-        state: "waiting",
-    },
-    HookSpec {
-        event: "Stop",
-        matcher: None,
-        state: "done",
-    },
-];
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum HookAgent {
-    Claude,
-    Codex,
-}
-
-impl HookAgent {
-    fn parse(agent: &str) -> Result<Self, String> {
-        match agent {
-            "claude" => Ok(Self::Claude),
-            "codex" => Ok(Self::Codex),
-            _ => Err("Unknown agent".into()),
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-        }
-    }
-
-    fn specs(self) -> &'static [HookSpec] {
-        match self {
-            Self::Claude => CLAUDE_HOOKS,
-            Self::Codex => CODEX_HOOKS,
-        }
-    }
-
-    fn config_path(self) -> PathBuf {
-        let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()));
-        match self {
-            Self::Claude => home.join(".claude").join("settings.json"),
-            Self::Codex => home.join(".codex").join("hooks.json"),
-        }
-    }
+/// Where and how one agent's alert hooks are installed.
+pub(crate) struct AlertHooks {
+    pub agent: &'static str,
+    pub config: PathBuf,
+    pub specs: &'static [HookSpec],
+    /// Run the handlers asynchronously so they never delay the agent.
+    pub async_handlers: bool,
 }
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
-fn hook_command(executable: &str, local: bool, agent: HookAgent, state: &str) -> String {
+fn hook_command(executable: &str, local: bool, agent: &str, state: &str) -> String {
     format!(
-        "{} --cli{} agent event {state} --agent {}",
+        "{} --cli{} agent event {state} --agent {agent}",
         shell_quote(executable),
         if local { " --local" } else { "" },
-        agent.name()
     )
 }
 
@@ -175,7 +91,7 @@ fn remove_owned_hooks(root: &mut Value) {
 
 fn install_hooks(
     root: &mut Value,
-    agent: HookAgent,
+    hooks: &AlertHooks,
     command: impl Fn(&str) -> String,
 ) -> Result<(), String> {
     let Some(object) = root.as_object_mut() else {
@@ -189,10 +105,10 @@ fn install_hooks(
     }
     remove_owned_hooks(root);
     let events = root["hooks"].as_object_mut().expect("hooks is an object");
-    for spec in agent.specs() {
+    for spec in hooks.specs {
         let mut handler =
             json!({ "type": "command", "command": command(spec.state), "timeout": 5 });
-        if agent == HookAgent::Claude {
+        if hooks.async_handlers {
             handler["async"] = json!(true);
         }
         let mut group = json!({ "hooks": [handler] });
@@ -259,18 +175,21 @@ pub struct AgentHooksStatus {
     codex: HooksState,
 }
 
-fn hooks_state(root: &Value, agent: HookAgent, command: impl Fn(&str) -> String) -> HooksState {
+fn hooks_state(root: &Value, hooks: &AlertHooks, command: impl Fn(&str) -> String) -> HooksState {
     if !has_owned_hooks(root) {
         return HooksState::Missing;
     }
     let mut expected = root.clone();
-    match install_hooks(&mut expected, agent, command) {
+    match install_hooks(&mut expected, hooks, command) {
         Ok(()) if expected == *root => HooksState::Installed,
         _ => HooksState::Outdated,
     }
 }
 
-fn app_hook_command(app: &AppHandle, agent: HookAgent) -> Result<impl Fn(&str) -> String, String> {
+fn app_hook_command<R: Runtime>(
+    app: &AppHandle<R>,
+    agent: &'static str,
+) -> Result<impl Fn(&str) -> String, String> {
     let executable = std::env::current_exe()
         .and_then(fs::canonicalize)
         .map_err(|_| "Cannot locate the WorktreeManager executable")?
@@ -280,36 +199,39 @@ fn app_hook_command(app: &AppHandle, agent: HookAgent) -> Result<impl Fn(&str) -
     Ok(move |state: &str| hook_command(&executable, local, agent, state))
 }
 
-fn installed_state(app: &AppHandle, agent: HookAgent) -> HooksState {
-    let Ok(Some(root)) = load_config(&agent.config_path()) else {
+fn installed_state<R: Runtime>(app: &AppHandle<R>, agents: &Agents, agent: &str) -> HooksState {
+    let Ok(hooks) = agents.get(agent).map(|adapter| adapter.alert_hooks()) else {
         return HooksState::Missing;
     };
-    match app_hook_command(app, agent) {
-        Ok(command) => hooks_state(&root, agent, command),
+    let Ok(Some(root)) = load_config(&hooks.config) else {
+        return HooksState::Missing;
+    };
+    match app_hook_command(app, hooks.agent) {
+        Ok(command) => hooks_state(&root, &hooks, command),
         Err(_) => HooksState::Outdated,
     }
 }
 
 #[tauri::command]
-pub fn agent_hooks_status(app: AppHandle) -> AgentHooksStatus {
+pub fn agent_hooks_status<R: Runtime>(app: AppHandle<R>) -> AgentHooksStatus {
+    let agents = Agents::of(&app);
     AgentHooksStatus {
-        claude: installed_state(&app, HookAgent::Claude),
-        codex: installed_state(&app, HookAgent::Codex),
+        claude: installed_state(&app, &agents, "claude"),
+        codex: installed_state(&app, &agents, "codex"),
     }
 }
 
 #[tauri::command]
-pub fn agent_hooks_install(app: AppHandle, agent: String) -> Result<(), String> {
-    let agent = HookAgent::parse(&agent)?;
-    let path = agent.config_path();
-    let mut root = load_config(&path)?.unwrap_or_else(|| json!({}));
-    install_hooks(&mut root, agent, app_hook_command(&app, agent)?)?;
-    write_config(&path, &root)
+pub fn agent_hooks_install<R: Runtime>(app: AppHandle<R>, agent: String) -> Result<(), String> {
+    let hooks = Agents::of(&app).get(&agent)?.alert_hooks();
+    let mut root = load_config(&hooks.config)?.unwrap_or_else(|| json!({}));
+    install_hooks(&mut root, &hooks, app_hook_command(&app, hooks.agent)?)?;
+    write_config(&hooks.config, &root)
 }
 
 #[tauri::command]
-pub fn agent_hooks_remove(agent: String) -> Result<(), String> {
-    let path = HookAgent::parse(&agent)?.config_path();
+pub fn agent_hooks_remove<R: Runtime>(app: AppHandle<R>, agent: String) -> Result<(), String> {
+    let path = Agents::of(&app).get(&agent)?.alert_hooks().config;
     let Some(mut root) = load_config(&path)? else {
         return Ok(());
     };
@@ -501,8 +423,12 @@ pub fn agent_badge(app: AppHandle, count: u32) {
 mod tests {
     use super::*;
 
+    fn hooks(agent: &str) -> AlertHooks {
+        Agents::default().get(agent).unwrap().alert_hooks()
+    }
+
     fn command(state: &str) -> String {
-        hook_command("/Apps/WTM's.app/wtm", false, HookAgent::Claude, state)
+        hook_command("/Apps/WTM's.app/wtm", false, "claude", state)
     }
 
     #[test]
@@ -519,7 +445,7 @@ mod tests {
             r"'/Apps/WTM'\''s.app/wtm' --cli agent event done --agent claude"
         );
         assert_eq!(
-            hook_command("/b/wtm", true, HookAgent::Codex, "waiting"),
+            hook_command("/b/wtm", true, "codex", "waiting"),
             "'/b/wtm' --cli --local agent event waiting --agent codex"
         );
     }
@@ -533,7 +459,7 @@ mod tests {
                 "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "rtk" }] }]
             }
         });
-        install_hooks(&mut root, HookAgent::Claude, command).unwrap();
+        install_hooks(&mut root, &hooks("claude"), command).unwrap();
 
         assert_eq!(root["model"], "opus");
         assert_eq!(root["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "rtk");
@@ -557,22 +483,22 @@ mod tests {
     fn state_tells_missing_current_and_outdated_hooks_apart() {
         let mut root = json!({ "hooks": { "Stop": [] } });
         assert_eq!(
-            hooks_state(&root, HookAgent::Claude, command),
+            hooks_state(&root, &hooks("claude"), command),
             HooksState::Missing
         );
-        install_hooks(&mut root, HookAgent::Claude, command).unwrap();
+        install_hooks(&mut root, &hooks("claude"), command).unwrap();
         assert_eq!(
-            hooks_state(&root, HookAgent::Claude, command),
+            hooks_state(&root, &hooks("claude"), command),
             HooksState::Installed
         );
-        let other_build = |s: &str| hook_command("/other/wtm", false, HookAgent::Claude, s);
+        let other_build = |s: &str| hook_command("/other/wtm", false, "claude", s);
         assert_eq!(
-            hooks_state(&root, HookAgent::Claude, other_build),
+            hooks_state(&root, &hooks("claude"), other_build),
             HooksState::Outdated
         );
         root["hooks"]["PreToolUse"].as_array_mut().unwrap().clear();
         assert_eq!(
-            hooks_state(&root, HookAgent::Claude, command),
+            hooks_state(&root, &hooks("claude"), command),
             HooksState::Outdated
         );
     }
@@ -580,12 +506,12 @@ mod tests {
     #[test]
     fn reinstall_replaces_previous_owned_hooks() {
         let mut root = json!({});
-        install_hooks(&mut root, HookAgent::Codex, |s| {
-            hook_command("/old/wtm", false, HookAgent::Codex, s)
+        install_hooks(&mut root, &hooks("codex"), |s| {
+            hook_command("/old/wtm", false, "codex", s)
         })
         .unwrap();
-        install_hooks(&mut root, HookAgent::Codex, |s| {
-            hook_command("/new/wtm", false, HookAgent::Codex, s)
+        install_hooks(&mut root, &hooks("codex"), |s| {
+            hook_command("/new/wtm", false, "codex", s)
         })
         .unwrap();
 
@@ -624,11 +550,11 @@ mod tests {
 
     #[test]
     fn install_rejects_unexpected_shapes() {
-        assert!(install_hooks(&mut json!([]), HookAgent::Claude, command).is_err());
-        assert!(install_hooks(&mut json!({ "hooks": [] }), HookAgent::Claude, command).is_err());
+        assert!(install_hooks(&mut json!([]), &hooks("claude"), command).is_err());
+        assert!(install_hooks(&mut json!({ "hooks": [] }), &hooks("claude"), command).is_err());
         assert!(install_hooks(
             &mut json!({ "hooks": { "Stop": {} } }),
-            HookAgent::Claude,
+            &hooks("claude"),
             command
         )
         .is_err());
@@ -640,5 +566,41 @@ mod tests {
         assert_eq!(default_sound("waiting"), Some("Ping"));
         assert_eq!(default_sound("working"), None);
         assert!(default_sound("done").is_some_and(|sound| SYSTEM_SOUNDS.contains(&sound)));
+    }
+
+    #[test]
+    fn commands_install_report_and_remove_hooks_in_each_agent_config() {
+        use super::super::agents::{claude::Claude, codex::Codex};
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let home = std::env::temp_dir().join(format!("wtm-alerts-{}", uuid::Uuid::new_v4()));
+        let agents = Agents::new(
+            Claude::new("claude", Some(home.clone())),
+            Codex::new("codex", Some(home.clone()), None),
+        );
+        let app = mock_builder()
+            .manage(agents)
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let status = || {
+            let status = agent_hooks_status(app.handle().clone());
+            (status.claude, status.codex)
+        };
+        assert_eq!(status(), (HooksState::Missing, HooksState::Missing));
+        assert_eq!(
+            installed_state(app.handle(), &Agents::of(app.handle()), "gemini"),
+            HooksState::Missing
+        );
+        agent_hooks_install(app.handle().clone(), "codex".into()).unwrap();
+        assert_eq!(status(), (HooksState::Missing, HooksState::Installed));
+        assert!(fs::read_to_string(home.join(".codex/hooks.json"))
+            .unwrap()
+            .contains("--agent codex"));
+        assert!(agent_hooks_install(app.handle().clone(), "gemini".into()).is_err());
+        assert!(agent_hooks_remove(app.handle().clone(), "gemini".into()).is_err());
+        for agent in ["claude", "codex", "codex"] {
+            agent_hooks_remove(app.handle().clone(), agent.into()).unwrap();
+        }
+        assert_eq!(status(), (HooksState::Missing, HooksState::Missing));
+        fs::remove_dir_all(home).unwrap();
     }
 }

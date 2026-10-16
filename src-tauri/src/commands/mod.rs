@@ -1,4 +1,5 @@
 pub mod agent_alerts;
+pub mod agent_usage;
 pub mod agents;
 pub mod chat;
 pub mod claude_config;

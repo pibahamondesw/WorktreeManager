@@ -1,4 +1,3 @@
-use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -6,44 +5,11 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, Runtime, State};
 
+use super::super::agents::{Agents, ForkLaunch, ForkMethod, ForkRequest};
 use super::{
-    agent_alerts, blocking, checkpoints, claude, conversation_store, login_shell, model,
-    AgentRuntime, ChatRegistry, ChatSession, ChatStatus, Conversation, ConversationFork,
-    ProviderOutput, Shared,
+    agent_alerts, blocking, checkpoints, conversation_store, model, ChatRegistry, ChatSession,
+    ChatStatus, Conversation, ConversationFork, Launch, ProviderOutput, Shared,
 };
-
-pub(super) fn claude_fork_launch(
-    cwd: &str,
-    extra_dirs: &[String],
-    id: &str,
-    source: &str,
-    item_id: &str,
-    runtime: &AgentRuntime,
-) -> Result<(Command, Vec<model::ChatItem>), String> {
-    let version = login_shell(cwd, &runtime.claude, &["--version".into()])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !version.status.success()
-        || !String::from_utf8_lossy(&version.stdout).starts_with("2.1.295 ")
-    {
-        return Err("Forking requires the verified Claude Code version 2.1.295".into());
-    }
-    let (anchor, history) = claude::fork_point(runtime.home.as_deref(), cwd, source, item_id)?;
-    let args = if let Some(anchor) = anchor {
-        let mut args = claude::launch_args(source, true, extra_dirs);
-        args.extend([
-            "--fork-session".into(),
-            "--session-id".into(),
-            id.into(),
-            "--resume-session-at".into(),
-            anchor,
-        ]);
-        args
-    } else {
-        claude::launch_args(id, false, extra_dirs)
-    };
-    Ok((login_shell(cwd, &runtime.claude, &args), history))
-}
 
 fn history_item(
     snapshot: &model::ChatSnapshot,
@@ -116,6 +82,8 @@ pub async fn chat_history<R: Runtime>(
     action: HistoryAction,
     confirmation: Option<String>,
 ) -> Result<(), String> {
+    let adapter = Agents::of(&app).get(&agent)?;
+    let fork_method = adapter.fork_method();
     let key = (task_id.clone(), agent.clone());
     let open_lock = registry.open_lock(&key);
     let _opening = open_lock.lock().await;
@@ -190,8 +158,8 @@ pub async fn chat_history<R: Runtime>(
     let _peer_guards = peers.into_iter().map(HistoryGuard).collect::<Vec<_>>();
     let mut replacement = None;
     if action != HistoryAction::Code {
-        if agent == "codex" {
-            let timeout = registry.runtime.history_timeout;
+        if fork_method == ForkMethod::InSession {
+            let timeout = registry.history_timeout;
             let (reply, receive) = std::sync::mpsc::channel();
             {
                 let mut state = shared.lock().unwrap();
@@ -215,7 +183,7 @@ pub async fn chat_history<R: Runtime>(
                 }
                 return Err(error);
             }
-        } else if agent == "claude" {
+        } else {
             let (folders, conversation, previous_items) = {
                 let state = shared.lock().unwrap();
                 (
@@ -228,20 +196,11 @@ pub async fn chat_history<R: Runtime>(
                 )
             };
             let cwd = folders.first().cloned().ok_or("No task folders")?;
-            let conversation =
-                if claude::session_exists(registry.runtime.home.as_deref(), &cwd, &conversation) {
-                    conversation
-                } else {
-                    conversation_store(&app)?
-                        .entry(&task_id, &agent, &cwd)
-                        .and_then(|entry| entry.fork)
-                        .map(|fork| fork.source)
-                        .unwrap_or(conversation)
-                };
-            let fork_record = ConversationFork {
-                source: conversation.clone(),
-                item_id: item_id.clone(),
-            };
+            let pending_source = conversation_store(&app)?
+                .entry(&task_id, &agent, &cwd)
+                .and_then(|entry| entry.fork)
+                .map(|fork| fork.source);
+            let fork_item = item_id.clone();
             let new_id = uuid::Uuid::new_v4().to_string();
             let fork_id = new_id.clone();
             let fork_task = task_id.clone();
@@ -249,27 +208,35 @@ pub async fn chat_history<R: Runtime>(
             let fork_remember = remember.clone();
             let fork_generation = registry.generation.fetch_add(1, Ordering::SeqCst) + 1;
             let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-            let agent_runtime = registry.runtime.clone();
-            let new_session = blocking(move || {
-                let (mut command, mut history) = claude_fork_launch(
-                    &cwd,
-                    &folders[1..],
-                    &fork_id,
-                    &conversation,
-                    &item_id,
-                    &agent_runtime,
-                )?;
+            let history_timeout = registry.history_timeout;
+            let (new_session, conversation) = blocking(move || {
+                let ForkLaunch {
+                    launch:
+                        Launch {
+                            mut command,
+                            provider,
+                            mut history,
+                        },
+                    source: conversation,
+                } = adapter.fork_launch(ForkRequest {
+                    cwd: &cwd,
+                    extra_dirs: &folders[1..],
+                    fork_id: &fork_id,
+                    source: &conversation,
+                    pending_source: pending_source.as_deref(),
+                    item_id: &item_id,
+                })?;
                 command
                     .env(agent_alerts::TASK_ENV, &fork_task)
                     .env(agent_alerts::SURFACE_ENV, "chat");
                 let session = ChatSession::spawn(
                     command,
-                    Box::new(claude::ClaudeProvider::new(fork_id.clone()).forking()),
+                    provider,
                     fork_generation,
                     fork_remember,
                     fork_notify,
                 )?;
-                let deadline = Instant::now() + agent_runtime.history_timeout;
+                let deadline = Instant::now() + history_timeout;
                 loop {
                     match session.status() {
                         ChatStatus::Idle => break,
@@ -309,12 +276,14 @@ pub async fn chat_history<R: Runtime>(
                     session.terminate();
                     return Err(error);
                 }
-                Ok(session)
+                Ok((session, conversation))
             })
             .await?;
+            let fork_record = ConversationFork {
+                source: conversation,
+                item_id: fork_item,
+            };
             replacement = Some((new_id, new_session, fork_record));
-        } else {
-            return Err("Unknown chat agent".into());
         }
     }
     let (backup, previous) = {
@@ -344,11 +313,13 @@ pub async fn chat_history<R: Runtime>(
                 if let Some((_, session, _)) = replacement {
                     session.terminate();
                 }
-                return Err(if agent == "codex" && action == HistoryAction::Both {
-                    format!("Conversation forked, but code was not fully restored: {error}")
-                } else {
-                    error
-                });
+                return Err(
+                    if fork_method == ForkMethod::InSession && action == HistoryAction::Both {
+                        format!("Conversation forked, but code was not fully restored: {error}")
+                    } else {
+                        error
+                    },
+                );
             }
         };
         let previous = if let Some((id, session, fork)) = replacement {
