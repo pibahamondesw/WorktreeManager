@@ -898,12 +898,12 @@ it.each(["claude", "codex"] as const)(
     const indicator = screen.queryByRole("button", { name: "Claude Code usage and limits" });
     if (agent === "claude") {
       expect(indicator).toBeInTheDocument();
-      expect(mocks.invoke).toHaveBeenCalledWith("claude_cached_usage");
+      expect(mocks.invoke).toHaveBeenCalledWith("agent_cached_usage", { agent: "claude" });
     } else {
       expect(screen.getByRole("button", { name: "Codex usage and limits" })).toBeInTheDocument();
-      expect(mocks.invoke).toHaveBeenCalledWith("codex_cached_usage");
+      expect(mocks.invoke).toHaveBeenCalledWith("agent_cached_usage", { agent: "codex" });
       expect(indicator).not.toBeInTheDocument();
-      expect(mocks.invoke).not.toHaveBeenCalledWith("claude_cached_usage");
+      expect(mocks.invoke).not.toHaveBeenCalledWith("agent_cached_usage", { agent: "claude" });
     }
   }
 );
