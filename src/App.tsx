@@ -28,6 +28,7 @@ import { useAutomation } from "./hooks/useAutomation";
 import { editorPresentation } from "./services/codeEditor";
 import { useAgentSessions } from "./hooks/useAgentSessions";
 import { useAgentActivity } from "./hooks/useAgentActivity";
+import { SurfaceSwitchDialog } from "./components/task/SurfaceSwitchDialog";
 import { NotificationTarget, embeddedSurface } from "./services/agentActivity";
 
 function App() {
@@ -156,15 +157,23 @@ function App() {
     [showTask, recordTaskVisit]
   );
 
-  const { openedTask, openTask, openTaskSurface, closeTask, restoreTask, switchSurface } =
-    useOpenTask({
-      editorApp,
-      agentViews,
-      workspaces: state.workspaces,
-      tasks: state.tasks,
-      recordTaskVisit,
-      showTask,
-    });
+  const {
+    openedTask,
+    openTask,
+    openTaskSurface,
+    closeTask,
+    restoreTask,
+    switchSurface,
+    surfaceSwitch,
+    resolveSurfaceSwitch,
+  } = useOpenTask({
+    editorApp,
+    agentViews,
+    workspaces: state.workspaces,
+    tasks: state.tasks,
+    recordTaskVisit,
+    showTask,
+  });
   const agentSessions = useAgentSessions(openedTask !== null);
   const openNotificationTarget = useCallback(
     (task: Task, target: NotificationTarget) => {
@@ -496,6 +505,11 @@ function App() {
         onThemeChange={(id) => void updateThemeId(id)}
         onEditorChange={(editor) => void updateEditorApp(editor)}
         onNewTask={() => setNewTaskRequested(true)}
+      />
+      <SurfaceSwitchDialog
+        prompt={surfaceSwitch}
+        agentActivity={surfaceSwitch ? agentActivity.activities[surfaceSwitch.taskId] : undefined}
+        onChoose={resolveSurfaceSwitch}
       />
       <SettingsModal
         shortcutOperations={operations}

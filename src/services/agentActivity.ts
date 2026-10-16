@@ -287,7 +287,9 @@ export interface NotificationTarget {
   agent: ActivityAgent;
 }
 
-export function embeddedSurface(target: NotificationTarget): TaskSurface | null {
+export function embeddedSurface(
+  target: Pick<NotificationTarget, "surface" | "agent">
+): TaskSurface | null {
   if (target.surface === "opencode") return { kind: "opencode" };
   if ((target.surface === "chat" || target.surface === "terminal") && target.agent !== "opencode")
     return { kind: target.surface, agent: target.agent };

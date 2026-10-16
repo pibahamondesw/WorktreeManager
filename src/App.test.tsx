@@ -119,7 +119,11 @@ beforeEach(() => {
   mocks.recordWorkspaceVisit.mockClear();
   mocks.listen.mockReset().mockResolvedValue(mocks.unlisten);
   mocks.unlisten.mockReset();
-  mocks.invoke.mockReset().mockResolvedValue(undefined);
+  mocks.invoke
+    .mockReset()
+    .mockImplementation((command: string) =>
+      Promise.resolve(command.endsWith("_list") ? [] : undefined)
+    );
   mocks.useDoctor.mockReturnValue({ report: null, running: false, recheck: vi.fn() });
   mocks.useStore.mockReturnValue({
     state: {
@@ -268,7 +272,7 @@ describe("workspace task-surface navigation", () => {
       });
       const view = render(<App />);
       fireEvent.click(view.getByRole("button", { name: "Open task" }));
-      expect(view.getByText("Task surface")).toBeTruthy();
+      expect(await view.findByText("Task surface")).toBeTruthy();
       const startViewTransition = vi.fn(() => ({ finished: Promise.resolve() }) as ViewTransition);
       document.startViewTransition = startViewTransition;
       mocks.recordWorkspaceVisit.mockClear();
@@ -295,7 +299,7 @@ describe("workspace task-surface navigation", () => {
 
   it.each(["click", "keyboard command"])(
     "returns to tasks and records history on current-workspace %s",
-    (source) => {
+    async (source) => {
       const store = mocks.useStore();
       mocks.useStore.mockReturnValue({
         ...store,
@@ -305,7 +309,7 @@ describe("workspace task-surface navigation", () => {
       });
       const view = render(<App />);
       fireEvent.click(view.getByRole("button", { name: "Open task" }));
-      expect(view.getByText("Task surface")).toBeTruthy();
+      expect(await view.findByText("Task surface")).toBeTruthy();
       mocks.recordWorkspaceVisit.mockClear();
 
       if (source === "click") {

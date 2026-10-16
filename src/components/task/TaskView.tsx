@@ -6,8 +6,7 @@ import { ChatPane } from "../chat/ChatPane";
 import { AgentSurfaceSwitcher } from "./AgentSurfaceSwitcher";
 import { EmbeddedSurfacePane } from "../editor/EmbeddedSurfacePane";
 import { embeddedSurfaces } from "../editor/embeddedSurfaces";
-import { chatStop } from "../../services/chat";
-import { terminalStop } from "../../services/terminal";
+import { stopTaskSurface } from "../../embedded/surfaceLifecycle";
 import { useShortcutActions } from "../../shortcuts/runtime";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { GitStatus, IssueLinearInfo, Task, TaskSurface } from "../../types";
@@ -48,14 +47,7 @@ export function TaskView({
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
 
-  /** Ends the running surface's process; agent sessions keep their conversation for resuming. */
-  const stopSurface = () => {
-    if (surface.kind === "editor" || surface.kind === "opencode")
-      return embeddedSurfaces[surface.kind].close(task.id);
-    if (surface.kind === "chat") return chatStop(task.id, surface.agent);
-    if (surface.kind === "terminal") return terminalStop(task.id, surface.agent);
-    return Promise.resolve();
-  };
+  const stopSurface = () => stopTaskSurface(task.id, surface);
 
   /** Chat and terminal are exclusive: stop the running one before the other takes over. */
   const switchSurface = async (to: TaskSurface) => {
