@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::{adapter, profile, runtime};
+use super::{adapter, orphan, profile, runtime};
 use crate::commands::embedded::{loopback_client, poll_until_ready, ServerProcess};
 
 #[derive(Clone)]
@@ -17,21 +17,26 @@ pub struct Connection {
 pub struct Server {
     pub workspace_id: String,
     pub control: PathBuf,
+    directory: PathBuf,
     pub process: ServerProcess,
     startup: Mutex<Option<Connection>>,
 }
 
 impl Server {
     pub fn new(root: &Path, workspace_id: &str) -> Self {
+        let directory = root.join("workspaces").join(profile::key(workspace_id));
         Self {
             workspace_id: workspace_id.into(),
-            control: root
-                .join("workspaces")
-                .join(profile::key(workspace_id))
-                .join("control"),
+            control: directory.join("control"),
+            directory,
             process: ServerProcess::default(),
             startup: Mutex::new(None),
         }
+    }
+
+    pub fn stop(&self) {
+        self.process.stop();
+        orphan::forget(&self.directory);
     }
 
     pub fn connection(&self, root: &Path) -> Result<Connection, String> {
@@ -78,7 +83,9 @@ impl Server {
             .env_remove("WTM_EDITOR_SESSION")
             .env(crate::commands::agent_alerts::SURFACE_ENV, "editor")
             .env("WTM_EDITOR_CONTROL", &self.control);
+        orphan::reclaim(&profile.directory);
         let (pid, _) = self.process.spawn(&mut command)?;
+        orphan::record(&profile.directory, pid)?;
         let client = loopback_client(Some(Duration::from_secs(2)));
         let ready = poll_until_ready(&self.process, || {
             let Some(url) = server_url(&std::fs::read_to_string(&log).unwrap_or_default()) else {
@@ -97,7 +104,15 @@ impl Server {
                 .map_err(|error| error.to_string())?;
             Ok(Some(Connection { url, cookie, pid }))
         })?;
-        ready.ok_or_else(|| format!("code-server did not start. See {}", log.display()))
+        ready.ok_or_else(|| {
+            let output = std::fs::read_to_string(&log).unwrap_or_default();
+            let cause = if output.contains("EADDRINUSE") {
+                " because its saved port is in use"
+            } else {
+                ""
+            };
+            format!("code-server did not start{cause}. See {}", log.display())
+        })
     }
 }
 

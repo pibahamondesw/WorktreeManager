@@ -2,6 +2,7 @@
 //! has its own editor session, workspace file and view.
 
 mod adapter;
+mod orphan;
 mod profile;
 pub mod runtime;
 mod server;
@@ -55,7 +56,7 @@ impl Lease for EditorLease {
     }
 
     fn retire(&self) {
-        self.server.process.stop();
+        self.server.stop();
     }
 
     fn shares_server(&self, other: &Self) -> bool {
@@ -133,7 +134,7 @@ impl Adapter for CodeServer {
     fn shutdown(&self) {
         self.installer.cancel();
         for (_, server) in self.servers.lock().unwrap().drain() {
-            server.process.stop();
+            server.stop();
         }
     }
 }
@@ -486,8 +487,137 @@ mod tests {
             std::fs::remove_dir_all(root).unwrap();
             let (root, lease) = editor_lease("#!/bin/sh\nexit 1\n");
             let error = lease.server.connection(&root).err().unwrap();
-            assert!(error.starts_with("code-server did not start"));
+            assert!(error.starts_with("code-server did not start. See"));
             std::fs::remove_dir_all(root).unwrap();
+            let (root, lease) =
+                editor_lease("#!/bin/sh\necho 'Error: listen EADDRINUSE'\nexit 1\n");
+            let error = lease.server.connection(&root).err().unwrap();
+            assert!(error.starts_with("code-server did not start because its saved port is in use"));
+            std::fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn a_started_server_is_recorded_until_it_stops() {
+            let (root, lease) = editor_lease(&listening(stub_endpoints("302 Found")));
+            let connection = lease.server.connection(&root).unwrap();
+            let recorded = lease.server.control.with_file_name("server.pid");
+            assert_eq!(
+                std::fs::read_to_string(&recorded).unwrap(),
+                connection.pid.to_string()
+            );
+            lease.retire();
+            assert!(!recorded.exists());
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    mod orphaned_server {
+        use std::process::Command;
+
+        use super::*;
+
+        struct Profile(PathBuf);
+
+        impl Profile {
+            fn new() -> Self {
+                let directory = std::env::temp_dir().join(runtime::random_id().unwrap());
+                std::fs::create_dir_all(&directory).unwrap();
+                Self(directory)
+            }
+
+            fn data(&self) -> String {
+                self.0.join("data").to_string_lossy().into_owned()
+            }
+
+            fn record(&self, pid: impl ToString) {
+                std::fs::write(self.0.join("server.pid"), pid.to_string()).unwrap();
+            }
+
+            fn reclaim(&self) {
+                orphan::reclaim(&self.0);
+                assert!(!self.0.join("server.pid").exists());
+            }
+        }
+
+        impl Drop for Profile {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        /// Starts `script` in its own process group from a shell that exits at once, leaving it
+        /// to launchd like a server whose app was killed.
+        fn orphan(profile: &Profile, script: &str) -> i32 {
+            let pid_path = profile.0.join("orphan");
+            let launched = Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!(
+                    "set -m; /bin/sh -c '{script}' & echo $! > '{}'",
+                    pid_path.display()
+                ))
+                .status()
+                .unwrap();
+            assert!(launched.success());
+            std::fs::read_to_string(pid_path)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap()
+        }
+
+        fn alive(pid: i32) -> bool {
+            unsafe { libc::kill(pid, 0) == 0 }
+        }
+
+        fn kill(pid: i32) {
+            unsafe { libc::kill(-pid, libc::SIGKILL) };
+        }
+
+        #[test]
+        fn an_orphaned_server_of_the_profile_is_terminated() {
+            let profile = Profile::new();
+            let pid = orphan(&profile, &format!("sleep 60; true {}", profile.data()));
+            profile.record(pid);
+            profile.reclaim();
+            assert!(!alive(pid));
+        }
+
+        #[test]
+        fn a_process_running_something_else_is_left_alone() {
+            let profile = Profile::new();
+            let pid = orphan(&profile, "sleep 60; true /elsewhere/data");
+            profile.record(pid);
+            profile.reclaim();
+            assert!(alive(pid));
+            kill(pid);
+        }
+
+        #[test]
+        fn a_server_another_instance_still_owns_is_left_alone() {
+            let profile = Profile::new();
+            let mut owned = crate::commands::process::OwnedProcess::spawn(
+                Command::new("/bin/sh")
+                    .arg("-c")
+                    .arg(format!("sleep 60; true {}", profile.data())),
+            )
+            .unwrap();
+            profile.record(owned.id());
+            profile.reclaim();
+            assert!(owned.poll().unwrap().is_none());
+            owned.terminate();
+        }
+
+        #[test]
+        fn a_missing_dead_or_invalid_record_is_ignored() {
+            let profile = Profile::new();
+            profile.reclaim();
+            let mut ended = Command::new("/usr/bin/true").spawn().unwrap();
+            ended.wait().unwrap();
+            profile.record(ended.id());
+            profile.reclaim();
+            profile.record("not a pid");
+            profile.reclaim();
         }
     }
 }
