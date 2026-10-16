@@ -5,6 +5,7 @@ import {
   editorOpen,
   editorProbe,
   EditorSession,
+  EmbeddedSurfaceKind,
   onEditorSession,
 } from "../../services/codeEditor";
 import { onOpenCodeSession, openCodeClose, openCodeOpen } from "../../services/opencode";
@@ -24,6 +25,7 @@ interface InstallGate {
 }
 
 export interface EmbeddedSurface {
+  kind: EmbeddedSurfaceKind;
   name: string;
   testId: string;
   restartLabel: string;
@@ -40,6 +42,7 @@ const vsCodeNeedsInstall = async () => {
 
 export const embeddedSurfaces = {
   editor: {
+    kind: "editor",
     name: "VS Code",
     testId: "editor-pane",
     restartLabel: "Restart editor",
@@ -53,6 +56,7 @@ export const embeddedSurfaces = {
     },
   },
   opencode: {
+    kind: "opencode",
     name: "OpenCode",
     testId: "opencode-pane",
     restartLabel: "Restart OpenCode",
@@ -60,4 +64,4 @@ export const embeddedSurfaces = {
     close: openCodeClose,
     onSession: onOpenCodeSession,
   },
-} satisfies Record<"editor" | "opencode", EmbeddedSurface>;
+} satisfies { [Kind in EmbeddedSurfaceKind]: EmbeddedSurface & { kind: Kind } };

@@ -42,10 +42,19 @@ impl Bounds {
     }
 }
 
+/// The surface a task pane shows; each runs its own session for the task.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SurfaceKind {
+    Editor,
+    Opencode,
+}
+
 #[derive(Default)]
 struct Presentation {
     revision: u64,
     task_id: Option<String>,
+    surface: Option<SurfaceKind>,
     bounds: Bounds,
     suppressed: bool,
 }
@@ -55,6 +64,7 @@ impl Presentation {
         &mut self,
         revision: u64,
         task_id: Option<String>,
+        surface: Option<SurfaceKind>,
         bounds: Bounds,
         suppressed: bool,
     ) -> bool {
@@ -63,6 +73,7 @@ impl Presentation {
         }
         self.revision = revision;
         self.task_id = task_id;
+        self.surface = surface;
         self.bounds = bounds;
         self.suppressed = suppressed;
         true
@@ -90,10 +101,11 @@ impl EditorRegistry {
         self.opencode.shutdown_all();
     }
 
-    fn running_label(&self, task_id: &str) -> Option<String> {
-        self.editor
-            .running_label(task_id)
-            .or_else(|| self.opencode.running_label(task_id))
+    fn running_label(&self, task_id: &str, surface: SurfaceKind) -> Option<String> {
+        match surface {
+            SurfaceKind::Editor => self.editor.running_label(task_id),
+            SurfaceKind::Opencode => self.opencode.running_label(task_id),
+        }
     }
 
     /// Re-applies the current presentation, e.g. once a surface finished opening.
@@ -101,13 +113,14 @@ impl EditorRegistry {
         self.present(app, &self.presentation.lock().unwrap(), focus)
     }
 
-    /// Every surface shares one presentation: only the selected task's view is shown, over the
-    /// task pane, and nothing is shown while a modal covers it.
+    /// Every surface shares one presentation: only the selected task's selected surface is shown,
+    /// over the task pane, and nothing is shown while a modal covers it.
     fn present(&self, app: &AppHandle, state: &Presentation, focus: bool) -> Result<(), String> {
         let label = state
             .task_id
             .as_deref()
-            .and_then(|task_id| self.running_label(task_id));
+            .zip(state.surface)
+            .and_then(|(task_id, surface)| self.running_label(task_id, surface));
         let visible = !state.suppressed && state.bounds.valid();
         for (name, webview) in app.webviews() {
             if name.starts_with(registry::LABEL_ROOT) && (!visible || label.as_ref() != Some(&name))
@@ -125,17 +138,19 @@ impl EditorRegistry {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn vscode_present(
     app: AppHandle,
     surfaces: State<'_, EditorRegistry>,
     revision: u64,
     task_id: Option<String>,
+    surface: Option<SurfaceKind>,
     bounds: Bounds,
     suppressed: bool,
     focus: bool,
 ) -> Result<(), String> {
     let mut state = surfaces.presentation.lock().unwrap();
-    if state.update(revision, task_id, bounds, suppressed) {
+    if state.update(revision, task_id, surface, bounds, suppressed) {
         surfaces.present(&app, &state, focus)?;
     }
     Ok(())
@@ -160,10 +175,32 @@ mod tests {
     #[test]
     fn stale_navigation_cannot_show_a_previous_task_or_cover_a_modal() {
         let mut state = Presentation::default();
-        assert!(state.update(1, Some("a".into()), Bounds::default(), false));
-        assert!(state.update(3, Some("b".into()), Bounds::default(), true));
-        assert!(!state.update(2, Some("a".into()), Bounds::default(), false));
+        let editor = Some(SurfaceKind::Editor);
+        assert!(state.update(1, Some("a".into()), editor, Bounds::default(), false));
+        assert!(state.update(3, Some("b".into()), editor, Bounds::default(), true));
+        assert!(!state.update(2, Some("a".into()), None, Bounds::default(), false));
         assert_eq!(state.task_id.as_deref(), Some("b"));
+        assert_eq!(state.surface, editor);
         assert!(state.suppressed);
+    }
+
+    #[test]
+    fn a_task_shows_its_selected_surface_while_the_other_stays_open() {
+        let root =
+            std::env::temp_dir().join(super::super::code_server::runtime::random_id().unwrap());
+        let registry = EditorRegistry::default();
+        let request = super::super::code_server::test_request(&root, "workspace", "/a");
+        let editor = registry.editor.reserve("a", request).unwrap();
+        let opencode = registry.opencode.reserve("a", vec!["/a".into()]).unwrap();
+        editor.mark_running();
+        opencode.mark_running();
+        let shown = |surface| registry.running_label("a", surface);
+        assert_eq!(shown(SurfaceKind::Opencode), Some(opencode.label.clone()));
+        assert_eq!(shown(SurfaceKind::Editor), Some(editor.label.clone()));
+        assert_eq!(shown(SurfaceKind::Opencode), Some(opencode.label.clone()));
+        assert!(editor.is_open() && opencode.is_open());
+        assert_eq!(registry.running_label("b", SurfaceKind::Editor), None);
+        registry.shutdown_all();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

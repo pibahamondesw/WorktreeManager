@@ -36,7 +36,7 @@ export function EmbeddedSurfacePane({
       const rect = element.getBoundingClientRect();
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     };
-    const lease = editorPresentation.attach(taskId, bounds(), setError);
+    const lease = editorPresentation.attach(taskId, surface.kind, bounds(), setError);
     const resize = () => lease.update(bounds());
     const observer = new ResizeObserver(resize);
     observer.observe(element);
@@ -46,7 +46,7 @@ export function EmbeddedSurfacePane({
       window.removeEventListener("resize", resize);
       lease.release();
     };
-  }, [taskId, attempt]);
+  }, [taskId, surface.kind, attempt]);
 
   useEffect(() => {
     let cancelled = false;

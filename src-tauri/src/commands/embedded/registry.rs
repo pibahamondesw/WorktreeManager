@@ -128,6 +128,11 @@ impl<A: Adapter> Slot<A> {
         self.is_open() && self.info.lock().unwrap().status == "running"
     }
 
+    #[cfg(test)]
+    pub(crate) fn mark_running(&self) {
+        self.info.lock().unwrap().status = "running".into();
+    }
+
     fn update(
         &self,
         app: &AppHandle<A::Runtime>,

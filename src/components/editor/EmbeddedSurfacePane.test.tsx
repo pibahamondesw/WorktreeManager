@@ -68,6 +68,7 @@ beforeEach(() => {
   mocks.editorInstall.mockResolvedValue({ ready: true });
   mocks.editorInstallStatus.mockResolvedValue({ phase: "", active: false, logs: [] });
   surface = {
+    kind: "opencode",
     name: "Stub",
     testId: "stub-pane",
     restartLabel: "Restart stub",
@@ -91,7 +92,12 @@ describe("EmbeddedSurfacePane lifecycle", () => {
       workspaceId: "workspace",
       folders: ["/a", "/b"],
     });
-    expect(mocks.attach).toHaveBeenCalledWith("a", expect.anything(), expect.any(Function));
+    expect(mocks.attach).toHaveBeenCalledWith(
+      "a",
+      "opencode",
+      expect.anything(),
+      expect.any(Function)
+    );
     view.unmount();
     expect(mocks.release).toHaveBeenCalledOnce();
     expect(surface.close).not.toHaveBeenCalled();
@@ -192,6 +198,26 @@ describe("embedded surfaces", () => {
     mocks.editorProbe.mockClear();
     expect(await needed()).toBe(true);
     expect(mocks.editorProbe).not.toHaveBeenCalled();
+  });
+
+  it("presents VS Code as the editor surface of its task", async () => {
+    mocks.editorOpen.mockResolvedValue(session);
+    render(
+      <EmbeddedSurfacePane
+        surface={embeddedSurfaces.editor}
+        workspaceId="workspace"
+        taskId="a"
+        folders={["/a"]}
+        onStatusChange={vi.fn()}
+      />
+    );
+    expect(mocks.attach).toHaveBeenCalledWith(
+      "a",
+      "editor",
+      expect.anything(),
+      expect.any(Function)
+    );
+    await waitFor(() => expect(mocks.editorOpen).toHaveBeenCalledOnce());
   });
 
   it("installs VS Code embedded before creating an editor session", async () => {

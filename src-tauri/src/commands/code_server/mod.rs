@@ -266,6 +266,19 @@ pub fn native_test_failed_view_cleanup(view: &tauri::Webview) {
     assert!(view.app_handle().get_webview(view.label()).is_none());
 }
 
+#[cfg(test)]
+pub(crate) fn test_request(
+    root: &std::path::Path,
+    workspace_id: &str,
+    folder: &str,
+) -> EditorRequest {
+    EditorRequest {
+        root: root.into(),
+        workspace_id: workspace_id.into(),
+        folders: vec![folder.into()],
+    }
+}
+
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod native {
     use std::io::{BufRead, BufReader, Write};
@@ -329,6 +342,7 @@ pub(crate) mod native {
             app.state(),
             revision,
             Some(task_id.into()),
+            Some(embedded::SurfaceKind::Editor),
             bounds,
             false,
             false,
@@ -398,13 +412,7 @@ pub(crate) mod native {
 mod tests {
     use super::*;
 
-    fn request(root: &std::path::Path, workspace_id: &str, folder: &str) -> EditorRequest {
-        EditorRequest {
-            root: root.into(),
-            workspace_id: workspace_id.into(),
-            folders: vec![folder.into()],
-        }
-    }
+    use super::test_request as request;
 
     #[test]
     fn tasks_share_only_their_workspace_server_until_it_stops() {

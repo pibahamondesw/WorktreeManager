@@ -278,6 +278,7 @@ pub(crate) mod native {
             app.state(),
             u64::MAX,
             Some("task".into()),
+            Some(embedded::SurfaceKind::Opencode),
             embedded::Bounds {
                 x: 0.0,
                 y: 0.0,

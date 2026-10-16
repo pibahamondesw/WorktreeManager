@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { TaskSurface } from "../types";
 
 export interface EditorRuntime {
   installed: boolean;
@@ -41,9 +42,13 @@ export interface EditorBounds {
   width: number;
   height: number;
 }
+/** A task surface drawn by a backend webview over the task pane. */
+export type EmbeddedSurfaceKind = Extract<TaskSurface["kind"], "editor" | "opencode">;
+
 export interface EditorPresentation {
   revision: number;
   taskId: string | null;
+  surface: EmbeddedSurfaceKind | null;
   bounds: EditorBounds;
   suppressed: boolean;
   focus: boolean;
@@ -55,6 +60,7 @@ export class EditorPresentationController {
   private active: {
     token: symbol;
     taskId: string;
+    surface: EmbeddedSurfaceKind;
     bounds: EditorBounds;
     onError: (error: string) => void;
   } | null = null;
@@ -70,9 +76,14 @@ export class EditorPresentationController {
     this.send(false);
   }
 
-  attach(taskId: string, bounds: EditorBounds, onError: (error: string) => void) {
+  attach(
+    taskId: string,
+    surface: EmbeddedSurfaceKind,
+    bounds: EditorBounds,
+    onError: (error: string) => void
+  ) {
     const token = Symbol(taskId);
-    this.active = { token, taskId, bounds, onError };
+    this.active = { token, taskId, surface, bounds, onError };
     this.send(true);
     return {
       update: (bounds: EditorBounds) => {
@@ -103,6 +114,7 @@ export class EditorPresentationController {
     void this.dispatch({
       revision: ++this.revision,
       taskId: active?.taskId ?? null,
+      surface: active?.surface ?? null,
       bounds: active?.bounds ?? { x: 0, y: 0, width: 0, height: 0 },
       suppressed: this.blockers.size > 0,
       focus,
