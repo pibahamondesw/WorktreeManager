@@ -259,14 +259,6 @@ const SYSTEM_SOUNDS: &[&str] = &[
     "Tink",
 ];
 
-pub fn default_sound(state: &str) -> Option<&'static str> {
-    match state {
-        "done" => Some("Submarine"),
-        "waiting" => Some("Ping"),
-        _ => None,
-    }
-}
-
 pub fn play_sound(sound: &str) {
     if !SYSTEM_SOUNDS.contains(&sound) {
         return;
@@ -558,14 +550,6 @@ mod tests {
             command
         )
         .is_err());
-    }
-
-    #[test]
-    fn only_finished_and_waiting_have_default_sounds() {
-        assert_eq!(default_sound("done"), Some("Submarine"));
-        assert_eq!(default_sound("waiting"), Some("Ping"));
-        assert_eq!(default_sound("working"), None);
-        assert!(default_sound("done").is_some_and(|sound| SYSTEM_SOUNDS.contains(&sound)));
     }
 
     #[test]
