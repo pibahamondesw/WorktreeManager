@@ -78,7 +78,8 @@ export function AgentAlertSettingsPanel({
         <p className="text-sm text-text-secondary">
           Global hooks tell WorktreeManager when an agent starts working, needs your input or
           finishes in embedded terminals and editors, Cursor and external terminals. Embedded chats
-          report it on their own. Your other hooks are kept as they are.
+          report it on their own. Subagent activity is ignored. Alerts require WorktreeManager to be
+          running. Your other hooks are kept as they are.
         </p>
         {AGENT_IDS.map((id) => (
           <div

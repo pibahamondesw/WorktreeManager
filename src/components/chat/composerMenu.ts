@@ -43,6 +43,7 @@ export type LocalCommand =
   | { kind: "review"; target: ReviewTarget }
   | { kind: "reviewPicker" }
   | { kind: "clear" }
+  | { kind: "hooks" }
   | { kind: "status" };
 
 export const REVIEW_CHOICES = [
@@ -105,6 +106,8 @@ export function localCommand(text: string, controls: ChatControls): LocalCommand
       return { kind: "clear" };
     case "status":
       return { kind: "status" };
+    case "hooks":
+      return { kind: "hooks" };
     case "insert":
       return null;
   }

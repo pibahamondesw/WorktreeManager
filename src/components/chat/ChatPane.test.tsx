@@ -69,6 +69,7 @@ const snapshot = (overrides = {}) => ({
         action: { kind: "insert", text: "/review " },
       },
       { name: "status", description: "Show plan usage", action: { kind: "status" } },
+      { name: "hooks", description: "Review hooks", action: { kind: "hooks" } },
     ],
     todos: [
       { text: "Read the code", status: "completed" },
@@ -534,6 +535,40 @@ describe("ChatPane", () => {
     expect(
       screen.getByRole("button", { name: "Context 25% used. Show plan usage and limits" })
     ).toBeInTheDocument();
+  });
+
+  it("opens /hooks locally and closes it when the session generation changes", async () => {
+    const { rerender } = render(<ChatPane taskId="hooks-task" agent="codex" folders={["/wt/a"]} />);
+    await screen.findByText("Fix the bug");
+    const box = screen.getByRole("textbox", { name: "Message Codex" });
+    typeInto(box, "/hooks");
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByRole("dialog", { name: "Codex hooks" })).toBeVisible();
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_configure", {
+      taskId: "hooks-task",
+      agent: "codex",
+      setting: { kind: "hooks" },
+    });
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "chat_send")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Close Codex hooks" }));
+    typeInto(box, "/hooks");
+    fireEvent.keyDown(box, { key: "Escape" });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByRole("dialog", { name: "Codex hooks" })).toBeVisible();
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? snapshot({ generation: 4 }) : undefined)
+    );
+    const newControls = {
+      ...snapshot().controls,
+      hooks: { items: [], loading: false, error: null, warnings: [] },
+    };
+    emit(3, { type: "controls", controls: newControls });
+    expect(screen.getByText("No hooks configured for this worktree.")).toBeVisible();
+    rerender(<ChatPane taskId="hooks-task" agent="codex" folders={["/wt/b"]} />);
+    await waitFor(() =>
+      expect(mocks.invoke.mock.calls.filter(([command]) => command === "chat_open")).toHaveLength(2)
+    );
+    expect(screen.queryByRole("dialog", { name: "Codex hooks" })).not.toBeInTheDocument();
   });
 
   it("opens plan usage from /status and the context ring, updating with new limits", async () => {

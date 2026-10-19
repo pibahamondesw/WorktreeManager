@@ -24,7 +24,7 @@ export const AGENTS: Record<AgentId, AgentCapabilities> = {
     planUrl: "https://learn.chatgpt.com/docs/pricing",
     alertHooksConfig: "~/.codex/hooks.json",
     alertHooksTrust:
-      "Codex runs new or changed hooks only once trusted: run /hooks in codex and trust them.",
+      "Run /hooks in the Codex chat or CLI to review and trust new or changed hooks.",
   },
 };
 

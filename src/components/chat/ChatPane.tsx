@@ -6,6 +6,7 @@ import { PendingRequestCard } from "./PendingRequestCard";
 import { SessionList } from "./SessionList";
 import { TodoPanel } from "./TodoPanel";
 import { UsageDialog } from "./UsageDialog";
+import { HooksDialog } from "./HooksDialog";
 import { HistoryDialog } from "./HistoryDialog";
 import { ChangeSummaryCard, ChangesPanel, ChangesScope, LineCounts } from "./ChangesPanel";
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
@@ -64,6 +65,8 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   const [actionError, setActionError] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [hooksSession, setHooksSession] = useState<string | null>(null);
+  const sessionKey = `${taskId}:${agent}:${snapshot.generation}`;
   const [historyPending, setHistoryPending] = useState<string | null>(null);
   const [historyItem, setHistoryItem] = useState<{
     item: ChatItem;
@@ -283,6 +286,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
               review: session.review,
               startFresh: session.startFresh,
               showUsage: () => setUsageOpen(true),
+              showHooks: () => setHooksSession(sessionKey),
             }}
             onError={setActionError}
           />
@@ -321,6 +325,14 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
                 </Button>
               ))
             }
+          />
+        )}
+        {hooksSession === sessionKey && agent === "codex" && (
+          <HooksDialog
+            key={sessionKey}
+            hooks={controls.hooks}
+            onConfigure={session.configure}
+            onClose={() => setHooksSession(null)}
           />
         )}
         <UsageDialog
