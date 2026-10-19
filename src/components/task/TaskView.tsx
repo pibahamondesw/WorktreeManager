@@ -6,7 +6,7 @@ import { ChatPane } from "../chat/ChatPane";
 import { AgentSurfaceSwitcher } from "./AgentSurfaceSwitcher";
 import { EmbeddedSurfacePane } from "../editor/EmbeddedSurfacePane";
 import { embeddedSurfaces } from "../editor/embeddedSurfaces";
-import { stopTaskSurface } from "../../embedded/surfaceLifecycle";
+import { sessionRegistry } from "../../embedded/sessionTransports";
 import { useShortcutActions } from "../../shortcuts/runtime";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { GitStatus, IssueLinearInfo, Task, TaskSurface } from "../../types";
@@ -47,7 +47,7 @@ export function TaskView({
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
 
-  const stopSurface = () => stopTaskSurface(task.id, surface);
+  const stopSurface = () => sessionRegistry.stop(task.id, surface);
 
   /** Chat and terminal are exclusive: stop the running one before the other takes over. */
   const switchSurface = async (to: TaskSurface) => {

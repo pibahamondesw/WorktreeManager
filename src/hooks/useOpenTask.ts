@@ -11,7 +11,8 @@ import {
 import { openEditorForWorktree } from "../services/openEditor";
 import { agentSurface, taskSurfaceFor, isEmbedded } from "../embedded/taskSurface";
 import { transitionTaskView } from "../services/taskTransition";
-import { listLiveSurfaces, stopTaskSurface } from "../embedded/surfaceLifecycle";
+import { SessionRegistry } from "../embedded/sessionRegistry";
+import { sessionRegistry } from "../embedded/sessionTransports";
 import {
   landingSurface,
   planTaskOpen,
@@ -77,12 +78,7 @@ function useSurfaceSwitchPrompt() {
   return { prompt, ask, answer, dismiss };
 }
 
-interface SurfaceLifecycle {
-  listLive: (taskId: string) => Promise<TaskSurface[]>;
-  stop: (taskId: string, surface: TaskSurface) => Promise<void>;
-}
-
-const BACKEND_SURFACES: SurfaceLifecycle = { listLive: listLiveSurfaces, stop: stopTaskSurface };
+type SurfaceLifecycle = Pick<SessionRegistry, "listLive" | "stop">;
 
 interface UseOpenTaskArgs {
   editorApp: EditorApp;
@@ -105,7 +101,7 @@ export function useOpenTask({
   tasks,
   recordTaskVisit,
   showTask,
-  surfaces = BACKEND_SURFACES,
+  surfaces = sessionRegistry,
 }: UseOpenTaskArgs) {
   const [openedTask, setOpenedTask] = useState<OpenedTask | null>(null);
   const surfaceSwitch = useSurfaceSwitchPrompt();

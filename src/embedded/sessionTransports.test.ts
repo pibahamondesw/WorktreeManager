@@ -4,7 +4,7 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
-import { listLiveSurfaces, stopTaskSurface } from "./surfaceLifecycle";
+import { sessionRegistry } from "./sessionTransports";
 
 const lists: Record<string, unknown[]> = {
   vscode_list: [
@@ -27,9 +27,9 @@ beforeEach(() => {
   invoke.mockImplementation((command: string) => Promise.resolve(lists[command]));
 });
 
-describe("listLiveSurfaces", () => {
+describe("sessionRegistry.listLive", () => {
   it("lists only the task's surfaces whose process is still alive", async () => {
-    await expect(listLiveSurfaces("t1")).resolves.toEqual([
+    await expect(sessionRegistry.listLive("t1")).resolves.toEqual([
       { kind: "editor" },
       { kind: "chat", agent: "claude" },
       { kind: "terminal", agent: "codex" },
@@ -37,30 +37,45 @@ describe("listLiveSurfaces", () => {
   });
 });
 
-describe("listLiveSurfaces with a failing list", () => {
+describe("sessionRegistry.listLive with a failing list", () => {
   it("still reports what the other lists know", async () => {
     invoke.mockImplementation((command: string) =>
       command === "opencode_list"
         ? Promise.reject(new Error("down"))
         : Promise.resolve(lists[command])
     );
-    await expect(listLiveSurfaces("t2")).resolves.toEqual([{ kind: "editor" }]);
+    await expect(sessionRegistry.listLive("t2")).resolves.toEqual([{ kind: "editor" }]);
   });
 });
 
-describe("stopTaskSurface", () => {
+describe("sessionRegistry.stop", () => {
   it.each([
     [{ kind: "editor" }, "vscode_close", { taskId: "t1" }],
     [{ kind: "opencode" }, "opencode_close", { taskId: "t1" }],
     [{ kind: "chat", agent: "claude" }, "chat_stop", { taskId: "t1", agent: "claude" }],
     [{ kind: "terminal", agent: "codex" }, "terminal_stop", { taskId: "t1", agent: "codex" }],
   ] as const)("closes %o through its own close command", async (surface, command, args) => {
-    await stopTaskSurface("t1", surface);
+    await sessionRegistry.stop("t1", surface);
     expect(invoke).toHaveBeenCalledWith(command, args);
   });
 
   it("has nothing to close for an external editor", async () => {
-    await stopTaskSurface("t1", { kind: "external" });
+    await sessionRegistry.stop("t1", { kind: "external" });
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("sessionRegistry.closeAll", () => {
+  it("closes the task through every transport's close command", async () => {
+    await sessionRegistry.closeAll("t1");
+    expect(invoke.mock.calls.map(([command]) => command as string).sort()).toEqual([
+      "chat_close",
+      "opencode_close",
+      "terminal_close",
+      "vscode_close",
+    ]);
+    expect(
+      invoke.mock.calls.every(([, args]) => (args as { taskId: string }).taskId === "t1")
+    ).toBe(true);
   });
 });

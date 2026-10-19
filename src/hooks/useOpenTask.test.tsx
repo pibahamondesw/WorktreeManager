@@ -5,10 +5,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 const openEditorForWorktree = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../services/openEditor", () => ({ openEditorForWorktree }));
 const surfaces = vi.hoisted(() => ({
-  listLiveSurfaces: vi.fn(),
-  stopTaskSurface: vi.fn(),
+  listLive: vi.fn(),
+  stop: vi.fn(),
 }));
-vi.mock("../embedded/surfaceLifecycle", () => surfaces);
+vi.mock("../embedded/sessionTransports", () => ({ sessionRegistry: surfaces }));
 
 import { useOpenTask } from "./useOpenTask";
 import { Task, TaskSurface, Workspace } from "../types";
@@ -41,14 +41,14 @@ function deferred<Value>() {
   return { promise, resolve };
 }
 
-const live = (...list: TaskSurface[]) => surfaces.listLiveSurfaces.mockResolvedValue(list);
+const live = (...list: TaskSurface[]) => surfaces.listLive.mockResolvedValue(list);
 
 beforeEach(() => {
   openEditorForWorktree.mockClear();
-  surfaces.listLiveSurfaces.mockReset();
-  surfaces.stopTaskSurface.mockReset();
+  surfaces.listLive.mockReset();
+  surfaces.stop.mockReset();
   live();
-  surfaces.stopTaskSurface.mockResolvedValue(undefined);
+  surfaces.stop.mockResolvedValue(undefined);
 });
 
 describe("useOpenTask", () => {
@@ -161,7 +161,7 @@ describe("useOpenTask", () => {
       });
       expect(result.current.openedTask).toEqual({ taskId: "t1", surface: { kind: "editor" } });
       expect(result.current.surfaceSwitch).toBeNull();
-      expect(surfaces.stopTaskSurface).not.toHaveBeenCalled();
+      expect(surfaces.stop).not.toHaveBeenCalled();
     });
 
     it("closes the live surfaces before opening the requested one", async () => {
@@ -172,7 +172,7 @@ describe("useOpenTask", () => {
       await act(async () => {
         await expect(opened).resolves.toBe(true);
       });
-      expect(surfaces.stopTaskSurface.mock.calls).toEqual([
+      expect(surfaces.stop.mock.calls).toEqual([
         ["t1", { kind: "editor" }],
         ["t1", { kind: "terminal", agent: "codex" }],
       ]);
@@ -194,9 +194,7 @@ describe("useOpenTask", () => {
 
     it("keeps asking with the error and the surfaces still open when closing fails", async () => {
       live({ kind: "editor" }, { kind: "opencode" });
-      surfaces.stopTaskSurface
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce("server busy");
+      surfaces.stop.mockResolvedValueOnce(undefined).mockRejectedValueOnce("server busy");
       const { result } = setup("claude-code");
       const { opened } = await pendingOpen(result);
       act(() => result.current.resolveSurfaceSwitch("replace"));
@@ -213,7 +211,7 @@ describe("useOpenTask", () => {
       await act(async () => {
         await expect(opened).resolves.toBe(true);
       });
-      expect(surfaces.stopTaskSurface).toHaveBeenLastCalledWith("t1", { kind: "opencode" });
+      expect(surfaces.stop).toHaveBeenLastCalledWith("t1", { kind: "opencode" });
       expect(result.current.surfaceSwitch).toBeNull();
       expect(result.current.openedTask?.surface).toEqual({ kind: "chat", agent: "claude" });
     });
@@ -221,7 +219,7 @@ describe("useOpenTask", () => {
     it("drops a replacement that a newer navigation overtook while closing", async () => {
       live({ kind: "opencode" });
       const stop = deferred<undefined>();
-      surfaces.stopTaskSurface.mockReturnValue(stop.promise);
+      surfaces.stop.mockReturnValue(stop.promise);
       const second = { ...task, id: "t2" };
       const { result } = setup("vscode-web", [task, second]);
       const { opened } = await pendingOpen(result);
@@ -277,7 +275,7 @@ describe("useOpenTask", () => {
       rerender({ tasks: [] });
       await expect(opened).resolves.toBe(false);
       expect(result.current.surfaceSwitch).toBeNull();
-      expect(surfaces.stopTaskSurface).not.toHaveBeenCalled();
+      expect(surfaces.stop).not.toHaveBeenCalled();
     });
 
     it.each(["vscode-web", "cursor"] as const)(
@@ -298,7 +296,7 @@ describe("useOpenTask", () => {
 
     it("ignores a restore that a later close superseded", async () => {
       const list = deferred<TaskSurface[]>();
-      surfaces.listLiveSurfaces.mockReturnValue(list.promise);
+      surfaces.listLive.mockReturnValue(list.promise);
       const { result, showTask } = setup("vscode-web");
       act(() => result.current.restoreTask(task));
       act(() => result.current.closeTask());
@@ -317,11 +315,11 @@ describe("useOpenTask", () => {
       await act(() => result.current.openTask(task, { onError: () => undefined }));
       expect(openEditorForWorktree).toHaveBeenCalled();
       expect(result.current.surfaceSwitch).toBeNull();
-      expect(surfaces.listLiveSurfaces).not.toHaveBeenCalled();
+      expect(surfaces.listLive).not.toHaveBeenCalled();
     });
 
     it("treats an unreadable session list as nothing live", async () => {
-      surfaces.listLiveSurfaces.mockRejectedValue(new Error("ipc down"));
+      surfaces.listLive.mockRejectedValue(new Error("ipc down"));
       const { result } = setup("vscode-web");
       await act(() => result.current.openTask(task));
       expect(result.current.openedTask).toEqual({ taskId: "t1", surface: { kind: "editor" } });
