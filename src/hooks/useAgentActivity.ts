@@ -18,7 +18,7 @@ import {
   taskForCwd,
   pendingInputCount,
 } from "../services/agentActivity";
-import { ChatInfo, chatList, onChatStatus } from "../services/chat";
+import { sessionRegistry } from "../embedded/sessionTransports";
 import { onOpenCodeActivity } from "../services/opencode";
 import { TerminalStatus } from "../services/terminal";
 import { loadAgentAlerts, persist } from "../services/store";
@@ -105,45 +105,24 @@ export function useAgentActivity({
     [record]
   );
 
-  useEffect(() => {
-    let stale = false;
-    let unlisten: (() => void) | undefined;
-    const previous = new Map<string, ChatInfo>();
-    const update = (chat: ChatInfo) => {
-      const key = `${chat.taskId}:${chat.agent}`;
-      const event = chatActivityEvent(previous.get(key), chat, Date.now());
-      previous.set(key, chat);
-      if (event === "end")
-        setActivities((current) => {
-          if (current[chat.taskId]?.surface !== "chat") return current;
-          const next = { ...current };
-          delete next[chat.taskId];
-          return next;
-        });
-      else if (event) {
-        const task = latest.current.tasks.find((t) => t.id === chat.taskId);
-        if (task) record(task, event);
-      }
-    };
-    void (async () => {
-      const stop = await onChatStatus((chat) => {
-        if (!stale) update(chat);
-      });
-      if (stale) {
-        stop();
-        return;
-      }
-      unlisten = stop;
-      for (const chat of await chatList()) {
-        const key = `${chat.taskId}:${chat.agent}`;
-        if (!stale && !previous.has(key)) previous.set(key, chat);
-      }
-    })().catch(() => undefined);
-    return () => {
-      stale = true;
-      unlisten?.();
-    };
-  }, [record]);
+  useEffect(
+    () =>
+      sessionRegistry.onSessionEvent("chat", (chat, previous) => {
+        const event = chatActivityEvent(previous, chat, Date.now());
+        if (event === "end")
+          setActivities((current) => {
+            if (current[chat.taskId]?.surface !== "chat") return current;
+            const next = { ...current };
+            delete next[chat.taskId];
+            return next;
+          });
+        else if (event) {
+          const task = latest.current.tasks.find((t) => t.id === chat.taskId);
+          if (task) record(task, event);
+        }
+      }),
+    [record]
+  );
 
   useEffect(() => {
     const unlisten = onOpenCodeActivity(({ taskId, state, at }) => {
