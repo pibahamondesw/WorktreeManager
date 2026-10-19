@@ -188,6 +188,7 @@ pub enum CommandAction {
     Review,
     Clear,
     Status,
+    Hooks,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -260,6 +261,44 @@ pub struct ChatControls {
     pub todos: Vec<TodoItem>,
     pub context: Option<ContextUsage>,
     pub usage: Option<PlanUsage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hooks: Option<Box<HookControls>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookControls {
+    pub items: Vec<HookOption>,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookOption {
+    pub key: String,
+    pub event_name: String,
+    pub source_path: String,
+    pub current_hash: String,
+    pub enabled: bool,
+    pub is_managed: bool,
+    pub trust_status: String,
+    pub matcher: Option<String>,
+    pub handler_type: String,
+    pub command: Option<String>,
+    pub server: Option<String>,
+    pub tool: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookSetting {
+    pub key: String,
+    pub hash: String,
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub trust: bool,
 }
 
 impl ChatControls {
@@ -285,6 +324,8 @@ pub enum ChatSetting {
     Model(String),
     Effort(String),
     Mode(String),
+    Hooks,
+    Hook(HookSetting),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

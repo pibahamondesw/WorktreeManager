@@ -9,6 +9,7 @@ use base64::Engine;
 
 use serde_json::{json, Value};
 
+use super::codex_hooks;
 use super::model::*;
 
 const UNSUPPORTED: i64 = -32601;
@@ -42,6 +43,11 @@ fn base_commands() -> Vec<CommandOption> {
             "Show plan usage and limits",
             CommandAction::Status,
         ),
+        CommandOption::new(
+            "hooks",
+            "Review and manage Codex hooks",
+            CommandAction::Hooks,
+        ),
     ]
 }
 
@@ -57,6 +63,8 @@ enum Call {
     Config,
     Skills,
     RateLimits,
+    Hooks,
+    HookWrite,
     Ignore,
 }
 
@@ -329,6 +337,19 @@ impl CodexProvider {
         })
     }
 
+    fn refresh_hooks(&mut self, out: &mut ProviderOutput) {
+        let hooks = self.controls.hooks.get_or_insert_with(Default::default);
+        hooks.loading = true;
+        hooks.error = None;
+        out.controls(&self.controls);
+        self.call(
+            out,
+            Call::Hooks,
+            "hooks/list",
+            json!({ "cwds": [self.cwd] }),
+        );
+    }
+
     /// A conversation the user picked must resume or fail; never replace it with a new thread.
     pub fn pinned(mut self) -> Self {
         self.pinned = true;
@@ -413,6 +434,31 @@ impl CodexProvider {
         };
         let result = &message["result"];
         match call {
+            Call::Hooks | Call::HookWrite => {
+                let error = if message["error"]["code"] == UNSUPPORTED {
+                    Some("This Codex version does not support /hooks; update codex-cli".into())
+                } else {
+                    error.map(str::to_owned)
+                };
+                if let Some(error) = error {
+                    let hooks = self.controls.hooks.get_or_insert_with(Default::default);
+                    hooks.loading = false;
+                    hooks.error = Some(error);
+                } else if matches!(call, Call::HookWrite) {
+                    self.refresh_hooks(out);
+                    return;
+                } else {
+                    match codex_hooks::parse(result, &self.cwd) {
+                        Ok(hooks) => self.controls.hooks = Some(Box::new(hooks)),
+                        Err(error) => {
+                            let hooks = self.controls.hooks.get_or_insert_with(Default::default);
+                            hooks.loading = false;
+                            hooks.error = Some(error);
+                        }
+                    }
+                }
+                out.controls(&self.controls);
+            }
             Call::Fork(expected) => {
                 let result = match error {
                     Some(error) => Err(format!("Could not fork the conversation: {error}")),
@@ -922,6 +968,31 @@ impl ChatProvider for CodexProvider {
 
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String> {
         match setting {
+            ChatSetting::Hooks => {
+                if !self
+                    .controls
+                    .hooks
+                    .as_ref()
+                    .is_some_and(|hooks| hooks.loading)
+                {
+                    self.refresh_hooks(out);
+                }
+                return Ok(());
+            }
+            ChatSetting::Hook(setting) => {
+                let hooks = self
+                    .controls
+                    .hooks
+                    .as_ref()
+                    .ok_or("Load hooks before changing them")?;
+                let params = codex_hooks::write_params(hooks, setting)?;
+                let hooks = self.controls.hooks.as_mut().unwrap();
+                hooks.loading = true;
+                hooks.error = None;
+                out.controls(&self.controls);
+                self.call(out, Call::HookWrite, "config/batchWrite", params);
+                return Ok(());
+            }
             ChatSetting::Model(model) => {
                 self.controls.model = Some(model.clone());
                 let efforts = self.controls.efforts();
@@ -2252,6 +2323,137 @@ mod tests {
             json!({ "id": id, "error": { "code": -32601, "message": "unknown method" } }),
         );
         assert_eq!(snapshot.controls.usage.map(|u| u.supported), Some(false));
+    }
+
+    #[test]
+    fn hooks_are_loaded_and_trusted_without_starting_a_model_turn() {
+        let (mut provider, mut snapshot) = resumed();
+        assert!(provider
+            .controls
+            .commands
+            .iter()
+            .any(|command| command.name == "hooks" && command.action == CommandAction::Hooks));
+        let mut out = ProviderOutput::default();
+        provider.configure(&ChatSetting::Hooks, &mut out).unwrap();
+        let list = request(&out, "hooks/list");
+        assert_eq!(list["params"], json!({"cwds":["/wt/a"]}));
+        let loaded = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({"id":list["id"],"result":{"data":[{
+                "cwd":"/wt/a", "errors":[], "warnings":[], "hooks":[{
+                    "key":"hook-key", "currentHash":"sha256:reviewed", "eventName":"stop",
+                    "sourcePath":"/user/hooks.json", "enabled":true, "isManaged":false,
+                    "trustStatus":"untrusted", "handlerType":"command", "command":"wtm --cli agent event done --agent codex"
+                }]
+            }]}}),
+        );
+        assert!(loaded.writes.is_empty());
+        assert!(!snapshot.controls.hooks.as_ref().unwrap().loading);
+        let mut out = ProviderOutput::default();
+        provider
+            .configure(
+                &ChatSetting::Hook(HookSetting {
+                    key: "hook-key".into(),
+                    hash: "sha256:reviewed".into(),
+                    enabled: Some(true),
+                    trust: true,
+                }),
+                &mut out,
+            )
+            .unwrap();
+        let write = request(&out, "config/batchWrite");
+        assert_eq!(write["params"]["reloadUserConfig"], true);
+        let reloaded = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({"id":write["id"],"result":{}}),
+        );
+        request(&reloaded, "hooks/list");
+        assert!(snapshot.controls.hooks.as_ref().unwrap().loading);
+        assert!(!out.starts_turn && !reloaded.starts_turn);
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+
+        let mut trusted =
+            serde_json::to_value(&provider.controls.hooks.as_ref().unwrap().items[0]).unwrap();
+        trusted["trustStatus"] = json!("trusted");
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "id": request(&reloaded, "hooks/list")["id"],
+                "result": { "data": [{ "cwd": "/wt/a", "hooks": [trusted], "errors": [], "warnings": [] }] }
+            }),
+        );
+        assert_eq!(
+            snapshot.controls.hooks.as_ref().unwrap().items[0].trust_status,
+            "trusted"
+        );
+        assert!(!snapshot.controls.hooks.as_ref().unwrap().loading);
+
+        let mut out = ProviderOutput::default();
+        provider
+            .configure(
+                &ChatSetting::Hook(HookSetting {
+                    key: "hook-key".into(),
+                    hash: "sha256:reviewed".into(),
+                    enabled: Some(false),
+                    trust: false,
+                }),
+                &mut out,
+            )
+            .unwrap();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "id": request(&out, "config/batchWrite")["id"],
+                "error": { "code": -32000, "message": "Permission denied" }
+            }),
+        );
+        let hooks = snapshot.controls.hooks.as_ref().unwrap();
+        assert_eq!(hooks.error.as_deref(), Some("Permission denied"));
+        assert!(!hooks.loading);
+        assert!(hooks.items[0].enabled);
+    }
+
+    #[test]
+    fn hook_errors_are_visible_without_changing_conversation_status() {
+        let (mut provider, mut snapshot) = resumed();
+        for (code, message) in [(-32601, "unknown method"), (-32000, "Config is read-only")] {
+            let mut out = ProviderOutput::default();
+            provider.configure(&ChatSetting::Hooks, &mut out).unwrap();
+            let list = request(&out, "hooks/list");
+            feed(
+                &mut provider,
+                &mut snapshot,
+                json!({"id":list["id"],"error":{"code":code,"message":message}}),
+            );
+            let hooks = snapshot.controls.hooks.as_ref().unwrap();
+            assert!(!hooks.loading);
+            assert!(hooks.error.as_deref().unwrap().contains(if code == -32601 {
+                "update codex-cli"
+            } else {
+                message
+            }));
+            assert_eq!(snapshot.status, ChatStatus::Idle);
+        }
+        let mut out = ProviderOutput::default();
+        provider.configure(&ChatSetting::Hooks, &mut out).unwrap();
+        let list = request(&out, "hooks/list");
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": list["id"], "result": { "data": [] } }),
+        );
+        let hooks = snapshot.controls.hooks.as_ref().unwrap();
+        assert!(!hooks.loading);
+        assert!(hooks
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("did not return hooks"));
+        assert_eq!(snapshot.status, ChatStatus::Idle);
     }
 
     #[test]

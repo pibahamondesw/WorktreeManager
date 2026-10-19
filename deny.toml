@@ -1,3 +1,9 @@
+[graph]
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]
+
 [advisories]
 ignore = [
   { id = "RUSTSEC-2026-0194", reason = "Tauri's plist 1.8 dependency constrains quick-xml to 0.38" },

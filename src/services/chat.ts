@@ -79,6 +79,7 @@ type CommandAction =
   | { kind: "compact" }
   | { kind: "review" }
   | { kind: "clear" }
+  | { kind: "hooks" }
   | { kind: "status" };
 
 export interface CommandOption {
@@ -103,12 +104,37 @@ export interface ChatControls {
   todos: TodoItem[];
   context: { used: number; max: number } | null;
   usage: PlanUsage | null;
+  hooks?: HookControls;
+}
+
+export interface HookOption {
+  key: string;
+  eventName: string;
+  sourcePath: string;
+  currentHash: string;
+  enabled: boolean;
+  isManaged: boolean;
+  trustStatus: string;
+  matcher: string | null;
+  handlerType: string;
+  command: string | null;
+  server: string | null;
+  tool: string | null;
+}
+
+export interface HookControls {
+  items: HookOption[];
+  loading: boolean;
+  error: string | null;
+  warnings: string[];
 }
 
 export type ChatSetting =
   | { kind: "model"; value: string }
   | { kind: "effort"; value: string }
-  | { kind: "mode"; value: string };
+  | { kind: "mode"; value: string }
+  | { kind: "hooks" }
+  | { kind: "hook"; value: { key: string; hash: string; enabled?: boolean; trust?: boolean } };
 
 export interface FileMatch {
   path: string;

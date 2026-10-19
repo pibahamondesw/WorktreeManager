@@ -8,6 +8,7 @@ mod checkpoint_git;
 mod checkpoints;
 pub(crate) mod claude;
 pub(crate) mod codex;
+mod codex_hooks;
 
 pub use codex::purge_stale_chat_images;
 mod conversations;

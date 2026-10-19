@@ -328,7 +328,7 @@ fn run_cli(
         }
     };
     if arguments.method == "agent.event" {
-        report_agent_event(arguments, read_hook_payload());
+        report_agent_event(arguments, read_hook_payload(), execute);
         return Some(0);
     }
     match execute(arguments) {
@@ -354,7 +354,15 @@ fn read_hook_payload() -> Value {
 }
 
 fn agent_event_cwd(payload: &Value) -> Option<String> {
-    if payload["stop_hook_active"] == true {
+    if payload["stop_hook_active"] == true
+        || payload["agent_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+        || matches!(
+            payload["hook_event_name"].as_str(),
+            Some("SubagentStart" | "SubagentStop")
+        )
+    {
         return None;
     }
     payload["cwd"].as_str().map(str::to_owned).or_else(|| {
@@ -418,7 +426,11 @@ fn agent_event_origin(env: impl Fn(&str) -> Option<String>) -> Map<String, Value
     origin
 }
 
-fn report_agent_event(mut arguments: Arguments, payload: Value) {
+fn report_agent_event(
+    mut arguments: Arguments,
+    payload: Value,
+    deliver: impl FnOnce(Arguments) -> Result<Value, String>,
+) {
     let origin = agent_event_origin(|key| std::env::var(key).ok());
     let Some(cwd) = agent_event_cwd(&payload) else {
         return;
@@ -431,10 +443,7 @@ fn report_agent_event(mut arguments: Arguments, payload: Value) {
     arguments.params.insert("cwd".into(), json!(cwd));
     arguments.params.extend(origin);
     arguments.params.extend(agent_event_kind(&payload));
-    let delivered = execute(arguments).is_ok_and(|response| response["ok"] == true);
-    if let Some(sound) = agent_alerts::default_sound(&state).filter(|_| !delivered) {
-        agent_alerts::play_sound(sound);
-    }
+    let _ = deliver(arguments);
 }
 
 pub fn run_if_requested() -> Option<i32> {
@@ -636,6 +645,108 @@ mod tests {
         );
         assert!(agent_event_cwd(&json!({ "cwd": "/wt", "stop_hook_active": true })).is_none());
         assert!(agent_event_cwd(&Value::Null).is_some());
+    }
+
+    #[test]
+    fn subagent_hooks_never_reach_the_app() {
+        for agent in ["codex", "claude"] {
+            for (event, state) in [
+                ("UserPromptSubmit", "working"),
+                ("PostToolUse", "working"),
+                ("PreToolUse", "waiting"),
+                ("PermissionRequest", "waiting"),
+                ("Stop", "done"),
+                ("SubagentStart", "working"),
+                ("SubagentStop", "done"),
+            ] {
+                let arguments =
+                    parse(&args(&format!("agent event {state} --agent {agent}"))).unwrap();
+                let payload = json!({
+                    "cwd": "/wt/shared",
+                    "session_id": "parent-session",
+                    "agent_id": "child-agent",
+                    "hook_event_name": event,
+                    "tool_name": "request_user_input_async"
+                });
+                report_agent_event(arguments, payload, |_| panic!("forwarded {agent} {event}"));
+            }
+        }
+        for event in ["SubagentStart", "SubagentStop"] {
+            let arguments = parse(&args("agent event done --agent codex")).unwrap();
+            let payload = json!({ "hook_event_name": event });
+            report_agent_event(arguments, payload, |_| panic!("forwarded {event}"));
+        }
+    }
+
+    #[test]
+    fn agent_hook_cli_reads_stdin_and_ignores_subagents() {
+        if std::env::var_os("WTM_TEST_AGENT_HOOK").is_some() {
+            assert_eq!(
+                run_cli(
+                    "wtm",
+                    args("agent event working --agent codex"),
+                    open_application
+                ),
+                Some(0)
+            );
+            return;
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "cli::tests::agent_hook_cli_reads_stdin_and_ignores_subagents",
+            ])
+            .env("WTM_TEST_AGENT_HOOK", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(
+            br#"{"cwd":"/tmp/wtm-ignored-subagent","agent_id":"child","hook_event_name":"PostToolUse"}"#
+        ).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(0));
+    }
+
+    #[test]
+    fn main_thread_hooks_preserve_questions_and_survive_delivery_failures() {
+        for agent in ["codex", "claude"] {
+            for (event, state, tool) in [
+                ("UserPromptSubmit", "working", ""),
+                ("PostToolUse", "working", "Bash"),
+                ("PreToolUse", "waiting", "request_user_input_async"),
+                ("PermissionRequest", "waiting", "Bash"),
+                ("Stop", "done", ""),
+            ] {
+                let arguments =
+                    parse(&args(&format!("agent event {state} --agent {agent}"))).unwrap();
+                let payload = json!({
+                    "cwd": "/wt/shared",
+                    "session_id": "parent-session",
+                    "agent_id": null,
+                    "hook_event_name": event,
+                    "tool_name": tool
+                });
+                let mut delivered = false;
+                report_agent_event(arguments, payload, |arguments| {
+                    delivered = true;
+                    assert_eq!(arguments.params["cwd"], "/wt/shared");
+                    assert_eq!(arguments.params["state"], state);
+                    assert_eq!(arguments.params["agent"], agent);
+                    assert_eq!(
+                        arguments.params.contains_key("prompt"),
+                        event == "UserPromptSubmit"
+                    );
+                    assert_eq!(
+                        arguments.params.contains_key("asyncQuestion"),
+                        tool == "request_user_input_async"
+                    );
+                    Err("App unavailable".into())
+                });
+                assert!(delivered);
+            }
+        }
     }
 
     #[test]

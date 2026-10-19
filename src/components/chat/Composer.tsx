@@ -36,6 +36,7 @@ interface ComposerActions {
   review: (target: ReviewTarget) => Promise<void>;
   startFresh: () => Promise<void>;
   showUsage: () => void;
+  showHooks: () => void;
 }
 
 interface ComposerProps {
@@ -147,7 +148,7 @@ export function Composer({
     }
   };
 
-  const configure = (setting: ChatSetting["kind"], value: string) =>
+  const configure = (setting: "model" | "effort" | "mode", value: string) =>
     run(() => actions.configure({ kind: setting, value } as ChatSetting));
 
   const openPicker = (next: Picker) => {
@@ -165,6 +166,7 @@ export function Composer({
     else if (action.kind === "compact") void run(actions.compact);
     else if (action.kind === "review") openPicker("review");
     else if (action.kind === "status") actions.showUsage();
+    else if (action.kind === "hooks") actions.showHooks();
     else void run(actions.startFresh);
   };
 
@@ -247,6 +249,7 @@ export function Composer({
       else if (local.kind === "reviewPicker") openPicker("review");
       else if (local.kind === "review") void run(() => actions.review(local.target));
       else if (local.kind === "status") actions.showUsage();
+      else if (local.kind === "hooks") actions.showHooks();
       else void run(actions.startFresh);
       return;
     }

@@ -620,6 +620,9 @@ impl ChatProvider for ClaudeProvider {
 
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String> {
         match setting {
+            ChatSetting::Hooks | ChatSetting::Hook(_) => {
+                return Err("Hook management is only available for Codex".into());
+            }
             ChatSetting::Model(model) => {
                 self.control(
                     out,
@@ -1755,6 +1758,9 @@ mod tests {
         let mut out = ProviderOutput::default();
         provider.compact(&mut out).unwrap();
         assert_eq!(written(&out)[0]["message"]["content"], "/compact");
+        let mut out = ProviderOutput::default();
+        assert!(provider.configure(&ChatSetting::Hooks, &mut out).is_err());
+        assert!(out.writes.is_empty());
     }
 
     #[test]

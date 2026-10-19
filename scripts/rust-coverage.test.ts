@@ -160,6 +160,7 @@ describe("Rust coverage pipeline", () => {
         "--message-format=json-render-diagnostics",
       ]);
       expect(commands.find((call) => call.tool === "unit tests")?.args).toEqual([
+        "cli::tests::",
         "commands::claude_config::tests::",
         "commands::export::tests::",
         "commands::github::tests::",
