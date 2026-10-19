@@ -59,8 +59,3 @@ pub fn cli_available(bin: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-
-/// True if `claude` resolves after the same PATH/profile prelude as launch scripts.
-pub fn claude_cli_available() -> bool {
-    cli_available("claude")
-}

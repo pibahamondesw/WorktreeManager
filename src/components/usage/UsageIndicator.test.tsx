@@ -2,8 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ClaudeUsageIndicator } from "./ClaudeUsageIndicator";
-import { CodexUsageIndicator } from "./CodexUsageIndicator";
+import { AgentUsageIndicator } from "./AgentUsageIndicator";
 import { CachedUsage } from "../../hooks/useCachedUsage";
 import { UsageIndicator } from "./UsageIndicator";
 
@@ -40,16 +39,14 @@ describe.each([
   {
     label: "Claude",
     agentLabel: "Claude Code",
-    Component: ClaudeUsageIndicator,
-    command: "claude_cached_usage",
+    agent: "claude" as const,
   },
   {
     label: "Codex",
     agentLabel: "Codex",
-    Component: CodexUsageIndicator,
-    command: "codex_cached_usage",
+    agent: "codex" as const,
   },
-])("$agentLabel usage indicator", ({ label, agentLabel, Component, command }) => {
+])("$agentLabel usage indicator", ({ label, agentLabel, agent }) => {
   function snapshot(percent = 25): CachedUsage {
     const value = usageSnapshot(percent);
     if (label === "Codex") {
@@ -60,7 +57,7 @@ describe.each([
   }
 
   async function mount() {
-    await act(async () => render(<Component />));
+    await act(async () => render(<AgentUsageIndicator agent={agent} />));
     return screen.getByRole("button", { name: `${agentLabel} usage and limits` });
   }
 
@@ -113,7 +110,7 @@ describe.each([
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     await act(async () => fireEvent.click(trigger));
     expect(mocks.invoke).toHaveBeenCalledTimes(2);
-    expect(mocks.invoke).toHaveBeenLastCalledWith(command);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("agent_cached_usage", { agent });
     expect(screen.getByRole("dialog", { name: `${agentLabel} usage` })).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "5-hour limit" })).toHaveAttribute(
       "aria-valuenow",

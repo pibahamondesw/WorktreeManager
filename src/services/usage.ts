@@ -38,8 +38,6 @@ export function formatReset(resetsAt: number, now = Date.now()): string {
   return `Resets ${day}, ${time}`;
 }
 
-export const CODEX_PLAN_URL = "https://learn.chatgpt.com/docs/pricing";
-
 export function formatPlanName(plan: string): string {
   const names: Record<string, string> = { prolite: "ProLite", promax: "ProMax" };
   return plan

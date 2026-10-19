@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../ui/Button";
 import { AgentId } from "../../types";
+import { AGENT_IDS, AGENTS } from "../../services/agents";
 import {
   AgentAlertSettings,
   AgentHooksStatus,
@@ -18,16 +19,6 @@ interface AgentAlertSettingsPanelProps {
   alerts: AgentAlertSettings;
   onAlertsChange: (alerts: AgentAlertSettings) => void;
 }
-
-const AGENTS: { id: AgentId; label: string; config: string; trust?: string }[] = [
-  { id: "claude", label: "Claude Code", config: "~/.claude/settings.json" },
-  {
-    id: "codex",
-    label: "Codex",
-    config: "~/.codex/hooks.json",
-    trust: "Codex runs new or changed hooks only once trusted: run /hooks in codex and trust them.",
-  },
-];
 
 const ACTION_LABELS: Record<HooksState, string> = {
   missing: "Install hooks",
@@ -89,27 +80,27 @@ export function AgentAlertSettingsPanel({
           finishes in embedded terminals and editors, Cursor and external terminals. Embedded chats
           report it on their own. Your other hooks are kept as they are.
         </p>
-        {AGENTS.map((agent) => (
+        {AGENT_IDS.map((id) => (
           <div
-            key={agent.id}
+            key={id}
             className="flex items-center justify-between gap-3 rounded-lg bg-bg-tertiary border border-border px-3 py-2"
           >
             <div className="min-w-0">
-              <p className="text-sm text-text-primary">{agent.label}</p>
+              <p className="text-sm text-text-primary">{AGENTS[id].productName}</p>
               <p className="text-xs font-mono text-text-muted truncate select-text">
-                {agent.config}
+                {AGENTS[id].alertHooksConfig}
               </p>
-              {agent.trust && hooks?.[agent.id] !== "missing" && (
-                <p className="text-xs text-text-muted select-text">{agent.trust}</p>
+              {AGENTS[id].alertHooksTrust && hooks?.[id] !== "missing" && (
+                <p className="text-xs text-text-muted select-text">{AGENTS[id].alertHooksTrust}</p>
               )}
             </div>
             <Button
-              variant={hooks?.[agent.id] === "installed" ? "ghost" : "primary"}
+              variant={hooks?.[id] === "installed" ? "ghost" : "primary"}
               disabled={!hooks || busy !== null}
-              loading={busy === agent.id}
-              onClick={() => void toggleHooks(agent.id)}
+              loading={busy === id}
+              onClick={() => void toggleHooks(id)}
             >
-              {ACTION_LABELS[hooks?.[agent.id] ?? "missing"]}
+              {ACTION_LABELS[hooks?.[id] ?? "missing"]}
             </Button>
           </div>
         ))}

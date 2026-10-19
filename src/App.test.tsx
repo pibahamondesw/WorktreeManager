@@ -510,9 +510,8 @@ describe("navigation history shortcuts", () => {
 it("keeps agent usage out of the main app chrome", () => {
   const view = render(<App />);
   expect(view.queryByRole("button", { name: "Claude Code usage and limits" })).toBeNull();
-  expect(mocks.invoke).not.toHaveBeenCalledWith("claude_cached_usage");
   expect(view.queryByRole("button", { name: "Codex usage and limits" })).toBeNull();
-  expect(mocks.invoke).not.toHaveBeenCalledWith("codex_cached_usage");
+  expect(mocks.invoke).not.toHaveBeenCalledWith("agent_cached_usage", expect.anything());
 });
 
 it.each([

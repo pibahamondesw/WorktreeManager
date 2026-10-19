@@ -1,33 +1,45 @@
+//! Codex's usage source: the last rate limits recorded in its newest session log.
+
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
-use serde::Serialize;
 use serde_json::Value;
-use tauri::State;
 
-use super::chat::{unix_seconds, window_label, PlanUsage, UsageWindow};
+use super::agent_usage::{CachedUsage, UsageFile, UsageSource};
+use super::chat::claude::unix_seconds;
+use super::chat::codex::window_label;
+use super::chat::{PlanUsage, UsageWindow};
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CachedCodexUsage {
-    usage: Option<PlanUsage>,
-    updated_at: Option<i64>,
+pub(crate) struct CodexUsage {
+    sessions: Option<PathBuf>,
 }
 
-#[derive(Default)]
-pub struct CodexUsageCache(Arc<Mutex<Option<UsageFile>>>);
-
-struct UsageFile {
-    path: PathBuf,
-    modified: SystemTime,
-    len: u64,
-    snapshot: CachedCodexUsage,
+impl CodexUsage {
+    pub(crate) fn new(sessions: Option<PathBuf>) -> Self {
+        Self { sessions }
+    }
 }
 
-fn parse_usage_event(line: &[u8], now: i64) -> Option<CachedCodexUsage> {
+impl UsageSource for CodexUsage {
+    fn latest(&self) -> Result<Option<UsageFile>, String> {
+        let root = self
+            .sessions
+            .as_ref()
+            .ok_or("Could not locate Codex usage cache")?;
+        newest_session(root)?
+            .map(|(path, metadata)| UsageFile::of(path, &metadata))
+            .transpose()
+            .map_err(|_| "Could not read Codex usage cache".into())
+    }
+
+    fn read(&self, file: &UsageFile, now: i64) -> Result<CachedUsage, String> {
+        read_last_usage(&file.path, file.len, now)
+    }
+}
+
+fn parse_usage_event(line: &[u8], now: i64) -> Option<CachedUsage> {
     let event: Value = serde_json::from_slice(line).ok()?;
     let payload = &event["payload"];
     let limits = &payload["rate_limits"];
@@ -59,7 +71,7 @@ fn parse_usage_event(line: &[u8], now: i64) -> Option<CachedCodexUsage> {
             })
         })
         .collect();
-    Some(CachedCodexUsage {
+    Some(CachedUsage {
         usage: Some(PlanUsage {
             supported: true,
             plan: limits["plan_type"].as_str().map(String::from),
@@ -107,7 +119,7 @@ fn newest_session(root: &Path) -> Result<Option<(PathBuf, fs::Metadata)>, String
     Ok(newest)
 }
 
-fn read_last_usage(path: &Path, len: u64, now: i64) -> Result<CachedCodexUsage, String> {
+fn read_last_usage(path: &Path, len: u64, now: i64) -> Result<CachedUsage, String> {
     let mut file = File::open(path).map_err(|_| "Could not read Codex usage cache")?;
     let mut offset = len;
     let mut remainder = Vec::new();
@@ -129,67 +141,12 @@ fn read_last_usage(path: &Path, len: u64, now: i64) -> Result<CachedCodexUsage, 
             }
         }
     }
-    Ok(CachedCodexUsage::default())
-}
-
-fn read_cached_usage(
-    root: &Path,
-    cached: &mut Option<UsageFile>,
-    now: i64,
-) -> Result<CachedCodexUsage, String> {
-    let Some((path, metadata)) = newest_session(root)? else {
-        *cached = None;
-        return Ok(CachedCodexUsage::default());
-    };
-    let modified = metadata
-        .modified()
-        .map_err(|_| "Could not read Codex usage cache")?;
-    if !cached.as_ref().is_some_and(|file| {
-        file.path == path && file.modified == modified && file.len == metadata.len()
-    }) {
-        let snapshot = read_last_usage(&path, metadata.len(), now)?;
-        *cached = Some(UsageFile {
-            path,
-            modified,
-            len: metadata.len(),
-            snapshot,
-        });
-    }
-    let mut snapshot = cached.as_ref().unwrap().snapshot.clone();
-    if let Some(usage) = &mut snapshot.usage {
-        usage
-            .windows
-            .retain(|window| window.resets_at.is_some_and(|at| at > now / 1000));
-    }
-    Ok(snapshot)
-}
-
-#[tauri::command]
-pub async fn codex_cached_usage(
-    cache: State<'_, CodexUsageCache>,
-) -> Result<CachedCodexUsage, String> {
-    let home = std::env::var_os("CODEX_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
-        .ok_or("Could not locate Codex usage cache")?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "Could not read current time")?
-        .as_millis() as i64;
-    let cache = Arc::clone(&cache.0);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut cached = cache
-            .lock()
-            .map_err(|_| "Could not read Codex usage cache")?;
-        read_cached_usage(&home.join("sessions"), &mut cached, now)
-    })
-    .await
-    .map_err(|_| "Could not read Codex usage cache")?
+    Ok(CachedUsage::default())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::agent_usage::read_cached;
     use super::*;
     use serde_json::json;
     use std::io::Write;
@@ -211,6 +168,10 @@ mod tests {
                 }
             }
         })
+    }
+
+    fn source(root: &Path) -> CodexUsage {
+        CodexUsage::new(Some(root.to_path_buf()))
     }
 
     struct Sessions(PathBuf);
@@ -316,31 +277,31 @@ mod tests {
         let sessions = Sessions::new();
         let mut cached = None;
         assert_eq!(
-            read_cached_usage(&sessions.0, &mut cached, NOW).unwrap(),
-            CachedCodexUsage::default()
+            read_cached(&source(&sessions.0), &mut cached, NOW).unwrap(),
+            CachedUsage::default()
         );
         sessions.file("old.jsonl", &event(10.0).to_string(), 1);
         let path = sessions.file("new.jsonl", &event(85.0).to_string(), 2);
-        let snapshot = read_cached_usage(&sessions.0, &mut cached, NOW).unwrap();
+        let snapshot = read_cached(&source(&sessions.0), &mut cached, NOW).unwrap();
         assert_eq!(snapshot.usage.unwrap().windows[0].used_percent, 85.0);
         let mut file = File::options().append(true).open(&path).unwrap();
         writeln!(file, "\n{}", event(95.0)).unwrap();
-        let snapshot = read_cached_usage(&sessions.0, &mut cached, NOW).unwrap();
+        let snapshot = read_cached(&source(&sessions.0), &mut cached, NOW).unwrap();
         assert_eq!(snapshot.usage.unwrap().windows[0].used_percent, 95.0);
-        let expired = read_cached_usage(&sessions.0, &mut cached, NOW + 3600_000).unwrap();
+        let expired = read_cached(&source(&sessions.0), &mut cached, NOW + 3_600_000).unwrap();
         assert_eq!(expired.usage.unwrap().windows.len(), 1);
         fs::write(&path, "{ malformed secret").unwrap();
         assert_eq!(
-            read_cached_usage(&sessions.0, &mut cached, NOW).unwrap(),
-            CachedCodexUsage::default()
+            read_cached(&source(&sessions.0), &mut cached, NOW).unwrap(),
+            CachedUsage::default()
         );
         fs::remove_file(path).unwrap();
-        let fallback = read_cached_usage(&sessions.0, &mut cached, NOW).unwrap();
+        let fallback = read_cached(&source(&sessions.0), &mut cached, NOW).unwrap();
         assert_eq!(fallback.usage.unwrap().windows[0].used_percent, 10.0);
         fs::remove_file(sessions.0.join("2026/10/07/old.jsonl")).unwrap();
         assert_eq!(
-            read_cached_usage(&sessions.0, &mut cached, NOW).unwrap(),
-            CachedCodexUsage::default()
+            read_cached(&source(&sessions.0), &mut cached, NOW).unwrap(),
+            CachedUsage::default()
         );
     }
 
@@ -349,19 +310,20 @@ mod tests {
         let sessions = Sessions::new();
         sessions.file("old.jsonl", &event(85.0).to_string(), 1);
         sessions.file("new.jsonl", "", 2);
-        let snapshot = read_cached_usage(&sessions.0, &mut None, NOW).unwrap();
-        assert_eq!(snapshot, CachedCodexUsage::default());
+        let snapshot = read_cached(&source(&sessions.0), &mut None, NOW).unwrap();
+        assert_eq!(snapshot, CachedUsage::default());
     }
 
     #[test]
     fn missing_sessions_are_unavailable_and_read_failures_are_sanitized() {
         let sessions = Sessions::new();
-        let snapshot = read_cached_usage(&sessions.0.join("missing"), &mut None, NOW).unwrap();
-        assert_eq!(snapshot, CachedCodexUsage::default());
+        let snapshot = read_cached(&source(&sessions.0.join("missing")), &mut None, NOW).unwrap();
+        assert_eq!(snapshot, CachedUsage::default());
         let path = sessions.file("not-a-directory", "sensitive content", 1);
         assert_eq!(
-            read_cached_usage(&path, &mut None, NOW).unwrap_err(),
+            read_cached(&source(&path), &mut None, NOW).unwrap_err(),
             "Could not read Codex sessions"
         );
+        assert!(read_cached(&CodexUsage::new(None), &mut None, NOW).is_err());
     }
 }

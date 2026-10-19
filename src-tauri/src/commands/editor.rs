@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::agents::Agents;
 use super::{shell_env, workspace};
 
 #[derive(serde::Serialize)]
@@ -150,8 +151,8 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
         "vscode-web" => Ok(true),
         "opencode" => Ok(gui_app_exists("OpenCode")),
         "opencode-web" => Ok(shell_env::cli_available("opencode")),
-        "claude-code" => Ok(shell_env::claude_cli_available()),
-        "codex" => Ok(shell_env::cli_available("codex")),
+        "claude-code" => Ok(Agents::default().get("claude")?.installed()),
+        "codex" => Ok(Agents::default().get("codex")?.installed()),
         "zed" => Ok(gui_app_exists("Zed")),
         _ => Err(format!("Unknown editor: {}", editor)),
     }
@@ -230,5 +231,15 @@ mod tests {
             check_app_installed("opencode-web".into()),
             Ok(shell_env::cli_available("opencode"))
         );
+    }
+
+    #[test]
+    fn embedded_agents_are_installed_when_their_cli_resolves() {
+        for (editor, cli) in [("claude-code", "claude"), ("codex", "codex")] {
+            assert_eq!(
+                check_app_installed(editor.into()),
+                Ok(shell_env::cli_available(cli))
+            );
+        }
     }
 }

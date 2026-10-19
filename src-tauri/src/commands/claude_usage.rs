@@ -1,44 +1,63 @@
+//! Claude Code's usage source: the plan utilization it caches in `~/.claude.json`.
+
 use std::fs;
-use std::path::Path;
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
 
-use serde::Serialize;
 use serde_json::Value;
-use tauri::State;
 
-use super::chat::{usage_windows, PlanUsage};
+use super::agent_usage::{CachedUsage, UsageFile, UsageSource};
+use super::chat::claude::usage_windows;
+use super::chat::PlanUsage;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CachedClaudeUsage {
-    usage: Option<PlanUsage>,
-    updated_at: Option<i64>,
+const READ_ERROR: &str = "Could not read Claude Code usage cache";
+
+pub(crate) struct ClaudeUsage {
+    config: Option<PathBuf>,
 }
 
-#[derive(Default)]
-pub struct ClaudeUsageCache(Mutex<Option<UsageFile>>);
-
-struct UsageFile {
-    modified: SystemTime,
-    len: u64,
-    snapshot: CachedClaudeUsage,
+impl ClaudeUsage {
+    pub(crate) fn new(config: Option<PathBuf>) -> Self {
+        Self { config }
+    }
 }
 
-fn parse_cached_usage(root: &Value, now: i64) -> CachedClaudeUsage {
+impl UsageSource for ClaudeUsage {
+    fn latest(&self) -> Result<Option<UsageFile>, String> {
+        let path = self
+            .config
+            .as_ref()
+            .ok_or("Could not locate Claude Code usage cache")?;
+        match fs::metadata(path) {
+            Ok(metadata) => UsageFile::of(path.clone(), &metadata)
+                .map(Some)
+                .map_err(|_| READ_ERROR.into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(READ_ERROR.into()),
+        }
+    }
+
+    fn read(&self, file: &UsageFile, now: i64) -> Result<CachedUsage, String> {
+        let content = fs::read(&file.path).map_err(|_| READ_ERROR)?;
+        let root: Value = serde_json::from_slice(&content)
+            .map_err(|_| "Could not parse Claude Code usage cache")?;
+        Ok(parse_cached_usage(&root, now))
+    }
+}
+
+fn parse_cached_usage(root: &Value, now: i64) -> CachedUsage {
     let cache = &root["cachedUsageUtilization"];
     let account = root["oauthAccount"]["accountUuid"].as_str();
     if account.is_none() || account == Some("") || account != cache["accountUuid"].as_str() {
-        return CachedClaudeUsage::default();
+        return CachedUsage::default();
     }
     let Some(updated_at) = cache["fetchedAtMs"]
         .as_i64()
         .filter(|at| *at > 0 && *at <= now)
     else {
-        return CachedClaudeUsage::default();
+        return CachedUsage::default();
     };
     if !cache["utilization"].is_object() {
-        return CachedClaudeUsage::default();
+        return CachedUsage::default();
     }
     let windows = usage_windows(&cache["utilization"])
         .into_iter()
@@ -47,7 +66,7 @@ fn parse_cached_usage(root: &Value, now: i64) -> CachedClaudeUsage {
                 && window.resets_at.is_some_and(|at| at > now / 1000)
         })
         .collect();
-    CachedClaudeUsage {
+    CachedUsage {
         usage: Some(PlanUsage {
             supported: true,
             windows,
@@ -57,63 +76,9 @@ fn parse_cached_usage(root: &Value, now: i64) -> CachedClaudeUsage {
     }
 }
 
-fn read_cached_usage(
-    path: &Path,
-    cached: &mut Option<UsageFile>,
-    now: i64,
-) -> Result<CachedClaudeUsage, String> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            *cached = None;
-            return Ok(CachedClaudeUsage::default());
-        }
-        Err(_) => return Err("Could not read Claude Code usage cache".into()),
-    };
-    let modified = metadata
-        .modified()
-        .map_err(|_| "Could not read Claude Code usage cache")?;
-    if !cached
-        .as_ref()
-        .is_some_and(|file| file.modified == modified && file.len == metadata.len())
-    {
-        let content = fs::read(path).map_err(|_| "Could not read Claude Code usage cache")?;
-        let root: Value = serde_json::from_slice(&content)
-            .map_err(|_| "Could not parse Claude Code usage cache")?;
-        *cached = Some(UsageFile {
-            modified,
-            len: metadata.len(),
-            snapshot: parse_cached_usage(&root, now),
-        });
-    }
-    let mut snapshot = cached.as_ref().unwrap().snapshot.clone();
-    if let Some(usage) = &mut snapshot.usage {
-        usage
-            .windows
-            .retain(|window| window.resets_at.is_some_and(|at| at > now / 1000));
-    }
-    Ok(snapshot)
-}
-
-#[tauri::command]
-pub fn claude_cached_usage(
-    cache: State<'_, ClaudeUsageCache>,
-) -> Result<CachedClaudeUsage, String> {
-    let home = std::env::var_os("HOME").ok_or("Could not locate Claude Code usage cache")?;
-    let path = Path::new(&home).join(".claude.json");
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "Could not read current time")?
-        .as_millis() as i64;
-    let mut cached = cache
-        .0
-        .lock()
-        .map_err(|_| "Could not read Claude Code usage cache")?;
-    read_cached_usage(&path, &mut cached, now)
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::agent_usage::read_cached;
     use super::*;
     use serde_json::json;
 
@@ -168,8 +133,13 @@ mod tests {
                 root["cachedUsageUtilization"]["fetchedAtMs"] = Value::Null;
                 root
             },
+            {
+                let mut root = config();
+                root["cachedUsageUtilization"]["utilization"] = Value::Null;
+                root
+            },
         ] {
-            assert_eq!(parse_cached_usage(&root, NOW), CachedClaudeUsage::default());
+            assert_eq!(parse_cached_usage(&root, NOW), CachedUsage::default());
         }
     }
 
@@ -189,35 +159,49 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wtm-usage-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join(".claude.json");
+        let source = ClaudeUsage::new(Some(path.clone()));
         let mut cached = None;
         assert_eq!(
-            read_cached_usage(&path, &mut cached, NOW).unwrap(),
-            CachedClaudeUsage::default()
+            read_cached(&source, &mut cached, NOW).unwrap(),
+            CachedUsage::default()
         );
         fs::write(&path, config().to_string()).unwrap();
-        let first = read_cached_usage(&path, &mut cached, NOW).unwrap();
+        let first = read_cached(&source, &mut cached, NOW).unwrap();
         assert_eq!(first.usage.unwrap().windows[0].used_percent, 85.5);
         let mut root = config();
         root["cachedUsageUtilization"]["utilization"]["five_hour"]["utilization"] = json!(95);
         fs::write(&path, root.to_string()).unwrap();
-        let changed = read_cached_usage(&path, &mut cached, NOW).unwrap();
+        let changed = read_cached(&source, &mut cached, NOW).unwrap();
         assert_eq!(changed.usage.unwrap().windows[0].used_percent, 95.0);
-        let expired = read_cached_usage(&path, &mut cached, 1_790_809_800_000).unwrap();
+        let expired = read_cached(&source, &mut cached, 1_790_809_800_000).unwrap();
         assert_eq!(expired.usage.unwrap().windows.len(), 1);
         fs::write(&path, "{ malformed secret").unwrap();
         assert_eq!(
-            read_cached_usage(&path, &mut cached, NOW).unwrap_err(),
+            read_cached(&source, &mut cached, NOW).unwrap_err(),
             "Could not parse Claude Code usage cache"
         );
         fs::write(&path, config().to_string()).unwrap();
-        assert!(read_cached_usage(&path, &mut cached, NOW)
+        assert!(read_cached(&source, &mut cached, NOW)
             .unwrap()
             .usage
             .is_some());
         fs::remove_file(&path).unwrap();
         assert_eq!(
-            read_cached_usage(&path, &mut cached, NOW).unwrap(),
-            CachedClaudeUsage::default()
+            read_cached(&source, &mut cached, NOW).unwrap(),
+            CachedUsage::default()
+        );
+        fs::create_dir_all(&path).unwrap();
+        assert_eq!(
+            read_cached(&source, &mut cached, NOW).unwrap_err(),
+            READ_ERROR
+        );
+        assert!(read_cached(&ClaudeUsage::new(None), &mut cached, NOW).is_err());
+        let plain = dir.join("plain");
+        fs::write(&plain, "").unwrap();
+        let below_a_file = ClaudeUsage::new(Some(plain.join(".claude.json")));
+        assert_eq!(
+            read_cached(&below_a_file, &mut None, NOW).unwrap_err(),
+            READ_ERROR
         );
         fs::remove_dir_all(&dir).unwrap();
     }

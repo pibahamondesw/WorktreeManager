@@ -4,6 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use serde_json::{json, Value};
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 
+use super::super::agents::{claude::Claude, codex::Codex, AgentAdapter, LaunchContext};
 use super::history::{chat_history, chat_rewind_preview, HistoryAction};
 use super::*;
 
@@ -14,6 +15,15 @@ def config():
     return json.loads((root / 'control.json').read_text())
 def send(message):
     print(json.dumps(message), flush=True)
+def log(name, entry):
+    with open(root / name, 'a') as f:
+        f.write(entry.rstrip('\n') + '\n')
+log('argv.jsonl', json.dumps(sys.argv[1:]))
+if '--session-id' in sys.argv and 'wm-claude-probe-' in str(pathlib.Path.cwd()):
+    probe = root / 'agent-state/.claude/projects/probe'
+    probe.mkdir(parents=True, exist_ok=True)
+    session = sys.argv[sys.argv.index('--session-id') + 1]
+    (probe / (session + '.jsonl')).write_text(json.dumps({'cwd': str(pathlib.Path.cwd())}))
 def thread(identifier, count=2):
     return {'id': identifier, 'status': {'type': 'idle'}, 'turns': [
         {'id': 't' + str(i), 'items': [{'type': 'userMessage', 'id': 'u' + str(i),
@@ -25,6 +35,7 @@ if '--version' in sys.argv:
     print(config().get('version', '2.1.295') + ' (test agent)', flush=True)
     sys.exit(config().get('version_exit', 0))
 for line in sys.stdin:
+    log('requests.jsonl', line)
     message = json.loads(line)
     settings = config()
     if message.get('type') == 'control_request':
@@ -41,6 +52,9 @@ for line in sys.stdin:
         send({'type': 'result', 'is_error': False})
     elif 'method' in message and 'id' in message:
         method = message['method']
+        if settings.get('fail_method') == method:
+            send({'id': message['id'], 'error': {'message': 'test ' + method + ' failed'}})
+            continue
         if method == 'thread/fork':
             (root / 'fork-entered').write_text('ready')
             while config().get('hold_fork') and not (root / 'release-fork').exists():
@@ -53,6 +67,8 @@ for line in sys.stdin:
             result = {'thread': thread('fork', 1)}
         elif method in ['thread/start', 'thread/resume']:
             result = {'thread': thread(message.get('params', {}).get('threadId', 'fresh'), 0 if method == 'thread/start' else 2)}
+        elif method == 'thread/list':
+            result = {'data': [{'id': 'parent', 'name': 'Parent thread', 'updatedAt': 5}]}
         elif method == 'account/read':
             result = {'account': {}}
         elif method == 'turn/start':
@@ -88,7 +104,7 @@ impl Fixture {
         let transcripts = home.join(".claude/projects/fixture");
         fs::create_dir_all(&transcripts).unwrap();
         fs::write(transcripts.join("parent.jsonl"), [
-            json!({"type":"user", "uuid":"u1", "parentUuid":null, "message":{"content":"first"}}),
+            json!({"type":"user", "uuid":"u1", "parentUuid":null, "cwd":repositories.folders[0], "message":{"content":"first"}}),
             json!({"type":"assistant", "uuid":"a1", "parentUuid":"u1", "message":{"id":"a1", "content":[{"type":"text", "text":"answer"}]}}),
             json!({"type":"user", "uuid":"u2", "parentUuid":"a1", "message":{"content":"second"}}),
         ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
@@ -100,12 +116,7 @@ impl Fixture {
         repositories.store.bind("parent", "u2", &before).unwrap();
         fs::write(repositories.file(0, "file.txt"), "agent changes").unwrap();
         fs::write(repositories.file(1, "file.txt"), "peer changes").unwrap();
-        let runtime = AgentRuntime {
-            claude: agent.to_string_lossy().into_owned(),
-            codex: agent.to_string_lossy().into_owned(),
-            home: Some(home),
-            history_timeout: Duration::from_secs(10),
-        };
+        let agents = fixture_agents(&agent.to_string_lossy(), &home);
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier = repositories
             .dir
@@ -121,9 +132,10 @@ impl Fixture {
                 super::chat_close
             ])
             .manage(ChatRegistry {
-                runtime,
+                history_timeout: Duration::from_secs(10),
                 ..Default::default()
             })
+            .manage(agents)
             .build(context)
             .unwrap();
         assert_eq!(
@@ -145,6 +157,53 @@ impl Fixture {
                 .unwrap();
         }
         Self { repositories, app }
+    }
+
+    fn agent(&self) -> String {
+        self.repositories
+            .dir
+            .join("agent with spaces.py")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn logged(&self, name: &str) -> Vec<Value> {
+        fs::read_to_string(self.repositories.dir.join(name))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
+    fn sessions(&self, agent: &str) -> Result<sessions::SessionList, String> {
+        tauri::async_runtime::block_on(chat_sessions(
+            self.app.handle().clone(),
+            "task".into(),
+            agent.into(),
+            self.repositories.folders.clone(),
+        ))
+    }
+
+    fn rename(&self, agent: &str, id: &str, title: &str) -> Result<(), String> {
+        tauri::async_runtime::block_on(chat_session_rename(
+            self.app.handle().clone(),
+            self.app.state(),
+            "task".into(),
+            agent.into(),
+            self.repositories.folders.clone(),
+            id.into(),
+            title.into(),
+        ))
+    }
+
+    fn archive(&self, agent: &str, id: &str) -> Result<(), String> {
+        tauri::async_runtime::block_on(chat_session_archive(
+            self.app.handle().clone(),
+            "task".into(),
+            agent.into(),
+            self.repositories.folders.clone(),
+            id.into(),
+        ))
     }
 
     fn settings(&self, settings: Value) {
@@ -235,6 +294,13 @@ fn apply(
         action,
         token,
     ))
+}
+
+fn fixture_agents(program: &str, home: &std::path::Path) -> Agents {
+    Agents::new(
+        Claude::new(program, Some(home.to_path_buf())),
+        Codex::new(program, Some(home.to_path_buf()), Some(home.join(".codex"))),
+    )
 }
 
 impl Drop for Fixture {
@@ -656,7 +722,7 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
     assert!(fixture
         .apply("other", "u2", HistoryAction::Conversation, None)
         .unwrap_err()
-        .contains("Unknown chat agent"));
+        .contains("Unknown agent"));
 }
 
 #[test]
@@ -805,31 +871,22 @@ fn codex_store_errors_are_reported_after_a_successful_protocol_fork() {
 #[test]
 fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread() {
     let fixture = Fixture::new();
-    let runtime = AgentRuntime {
-        codex: "/missing-test-agent".into(),
-        ..Default::default()
+    let request = |resume: Option<&str>| ChatRequest {
+        cwd: fixture.repositories.folders[0].clone(),
+        extra_dirs: Vec::new(),
+        resume: resume.map(String::from),
+        pinned: resume.is_some(),
+        fork: None,
     };
-    assert!(launch(
-        "codex",
-        &fixture.repositories.folders[0],
-        Vec::new(),
-        None,
-        false,
-        None,
-        &runtime
-    )
-    .is_err());
-    let registry = fixture.app.state::<ChatRegistry>();
-    let launched = launch(
-        "codex",
-        &fixture.repositories.folders[0],
-        Vec::new(),
-        Some("parent".into()),
-        true,
-        None,
-        &registry.runtime,
-    )
-    .unwrap();
+    let missing = Codex::new("/missing-test-agent", None, None);
+    assert!(missing.chat_launch(request(None)).is_err());
+    let launched = fixture
+        .app
+        .state::<Agents>()
+        .get("codex")
+        .unwrap()
+        .chat_launch(request(Some("parent")))
+        .unwrap();
     let session = ChatSession::spawn(
         launched.command,
         launched.provider,
@@ -1073,4 +1130,141 @@ fn change_commands_read_turn_checkpoints_of_the_open_conversation() {
         super::changes::ChatChanges::default()
     );
     assert!(file_diff().unwrap_err().contains("unavailable"));
+}
+
+#[test]
+fn codex_catalogue_lists_renames_and_archives_over_the_app_server() {
+    let fixture = Fixture::new();
+    let list = fixture.sessions("codex").unwrap();
+    assert_eq!(
+        (list.sessions[0].title.as_str(), list.sessions[0].current),
+        ("Parent thread", true)
+    );
+    assert!(list.can_rename && list.can_archive);
+    fixture.rename("codex", "parent", "  Renamed  ").unwrap();
+    fixture.archive("codex", "older").unwrap();
+    assert!(fixture
+        .archive("codex", "parent")
+        .unwrap_err()
+        .contains("cannot be archived"));
+    let requests = fixture.logged("requests.jsonl");
+    let call = |method: &str| {
+        requests
+            .iter()
+            .find(|request| request["method"] == method)
+            .unwrap()["params"]
+            .clone()
+    };
+    assert_eq!(call("initialize")["clientInfo"]["name"], "worktreemanager");
+    assert_eq!(call("thread/list")["limit"], 50);
+    assert_eq!(
+        call("thread/name/set"),
+        json!({"threadId":"parent", "name":"Renamed"})
+    );
+    assert_eq!(call("thread/archive"), json!({"threadId":"older"}));
+    fixture.settings(json!({"fail_method":"thread/list"}));
+    assert_eq!(
+        fixture.sessions("codex").unwrap_err(),
+        "test thread/list failed"
+    );
+}
+
+#[test]
+fn claude_catalogue_reads_transcripts_and_renames_through_the_live_session_when_current() {
+    let fixture = Fixture::new();
+    let list = fixture.sessions("claude").unwrap();
+    assert_eq!(
+        list.sessions
+            .iter()
+            .map(|session| (session.id.as_str(), session.title.as_str(), session.current))
+            .collect::<Vec<_>>(),
+        [("parent", "first", true)]
+    );
+    assert!(list.can_rename && !list.can_archive);
+    assert!(fixture.sessions("claude").unwrap().can_rename);
+    assert!(!fixture
+        .repositories
+        .dir
+        .join("agent-state/.claude/projects/probe")
+        .exists());
+    assert!(fixture
+        .archive("claude", "older")
+        .unwrap_err()
+        .contains("cannot archive"));
+    assert!(fixture.rename("claude", "parent", "   ").is_err());
+    assert!(fixture.sessions("gemini").is_err());
+
+    fixture.rename("claude", "parent", "Headless").unwrap();
+    assert!(fixture.logged("argv.jsonl").iter().any(|argv| argv
+        .as_array()
+        .unwrap()
+        .windows(2)
+        .any(|pair| pair[0] == "--resume" && pair[1] == "parent")));
+
+    fixture.open("claude", OpenMode::Restart).unwrap();
+    let launches = fixture.logged("argv.jsonl").len();
+    fixture.rename("claude", "parent", "Live").unwrap();
+    assert_eq!(fixture.logged("argv.jsonl").len(), launches);
+    let renamed = || -> Vec<_> {
+        fixture
+            .logged("requests.jsonl")
+            .into_iter()
+            .filter(|request| request["request"]["subtype"] == "rename_session")
+            .map(|request| request["request"]["title"].clone())
+            .collect()
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while renamed().last() != Some(&json!("Live")) {
+        assert!(
+            Instant::now() < deadline,
+            "the live session was not renamed"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(renamed().contains(&json!("Headless")));
+}
+
+#[test]
+fn terminal_launches_run_the_configured_agent_with_its_arguments() {
+    let fixture = Fixture::new();
+    let store = fixture.repositories.dir.join("terminal-sessions");
+    let folders = &fixture.repositories.folders;
+    let ctx = LaunchContext {
+        canonical_dir: &folders[0],
+        extra_dirs: &folders[1..],
+        branch_name: Some("feat/x"),
+        session_store: &store,
+    };
+    let run = |adapter: &dyn AgentAdapter| {
+        let spec = adapter.terminal_launch(&ctx).unwrap();
+        let status = std::process::Command::new(&spec.program)
+            .args(&spec.args)
+            .envs(spec.env.iter().cloned())
+            .current_dir(&spec.cwd)
+            .stdin(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        fixture.logged("argv.jsonl").pop().unwrap()
+    };
+    let claude = Claude::new(fixture.agent(), None);
+    assert_eq!(
+        run(&claude),
+        json!(["-n", "wm-feat-x", "/color", "--add-dir", folders[1]])
+    );
+    assert_eq!(run(&claude), json!(["-c", "--add-dir", folders[1]]));
+    claude.forget_terminal_session(&ctx);
+    assert_eq!(run(&claude)[0], "-n");
+    let codex = Codex::new(fixture.agent(), None, None);
+    assert_eq!(
+        run(&codex),
+        json!([
+            "resume",
+            "--last",
+            "--cd",
+            folders[0],
+            "--add-dir",
+            folders[1]
+        ])
+    );
 }
