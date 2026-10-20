@@ -3,6 +3,7 @@ import { Task } from "../types";
 import {
   AgentActivities,
   AgentActivity,
+  AlertCategory,
   DEFAULT_AGENT_ALERTS,
   alertsFor,
   applyAgentEvent,
@@ -175,11 +176,16 @@ describe("indicators", () => {
 });
 
 describe("chatActivityEvent", () => {
-  const chat = (status: ChatInfo["status"], waiting = false): ChatInfo => ({
+  const chat = (
+    status: ChatInfo["status"],
+    waiting = false,
+    backgroundAgents = false
+  ): ChatInfo => ({
     taskId: "t1",
     agent: "codex",
     status,
     waiting,
+    backgroundAgents,
   });
 
   it("turns chat status changes into working, waiting and done", () => {
@@ -194,6 +200,42 @@ describe("chatActivityEvent", () => {
     expect(chatActivityEvent(busy, idle, 10)).toMatchObject({ state: "done", surface: "chat" });
     expect(chatActivityEvent(undefined, idle, 11)).toBeNull();
     expect(chatActivityEvent(busy, chat({ kind: "exited", code: 0 }), 12)).toBe("end");
+  });
+
+  it("keeps working while background subagents run past the end of the turn", () => {
+    const busy = chat({ kind: "busy" });
+    const idle = chat({ kind: "idle" });
+    const busyWithAgents = chat({ kind: "busy" }, false, true);
+    const idleWithAgents = chat({ kind: "idle" }, false, true);
+    expect(chatActivityEvent(busy, busyWithAgents, 1)).toBeNull();
+    expect(chatActivityEvent(busyWithAgents, idleWithAgents, 2)).toBeNull();
+    expect(chatActivityEvent(idleWithAgents, busyWithAgents, 3)).toBeNull();
+    expect(chatActivityEvent(busyWithAgents, idleWithAgents, 4)).toBeNull();
+    expect(chatActivityEvent(idleWithAgents, idle, 5)).toMatchObject({ state: "done", at: 5 });
+    expect(chatActivityEvent(undefined, idleWithAgents, 6)).toMatchObject({ state: "working" });
+    expect(chatActivityEvent(idle, idleWithAgents, 7)).toMatchObject({ state: "working" });
+  });
+
+  it("alerts once when a notification-driven turn ends with no subagents left", () => {
+    const busy = chat({ kind: "busy" });
+    const idleWithAgents = chat({ kind: "idle" }, false, true);
+    const idle = chat({ kind: "idle" });
+    let activity: AgentActivity | undefined;
+    const alerts: (AlertCategory | null)[] = [];
+    const steps: [ChatInfo | undefined, ChatInfo][] = [
+      [undefined, busy],
+      [busy, idleWithAgents],
+      [idleWithAgents, idle],
+    ];
+    steps.forEach(([previous, next], at) => {
+      const event = chatActivityEvent(previous, next, at);
+      if (!event || event === "end") return;
+      const updated = nextActivity(activity, event, false);
+      alerts.push(alertsFor(activity, updated));
+      activity = updated ?? activity;
+    });
+    expect(alerts).toEqual([null, "done"]);
+    expect(activity).toMatchObject({ state: "done", unread: true });
   });
 });
 

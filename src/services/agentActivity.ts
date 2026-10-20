@@ -202,23 +202,28 @@ export function endStaleSessions(
   return next;
 }
 
+type ChatActivity = Pick<ChatInfo, "status" | "waiting" | "backgroundAgents">;
+
+const isChatWorking = (chat: ChatActivity) =>
+  chat.status.kind === "busy" || (chat.status.kind === "idle" && chat.backgroundAgents);
+
 /**
- * Embedded chats report their state directly, so their hook events are ignored. A chat that
- * turns idle after being busy has finished its turn.
+ * Embedded chats report their state directly, so their hook events are ignored. A chat works
+ * while its turn runs or its background subagents do, and is done once both have ended.
  */
 export function chatActivityEvent(
-  previous: Pick<ChatInfo, "status" | "waiting"> | undefined,
+  previous: ChatActivity | undefined,
   chat: ChatInfo,
   at: number
 ): Omit<AgentEvent, "cwd" | "taskId"> | "end" | null {
   const base = { agent: chat.agent, surface: "chat" as const, at };
   if (!isLive(chat.status)) return "end";
   if (chat.waiting) return previous?.waiting ? null : { ...base, state: "waiting" };
-  if (chat.status.kind === "busy")
-    return previous?.status.kind === "busy" && !previous.waiting
+  if (isChatWorking(chat))
+    return previous && isChatWorking(previous) && !previous.waiting
       ? null
       : { ...base, state: "working" };
-  if (chat.status.kind === "idle" && (previous?.status.kind === "busy" || previous?.waiting))
+  if (chat.status.kind === "idle" && previous && (isChatWorking(previous) || previous.waiting))
     return { ...base, state: "done" };
   return null;
 }

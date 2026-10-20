@@ -57,9 +57,19 @@ const STDERR_TAIL: usize = 4096;
 pub struct ChatInfo {
     task_id: String,
     agent: String,
+    #[serde(flatten)]
+    activity: ChatActivity,
+}
+
+/// What the app's agent alerts follow; a change is broadcast as `chat-status`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatActivity {
     status: ChatStatus,
     /// An approval or question is pending an answer.
     waiting: bool,
+    /// Background subagents keep the agent working after its turn ends.
+    background_agents: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -84,11 +94,26 @@ struct Shared {
     history_busy: bool,
 }
 
-type Notify = Arc<dyn Fn(ChatStatus, bool) + Send + Sync>;
+type Notify = Arc<dyn Fn(ChatActivity) + Send + Sync>;
 
 impl Shared {
     fn waiting(&self) -> bool {
         !self.snapshot.pending.is_empty()
+    }
+
+    fn activity(&self) -> ChatActivity {
+        ChatActivity {
+            status: self.snapshot.status.clone(),
+            waiting: self.waiting(),
+            background_agents: self.snapshot.background_agents,
+        }
+    }
+
+    fn notify_change(&self, before: ChatActivity, notify: &Notify) {
+        let after = self.activity();
+        if before != after {
+            notify(after);
+        }
     }
 
     fn capture_checkpoint(&self, previous: Option<&str>) -> Option<String> {
@@ -230,17 +255,20 @@ impl Shared {
                 }
                 _ => {}
             }
-            let before = (self.snapshot.status.clone(), self.waiting());
+            let before = self.activity();
             self.snapshot.apply(&event);
-            if before != (self.snapshot.status.clone(), self.waiting()) {
-                notify(self.snapshot.status.clone(), self.waiting());
-            }
+            self.notify_change(before, notify);
             if let Some(sink) = &self.sink {
                 let _ = sink.send(LiveEvent {
                     generation: self.snapshot.generation,
                     event,
                 });
             }
+        }
+        if let Some(background_agents) = out.background_agents {
+            let before = self.activity();
+            self.snapshot.background_agents = background_agents;
+            self.notify_change(before, notify);
         }
         if let Some(result) = out.history_result {
             if let Some(reply) = self.history_reply.take() {
@@ -410,14 +438,18 @@ impl ChatSession {
         self.shared.lock().unwrap().snapshot.status.clone()
     }
 
-    fn waiting(&self) -> bool {
-        self.shared.lock().unwrap().waiting()
+    fn activity(&self) -> ChatActivity {
+        self.shared.lock().unwrap().activity()
     }
 
     /// Terminate and tell listeners it ended; the conversation mapping is kept for resuming.
     fn stop(&self) {
         self.terminate();
-        (self.notify)(ChatStatus::Exited { code: None }, false);
+        (self.notify)(ChatActivity {
+            status: ChatStatus::Exited { code: None },
+            waiting: false,
+            background_agents: false,
+        });
     }
 
     fn terminate(&self) {
@@ -657,14 +689,13 @@ pub async fn chat_open<R: Runtime>(
     };
     let notify: Notify = {
         let (app, task_id, agent) = (app.clone(), task_id.clone(), agent.clone());
-        Arc::new(move |status, waiting| {
+        Arc::new(move |activity| {
             let _ = app.emit(
                 STATUS_EVENT,
                 ChatInfo {
                     task_id: task_id.clone(),
                     agent: agent.clone(),
-                    status,
-                    waiting,
+                    activity,
                 },
             );
         })
@@ -969,8 +1000,7 @@ pub fn chat_list(registry: State<'_, ChatRegistry>) -> Vec<ChatInfo> {
         .map(|((task_id, agent), session)| ChatInfo {
             task_id: task_id.clone(),
             agent: agent.clone(),
-            status: session.status(),
-            waiting: session.waiting(),
+            activity: session.activity(),
         })
         .collect()
 }
@@ -1011,7 +1041,7 @@ mod tests {
             ChatEvent::Upsert { item } if item.kind == ItemKind::User => Some(item.id.clone()),
             _ => None,
         });
-        let notify: Notify = Arc::new(|_, _| {});
+        let notify: Notify = Arc::new(|_| {});
         shared.commit(out, &drop, &notify);
         item
     }
@@ -1021,7 +1051,7 @@ mod tests {
         shared
             .provider
             .handle_line(&line.to_string(), &shared.snapshot, &mut out);
-        let notify: Notify = Arc::new(|_, _| {});
+        let notify: Notify = Arc::new(|_| {});
         shared.commit(out, &drop, &notify);
     }
 
@@ -1086,7 +1116,7 @@ mod tests {
             Box::new(Echo),
             7,
             Arc::new(move |id| remembered.lock().unwrap().push(id)),
-            Arc::new(move |status, _| statuses.lock().unwrap().push(status)),
+            Arc::new(move |activity: ChatActivity| statuses.lock().unwrap().push(activity.status)),
         )
         .unwrap()
     }
@@ -1119,12 +1149,76 @@ mod tests {
     }
 
     #[test]
+    fn notifies_when_background_agents_start_and_stop() {
+        let notified = Arc::new(Mutex::new(Vec::new()));
+        let notify: Notify = {
+            let notified = notified.clone();
+            Arc::new(move |activity: ChatActivity| {
+                notified
+                    .lock()
+                    .unwrap()
+                    .push((activity.status, activity.background_agents))
+            })
+        };
+        let mut shared = Shared {
+            provider: Box::new(Echo),
+            snapshot: ChatSnapshot::new(1),
+            stdin: None,
+            sink: None,
+            checkpoints: None,
+            folders: Vec::new(),
+            conversation_id: None,
+            turn_checkpoint: None,
+            last_checkpoint: None,
+            turn_messages: Vec::new(),
+            history_reply: None,
+            history_busy: false,
+        };
+        let commit = |shared: &mut Shared, status: ChatStatus, background_agents: Option<bool>| {
+            let mut out = ProviderOutput {
+                background_agents,
+                ..Default::default()
+            };
+            out.status(status);
+            shared.commit(out, &drop, &notify);
+        };
+        commit(&mut shared, ChatStatus::Busy, Some(true));
+        commit(&mut shared, ChatStatus::Idle, Some(true));
+        commit(&mut shared, ChatStatus::Idle, None);
+        commit(&mut shared, ChatStatus::Idle, Some(false));
+        assert_eq!(
+            *notified.lock().unwrap(),
+            [
+                (ChatStatus::Busy, false),
+                (ChatStatus::Busy, true),
+                (ChatStatus::Idle, true),
+                (ChatStatus::Idle, false)
+            ]
+        );
+        let info = serde_json::to_value(ChatInfo {
+            task_id: "t1".into(),
+            agent: "claude".into(),
+            activity: shared.activity(),
+        })
+        .unwrap();
+        assert_eq!(
+            info,
+            serde_json::json!({ "taskId": "t1", "agent": "claude", "status": { "kind": "idle" }, "waiting": false, "backgroundAgents": false })
+        );
+    }
+
+    #[test]
     fn notifies_when_a_request_starts_and_stops_waiting() {
         use model::{DetailFormat, PendingKind, PendingRequest};
         let notified = Arc::new(Mutex::new(Vec::new()));
         let notify: Notify = {
             let notified = notified.clone();
-            Arc::new(move |status, waiting| notified.lock().unwrap().push((status, waiting)))
+            Arc::new(move |activity: ChatActivity| {
+                notified
+                    .lock()
+                    .unwrap()
+                    .push((activity.status, activity.waiting))
+            })
         };
         let mut shared = Shared {
             provider: Box::new(Echo),
@@ -1350,7 +1444,7 @@ mod tests {
         history.event(ChatEvent::Items {
             items: shared.snapshot.items.clone(),
         });
-        let notify: Notify = Arc::new(|_, _| {});
+        let notify: Notify = Arc::new(|_| {});
         resumed.commit(history, &drop, &notify);
         assert_eq!(resumed.last_checkpoint.as_ref(), Some(&second_turn.after));
         let next = send_checkpoint_message(&mut resumed, "after restart").unwrap();
@@ -1445,7 +1539,7 @@ mod tests {
         );
         let mut out = ProviderOutput::default();
         shared.provider.start(&mut out);
-        let notify: Notify = Arc::new(|_, _| {});
+        let notify: Notify = Arc::new(|_| {});
         shared.commit(out, &drop, &notify);
         feed_checkpoint_line(&mut shared, serde_json::json!({ "id": 1, "result": {} }));
         feed_checkpoint_line(
@@ -1533,7 +1627,7 @@ mod tests {
         fixture.store.bind_turn("conv", &item, &turn).unwrap();
         let directory = fixture.dir.join("app-data/chat-checkpoints");
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let notify: Notify = Arc::new(|_, _| {});
+        let notify: Notify = Arc::new(|_| {});
         let mut duplicate = ProviderOutput::default();
         duplicate.upsert(shared.snapshot.item(&item).unwrap().clone());
         shared.commit(duplicate, &drop, &notify);
