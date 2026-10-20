@@ -39,9 +39,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::agent_alerts;
 use super::agents::{Agents, ChatRequest};
-use super::git::GIT_ENV_SCRUB;
 use super::process::OwnedProcess;
-use super::shell_env::{claude_env_prelude, shell_single_quoted};
 use conversations::{Conversation, ConversationStore};
 use model::{
     ChatEvent, ChatImage, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus,
@@ -297,9 +295,6 @@ impl ChatSession {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        for key in GIT_ENV_SCRUB {
-            command.env_remove(key);
-        }
         let mut process = OwnedProcess::spawn(&mut command)?;
         let child = process.child_mut();
         let stdin = child.stdin.take();
@@ -571,27 +566,6 @@ fn canonical(path: &str) -> String {
         .unwrap_or_else(|_| PathBuf::from(path))
         .to_string_lossy()
         .to_string()
-}
-
-/// GUI launches get a minimal PATH, so the agent runs through the same login-shell prelude as the
-/// embedded terminals. Arguments are quoted into the script; stdio stays piped to us.
-pub(crate) fn login_shell(cwd: &str, program: &str, args: &[String]) -> Command {
-    let quoted: String = args
-        .iter()
-        .map(|arg| format!(" {}", shell_single_quoted(arg)))
-        .collect();
-    let mut command = Command::new("/bin/zsh");
-    command
-        .args([
-            "-lc",
-            &format!(
-                "{}; exec {}{quoted}",
-                claude_env_prelude(),
-                shell_single_quoted(program)
-            ),
-        ])
-        .current_dir(cwd);
-    command
 }
 
 pub(crate) struct Launch {
@@ -1710,9 +1684,9 @@ mod tests {
         let ready = fixture.dir.join("ready");
         let go = fixture.dir.join("go");
         let script = format!(
-            "while [ ! -f {} ]; do sleep 0.01; done; echo late; touch {}; sleep 60",
-            shell_single_quoted(&go.to_string_lossy()),
-            shell_single_quoted(&ready.to_string_lossy())
+            "while [ ! -f '{}' ]; do sleep 0.01; done; echo late; touch '{}'; sleep 60",
+            go.display(),
+            ready.display()
         );
         let session = spawn(&script, Arc::default(), Arc::default());
         session.shared.lock().unwrap().snapshot.status = ChatStatus::Exited { code: None };
@@ -1782,21 +1756,5 @@ mod tests {
             .is_ok());
         drop(held);
         assert!(registry.open_lock(&key).try_lock().is_ok());
-    }
-
-    #[test]
-    fn login_shell_quotes_arguments() {
-        let command = login_shell(
-            "/tmp",
-            "claude",
-            &["--add-dir".into(), "/tmp/it's here".into()],
-        );
-        let script = command
-            .get_args()
-            .nth(1)
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        assert!(script.ends_with("exec 'claude' '--add-dir' '/tmp/it'\\''s here'"));
     }
 }

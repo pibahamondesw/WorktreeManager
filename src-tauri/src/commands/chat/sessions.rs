@@ -10,7 +10,6 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::git::GIT_ENV_SCRUB;
 use super::super::process::OwnedProcess;
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -57,9 +56,6 @@ pub(crate) fn exchange(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    for key in GIT_ENV_SCRUB {
-        command.env_remove(key);
-    }
     let mut process = OwnedProcess::spawn(&mut command)?;
     let child = process.child_mut();
     let mut stdin = child.stdin.take().ok_or("agent stdin unavailable")?;

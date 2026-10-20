@@ -9,11 +9,9 @@ use super::{AgentAdapter, ChatRequest, ForkMethod, LaunchContext, LaunchSpec};
 use crate::commands::agent_alerts::{AlertHooks, HookSpec};
 use crate::commands::agent_usage::UsageSource;
 use crate::commands::chat::codex::{initialize_params, CodexProvider};
-use crate::commands::chat::{
-    exchange, login_shell, truncate, Launch, SessionList, SessionSummary, LIST_LIMIT,
-};
+use crate::commands::chat::{exchange, truncate, Launch, SessionList, SessionSummary, LIST_LIMIT};
 use crate::commands::codex_usage::CodexUsage;
-use crate::commands::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
+use crate::commands::login_shell::{cli_available, LoginShell};
 
 const ALERT_HOOKS: &[HookSpec] = &[
     HookSpec {
@@ -71,7 +69,9 @@ impl Codex {
     }
 
     fn app_server(&self, cwd: &str) -> std::process::Command {
-        login_shell(cwd, &self.program, &["app-server".to_string()])
+        LoginShell::program(&self.program, ["app-server"])
+            .current_dir(cwd)
+            .command()
     }
 
     fn call(&self, cwd: &str, method: &str, params: Value) -> Result<Value, String> {
@@ -120,12 +120,7 @@ impl AgentAdapter for Codex {
 
     fn terminal_launch(&self, ctx: &LaunchContext) -> Result<LaunchSpec, String> {
         self.require_cli()?;
-        Ok(LaunchSpec {
-            program: "/bin/zsh".to_string(),
-            args: vec!["-lc".to_string(), build_launch_script(&self.program, ctx)],
-            env: vec![],
-            cwd: ctx.canonical_dir.to_string(),
-        })
+        Ok(terminal_session(&self.program, ctx).terminal())
     }
 
     fn sessions(&self, cwd: &str, current: Option<&str>) -> Result<SessionList, String> {
@@ -180,18 +175,14 @@ impl AgentAdapter for Codex {
     }
 }
 
-fn build_launch_script(program: &str, ctx: &LaunchContext) -> String {
-    let add_dirs = ctx
-        .extra_dirs
-        .iter()
-        .map(|dir| format!(" --add-dir {}", shell_single_quoted(dir)))
-        .collect::<String>();
-    format!(
-        "{}; exec {} resume --last --cd {}{add_dirs}",
-        claude_env_prelude(),
-        shell_single_quoted(program),
-        shell_single_quoted(ctx.canonical_dir)
-    )
+fn terminal_session(program: &str, ctx: &LaunchContext) -> LoginShell {
+    LoginShell::program(program, ["resume", "--last", "--cd", ctx.canonical_dir])
+        .args(
+            ctx.extra_dirs
+                .iter()
+                .flat_map(|dir| ["--add-dir", dir.as_str()]),
+        )
+        .current_dir(ctx.canonical_dir)
 }
 
 fn threads(result: &Value, current: Option<&str>) -> Vec<SessionSummary> {
@@ -223,22 +214,33 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn resumes_only_the_current_worktree_and_quotes_all_paths() {
+    fn terminal_resumes_only_the_current_worktree_with_every_task_folder() {
         let ctx = LaunchContext {
-            canonical_dir: "/tmp/task's worktree",
-            extra_dirs: &[
-                "/tmp/peer repo".to_string(),
-                "/tmp/$(echo injected)".to_string(),
-            ],
+            canonical_dir: "/tmp",
+            extra_dirs: &["/tmp/peer repo".to_string()],
             branch_name: Some("feat/codex"),
             session_store: Path::new("/tmp/unused"),
         };
-        let script = build_launch_script("codex", &ctx);
-        assert!(script.ends_with(
-            "exec 'codex' resume --last --cd '/tmp/task'\\''s worktree' --add-dir '/tmp/peer repo' --add-dir '/tmp/$(echo injected)'"
-        ));
-        assert!(!script.contains("--all"));
-        assert!(!script.contains("--dangerously"));
+        let expected = LoginShell::program(
+            "true",
+            [
+                "resume",
+                "--last",
+                "--cd",
+                "/tmp",
+                "--add-dir",
+                "/tmp/peer repo",
+            ],
+        )
+        .current_dir("/tmp")
+        .terminal();
+        let spec = Codex::new("true", None, None)
+            .terminal_launch(&ctx)
+            .unwrap();
+        assert_eq!(
+            (spec.args, spec.cwd, spec.env),
+            (expected.args, expected.cwd, expected.env)
+        );
     }
 
     #[test]

@@ -15,12 +15,7 @@ use super::agent_alerts::AlertHooks;
 use super::agent_usage::UsageSource;
 use super::chat::{ConversationFork, Launch, SessionList};
 
-pub struct LaunchSpec {
-    pub program: String,
-    pub args: Vec<String>,
-    pub env: Vec<(String, String)>,
-    pub cwd: String,
-}
+pub use super::login_shell::LaunchSpec;
 
 pub struct LaunchContext<'a> {
     pub canonical_dir: &'a str,

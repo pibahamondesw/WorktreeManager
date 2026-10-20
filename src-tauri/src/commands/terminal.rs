@@ -16,8 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::agent_alerts;
 use super::agents::{self, LaunchContext, LaunchSpec};
-use super::git::GIT_ENV_SCRUB;
-use super::shell_env::repo_script_args;
+use super::login_shell::LoginShell;
 
 const SCROLLBACK_CAP: usize = 2 * 1024 * 1024;
 const READ_BUF: usize = 32 * 1024;
@@ -180,7 +179,7 @@ impl TerminalSession {
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
-        for k in GIT_ENV_SCRUB {
+        for k in &spec.env_remove {
             cmd.env_remove(k);
         }
 
@@ -572,12 +571,10 @@ pub async fn run_task_script(
         return Err(format!("Script directory not found: {cwd}"));
     }
     let key = (task_id, session.clone());
-    let spec = LaunchSpec {
-        program: "/bin/zsh".to_string(),
-        args: repo_script_args(&script),
-        env,
-        cwd,
-    };
+    let spec = LoginShell::repo_script(&script)
+        .current_dir(&cwd)
+        .envs(env)
+        .terminal();
     let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
     let previous = {
         let mut sessions = registry.0.lock().unwrap();
@@ -641,6 +638,7 @@ mod tests {
             program: "/bin/cat".to_string(),
             args: vec![],
             env: vec![],
+            env_remove: vec![],
             cwd: "/tmp".to_string(),
         };
         for (task, agent) in [("task", "claude"), ("task", "codex"), ("other", "codex")] {
@@ -736,12 +734,9 @@ mod tests {
 
     #[test]
     fn repo_script_stops_at_first_failure_and_interrupt_stops_running_scripts() {
-        let spec = LaunchSpec {
-            program: "/bin/zsh".to_string(),
-            args: repo_script_args("echo one\nfalse\necho never"),
-            env: vec![],
-            cwd: "/tmp".to_string(),
-        };
+        let spec = LoginShell::repo_script("echo one\nfalse\necho never")
+            .current_dir("/tmp")
+            .terminal();
         let (tx, rx) = std::sync::mpsc::channel();
         let mut session = TerminalSession::spawn(&spec, "setup:api", 80, 24, move |code| {
             let _ = tx.send(code);
@@ -756,6 +751,7 @@ mod tests {
             program: "/bin/sh".to_string(),
             args: vec!["-c".to_string(), "sleep 30".to_string()],
             env: vec![],
+            env_remove: vec![],
             cwd: "/tmp".to_string(),
         };
         let (tx, rx) = std::sync::mpsc::channel();
@@ -770,11 +766,46 @@ mod tests {
     }
 
     #[test]
+    fn task_scripts_run_in_their_directory_with_the_task_environment() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let app = mock_builder()
+            .manage(TerminalRegistry::default())
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let dir = dir.to_string_lossy().to_string();
+        let code = tauri::async_runtime::block_on(run_task_script(
+            app.state(),
+            "task".into(),
+            "setup:api".into(),
+            "[ \"$(pwd -P)\" = \"$EXPECTED_DIR\" ] && [ \"$TASK_VALUE\" = 'a b' ] && exit 4".into(),
+            dir.clone(),
+            vec![
+                ("EXPECTED_DIR".into(), dir),
+                ("TASK_VALUE".into(), "a b".into()),
+            ],
+            None,
+        ))
+        .unwrap();
+        assert_eq!(code, Some(4));
+        for session in app
+            .state::<TerminalRegistry>()
+            .0
+            .lock()
+            .unwrap()
+            .values_mut()
+        {
+            session.terminate();
+        }
+    }
+
+    #[test]
     fn spawn_replays_output_and_reports_exit_code() {
         let spec = LaunchSpec {
             program: "/bin/sh".to_string(),
             args: vec!["-c".to_string(), "printf hi; exit 3".to_string()],
             env: vec![],
+            env_remove: vec![],
             cwd: "/tmp".to_string(),
         };
         let (tx, rx) = std::sync::mpsc::channel();
