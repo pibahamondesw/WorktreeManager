@@ -283,6 +283,15 @@ impl TerminalSession {
         *self.channel.lock().unwrap() = None;
     }
 
+    /// Detach only while `attachment` is still the sink, so a pane unmounting late cannot blank
+    /// the pane that attached after it.
+    fn detach_attachment(&self, attachment: u32) {
+        let mut channel = self.channel.lock().unwrap();
+        if channel.as_ref().is_some_and(|sink| sink.id() == attachment) {
+            *channel = None;
+        }
+    }
+
     /// Signal the whole process group (the PTY child leads its own session) after `delay`, so
     /// commands a script started stop too, while the scrollback stays available for review.
     fn interrupt_after(&self, delay: Duration) {
@@ -485,9 +494,14 @@ pub fn terminal_resize(
 }
 
 #[tauri::command]
-pub fn terminal_detach(registry: State<'_, TerminalRegistry>, task_id: String, agent: String) {
+pub fn terminal_detach(
+    registry: State<'_, TerminalRegistry>,
+    task_id: String,
+    agent: String,
+    attachment: u32,
+) {
     if let Some(session) = registry.0.lock().unwrap().get(&(task_id, agent)) {
-        session.detach();
+        session.detach_attachment(attachment);
     }
 }
 
@@ -822,6 +836,24 @@ mod tests {
             rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
             assert!(registry.0.lock().unwrap().is_empty());
         }
+    }
+
+    #[test]
+    fn a_late_detach_from_an_unmounted_pane_keeps_the_newer_pane_attached() {
+        let app = mock_app();
+        let registry = app.state::<TerminalRegistry>();
+        let key = ("task".to_string(), "gemini".to_string());
+        let mut session = cat_session();
+        let (unmounted, mounted) = (Channel::new(|_| Ok(())), Channel::new(|_| Ok(())));
+        let (unmounted_id, mounted_id) = (unmounted.id(), mounted.id());
+        session.attach(unmounted);
+        session.attach(mounted);
+        registry.0.lock().unwrap().insert(key.clone(), session);
+        terminal_detach(app.state(), key.0.clone(), key.1.clone(), unmounted_id);
+        assert_eq!(sink_id(&registry, &key), Some(mounted_id));
+        terminal_detach(app.state(), key.0.clone(), key.1.clone(), mounted_id);
+        assert_eq!(sink_id(&registry, &key), None);
+        registry.shutdown_all();
     }
 
     #[test]

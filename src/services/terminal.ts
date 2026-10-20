@@ -10,6 +10,8 @@ export interface TerminalOpenResult {
   created: boolean;
   status: TerminalStatus;
   replay: string;
+  /** Id of the channel this pane attached with; detaching with a stale id is a no-op. */
+  attachment: number;
 }
 
 export interface TerminalInfo {
@@ -28,10 +30,21 @@ export interface TerminalOpenArgs {
   onEvent: (event: TerminalEvent) => void;
 }
 
-export function terminalOpen({ onEvent, ...args }: TerminalOpenArgs): Promise<TerminalOpenResult> {
+function invokeAttached(
+  command: string,
+  args: Record<string, unknown>,
+  onEvent: (event: TerminalEvent) => void
+): Promise<TerminalOpenResult> {
   const channel = new Channel<TerminalEvent>();
   channel.onmessage = onEvent;
-  return invoke<TerminalOpenResult>("terminal_open", { ...args, onEvent: channel });
+  return invoke<Omit<TerminalOpenResult, "attachment">>(command, {
+    ...args,
+    onEvent: channel,
+  }).then((result) => ({ ...result, attachment: channel.id }));
+}
+
+export function terminalOpen({ onEvent, ...args }: TerminalOpenArgs): Promise<TerminalOpenResult> {
+  return invokeAttached("terminal_open", args, onEvent);
 }
 
 /** `agent` names the session: an agent, or a repository script session (`setup:<repoId>`). */
@@ -41,8 +54,8 @@ export const terminalWrite = (taskId: string, agent: string, data: string) =>
 export const terminalResize = (taskId: string, agent: string, cols: number, rows: number) =>
   invoke<void>("terminal_resize", { taskId, agent, cols, rows });
 
-export const terminalDetach = (taskId: string, agent: string) =>
-  invoke<void>("terminal_detach", { taskId, agent }).catch(() => undefined);
+export const terminalDetach = (taskId: string, agent: string, attachment: number) =>
+  invoke<void>("terminal_detach", { taskId, agent, attachment }).catch(() => undefined);
 
 /** Attach to an existing session without starting one. */
 export function terminalAttach(
@@ -50,9 +63,7 @@ export function terminalAttach(
   session: string,
   onEvent: (event: TerminalEvent) => void
 ): Promise<TerminalOpenResult> {
-  const channel = new Channel<TerminalEvent>();
-  channel.onmessage = onEvent;
-  return invoke<TerminalOpenResult>("terminal_attach", { taskId, session, onEvent: channel });
+  return invokeAttached("terminal_attach", { taskId, session }, onEvent);
 }
 
 /** Exit code of a repository script run in a PTY session; null when it was stopped. */

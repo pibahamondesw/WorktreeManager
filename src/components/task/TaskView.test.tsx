@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
@@ -6,6 +7,7 @@ import type { invoke } from "@tauri-apps/api/core";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<typeof invoke>(),
+  channels: { opened: 0 },
   term: {
     open: vi.fn(),
     write: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: mocks.invoke,
   Channel: class {
     onmessage?: (e: unknown) => void;
+    id = ++mocks.channels.opened;
   },
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
@@ -99,10 +102,58 @@ describe("TaskView", () => {
         })
       )
     );
-    expect(mocks.invoke).toHaveBeenCalledWith("terminal_detach", { taskId: "t1", agent: "claude" });
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "terminal_detach",
+      expect.objectContaining({ taskId: "t1", agent: "claude" })
+    );
     expect(mocks.invoke.mock.calls.some(([command]) => command === "terminal_close")).toBe(false);
     view.unmount();
-    expect(mocks.invoke).toHaveBeenCalledWith("terminal_detach", { taskId: "t1", agent: "codex" });
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "terminal_detach",
+      expect.objectContaining({ taskId: "t1", agent: "codex" })
+    );
+  });
+
+  it("keeps a remounted terminal attached when the discarded mount's open resolves late", async () => {
+    const opens: ((result: unknown) => void)[] = [];
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "terminal_open"
+        ? new Promise((resolve) => opens.push(resolve))
+        : Promise.resolve(undefined)
+    );
+    const view = render(
+      <StrictMode>
+        <TaskView
+          task={task}
+          surface={{ kind: "terminal", agent: "codex" }}
+          sidebarCollapsed={false}
+          onExpandSidebar={vi.fn()}
+          onBack={vi.fn()}
+          onSwitchSurface={vi.fn()}
+        />
+      </StrictMode>
+    );
+    await waitFor(() => expect(opens).toHaveLength(2));
+    const detaches = () =>
+      mocks.invoke.mock.calls.filter(([command]) => command === "terminal_detach");
+    const [discarded, mounted] = mocks.invoke.mock.calls
+      .filter(([command]) => command === "terminal_open")
+      .map(([, args]) => (args as { onEvent: { id: number } }).onEvent.id);
+    expect(detaches()).toEqual([]);
+    const opened = { created: false, status: { kind: "running" }, replay: "" };
+    opens[1](opened);
+    expect(await screen.findByText("running")).toBeInTheDocument();
+    opens[0](opened);
+    await waitFor(() =>
+      expect(detaches()).toEqual([
+        ["terminal_detach", { taskId: "t1", agent: "codex", attachment: discarded }],
+      ])
+    );
+    view.unmount();
+    expect(detaches()).toContainEqual([
+      "terminal_detach",
+      { taskId: "t1", agent: "codex", attachment: mounted },
+    ]);
   });
 
   it("stops the terminal before switching the agent to its chat", async () => {

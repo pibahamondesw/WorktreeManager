@@ -108,6 +108,7 @@ function useXterm(
 
     let disposed = false;
     let attached = false;
+    let attachment: number | null = null;
     const pending: string[] = [];
 
     const attach = async () => {
@@ -125,7 +126,11 @@ function useXterm(
             setStatus({ kind: "exited", code: event.code });
           }
         });
-        if (disposed) return;
+        if (disposed) {
+          void terminalDetach(taskId, session, result.attachment);
+          return;
+        }
+        attachment = result.attachment;
         if (result.replay) term.write(result.replay);
         pending.forEach((chunk) => term.write(chunk));
         pending.length = 0;
@@ -152,7 +157,7 @@ function useXterm(
       disposed = true;
       observer.disconnect();
       input.dispose();
-      void terminalDetach(taskId, session);
+      if (attachment !== null) void terminalDetach(taskId, session, attachment);
       term.dispose();
       termRef.current = null;
     };
