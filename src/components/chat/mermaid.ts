@@ -1,33 +1,40 @@
 type Mermaid = typeof import("mermaid").default;
 type MermaidConfig = Parameters<Mermaid["initialize"]>[0];
 
-export const DIAGRAM_BACKGROUND = "#12121a";
+const cssVar = (name: string, fallback: string) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 
-const BASE_CONFIG: MermaidConfig = {
-  startOnLoad: false,
-  securityLevel: "strict",
-  theme: "base",
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif',
-  themeVariables: {
-    darkMode: true,
-    background: DIAGRAM_BACKGROUND,
-    primaryColor: "#1a1a25",
-    primaryTextColor: "#e8e8ed",
-    primaryBorderColor: "#3a3a48",
-    secondaryColor: "#22222f",
-    tertiaryColor: DIAGRAM_BACKGROUND,
-    lineColor: "#8888a0",
-    textColor: "#e8e8ed",
-    fontSize: "14px",
-  },
-};
+export const diagramBackground = () => cssVar("--color-bg-secondary", "#12121a");
+
+function themedConfig(): MermaidConfig {
+  const background = diagramBackground();
+  const text = cssVar("--color-text-primary", "#e8e8ed");
+  return {
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "base",
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif',
+    themeVariables: {
+      darkMode: document.documentElement.dataset.appearance !== "light",
+      background,
+      primaryColor: cssVar("--color-bg-tertiary", "#1a1a25"),
+      primaryTextColor: text,
+      primaryBorderColor: cssVar("--color-border-light", "#3a3a48"),
+      secondaryColor: cssVar("--color-bg-hover", "#22222f"),
+      tertiaryColor: background,
+      lineColor: cssVar("--color-text-secondary", "#8888a0"),
+      textColor: text,
+      fontSize: "14px",
+    },
+  };
+}
 
 // WebKit taints a canvas that draws an SVG containing <foreignObject>, so images
 // are rendered with plain SVG text labels.
-const IMAGE_EXPORT_CONFIG: MermaidConfig = { ...BASE_CONFIG, htmlLabels: false };
+const imageExportConfig = (): MermaidConfig => ({ ...themedConfig(), htmlLabels: false });
 
 let mermaidLoader: Promise<Mermaid> | null = null;
-let appliedConfig: MermaidConfig | null = null;
+let appliedConfig: string | null = null;
 let renderQueue: Promise<unknown> = Promise.resolve();
 let diagramCount = 0;
 
@@ -50,11 +57,13 @@ function viewBoxSize(svg: string) {
   return width > 0 && height > 0 ? { width, height } : null;
 }
 
-async function renderWith(config: MermaidConfig, source: string) {
+async function renderWith(buildConfig: () => MermaidConfig, source: string) {
   const mermaid = await loadMermaid();
-  if (appliedConfig !== config) {
+  const config = buildConfig();
+  const configKey = JSON.stringify(config);
+  if (appliedConfig !== configKey) {
     mermaid.initialize(config);
-    appliedConfig = config;
+    appliedConfig = configKey;
   }
   if (!(await mermaid.parse(source, { suppressErrors: true }))) return null;
   const { svg } = await mermaid.render(`chat-mermaid-${++diagramCount}`, source);
@@ -62,12 +71,15 @@ async function renderWith(config: MermaidConfig, source: string) {
   return size && { svg, ...size };
 }
 
-function enqueueRender(config: MermaidConfig, source: string): Promise<RenderedDiagram | null> {
-  const rendered = renderQueue.then(() => renderWith(config, source));
+function enqueueRender(
+  buildConfig: () => MermaidConfig,
+  source: string
+): Promise<RenderedDiagram | null> {
+  const rendered = renderQueue.then(() => renderWith(buildConfig, source));
   renderQueue = rendered.catch(() => undefined);
   return rendered;
 }
 
-export const renderMermaid = (source: string) => enqueueRender(BASE_CONFIG, source);
+export const renderMermaid = (source: string) => enqueueRender(themedConfig, source);
 
-export const renderMermaidForImage = (source: string) => enqueueRender(IMAGE_EXPORT_CONFIG, source);
+export const renderMermaidForImage = (source: string) => enqueueRender(imageExportConfig, source);

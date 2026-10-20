@@ -4,6 +4,7 @@ import { ExpandIcon } from "../ui/Icons";
 import { DiagramActions } from "./DiagramActions";
 import { DiagramViewer } from "./DiagramViewer";
 import { RenderedDiagram, renderMermaid } from "./mermaid";
+import { THEME_CHANGE_EVENT } from "../../themes";
 
 type HastElement = NonNullable<ExtraProps["node"]>;
 type HastChild = HastElement["children"][number];
@@ -47,6 +48,13 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
     null
   );
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [themeRevision, setThemeRevision] = useState(0);
+
+  useEffect(() => {
+    const rerender = () => setThemeRevision((revision) => revision + 1);
+    window.addEventListener(THEME_CHANGE_EVENT, rerender);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, rerender);
+  }, []);
 
   useEffect(() => {
     let stale = false;
@@ -59,7 +67,7 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
       stale = true;
       clearTimeout(timer);
     };
-  }, [source]);
+  }, [source, themeRevision]);
 
   if (rendered?.source !== source) return fallback;
   const { svg, width, height } = rendered.diagram;

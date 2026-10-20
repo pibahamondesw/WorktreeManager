@@ -1,7 +1,8 @@
+// @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from "vitest";
 
 const mermaid = vi.hoisted(() => ({
-  initialize: vi.fn<(config: { htmlLabels?: boolean }) => void>(),
+  initialize: vi.fn<(config: { htmlLabels?: boolean; themeVariables?: object }) => void>(),
   parse: vi.fn(),
   render: vi.fn<(id: string, source: string) => Promise<{ svg: string }>>(),
 }));
@@ -62,4 +63,24 @@ it("renders image exports without HTML labels, one configuration at a time", asy
   expect(mermaid.initialize.mock.invocationCallOrder[1]).toBeGreaterThan(
     mermaid.render.mock.invocationCallOrder[0]
   );
+});
+
+it("re-initializes with the active theme colors when the theme changes", async () => {
+  mermaid.initialize.mockClear();
+  mermaid.parse.mockResolvedValue({ diagramType: "flowchart" });
+  mermaid.render.mockResolvedValue({ svg: SVG });
+  const root = document.documentElement;
+  root.style.setProperty("--color-bg-secondary", "#f2e5bc");
+  root.dataset.appearance = "light";
+
+  await renderMermaid("graph TD\nA-->B");
+  await renderMermaid("graph TD\nA-->B");
+
+  expect(mermaid.initialize).toHaveBeenCalledOnce();
+  expect(mermaid.initialize.mock.calls[0][0].themeVariables).toMatchObject({
+    background: "#f2e5bc",
+    darkMode: false,
+  });
+  root.style.removeProperty("--color-bg-secondary");
+  delete root.dataset.appearance;
 });

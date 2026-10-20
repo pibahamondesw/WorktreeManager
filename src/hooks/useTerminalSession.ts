@@ -13,6 +13,7 @@ import {
   TerminalStatus,
 } from "../services/terminal";
 import { xtermThemeFromCss } from "../components/terminal/xtermTheme";
+import { THEME_CHANGE_EVENT } from "../themes";
 
 export type SessionStatus = { kind: "connecting" } | TerminalStatus;
 
@@ -147,6 +148,10 @@ function useXterm(
     void attach();
 
     const input = term.onData((data) => void terminalWrite(taskId, session, data));
+    const followTheme = () => {
+      term.options.theme = xtermThemeFromCss();
+    };
+    window.addEventListener(THEME_CHANGE_EVENT, followTheme);
     const observer = new ResizeObserver(() => {
       safeFit();
       void terminalResize(taskId, session, term.cols, term.rows);
@@ -156,6 +161,7 @@ function useXterm(
     return () => {
       disposed = true;
       observer.disconnect();
+      window.removeEventListener(THEME_CHANGE_EVENT, followTheme);
       input.dispose();
       if (attachment !== null) void terminalDetach(taskId, session, attachment);
       term.dispose();

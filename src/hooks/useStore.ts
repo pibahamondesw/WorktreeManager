@@ -25,7 +25,7 @@ import {
   Workspace,
 } from "../types";
 import { Operations, CreateTaskInput, DeleteOptions, TaskReady } from "../services/operations";
-import { applyTheme, themes, CUSTOM_THEME_ID } from "../themes";
+import { applyTheme, presetFor, CUSTOM_THEME_ID, SYSTEM_THEME_ID } from "../themes";
 
 export function useStore() {
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
@@ -33,7 +33,7 @@ export function useStore() {
   const [editorApp, setEditorAppState] = useState<EditorApp>("cursor");
   const [agentViews, setAgentViews] = useState<AgentViews>(DEFAULT_AGENT_VIEWS);
   const agentViewsRef = useRef(agentViews);
-  const [themeId, setThemeIdState] = useState("default");
+  const [themeId, setThemeIdState] = useState(SYSTEM_THEME_ID);
   const [customColors, setCustomColors] = useState<Record<string, string> | null>(null);
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(false);
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
@@ -113,6 +113,15 @@ export function useStore() {
         setLoadError(e instanceof Error ? e : new Error(String(e)));
       });
   }, [commit, commitEditorApp]);
+
+  useEffect(() => {
+    if (themeId !== SYSTEM_THEME_ID) return;
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!media) return;
+    const followSystem = () => applyTheme(SYSTEM_THEME_ID);
+    media.addEventListener("change", followSystem);
+    return () => media.removeEventListener("change", followSystem);
+  }, [themeId]);
 
   const retryKeychain = useCallback(async () => {
     setKeychainRetrying(true);
@@ -263,7 +272,7 @@ export function useStore() {
       // currently-active preset so the user starts from a familiar palette.
       let seeded = customColors;
       if (id === CUSTOM_THEME_ID && !seeded) {
-        const source = themes.find((t) => t.id === prevTheme) ?? themes[0];
+        const source = presetFor(prevTheme);
         seeded = { ...source.colors };
         setCustomColors(seeded);
       }

@@ -29,6 +29,7 @@ import {
 import { loadSecrets, saveAndVerifySecrets, saveSecrets } from "./keychain";
 import { NavigationEntry, isNavigationEntry } from "../navigation/history";
 import { AgentAlertSettings, normalizeAgentAlerts } from "./agentActivity";
+import { SYSTEM_THEME_ID } from "../themes";
 
 let store: Store | null = null;
 
@@ -323,7 +324,7 @@ export async function loadState(
 
 export async function loadThemeId(): Promise<string> {
   const s = await getStore();
-  return (await s.get<string>("themeId")) ?? "default";
+  return (await s.get<string>("themeId")) ?? SYSTEM_THEME_ID;
 }
 
 /**

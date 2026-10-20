@@ -5,7 +5,7 @@ import {
   preferredShortcut,
   type ShortcutOverrides,
 } from "../shortcuts/catalog";
-import { CUSTOM_THEME_ID, themes } from "../themes";
+import { CUSTOM_THEME_ID, SYSTEM_THEME_ID, themeAppearance, themes } from "../themes";
 import { EditorApp, EDITOR_APPS, PullRequestInfo, Task, Workspace } from "../types";
 
 export type WorkspaceAction =
@@ -175,8 +175,9 @@ export function buildCommands({
   });
 
   const themeOptions = [
-    ...themes.map((t) => ({ id: t.id, name: t.name })),
-    { id: CUSTOM_THEME_ID, name: "Custom" },
+    { id: SYSTEM_THEME_ID, name: "System", tags: "light dark" },
+    ...themes.map((t) => ({ id: t.id, name: t.name, tags: themeAppearance(t.colors) })),
+    { id: CUSTOM_THEME_ID, name: "Custom", tags: "" },
   ];
   for (const theme of themeOptions) {
     const isCurrent = theme.id === themeId;
@@ -185,7 +186,7 @@ export function buildCommands({
       label: `Theme: ${theme.name}`,
       hint: isCurrent ? "current" : undefined,
       group: "settings",
-      keywords: `theme appearance ${theme.name}`.toLowerCase(),
+      keywords: `theme appearance ${theme.name} ${theme.tags}`.toLowerCase(),
       emptyVisible: false,
       action: { type: "set-theme", themeId: theme.id },
     });
