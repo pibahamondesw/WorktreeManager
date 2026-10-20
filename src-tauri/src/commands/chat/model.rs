@@ -380,6 +380,8 @@ pub struct ChatSnapshot {
     pub items: Vec<ChatItem>,
     pub pending: Vec<PendingRequest>,
     pub controls: ChatControls,
+    #[serde(skip)]
+    pub background_agents: bool,
 }
 
 impl ChatSnapshot {
@@ -390,6 +392,7 @@ impl ChatSnapshot {
             items: Vec::new(),
             pending: Vec::new(),
             controls: ChatControls::default(),
+            background_agents: false,
         }
     }
 
@@ -451,6 +454,8 @@ pub struct ProviderOutput {
     pub history_result: Option<Result<(), String>>,
     pub starts_turn: bool,
     pub completes_turn: bool,
+    /// Whether background subagents keep the session working after its turn ends.
+    pub background_agents: Option<bool>,
 }
 
 impl ProviderOutput {

@@ -892,7 +892,7 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         launched.provider,
         1,
         Arc::new(drop),
-        Arc::new(|_, _| {}),
+        Arc::new(|_| {}),
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);

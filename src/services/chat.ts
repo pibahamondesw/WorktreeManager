@@ -188,6 +188,8 @@ export interface ChatInfo {
   status: ChatStatus;
   /** An approval or question is waiting for an answer. */
   waiting: boolean;
+  /** Background subagents keep the agent working after its turn ends. */
+  backgroundAgents: boolean;
 }
 
 export const isLive = (status: ChatStatus) => status.kind !== "exited" && status.kind !== "failed";

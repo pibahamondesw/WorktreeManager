@@ -46,6 +46,8 @@ pub struct ClaudeProvider {
     usage: PlanUsage,
     usage_in_flight: bool,
     last_event_usage_request: Option<Instant>,
+    /// Background subagents still run, per the last `background_tasks_changed`.
+    background_agents: bool,
 }
 
 struct QueuedMessage {
@@ -108,6 +110,7 @@ impl ClaudeProvider {
             usage: PlanUsage::default(),
             usage_in_flight: false,
             last_event_usage_request: None,
+            background_agents: false,
         }
     }
 
@@ -126,6 +129,28 @@ impl ClaudeProvider {
         out.upsert(message.item);
         self.turns = 1;
         out.status(ChatStatus::Busy);
+    }
+
+    /// Claude ends its turn while background subagents run and wakes for each one that reports
+    /// back, so they keep the chat working until a turn ends with none left.
+    fn track_background_tasks(&mut self, tasks: &Value, out: &mut ProviderOutput) {
+        self.background_agents = tasks
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|task| task["task_type"] == "local_agent" && task["ambient"] != true);
+        if self.background_agents {
+            out.background_agents = Some(true);
+        }
+    }
+
+    /// Claude starts a turn on its own to read a finished subagent's report; messages sent
+    /// meanwhile wait for it, as in any other turn.
+    fn begin_wake_turn(&mut self, snapshot: &ChatSnapshot, out: &mut ProviderOutput) {
+        if self.turns == 0 && snapshot.background_agents {
+            self.turns = 1;
+            out.status(ChatStatus::Busy);
+        }
     }
 
     fn control(&mut self, out: &mut ProviderOutput, call: Control, request: Value) {
@@ -522,6 +547,10 @@ impl ChatProvider for ClaudeProvider {
                     self.select_mode(mode);
                 }
                 out.controls(&self.controls);
+                self.begin_wake_turn(snapshot, out);
+            }
+            Some("system") if message["subtype"] == "background_tasks_changed" => {
+                self.track_background_tasks(&message["tasks"], out)
             }
             Some("control_response") => self.handle_control_response(&message["response"], out),
             Some("user") => {
@@ -550,6 +579,7 @@ impl ChatProvider for ClaudeProvider {
             }
             Some("result") => {
                 out.completes_turn = true;
+                out.background_agents = Some(self.background_agents);
                 self.turns = self.turns.saturating_sub(1);
                 if message["is_error"] == true {
                     let text = message["result"]
@@ -1305,6 +1335,59 @@ mod tests {
                 status: ChatStatus::Idle
             }
         )));
+    }
+
+    #[test]
+    fn background_subagents_outlive_the_turn_until_one_ends_without_them() {
+        let (mut provider, mut snapshot) = started();
+        let agent = json!({ "task_id": "a1", "task_type": "local_agent", "description": "Review" });
+        let changed = |tasks: Value| json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": tasks });
+        let result = json!({ "type": "result", "is_error": false });
+        let ignored = json!([
+            { "task_id": "b1", "task_type": "local_bash", "description": "Server" },
+            { "task_id": "a2", "task_type": "local_agent", "ambient": true, "description": "Watch" },
+        ]);
+        assert_eq!(
+            feed(&mut provider, &mut snapshot, changed(ignored)).background_agents,
+            None
+        );
+        assert_eq!(
+            feed(&mut provider, &mut snapshot, result.clone()).background_agents,
+            Some(false)
+        );
+        let started = feed(&mut provider, &mut snapshot, changed(json!([agent])));
+        assert_eq!(started.background_agents, Some(true));
+        assert_eq!(
+            feed(&mut provider, &mut snapshot, result.clone()).background_agents,
+            Some(true)
+        );
+        let finished = feed(&mut provider, &mut snapshot, changed(json!([])));
+        assert_eq!(finished.background_agents, None);
+        assert_eq!(
+            feed(&mut provider, &mut snapshot, result).background_agents,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_wake_turn_for_a_finished_subagent_runs_like_a_turn() {
+        let (mut provider, mut snapshot) = started();
+        let init = json!({ "type": "system", "subtype": "init" });
+        let result = json!({ "type": "result", "is_error": false });
+        feed(&mut provider, &mut snapshot, init.clone());
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        snapshot.background_agents = true;
+        feed(&mut provider, &mut snapshot, init);
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+
+        let mut out = ProviderOutput::default();
+        provider.send("next", &[], &mut out).unwrap();
+        assert!(out.writes.is_empty());
+        let woke = feed(&mut provider, &mut snapshot, result.clone());
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+        assert!(written(&woke).iter().any(|line| line["type"] == "user"));
+        feed(&mut provider, &mut snapshot, result);
+        assert_eq!(snapshot.status, ChatStatus::Idle);
     }
 
     fn feed(
