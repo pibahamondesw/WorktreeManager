@@ -11,12 +11,12 @@
 //! once instead of per tool. Nothing here fails hard: an unresolvable tool is data, not an error.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::commands::doppler::repo_uses_doppler;
 use crate::commands::editor::gui_app_exists;
+use crate::commands::login_shell::{remember_availability, LoginShell};
 use crate::commands::node_deps::detect_package_manager;
-use crate::commands::shell_env::{claude_env_prelude, login_shell};
 
 #[derive(serde::Serialize)]
 pub struct CliProbe {
@@ -81,24 +81,28 @@ pub async fn doctor_probe(
 /// to run at all inside a project whose `package.json` pins a *different* manager, so probing
 /// from an arbitrary working directory would report a perfectly good manager as broken. The
 /// bundled app already starts at `/`; this makes `tauri dev` behave the same.
-const PROBE_LOOP: &str = r#"cd "$HOME" 2>/dev/null || cd /
-for b in __BINS__; do
+const PROBE_LOOP: &str = r#"for b in "$@"; do
   p=$(command -v "$b" 2>/dev/null) || p=""
   v=""
   [ -n "$p" ] && v=$("$b" --version 2>/dev/null | head -n 1 | tr -d '\t')
   printf '%s\t%s\t%s\n' "$b" "$p" "$v"
 done"#;
 
-fn probe_script(names: &[&str]) -> String {
-    format!(
-        "{}\n{}",
-        claude_env_prelude(),
-        PROBE_LOOP.replace("__BINS__", &names.join(" "))
-    )
+fn probe_launch(names: &[&str]) -> LoginShell {
+    LoginShell::script(PROBE_LOOP)
+        .args(names)
+        .current_dir(outside_projects())
 }
 
-/// Probed names are interpolated into the probe script, so restrict them to what an executable
-/// name can plausibly be. Everything the app probes is a literal in the frontend's catalogue —
+fn outside_projects() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_dir())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// Probed names are run as `<name> --version`, so restrict them to what an executable name can
+/// plausibly be. Everything the app probes is a literal in the frontend's catalogue —
 /// this guards the IPC boundary, not a real-world case.
 fn is_probe_safe(name: &str) -> bool {
     !name.is_empty()
@@ -136,8 +140,7 @@ fn probe_clis(names: &[String]) -> Vec<CliProbe> {
     let probed = if safe.is_empty() {
         HashMap::new()
     } else {
-        let script = probe_script(&safe);
-        match login_shell(&script).output() {
+        match probe_launch(&safe).output() {
             Ok(output) => parse_probe_output(&String::from_utf8_lossy(&output.stdout)),
             Err(e) => {
                 eprintln!("WorktreeManager: doctor CLI probe failed: {e}");
@@ -150,6 +153,7 @@ fn probe_clis(names: &[String]) -> Vec<CliProbe> {
         .iter()
         .map(|name| {
             let (path, version) = probed.get(name.as_str()).cloned().unwrap_or_default();
+            remember_availability(name, !path.is_empty());
             CliProbe {
                 name: name.clone(),
                 path: Some(path).filter(|p| !p.is_empty()),
@@ -200,19 +204,26 @@ mod tests {
     }
 
     #[test]
-    fn probe_script_lists_every_name_once() {
-        let script = probe_script(&["git", "gh"]);
-        assert!(script.contains("for b in git gh; do"));
-        assert!(!script.contains("__BINS__"));
+    fn probes_every_name_from_the_home_directory() {
+        // A corepack shim refuses to run inside a project pinned to another manager, so the
+        // version probe has to happen outside every repo.
+        assert_eq!(
+            probe_launch(&["git", "gh"]),
+            LoginShell::script(PROBE_LOOP)
+                .args(["git", "gh"])
+                .current_dir(std::env::var("HOME").unwrap())
+        );
     }
 
     #[test]
-    fn probe_script_leaves_any_project_directory_before_probing() {
-        // A corepack shim refuses to run inside a project pinned to another manager, so the
-        // version probe has to happen outside every repo.
-        let script = probe_script(&["pnpm"]);
-        let cd = script.find(r#"cd "$HOME""#).expect("probe should cd out");
-        assert!(cd < script.find("for b in").unwrap());
+    fn probing_resolves_binaries_and_refreshes_remembered_availability() {
+        remember_availability("wtm-doctor-uninstalled", true);
+        let probes = probe_clis(&["sh".to_string(), "wtm-doctor-uninstalled".to_string()]);
+        assert!(probes[0].path.is_some());
+        assert_eq!(probes[1].path, None);
+        assert!(!crate::commands::login_shell::cli_available(
+            "wtm-doctor-uninstalled"
+        ));
     }
 
     #[test]

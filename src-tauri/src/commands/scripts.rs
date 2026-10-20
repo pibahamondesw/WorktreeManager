@@ -19,7 +19,6 @@ use sha2::{Digest, Sha256};
 use super::doppler::repo_uses_doppler;
 use super::git::git_command;
 use super::node_deps::detect_package_manager;
-use super::shell_env::shell_single_quoted;
 
 pub const CONFIG_FILE: &str = ".worktreemanager.toml";
 pub const INCLUDE_FILE: &str = ".worktreeinclude";
@@ -128,6 +127,11 @@ fn read_superset_config(root: &Path) -> Result<Option<Scripts>, String> {
             teardown: json_script(config.get("teardown")),
         }),
     )
+}
+
+/// POSIX single-quoted literal for the setup script text shown to the user.
+fn shell_single_quoted(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Cursor accepts a command list or a script path relative to `.cursor/`; it has no teardown.

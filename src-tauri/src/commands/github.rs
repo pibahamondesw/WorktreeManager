@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use super::login_shell::LoginShell;
 use super::process::OwnedProcess;
-use super::shell_env::{claude_env_prelude, login_shell, shell_single_quoted};
 
 #[derive(serde::Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -89,14 +89,8 @@ fn run_process(
 
 fn run_gh(args: &[&str], input: &[u8]) -> Result<Vec<u8>, String> {
     let allow_partial = args.first() == Some(&"api");
-    let args = args
-        .iter()
-        .map(|a| shell_single_quoted(a))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let script = format!("{} >/dev/null; exec gh {}", claude_env_prelude(), args);
     run_process(
-        &mut login_shell(&script),
+        &mut LoginShell::program("gh", args).command(),
         input,
         Duration::from_secs(30),
         allow_partial,
@@ -218,6 +212,14 @@ pub(super) fn authenticated() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gh_resolves_through_the_login_shell() {
+        assert_eq!(
+            run_gh(&["--version"], b"").is_ok(),
+            crate::commands::login_shell::cli_available("gh")
+        );
+    }
 
     #[test]
     fn batch_deduplicates_and_validates_inputs() {

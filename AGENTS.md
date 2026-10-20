@@ -20,7 +20,7 @@ Keep changes small and follow nearby patterns. Prioritize user data, consistent 
 
 ## Platform and UI conventions
 
-- GUI launches have a minimal environment. Use macOS `open -a` for GUI editors and the shared [shell environment helpers](src-tauri/src/commands/shell_env.rs) for CLI launches and probes. Quote dynamic shell arguments.
+- GUI launches have a minimal environment. Use macOS `open -a` for GUI editors and the shared [login-shell launcher](src-tauri/src/commands/login_shell.rs) for CLI launches and probes. Pass dynamic values as launcher arguments, never as script text.
 - Use nested raw GraphQL queries for bulk Linear reads; SDK relation traversal creates N+1 requests.
 - Reuse UI primitives and theme tokens; keep chrome minimal and keyboard navigation usable. Errors, paths and branch names must remain selectable. Use `data-drag-region` with [useWindowDrag](src/hooks/useWindowDrag.ts), not Tauri's built-in drag handler or CSS app regions: native drags lose mouseup events and break subsequent clicks. Keep interactive controls out of drag handling and app shortcuts out of text/terminal input.
 
