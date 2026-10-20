@@ -56,7 +56,9 @@ describe("buildCommands", () => {
         "settings",
         "vault",
         "theme-picker",
+        "theme:system",
         "theme:default",
+        "theme:light",
         "editor:cursor",
         "editor:claude-code",
       ])

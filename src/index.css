@@ -40,6 +40,17 @@
   --motion-reveal-ring: 1500ms;
 }
 
+:root[data-appearance="light"] {
+  --syntax-keyword: #b4236e;
+  --syntax-function: #6d28d9;
+  --syntax-string: #2f7d3b;
+  --syntax-literal: #b45309;
+  --syntax-type: #0369a1;
+  --syntax-property: #4338ca;
+  --syntax-comment: #8a8aa0;
+  --syntax-punctuation: #5c5c72;
+}
+
 html,
 body,
 #root {

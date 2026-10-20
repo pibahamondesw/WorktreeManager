@@ -4,8 +4,18 @@ export interface Theme {
   colors: Record<string, string>;
 }
 
+export type ThemeAppearance = "light" | "dark";
+
 /** Id of the user-configurable theme (not part of the `themes` preset list). */
 export const CUSTOM_THEME_ID = "custom";
+
+/** Id of the theme that follows the macOS appearance (not part of the `themes` preset list). */
+export const SYSTEM_THEME_ID = "system";
+
+const SYSTEM_DARK_THEME_ID = "default";
+const SYSTEM_LIGHT_THEME_ID = "light";
+
+export const THEME_CHANGE_EVENT = "app-theme-change";
 
 /** A single editable color token, used to render the custom theme editor. */
 export interface ThemeColorToken {
@@ -214,15 +224,176 @@ export const themes: Theme[] = [
       "danger-hover": "#b03030",
     },
   },
+  {
+    id: "light",
+    name: "Daylight",
+    colors: {
+      "bg-primary": "#fbfbfd",
+      "bg-secondary": "#f3f3f8",
+      "bg-tertiary": "#eaeaf1",
+      "bg-hover": "#e2e2eb",
+      "bg-active": "#d8d8e4",
+      border: "#dcdce6",
+      "border-light": "#c6c6d4",
+      "text-primary": "#1a1a24",
+      "text-secondary": "#5c5c72",
+      "text-muted": "#8a8aa0",
+      accent: "#4f46e5",
+      "accent-hover": "#4338ca",
+      success: "#16a34a",
+      warning: "#b45309",
+      danger: "#dc2626",
+      "danger-hover": "#b91c1c",
+    },
+  },
+  {
+    id: "catppuccin-latte",
+    name: "Catppuccin Latte",
+    colors: {
+      "bg-primary": "#eff1f5",
+      "bg-secondary": "#e6e9ef",
+      "bg-tertiary": "#dce0e8",
+      "bg-hover": "#d5d9e2",
+      "bg-active": "#ccd0da",
+      border: "#ccd0da",
+      "border-light": "#bcc0cc",
+      "text-primary": "#4c4f69",
+      "text-secondary": "#6c6f85",
+      "text-muted": "#8c8fa1",
+      accent: "#8839ef",
+      "accent-hover": "#7024d6",
+      success: "#40a02b",
+      warning: "#c27612",
+      danger: "#d20f39",
+      "danger-hover": "#b00c2f",
+    },
+  },
+  {
+    id: "rose-pine-dawn",
+    name: "Rosé Pine Dawn",
+    colors: {
+      "bg-primary": "#faf4ed",
+      "bg-secondary": "#f4ede8",
+      "bg-tertiary": "#f2e9e1",
+      "bg-hover": "#ebe2da",
+      "bg-active": "#dfdad9",
+      border: "#dfdad9",
+      "border-light": "#cecacd",
+      "text-primary": "#575279",
+      "text-secondary": "#797593",
+      "text-muted": "#9893a5",
+      accent: "#907aa9",
+      "accent-hover": "#7c6595",
+      success: "#286983",
+      warning: "#c9801f",
+      danger: "#b4637a",
+      "danger-hover": "#9d5168",
+    },
+  },
+  {
+    id: "gruvbox-light",
+    name: "Gruvbox Light",
+    colors: {
+      "bg-primary": "#fbf1c7",
+      "bg-secondary": "#f2e5bc",
+      "bg-tertiary": "#ebdbb2",
+      "bg-hover": "#e3d2a8",
+      "bg-active": "#d5c4a1",
+      border: "#d5c4a1",
+      "border-light": "#bdae93",
+      "text-primary": "#3c3836",
+      "text-secondary": "#665c54",
+      "text-muted": "#928374",
+      accent: "#af3a03",
+      "accent-hover": "#8f3202",
+      success: "#79740e",
+      warning: "#b57614",
+      danger: "#cc241d",
+      "danger-hover": "#9d0006",
+    },
+  },
+  {
+    id: "everforest-light",
+    name: "Everforest Light",
+    colors: {
+      "bg-primary": "#fffbef",
+      "bg-secondary": "#f8f5e4",
+      "bg-tertiary": "#f2efdf",
+      "bg-hover": "#edeada",
+      "bg-active": "#e8e5d5",
+      border: "#e8e5d5",
+      "border-light": "#bec5b2",
+      "text-primary": "#5c6a72",
+      "text-secondary": "#829181",
+      "text-muted": "#a6b0a0",
+      accent: "#35a77c",
+      "accent-hover": "#2b8a66",
+      success: "#7f9100",
+      warning: "#c08a00",
+      danger: "#f85552",
+      "danger-hover": "#e5403d",
+    },
+  },
+  {
+    id: "solarized-light",
+    name: "Solarized Light",
+    colors: {
+      "bg-primary": "#fdf6e3",
+      "bg-secondary": "#f5efdc",
+      "bg-tertiary": "#eee8d5",
+      "bg-hover": "#e6dfca",
+      "bg-active": "#ddd6c1",
+      border: "#e0d9c4",
+      "border-light": "#cdc5ad",
+      "text-primary": "#073642",
+      "text-secondary": "#586e75",
+      "text-muted": "#93a1a1",
+      accent: "#268bd2",
+      "accent-hover": "#1f72ad",
+      success: "#859900",
+      warning: "#b58900",
+      danger: "#dc322f",
+      "danger-hover": "#b8281f",
+    },
+  },
 ];
+
+function relativeLuminance(hex: string) {
+  const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const [r, g, b] = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+export function themeAppearance(colors: Record<string, string>): ThemeAppearance {
+  return relativeLuminance(colors["bg-primary"] ?? "#000000") > 0.5 ? "light" : "dark";
+}
+
+function systemPrefersDark() {
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
+}
+
+const presetById = (id: string) => themes.find((t) => t.id === id) ?? themes[0];
+
+export const systemThemePresets = {
+  light: presetById(SYSTEM_LIGHT_THEME_ID),
+  dark: presetById(SYSTEM_DARK_THEME_ID),
+};
+
+/** The preset a theme id renders with; `system` resolves through the macOS appearance. */
+export function presetFor(themeId: string): Theme {
+  if (themeId !== SYSTEM_THEME_ID) return presetById(themeId);
+  return systemPrefersDark() ? systemThemePresets.dark : systemThemePresets.light;
+}
 
 export function applyTheme(themeId: string, customColors?: Record<string, string>) {
   const colors =
-    themeId === CUSTOM_THEME_ID
-      ? (customColors ?? themes[0].colors)
-      : (themes.find((t) => t.id === themeId) ?? themes[0]).colors;
+    themeId === CUSTOM_THEME_ID ? (customColors ?? themes[0].colors) : presetFor(themeId).colors;
   const root = document.documentElement;
   for (const [key, value] of Object.entries(colors)) {
     root.style.setProperty(`--color-${key}`, value);
   }
+  const appearance = themeAppearance(colors);
+  root.dataset.appearance = appearance;
+  root.style.colorScheme = appearance;
+  window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
 }

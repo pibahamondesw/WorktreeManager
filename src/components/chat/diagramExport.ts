@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { DIAGRAM_BACKGROUND, RenderedDiagram, renderMermaidForImage } from "./mermaid";
+import { diagramBackground, RenderedDiagram, renderMermaidForImage } from "./mermaid";
 
 const PIXEL_RATIO = 2;
 const PNG_FILE_NAME = "mermaid-diagram.png";
@@ -31,7 +31,7 @@ async function diagramPngBase64(diagram: RenderedDiagram) {
   canvas.height = Math.ceil(diagram.height * PIXEL_RATIO);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Could not draw the diagram");
-  context.fillStyle = DIAGRAM_BACKGROUND;
+  context.fillStyle = diagramBackground();
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);

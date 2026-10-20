@@ -7,7 +7,10 @@ import { renderMermaidForImage } from "./mermaid";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
-vi.mock("./mermaid", () => ({ DIAGRAM_BACKGROUND: "#12121a", renderMermaidForImage: vi.fn() }));
+vi.mock("./mermaid", () => ({
+  diagramBackground: () => "#12121a",
+  renderMermaidForImage: vi.fn(),
+}));
 
 const drawnImages: string[] = [];
 
