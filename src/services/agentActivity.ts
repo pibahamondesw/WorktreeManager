@@ -321,7 +321,10 @@ export function notificationFor(
   return { title, body: subject, target };
 }
 
-export type HooksState = "missing" | "outdated" | "installed";
+/** `otherApp`: another WorktreeManager build or profile receives the events, at `target`. */
+export type HooksState =
+  | { state: "missing" | "outdated" | "installed" }
+  | { state: "otherApp"; target: string };
 
 export interface AgentHooksStatus {
   claude: HooksState;
@@ -329,7 +332,8 @@ export interface AgentHooksStatus {
 }
 
 export const agentHooksStatus = () => invoke<AgentHooksStatus>("agent_hooks_status");
-export const installAgentHooks = (agent: AgentId) => invoke<void>("agent_hooks_install", { agent });
+export const installAgentHooks = (agent: AgentId, replaceOtherApp = false) =>
+  invoke<void>("agent_hooks_install", { agent, replaceOtherApp });
 export const removeAgentHooks = (agent: AgentId) => invoke<void>("agent_hooks_remove", { agent });
 export const previewSound = (sound: string) =>
   invoke<void>("agent_attention", { sound, notification: null });

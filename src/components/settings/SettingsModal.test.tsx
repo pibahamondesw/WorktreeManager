@@ -121,6 +121,34 @@ describe("SettingsModal", () => {
       sounds: { ...DEFAULT_AGENT_ALERTS.sounds, done: null },
     });
   });
+
+  it("shows hooks that report to another app and replaces them only after confirming", async () => {
+    const target = "'/dev/target/debug/worktree-manager' --cli --local";
+    const status = {
+      claude: { state: "otherApp", target },
+      codex: { state: "installed" },
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(status);
+    renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Agent alerts" }));
+    expect(await screen.findByText(target)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Use this app" }));
+    expect(screen.getByText(/stop receiving alerts/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/stop receiving alerts/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Use this app" }));
+    expect(invoke).toHaveBeenCalledTimes(1);
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ ...status, claude: { state: "installed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Replace hooks" }));
+    await waitFor(() => expect(screen.queryByText(target)).toBeNull());
+    expect(invoke).toHaveBeenCalledWith("agent_hooks_install", {
+      agent: "claude",
+      replaceOtherApp: true,
+    });
+    expect(screen.getAllByRole("button", { name: "Remove hooks" })).toHaveLength(2);
+  });
 });
 
 it("places keyboard shortcuts last in settings navigation", () => {

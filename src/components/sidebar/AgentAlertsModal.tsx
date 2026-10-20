@@ -20,10 +20,11 @@ interface AgentAlertSettingsPanelProps {
   onAlertsChange: (alerts: AgentAlertSettings) => void;
 }
 
-const ACTION_LABELS: Record<HooksState, string> = {
+const ACTION_LABELS: Record<HooksState["state"], string> = {
   missing: "Install hooks",
   outdated: "Update hooks",
   installed: "Remove hooks",
+  otherApp: "Use this app",
 };
 
 const CATEGORIES: { id: AlertCategory; label: string }[] = [
@@ -38,21 +39,31 @@ export function AgentAlertSettingsPanel({
 }: AgentAlertSettingsPanelProps) {
   const [hooks, setHooks] = useState<AgentHooksStatus | null>(null);
   const [busy, setBusy] = useState<AgentId | null>(null);
+  const [confirming, setConfirming] = useState<AgentId | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setConfirming(null);
     void agentHooksStatus()
       .then(setHooks)
       .catch((e) => setError(String(e)));
   }, [open]);
 
   const toggleHooks = async (agent: AgentId) => {
+    const state = hooks?.[agent].state;
+    if (state === "otherApp" && confirming !== agent) {
+      setConfirming(agent);
+      return;
+    }
+    setConfirming(null);
     setBusy(agent);
     setError(null);
     try {
-      await (hooks?.[agent] === "installed" ? removeAgentHooks(agent) : installAgentHooks(agent));
+      await (state === "installed"
+        ? removeAgentHooks(agent)
+        : installAgentHooks(agent, state === "otherApp"));
       setHooks(await agentHooksStatus());
     } catch (e) {
       setError(String(e));
@@ -81,30 +92,45 @@ export function AgentAlertSettingsPanel({
           report it on their own. Subagent activity is ignored. Alerts require WorktreeManager to be
           running. Your other hooks are kept as they are.
         </p>
-        {AGENT_IDS.map((id) => (
-          <div
-            key={id}
-            className="flex items-center justify-between gap-3 rounded-lg bg-bg-tertiary border border-border px-3 py-2"
-          >
-            <div className="min-w-0">
-              <p className="text-sm text-text-primary">{AGENTS[id].productName}</p>
-              <p className="text-xs font-mono text-text-muted truncate select-text">
-                {AGENTS[id].alertHooksConfig}
-              </p>
-              {AGENTS[id].alertHooksTrust && hooks?.[id] !== "missing" && (
-                <p className="text-xs text-text-muted select-text">{AGENTS[id].alertHooksTrust}</p>
+        {AGENT_IDS.map((id) => {
+          const state = hooks?.[id];
+          return (
+            <div
+              key={id}
+              className="space-y-2 rounded-lg bg-bg-tertiary border border-border px-3 py-2"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-text-primary">{AGENTS[id].productName}</p>
+                  <p className="text-xs font-mono text-text-muted truncate select-text">
+                    {AGENTS[id].alertHooksConfig}
+                  </p>
+                  {AGENTS[id].alertHooksTrust && state && state.state !== "missing" && (
+                    <p className="text-xs text-text-muted select-text">
+                      {AGENTS[id].alertHooksTrust}
+                    </p>
+                  )}
+                </div>
+                <Button
+                  variant={state?.state === "installed" ? "ghost" : "primary"}
+                  disabled={!hooks || busy !== null || confirming === id}
+                  loading={busy === id}
+                  onClick={() => void toggleHooks(id)}
+                >
+                  {ACTION_LABELS[state?.state ?? "missing"]}
+                </Button>
+              </div>
+              {state?.state === "otherApp" && (
+                <OtherAppHooks
+                  target={state.target}
+                  confirming={confirming === id}
+                  onConfirm={() => void toggleHooks(id)}
+                  onCancel={() => setConfirming(null)}
+                />
               )}
             </div>
-            <Button
-              variant={hooks?.[id] === "installed" ? "ghost" : "primary"}
-              disabled={!hooks || busy !== null}
-              loading={busy === id}
-              onClick={() => void toggleHooks(id)}
-            >
-              {ACTION_LABELS[hooks?.[id] ?? "missing"]}
-            </Button>
-          </div>
-        ))}
+          );
+        })}
         {error && <p className="text-sm text-danger select-text">{error}</p>}
       </div>
 
@@ -140,6 +166,37 @@ export function AgentAlertSettingsPanel({
           its task.
         </p>
       </div>
+    </div>
+  );
+}
+
+interface OtherAppHooksProps {
+  target: string;
+  confirming: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function OtherAppHooks({ target, confirming, onConfirm, onCancel }: OtherAppHooksProps) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-text-secondary">
+        These hooks report to another WorktreeManager, not this app:
+      </p>
+      <p className="text-xs font-mono text-text-muted break-all select-text">{target}</p>
+      {confirming && (
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <p className="text-xs text-warning">That app will stop receiving alerts. Replace them?</p>
+          <div className="flex gap-2 shrink-0">
+            <Button variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={onConfirm}>
+              Replace hooks
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
