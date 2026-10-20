@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::agent_alerts;
 use super::agents::{self, LaunchContext, LaunchSpec};
@@ -61,8 +61,14 @@ pub struct TerminalInfo {
     pub status: TermStatus,
 }
 
+/// Sessions by `(task, agent)`, plus a lock that runs `terminal_open` calls one at a time: a pane
+/// that remounts while its first open is still spawning must attach to that session, not start a
+/// second one whose insert kills the first.
 #[derive(Default)]
-pub struct TerminalRegistry(Mutex<HashMap<(String, String), TerminalSession>>);
+pub struct TerminalRegistry(
+    Mutex<HashMap<(String, String), TerminalSession>>,
+    tokio::sync::Mutex<()>,
+);
 
 impl TerminalRegistry {
     fn remove_task(&self, task_id: &str) -> Vec<TerminalSession> {
@@ -277,6 +283,15 @@ impl TerminalSession {
         *self.channel.lock().unwrap() = None;
     }
 
+    /// Detach only while `attachment` is still the sink, so a pane unmounting late cannot blank
+    /// the pane that attached after it.
+    fn detach_attachment(&self, attachment: u32) {
+        let mut channel = self.channel.lock().unwrap();
+        if channel.as_ref().is_some_and(|sink| sink.id() == attachment) {
+            *channel = None;
+        }
+    }
+
     /// Signal the whole process group (the PTY child leads its own session) after `delay`, so
     /// commands a script started stop too, while the scrollback stays available for review.
     fn interrupt_after(&self, delay: Duration) {
@@ -338,7 +353,7 @@ impl TerminalSession {
     }
 }
 
-fn session_store(app: &AppHandle) -> Result<PathBuf, String> {
+fn session_store<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map(|d| d.join("agent-sessions"))
@@ -352,8 +367,8 @@ fn canonical(path: &str) -> String {
         .to_string()
 }
 
-fn exit_notifier(
-    app: AppHandle,
+fn exit_notifier<R: Runtime>(
+    app: AppHandle<R>,
     task_id: String,
     agent: String,
 ) -> impl FnOnce(Option<i32>) + Send + 'static {
@@ -371,8 +386,8 @@ fn exit_notifier(
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn terminal_open(
-    app: AppHandle,
+pub async fn terminal_open<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, TerminalRegistry>,
     task_id: String,
     agent: String,
@@ -387,6 +402,7 @@ pub async fn terminal_open(
     }
     let (cols, rows) = (cols.max(2), rows.max(1));
 
+    let _one_open_at_a_time = registry.1.lock().await;
     let key = (task_id.clone(), agent.clone());
     let stale = {
         let mut sessions = registry.0.lock().unwrap();
@@ -478,9 +494,14 @@ pub fn terminal_resize(
 }
 
 #[tauri::command]
-pub fn terminal_detach(registry: State<'_, TerminalRegistry>, task_id: String, agent: String) {
+pub fn terminal_detach(
+    registry: State<'_, TerminalRegistry>,
+    task_id: String,
+    agent: String,
+    attachment: u32,
+) {
     if let Some(session) = registry.0.lock().unwrap().get(&(task_id, agent)) {
-        session.detach();
+        session.detach_attachment(attachment);
     }
 }
 
@@ -492,6 +513,7 @@ pub async fn terminal_stop(
     task_id: String,
     agent: String,
 ) -> Result<(), String> {
+    let _after_any_open = registry.1.lock().await;
     let removed = registry.0.lock().unwrap().remove(&(task_id, agent));
     if let Some(mut session) = removed {
         tauri::async_runtime::spawn_blocking(move || session.terminate())
@@ -502,11 +524,12 @@ pub async fn terminal_stop(
 }
 
 #[tauri::command]
-pub async fn terminal_close(
-    app: AppHandle,
+pub async fn terminal_close<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, TerminalRegistry>,
     task_id: String,
 ) -> Result<(), String> {
+    let _after_any_open = registry.1.lock().await;
     let store = session_store(&app)?;
     let removed = registry.remove_task(&task_id);
     tauri::async_runtime::spawn_blocking(move || {
@@ -687,6 +710,149 @@ mod tests {
             registry.0.lock().unwrap().values().next().unwrap().status(),
             TermStatus::Running
         );
+        registry.shutdown_all();
+    }
+
+    fn cat_session() -> TerminalSession {
+        let spec = LaunchSpec {
+            program: "/bin/cat".to_string(),
+            args: vec![],
+            env: vec![],
+            env_remove: vec![],
+            cwd: "/tmp".to_string(),
+        };
+        TerminalSession::spawn(&spec, "gemini", 80, 24, |_| {}).unwrap()
+    }
+
+    fn sink_id(registry: &TerminalRegistry, key: &(String, String)) -> Option<u32> {
+        let sessions = registry.0.lock().unwrap();
+        let channel = sessions[key].channel.lock().unwrap();
+        channel.as_ref().map(Channel::id)
+    }
+
+    fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        mock_builder()
+            .manage(TerminalRegistry::default())
+            .build(mock_context(noop_assets()))
+            .unwrap()
+    }
+
+    #[test]
+    fn an_open_while_another_is_starting_attaches_to_that_session_instead_of_spawning() {
+        let app = mock_app();
+        let registry = app.state::<TerminalRegistry>();
+        let key = ("task".to_string(), "gemini".to_string());
+        let starting_open = registry.1.blocking_lock();
+        let pane = Channel::new(|_| Ok(()));
+        let attachment = pane.id();
+        let handle = app.handle().clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let opened = tauri::async_runtime::block_on(terminal_open(
+                handle.clone(),
+                handle.state(),
+                "task".into(),
+                "gemini".into(),
+                vec!["/tmp".into()],
+                None,
+                80,
+                24,
+                pane,
+            ));
+            let _ = tx.send(opened);
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        registry
+            .0
+            .lock()
+            .unwrap()
+            .insert(key.clone(), cat_session());
+        drop(starting_open);
+        let opened = rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert!(!opened.created);
+        assert_eq!(opened.status, TermStatus::Running);
+        assert_eq!(sink_id(&registry, &key), Some(attachment));
+        registry.shutdown_all();
+    }
+
+    #[test]
+    fn an_open_for_an_unknown_agent_fails_before_spawning() {
+        let app = mock_app();
+        let opened = tauri::async_runtime::block_on(terminal_open(
+            app.handle().clone(),
+            app.state(),
+            "task".into(),
+            "gemini".into(),
+            vec!["/tmp".into()],
+            None,
+            80,
+            24,
+            Channel::new(|_| Ok(())),
+        ));
+        assert_eq!(opened.err(), Some("Unknown agent: gemini".to_string()));
+    }
+
+    #[test]
+    fn exit_notifications_name_the_task_agent_and_code() {
+        use tauri::Listener;
+        let app = mock_app();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.listen(EXIT_EVENT, move |event| {
+            let _ = tx.send(event.payload().to_string());
+        });
+        exit_notifier(app.handle().clone(), "task".into(), "codex".into())(Some(0));
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            r#"{"taskId":"task","agent":"codex","code":0}"#
+        );
+    }
+
+    #[test]
+    fn stop_and_close_wait_for_a_starting_open_so_its_session_is_not_left_running() {
+        let app = mock_app();
+        let registry = app.state::<TerminalRegistry>();
+        for close_task in [false, true] {
+            let starting_open = registry.1.blocking_lock();
+            let handle = app.handle().clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            thread::spawn(move || {
+                let stopped = tauri::async_runtime::block_on(async {
+                    if close_task {
+                        terminal_close(handle.clone(), handle.state(), "task".into()).await
+                    } else {
+                        terminal_stop(handle.state(), "task".into(), "gemini".into()).await
+                    }
+                });
+                let _ = tx.send(stopped);
+            });
+            assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+            registry
+                .0
+                .lock()
+                .unwrap()
+                .insert(("task".into(), "gemini".into()), cat_session());
+            drop(starting_open);
+            rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+            assert!(registry.0.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_late_detach_from_an_unmounted_pane_keeps_the_newer_pane_attached() {
+        let app = mock_app();
+        let registry = app.state::<TerminalRegistry>();
+        let key = ("task".to_string(), "gemini".to_string());
+        let mut session = cat_session();
+        let (unmounted, mounted) = (Channel::new(|_| Ok(())), Channel::new(|_| Ok(())));
+        let (unmounted_id, mounted_id) = (unmounted.id(), mounted.id());
+        session.attach(unmounted);
+        session.attach(mounted);
+        registry.0.lock().unwrap().insert(key.clone(), session);
+        terminal_detach(app.state(), key.0.clone(), key.1.clone(), unmounted_id);
+        assert_eq!(sink_id(&registry, &key), Some(mounted_id));
+        terminal_detach(app.state(), key.0.clone(), key.1.clone(), mounted_id);
+        assert_eq!(sink_id(&registry, &key), None);
         registry.shutdown_all();
     }
 
