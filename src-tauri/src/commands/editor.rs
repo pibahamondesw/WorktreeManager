@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::agents::Agents;
-use super::{shell_env, workspace};
+use super::login_shell::{cli_available, LoginShell};
+use super::workspace;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,17 +116,18 @@ fn dropped_folders_hint(extra: &[String], editor: &str) -> String {
     )
 }
 
+/// Tests launch a harmless stand-in instead of opening Zed.
+#[cfg(not(test))]
+const ZED_CLI: &str = "zed";
+#[cfg(test)]
+const ZED_CLI: &str = "true";
+
 /// Open all folders as one multi-root Zed window via the `zed` CLI. Falls back to opening the
 /// first folder with `open -a Zed` (plus a hint) when the CLI isn't on PATH.
 fn open_zed(folders: &[String]) -> Result<String, String> {
-    if shell_env::cli_available("zed") {
-        let joined = folders
-            .iter()
-            .map(|f| shell_env::shell_single_quoted(f))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let cmd = format!("{}; zed {joined}", shell_env::claude_env_prelude());
-        shell_env::login_shell(&cmd)
+    if cli_available(ZED_CLI) {
+        LoginShell::program(ZED_CLI, folders)
+            .command()
             .spawn()
             .map_err(|e| format!("Failed to launch Zed: {e}"))?;
         Ok(format!("Zed opened {} folder(s)", folders.len()))
@@ -150,7 +152,7 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
         "vscode" => Ok(gui_app_exists("Visual Studio Code")),
         "vscode-web" => Ok(true),
         "opencode" => Ok(gui_app_exists("OpenCode")),
-        "opencode-web" => Ok(shell_env::cli_available("opencode")),
+        "opencode-web" => Ok(cli_available("opencode")),
         "claude-code" => Ok(Agents::default().get("claude")?.installed()),
         "codex" => Ok(Agents::default().get("codex")?.installed()),
         "zed" => Ok(gui_app_exists("Zed")),
@@ -229,17 +231,22 @@ mod tests {
         );
         assert_eq!(
             check_app_installed("opencode-web".into()),
-            Ok(shell_env::cli_available("opencode"))
+            Ok(cli_available("opencode"))
         );
+    }
+
+    #[test]
+    fn zed_opens_every_folder_through_its_cli() {
+        let opened =
+            open_editor_blocking("zed".into(), vec!["/tmp".into(), "/var".into()], None, None)
+                .unwrap();
+        assert_eq!(opened.message, "Zed opened 2 folder(s)");
     }
 
     #[test]
     fn embedded_agents_are_installed_when_their_cli_resolves() {
         for (editor, cli) in [("claude-code", "claude"), ("codex", "codex")] {
-            assert_eq!(
-                check_app_installed(editor.into()),
-                Ok(shell_env::cli_available(cli))
-            );
+            assert_eq!(check_app_installed(editor.into()), Ok(cli_available(cli)));
         }
     }
 }

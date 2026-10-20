@@ -11,9 +11,7 @@ use std::process::Output;
 
 use crate::commands::doppler::repo_uses_doppler;
 
-use crate::commands::shell_env::{
-    claude_env_prelude, cli_available, login_shell, shell_single_quoted,
-};
+use crate::commands::login_shell::{cli_available, LoginShell};
 
 #[derive(serde::Serialize)]
 pub struct InstallDepsResult {
@@ -65,9 +63,7 @@ fn tail(s: &str, max_chars: usize) -> &str {
 #[tauri::command]
 pub async fn install_node_deps(worktree_path: String) -> Result<InstallDepsResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        run_install(&worktree_path, cli_available, |script| {
-            login_shell(script).output()
-        })
+        run_install(&worktree_path, cli_available, LoginShell::output)
     })
     .await
     .map_err(|e| format!("Dependency install task failed: {e}"))?
@@ -76,7 +72,7 @@ pub async fn install_node_deps(worktree_path: String) -> Result<InstallDepsResul
 fn run_install(
     worktree_path: &str,
     mut available: impl FnMut(&str) -> bool,
-    execute: impl FnOnce(&str) -> std::io::Result<Output>,
+    execute: impl FnOnce(&LoginShell) -> std::io::Result<Output>,
 ) -> Result<InstallDepsResult, String> {
     let root = Path::new(worktree_path);
     if !root.join("package.json").is_file() {
@@ -104,17 +100,8 @@ fn run_install(
             "Doppler CLI not found on PATH",
         ));
     }
-    let runner = if use_doppler { "doppler run -- " } else { "" };
-    let shell_cmd = format!(
-        "{}; cd {} && {}{} install",
-        claude_env_prelude(),
-        shell_single_quoted(worktree_path),
-        runner,
-        manager
-    );
-
-    let output =
-        execute(&shell_cmd).map_err(|e| format!("Failed to run {manager} install: {e}"))?;
+    let output = execute(&install_launch(worktree_path, manager, use_doppler))
+        .map_err(|e| format!("Failed to run {manager} install: {e}"))?;
 
     if output.status.success() {
         Ok(InstallDepsResult::new(
@@ -132,6 +119,15 @@ fn run_install(
             },
         ))
     }
+}
+
+fn install_launch(worktree_path: &str, manager: &str, use_doppler: bool) -> LoginShell {
+    let launch = if use_doppler {
+        LoginShell::program("doppler", ["run", "--", manager, "install"])
+    } else {
+        LoginShell::program(manager, ["install"])
+    };
+    launch.current_dir(worktree_path)
 }
 
 #[cfg(test)]
@@ -158,23 +154,23 @@ mod tests {
 
     #[test]
     fn installs_with_doppler_only_when_the_repository_declares_setup() {
+        let plain = |root: &Path| LoginShell::program("npm", ["install"]).current_dir(root);
+        let doppler = |root: &Path| {
+            LoginShell::program("doppler", ["run", "--", "npm", "install"]).current_dir(root)
+        };
         for (name, config, expected) in [
-            ("plain", None, "npm install"),
+            ("plain", None, plain as fn(&Path) -> LoginShell),
             (
                 "doppler",
                 Some(("doppler.yaml", "setup:\n  project: dashboard\n")),
-                "doppler run -- npm install",
+                doppler,
             ),
             (
                 "hidden-doppler",
                 Some((".doppler.yaml", "setup:\n  project: dashboard\n")),
-                "doppler run -- npm install",
+                doppler,
             ),
-            (
-                "no-setup",
-                Some(("doppler.yaml", "other: value\n")),
-                "npm install",
-            ),
+            ("no-setup", Some(("doppler.yaml", "other: value\n")), plain),
         ] {
             let root = temp_root(name);
             fs::write(root.join("package.json"), "{}").unwrap();
@@ -184,11 +180,8 @@ mod tests {
             let result = run_install(
                 root.to_str().unwrap(),
                 |_| true,
-                |script| {
-                    assert!(script.ends_with(&format!(
-                        "cd {} && {expected}",
-                        shell_single_quoted(root.to_str().unwrap())
-                    )));
+                |launch| {
+                    assert_eq!(*launch, expected(&root));
                     Ok(output(0))
                 },
             )
@@ -221,13 +214,26 @@ mod tests {
         let result = run_install(
             root.to_str().unwrap(),
             |_| true,
-            |script| {
-                assert!(script.ends_with("&& doppler run -- pnpm install"));
+            |launch| {
+                assert_eq!(
+                    *launch,
+                    LoginShell::program("doppler", ["run", "--", "pnpm", "install"])
+                        .current_dir(&root)
+                );
                 Ok(output(1))
             },
         )
         .unwrap();
         assert_eq!(result.status, "error");
+    }
+
+    #[test]
+    fn command_skips_worktrees_without_a_manifest() {
+        let root = temp_root("command-skip");
+        let result =
+            tauri::async_runtime::block_on(install_node_deps(root.to_string_lossy().to_string()))
+                .unwrap();
+        assert_eq!(result.status, "skipped_no_package_json");
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::sync::{
     Mutex,
 };
 
-use super::shell_env::{claude_env_prelude, login_shell};
+use super::login_shell::LoginShell;
 
 const START: &str = "<!-- worktreemanager:obsidian:start -->";
 const END: &str = "<!-- worktreemanager:obsidian:end -->";
@@ -44,15 +44,13 @@ impl VaultAgent {
 
 fn agent_home(agent: VaultAgent) -> Result<PathBuf, String> {
     // Match the profile environment used by external and embedded launchers.
-    // NUL framing separates the path from profile stdout.
+    // NUL framing separates the path from what login files print.
     let (variable, default_dir) = agent.home_variable();
-    let script = format!(
-        "{}; printf '\\0%s\\0' \"${{{variable}:-$HOME/{default_dir}}}\"",
-        claude_env_prelude()
-    );
-    let output = login_shell(&script)
-        .output()
-        .map_err(|e| format!("Resolve {} home: {e}", agent.label()))?;
+    let output = LoginShell::script(&format!(
+        "printf '\\0%s\\0' \"${{{variable}:-$HOME/{default_dir}}}\""
+    ))
+    .output()
+    .map_err(|e| format!("Resolve {} home: {e}", agent.label()))?;
     if !output.status.success() {
         return Err(format!(
             "Could not resolve {} home through your shell profiles",
@@ -370,6 +368,13 @@ mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn agent_homes_resolve_through_the_login_shell() {
+        for agent in [VaultAgent::Codex, VaultAgent::Claude] {
+            assert!(agent_home(agent).unwrap().is_absolute());
         }
     }
 

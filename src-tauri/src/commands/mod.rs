@@ -14,6 +14,7 @@ pub mod export;
 pub mod git;
 pub mod github;
 pub mod keychain;
+pub mod login_shell;
 pub mod node_deps;
 pub mod notes;
 pub mod opencode;

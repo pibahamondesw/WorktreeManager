@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager, State, Wry};
 
 use super::code_server::{self, task_key};
 use super::embedded::{Adapter, EditorRegistry, HiddenView, ServerProcess, SessionInfo, Slot};
-use super::shell_env::cli_available;
+use super::login_shell::cli_available;
 
 pub struct OpenCode {
     program: String,

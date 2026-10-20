@@ -22,11 +22,9 @@ use crate::commands::agent_usage::UsageSource;
 use crate::commands::chat::claude::{
     fork_point, history, launch_args, projects_dir, session_exists, ClaudeProvider, HEADLESS_ARGS,
 };
-use crate::commands::chat::{
-    exchange, login_shell, truncate, Launch, SessionList, SessionSummary, LIST_LIMIT,
-};
+use crate::commands::chat::{exchange, truncate, Launch, SessionList, SessionSummary, LIST_LIMIT};
 use crate::commands::claude_usage::ClaudeUsage;
-use crate::commands::shell_env::{claude_env_prelude, cli_available, shell_single_quoted};
+use crate::commands::login_shell::{cli_available, LoginShell};
 
 /// Env var holding the per-worktree session name. Long, prefixed name avoids clashing with
 /// anything a user might already export in their shell.
@@ -92,7 +90,8 @@ impl Claude {
     }
 
     fn fork(&self, request: &ForkRequest, source: &str) -> Result<Launch, String> {
-        let version = login_shell(request.cwd, &self.program, &["--version".into()])
+        let version = self
+            .cli(request.cwd, ["--version"])
             .output()
             .map_err(|e| e.to_string())?;
         if !version.status.success()
@@ -115,19 +114,22 @@ impl Claude {
             launch_args(request.fork_id, false, request.extra_dirs)
         };
         Ok(Launch {
-            command: login_shell(request.cwd, &self.program, &args),
+            command: self.cli(request.cwd, &args).command(),
             provider: Box::new(ClaudeProvider::new(request.fork_id.to_string()).forking()),
             history,
         })
     }
 
+    fn cli<I, S>(&self, cwd: &str, args: I) -> LoginShell
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        LoginShell::program(&self.program, args).current_dir(cwd)
+    }
+
     fn headless(&self, cwd: &str, args: &[&str]) -> std::process::Command {
-        let all: Vec<String> = HEADLESS_ARGS
-            .iter()
-            .chain(args)
-            .map(|arg| arg.to_string())
-            .collect();
-        login_shell(cwd, &self.program, &all)
+        self.cli(cwd, HEADLESS_ARGS.iter().chain(args)).command()
     }
 
     /// Whether the installed Claude Code accepts `rename_session`, probed on a throwaway session
@@ -199,11 +201,12 @@ impl AgentAdapter for Claude {
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         Ok(Launch {
-            command: login_shell(
-                cwd,
-                &self.program,
-                &launch_args(&session_id, resume.is_some(), &request.extra_dirs),
-            ),
+            command: self
+                .cli(
+                    cwd,
+                    launch_args(&session_id, resume.is_some(), &request.extra_dirs),
+                )
+                .command(),
             provider: Box::new(ClaudeProvider::new(session_id)),
             history,
         })
@@ -230,15 +233,10 @@ impl AgentAdapter for Claude {
         self.require_cli()?;
         let slug = branch_to_session_slug(ctx.branch_name, ctx.canonical_dir);
         let resume = marker_matches(ctx, &slug);
-        let spec = LaunchSpec {
-            program: "/bin/zsh".to_string(),
-            args: vec![
-                "-lc".to_string(),
-                build_launch_script(&self.program, &slug, resume, ctx.extra_dirs),
-            ],
-            env: vec![(SESSION_ENV.to_string(), slug.clone())],
-            cwd: ctx.canonical_dir.to_string(),
-        };
+        let spec = terminal_session(&self.program, &slug, resume, ctx.extra_dirs)
+            .current_dir(ctx.canonical_dir)
+            .env(SESSION_ENV, &slug)
+            .terminal();
         if !resume {
             write_marker(ctx, &slug)?;
         }
@@ -391,25 +389,25 @@ fn rename_reply(message: &Value) -> Option<Result<Value, String>> {
 /// interactive picker. A fast non-zero exit from `-c` means there was nothing to continue
 /// (e.g. the session was closed before Claude persisted anything) — fall back to a fresh named
 /// session. A slow non-zero exit is a real session that later failed, so propagate it.
+const CONTINUE_OR_START_NAMED: &str = r#"program=$1 slug=$2
+shift 2
+s=$SECONDS
+"$program" -c "$@"
+rc=$?
+if [ $rc -ne 0 ] && [ $((SECONDS - s)) -lt 10 ]; then exec "$program" -n "$slug" /color "$@"; fi
+exit $rc"#;
+
 /// `/color` must precede the variadic `--add-dir` flags, which would otherwise swallow it.
-fn build_launch_script(program: &str, slug: &str, resume: bool, extra_dirs: &[String]) -> String {
+fn terminal_session(program: &str, slug: &str, resume: bool, extra_dirs: &[String]) -> LoginShell {
     let add_dirs = extra_dirs
         .iter()
-        .map(|d| format!(" --add-dir {}", shell_single_quoted(d)))
-        .collect::<String>();
-    let program = shell_single_quoted(program);
-    let named = format!(
-        "exec {program} -n {} /color{add_dirs}",
-        shell_single_quoted(slug)
-    );
-    let prelude = claude_env_prelude();
+        .flat_map(|dir| ["--add-dir", dir.as_str()]);
     if resume {
-        format!(
-            "{prelude}; s=$SECONDS; {program} -c{add_dirs}; rc=$?; \
-             if [ $rc -ne 0 ] && [ $((SECONDS - s)) -lt 10 ]; then {named}; fi; exit $rc"
-        )
+        LoginShell::script(CONTINUE_OR_START_NAMED)
+            .args([program, slug])
+            .args(add_dirs)
     } else {
-        format!("{prelude}; {named}")
+        LoginShell::program(program, ["-n", slug, "/color"]).args(add_dirs)
     }
 }
 
@@ -483,6 +481,7 @@ pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn temp_store(tag: &str) -> PathBuf {
         let dir =
@@ -492,26 +491,95 @@ mod tests {
         dir
     }
 
-    #[test]
-    fn named_session_has_color_before_add_dirs_and_never_resume_flag() {
-        let extra = vec!["/tmp/a b".to_string(), "/tmp/c".to_string()];
-        let s = build_launch_script("claude", "wm-x", false, &extra);
-        assert!(
-            s.ends_with("exec 'claude' -n 'wm-x' /color --add-dir '/tmp/a b' --add-dir '/tmp/c'")
-        );
-        assert!(!s.contains("'claude' -c"));
-        assert!(!s.contains("--resume"));
+    fn fake_claude(dir: &Path, continue_exit: i32) -> String {
+        let program = dir.join("fake-claude");
+        fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = -c ]; then echo \"continued $*\"; exit {continue_exit}; fi\necho \"named $*\"\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        program.to_string_lossy().into_owned()
+    }
+
+    fn terminal_output(launch: LoginShell, home: &Path) -> (Option<i32>, String) {
+        let output = launch
+            .command()
+            .env("HOME", home)
+            .env_remove("ZDOTDIR")
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        )
     }
 
     #[test]
-    fn resume_continues_without_exec_or_color_and_falls_back_on_fast_failure() {
-        let s = build_launch_script("claude", "wm-x", true, &["/tmp/a".to_string()]);
-        assert!(s.contains("'claude' -c --add-dir '/tmp/a'; rc=$?"));
-        assert!(!s.contains("exec 'claude' -c"));
-        assert!(!s.contains("'claude' -c /color"));
-        assert!(s.contains("[ $rc -ne 0 ] && [ $((SECONDS - s)) -lt 10 ]"));
-        assert!(s.contains("then exec 'claude' -n 'wm-x' /color --add-dir '/tmp/a'; fi; exit $rc"));
-        assert!(!s.contains("--resume"));
+    fn named_session_has_color_before_add_dirs_and_never_resume_flag() {
+        let extra = vec!["/tmp/a b".to_string(), "/tmp/c".to_string()];
+        assert_eq!(
+            terminal_session("claude", "wm-x", false, &extra),
+            LoginShell::program(
+                "claude",
+                [
+                    "-n",
+                    "wm-x",
+                    "/color",
+                    "--add-dir",
+                    "/tmp/a b",
+                    "--add-dir",
+                    "/tmp/c"
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn resume_continues_and_falls_back_to_the_named_session_only_on_fast_failure() {
+        let store = temp_store("resume");
+        let extra = ["/tmp/a b".to_string()];
+        let continued = fake_claude(&store, 0);
+        assert_eq!(
+            terminal_output(terminal_session(&continued, "wm-x", true, &extra), &store),
+            (Some(0), "continued -c --add-dir /tmp/a b\n".to_string())
+        );
+        let missing = fake_claude(&store, 3);
+        assert_eq!(
+            terminal_output(terminal_session(&missing, "wm-x", true, &extra), &store),
+            (
+                Some(0),
+                "continued -c --add-dir /tmp/a b\nnamed -n wm-x /color --add-dir /tmp/a b\n"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn terminal_launch_starts_a_named_session_then_continues_it() {
+        let store = temp_store("terminal-launch");
+        let claude = Claude::new(fake_claude(&store, 0), None);
+        let ctx = LaunchContext {
+            canonical_dir: "/tmp",
+            extra_dirs: &[],
+            branch_name: Some("feat/x"),
+            session_store: &store,
+        };
+        let first = claude.terminal_launch(&ctx).unwrap();
+        assert_eq!(first.cwd, "/tmp");
+        assert_eq!(
+            first.env,
+            vec![(SESSION_ENV.to_string(), "wm-feat-x".to_string())]
+        );
+        assert!(first
+            .args
+            .ends_with(&["-n".into(), "wm-feat-x".into(), "/color".into()]));
+        let second = claude.terminal_launch(&ctx).unwrap();
+        assert!(second
+            .args
+            .ends_with(&[claude.program.clone(), "wm-feat-x".into()]));
     }
 
     #[test]

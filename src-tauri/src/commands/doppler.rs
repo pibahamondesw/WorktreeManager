@@ -11,14 +11,14 @@
 //! `doppler_cleanup` unsets it — the mirror image of setup.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Output;
 use std::sync::Mutex;
 
 static DOPPLER_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
-use crate::commands::shell_env::{
-    claude_env_prelude, cli_available, login_shell, shell_single_quoted,
-};
+use crate::commands::login_shell::{cli_available, LoginShell};
 
 #[derive(serde::Serialize)]
 pub struct DopplerSetupResult {
@@ -73,12 +73,18 @@ pub(crate) fn repo_uses_doppler(repo_path: &str) -> bool {
 /// non-zero exit as `error`, so the caller can treat it as best-effort.
 #[tauri::command]
 pub async fn doppler_setup(worktree_path: String) -> Result<DopplerSetupResult, String> {
-    tauri::async_runtime::spawn_blocking(move || doppler_setup_blocking(worktree_path))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        doppler_setup_blocking(worktree_path, cli_available, LoginShell::output)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
 }
 
-fn doppler_setup_blocking(worktree_path: String) -> Result<DopplerSetupResult, String> {
+fn doppler_setup_blocking(
+    worktree_path: String,
+    available: impl FnOnce(&str) -> bool,
+    execute: impl FnOnce(&LoginShell) -> io::Result<Output>,
+) -> Result<DopplerSetupResult, String> {
     let Some(config) = doppler_config_path(&worktree_path) else {
         return Ok(DopplerSetupResult::new(
             "skipped_no_config",
@@ -95,7 +101,7 @@ fn doppler_setup_blocking(worktree_path: String) -> Result<DopplerSetupResult, S
 
     // GUI-launched app doesn't inherit the shell PATH; resolve `doppler` through the same
     // PATH/profile prelude used for editor launches.
-    if !cli_available("doppler") {
+    if !available("doppler") {
         return Ok(DopplerSetupResult::new(
             "skipped_no_cli",
             "doppler CLI not found on PATH",
@@ -105,15 +111,10 @@ fn doppler_setup_blocking(worktree_path: String) -> Result<DopplerSetupResult, S
     let _guard = DOPPLER_CONFIG_LOCK
         .lock()
         .map_err(|_| "Doppler configuration lock unavailable")?;
-    let shell_cmd = format!(
-        "{}; cd {} && doppler setup --no-interactive",
-        claude_env_prelude(),
-        shell_single_quoted(&worktree_path)
-    );
-
-    let output = login_shell(&shell_cmd)
-        .output()
-        .map_err(|e| format!("Failed to run doppler setup: {e}"))?;
+    let output = execute(
+        &LoginShell::program("doppler", ["setup", "--no-interactive"]).current_dir(&worktree_path),
+    )
+    .map_err(|e| format!("Failed to run doppler setup: {e}"))?;
 
     if output.status.success() {
         Ok(DopplerSetupResult::new(
@@ -162,10 +163,24 @@ pub async fn doppler_cleanup(paths: Vec<String>) -> Result<Vec<String>, String> 
 }
 
 fn doppler_cleanup_blocking(paths: Vec<String>) -> Result<Vec<String>, String> {
+    unset_scopes(
+        paths,
+        &doppler_yaml_path(),
+        cli_available,
+        LoginShell::output,
+    )
+}
+
+fn unset_scopes(
+    paths: Vec<String>,
+    doppler_yaml: &Path,
+    available: impl FnOnce(&str) -> bool,
+    mut execute: impl FnMut(&LoginShell) -> io::Result<Output>,
+) -> Result<Vec<String>, String> {
     let _guard = DOPPLER_CONFIG_LOCK
         .lock()
         .map_err(|_| "Doppler configuration lock unavailable")?;
-    let Ok(contents) = fs::read_to_string(doppler_yaml_path()) else {
+    let Ok(contents) = fs::read_to_string(doppler_yaml) else {
         return Ok(Vec::new());
     };
 
@@ -173,24 +188,164 @@ fn doppler_cleanup_blocking(paths: Vec<String>) -> Result<Vec<String>, String> {
         .into_iter()
         .filter(|p| Path::new(p).is_absolute() && contents.contains(p.as_str()))
         .collect();
-    if scoped.is_empty() || !cli_available("doppler") {
+    if scoped.is_empty() || !available("doppler") {
         return Ok(Vec::new());
     }
 
     let mut cleaned = Vec::new();
     for path in scoped {
-        let shell_cmd = format!(
-            "{}; doppler configure unset {} --scope {} --silent",
-            claude_env_prelude(),
-            SCOPED_OPTIONS.join(" "),
-            shell_single_quoted(&path)
-        );
-        let ok = login_shell(&shell_cmd)
-            .output()
-            .is_ok_and(|out| out.status.success());
-        if ok {
+        if execute(&unset_scope(&path)).is_ok_and(|out| out.status.success()) {
             cleaned.push(path);
         }
     }
     Ok(cleaned)
+}
+
+fn unset_scope(path: &str) -> LoginShell {
+    LoginShell::program(
+        "doppler",
+        ["configure", "unset"]
+            .into_iter()
+            .chain(SCOPED_OPTIONS)
+            .chain(["--scope", path, "--silent"]),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wtm-doppler-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn output(code: i32, stderr: &str) -> Output {
+        Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: vec![],
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    fn configured_worktree(name: &str) -> String {
+        let dir = temp_dir(name);
+        fs::write(dir.join("doppler.yaml"), "setup:\n  project: app\n").unwrap();
+        dir.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn setup_runs_doppler_non_interactively_in_the_worktree() {
+        let worktree = configured_worktree("setup");
+        let result = doppler_setup_blocking(
+            worktree.clone(),
+            |cli| cli == "doppler",
+            |launch| {
+                assert_eq!(
+                    *launch,
+                    LoginShell::program("doppler", ["setup", "--no-interactive"])
+                        .current_dir(&worktree)
+                );
+                Ok(output(0, ""))
+            },
+        )
+        .unwrap();
+        assert_eq!(result.status, "configured");
+    }
+
+    #[test]
+    fn setup_reports_missing_cli_and_failures() {
+        let worktree = configured_worktree("setup-failure");
+        let never = |_: &LoginShell| -> io::Result<Output> { panic!("must not run") };
+        let missing = doppler_setup_blocking(worktree.clone(), |_| false, never).unwrap();
+        assert_eq!(missing.status, "skipped_no_cli");
+        let failed = doppler_setup_blocking(
+            worktree.clone(),
+            |_| true,
+            |_| Ok(output(1, " not logged in ")),
+        )
+        .unwrap();
+        assert_eq!(
+            (failed.status.as_str(), failed.message.as_str()),
+            ("error", "not logged in")
+        );
+        let silent = doppler_setup_blocking(worktree, |_| true, |_| Ok(output(1, ""))).unwrap();
+        assert_eq!(silent.message, "doppler setup exited non-zero");
+    }
+
+    #[test]
+    fn setup_command_skips_worktrees_without_config() {
+        let dir = temp_dir("setup-skip");
+        let result =
+            tauri::async_runtime::block_on(doppler_setup(dir.to_string_lossy().to_string()))
+                .unwrap();
+        assert_eq!(result.status, "skipped_no_config");
+    }
+
+    #[test]
+    fn cleanup_unsets_every_option_of_scoped_absolute_paths() {
+        let dir = temp_dir("cleanup");
+        let yaml = dir.join(".doppler.yaml");
+        fs::write(
+            &yaml,
+            "scoped:\n  /wt/a:\n    project: app\n  /wt/b:\n    project: app\n",
+        )
+        .unwrap();
+        let mut launched = Vec::new();
+        let cleaned = unset_scopes(
+            vec![
+                "/wt/a".into(),
+                "/wt/b".into(),
+                "/wt/none".into(),
+                "wt/a".into(),
+            ],
+            &yaml,
+            |_| true,
+            |launch| {
+                let succeeded = *launch == unset_scope("/wt/a");
+                launched.push(launch.clone());
+                Ok(output(if succeeded { 0 } else { 1 }, ""))
+            },
+        )
+        .unwrap();
+        assert_eq!(cleaned, vec!["/wt/a".to_string()]);
+        assert_eq!(launched, vec![unset_scope("/wt/a"), unset_scope("/wt/b")]);
+        assert_eq!(
+            unset_scope("/wt/a"),
+            LoginShell::program(
+                "doppler",
+                [
+                    "configure",
+                    "unset",
+                    "api-host",
+                    "config",
+                    "dashboard-host",
+                    "project",
+                    "token",
+                    "verify-tls",
+                    "--scope",
+                    "/wt/a",
+                    "--silent",
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn cleanup_is_a_no_op_without_config_scopes_or_cli() {
+        let dir = temp_dir("cleanup-noop");
+        let yaml = dir.join(".doppler.yaml");
+        let never = |_: &LoginShell| -> io::Result<Output> { panic!("must not run") };
+        assert!(unset_scopes(vec!["/wt/a".into()], &yaml, |_| true, never)
+            .unwrap()
+            .is_empty());
+        fs::write(&yaml, "scoped:\n  /wt/a:\n").unwrap();
+        assert!(unset_scopes(vec!["/wt/a".into()], &yaml, |_| false, never)
+            .unwrap()
+            .is_empty());
+        assert!(doppler_cleanup_blocking(Vec::new()).unwrap().is_empty());
+    }
 }

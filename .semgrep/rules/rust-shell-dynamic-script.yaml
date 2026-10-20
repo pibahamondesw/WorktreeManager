@@ -7,7 +7,7 @@ rules:
       confidence: HIGH
     paths:
       exclude:
-        - src-tauri/src/commands/shell_env.rs
+        - src-tauri/src/commands/login_shell.rs
     patterns:
       - pattern-not-inside: |
           mod tests { ... }

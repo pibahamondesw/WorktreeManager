@@ -10,8 +10,7 @@ use serde_json::{json, Value};
 
 use crate::commands::code_server::runtime::random_id;
 use crate::commands::embedded::{loopback_client, poll_until_ready, ServerProcess};
-use crate::commands::git::GIT_ENV_SCRUB;
-use crate::commands::shell_env::{claude_env_prelude, login_shell, shell_single_quoted};
+use crate::commands::login_shell::LoginShell;
 
 pub const USERNAME: &str = "opencode";
 const LISTENING: &str = "opencode server listening on http://127.0.0.1:";
@@ -73,28 +72,23 @@ pub fn start(
     let log = data.join("server.log");
     let output = File::create(&log).map_err(|error| error.to_string())?;
     let password = random_id()?;
-    let mut command = login_shell(&format!(
-        "{}; exec {} serve --hostname 127.0.0.1 --port 0",
-        claude_env_prelude(),
-        shell_single_quoted(program)
-    ));
+    let mut command =
+        LoginShell::program(program, ["serve", "--hostname", "127.0.0.1", "--port", "0"])
+            .current_dir(&folders[0])
+            .env("OPENCODE_SERVER_PASSWORD", &password)
+            .env("OPENCODE_DB", data.join("opencode.db").to_string_lossy())
+            .env(
+                "OPENCODE_CONFIG_CONTENT",
+                task_config(&folders[1..]).to_string(),
+            )
+            .command();
     command
-        .current_dir(&folders[0])
         .stdout(Stdio::piped())
         .stderr(output)
         .stdin(Stdio::null())
-        .env("OPENCODE_SERVER_PASSWORD", &password)
         .env_remove("OPENCODE_SERVER_USERNAME")
-        .env("OPENCODE_DB", data.join("opencode.db"))
-        .env(
-            "OPENCODE_CONFIG_CONTENT",
-            task_config(&folders[1..]).to_string(),
-        )
         .env_remove(crate::commands::agent_alerts::TASK_ENV)
         .env_remove(crate::commands::agent_alerts::SURFACE_ENV);
-    for variable in GIT_ENV_SCRUB {
-        command.env_remove(variable);
-    }
     let (pid, stdout) = server.spawn(&mut command)?;
     let port = announced_port(stdout);
     let mut origin = None;

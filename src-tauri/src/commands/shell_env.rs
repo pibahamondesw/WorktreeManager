@@ -1,6 +1,5 @@
-//! Shell environment helpers shared by every process WorktreeManager launches from the GUI
-//! (agent terminals, CLI probes, setup scripts). GUI-launched processes inherit a minimal PATH,
-//! so everything goes through `claude_env_prelude()` first.
+//! Names older builds wrote into worktrees and editor config, kept so they can still be
+//! recognized, hidden and dropped. Launches go through `login_shell`.
 
 /// Label of the task older builds wrote into editor config; kept only so a stale entry can be
 /// recognized and dropped.
@@ -12,50 +11,3 @@ pub const WM_CLAUDE_SCRIPT_FILE: &str = "wm-start-claude.sh";
 
 /// Session marker older builds wrote alongside the launch script; kept for the same reason.
 pub const WM_CLAUDE_SESSION_MARKER_FILE: &str = ".wm-claude-session-init";
-
-/// PATH + profile sources (same for the launch script, Terminal, and CLI install probes).
-///
-/// Profile sourcing is wrapped so its stderr is discarded: bash-oriented profiles
-/// (`.profile`/`.bash_profile`) sourced under zsh routinely emit noise — e.g. a stale
-/// `. <cargo/env>` line pointing at a path that no longer exists — which would otherwise leak
-/// into the launch terminal. Claude's own stderr runs later and is unaffected.
-pub(crate) fn claude_env_prelude() -> &'static str {
-    r#"export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; { [ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile"; [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"; [ -f "$HOME/.profile" ] && source "$HOME/.profile"; [ -f "$HOME/.bash_profile" ] && source "$HOME/.bash_profile"; } 2>/dev/null"#
-}
-
-/// Shell-safe single-quoted string (POSIX).
-pub(crate) fn shell_single_quoted(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
-/// Login zsh running `script`. Every value interpolated into `script` must be a literal, validated,
-/// or passed through `shell_single_quoted`.
-pub(crate) fn login_shell(script: &str) -> std::process::Command {
-    let mut command = std::process::Command::new("/bin/zsh");
-    command.args(["-lc", script]);
-    command
-}
-
-/// Login zsh arguments running a repository setup or teardown script verbatim, after the PATH
-/// prelude and with errexit, so the first failing line fails the script. The script is authored
-/// by the user or a repository they approved; task context reaches it only through environment
-/// variables, never by interpolation.
-pub(crate) fn repo_script_args(script: &str) -> Vec<String> {
-    vec![
-        "-lc".to_string(),
-        format!("{}\nset -e\n{}", claude_env_prelude(), script),
-    ]
-}
-
-/// True if `bin` resolves after the same PATH/profile prelude as launch scripts.
-pub fn cli_available(bin: &str) -> bool {
-    let probe = format!(
-        "{}; command -v {}",
-        claude_env_prelude(),
-        shell_single_quoted(bin)
-    );
-    login_shell(&probe)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
