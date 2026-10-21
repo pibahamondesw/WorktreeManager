@@ -4,19 +4,25 @@ import type { ScriptSource } from "./repoScripts";
 
 export const SETUP_STAGES = {
   config: "Copying local configuration",
-  doppler_setup: "Configuring Doppler",
-  install_node_deps: "Installing Node dependencies",
-  install_python_deps: "Installing Python dependencies",
+  detected: "Preparing detected setup",
+  doppler: "Configuring Doppler",
+  node: "Installing Node dependencies",
+  python: "Installing Python dependencies",
   script: "Running setup script",
   teardown: "Running teardown script",
 } as const;
 
 export type SetupStage = keyof typeof SETUP_STAGES;
-export const DETECTED_STAGES: SetupStage[] = [
-  "doppler_setup",
-  "install_node_deps",
-  "install_python_deps",
-];
+type DetectedStage = "doppler" | "node" | "python";
+export interface DetectedStep {
+  stage: DetectedStage;
+  status: "pending" | "running" | "completed" | "skipped" | "error";
+  message?: string;
+}
+export interface DetectedSetupPlan {
+  worktreePath: string;
+  steps: DetectedStep[];
+}
 export type SetupStatus = "pending" | "running" | "completed" | "skipped" | "error" | "cancelled";
 
 export interface RepoSetupState {
@@ -75,7 +81,7 @@ export function initializeTaskSetup(task: Task, warnings: OperationWarning[]) {
     repos: task.members.map((member) => ({
       repoId: member.repoId,
       repoName: member.repoName,
-      steps: pendingSteps(["config", ...DETECTED_STAGES]),
+      steps: pendingSteps(["config", "detected"]),
     })),
     warnings: [...warnings],
   });

@@ -13,10 +13,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::commands::detected_setup::detect_package_manager;
 use crate::commands::doppler::repo_uses_doppler;
 use crate::commands::editor::gui_app_exists;
 use crate::commands::login_shell::{remember_availability, LoginShell};
-use crate::commands::node_deps::detect_package_manager;
 
 #[derive(serde::Serialize)]
 pub struct CliProbe {
@@ -42,7 +42,7 @@ pub struct RepoUsage {
     /// Package managers implied by the repos' lockfiles, deduped in first-seen order. Empty when
     /// no repo has a `package.json`.
     pub package_managers: Vec<String>,
-    /// Whether some repo commits a Doppler config that `doppler_setup` would act on.
+    /// Whether some repo commits a Doppler config that detected setup would act on.
     pub doppler: bool,
 }
 
