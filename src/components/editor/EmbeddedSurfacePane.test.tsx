@@ -220,7 +220,7 @@ describe("embedded surfaces", () => {
     await waitFor(() => expect(mocks.editorOpen).toHaveBeenCalledOnce());
   });
 
-  it("installs VS Code embedded before creating an editor session", async () => {
+  it("installs VSCode before creating an editor session", async () => {
     mocks.editorProbe.mockResolvedValueOnce({ ready: false });
     mocks.editorOpen.mockResolvedValue(session);
     render(
@@ -232,7 +232,8 @@ describe("embedded surfaces", () => {
         onStatusChange={vi.fn()}
       />
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Install editor" }));
+    expect(await screen.findByText("Set up VSCode.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Install editor" }));
     await waitFor(() => expect(mocks.editorOpen).toHaveBeenCalledOnce());
     expect(mocks.editorInstall).toHaveBeenCalledOnce();
   });

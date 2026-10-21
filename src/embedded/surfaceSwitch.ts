@@ -37,7 +37,7 @@ export const landingSurface = (live: TaskSurface[], requested: TaskSurface): Tas
 export function surfaceLabel(surface: TaskSurface): string {
   switch (surface.kind) {
     case "editor":
-      return "VS Code";
+      return "VSCode";
     case "opencode":
       return "OpenCode";
     case "chat":

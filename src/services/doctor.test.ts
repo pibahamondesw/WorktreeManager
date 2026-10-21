@@ -131,6 +131,7 @@ describe("runDoctor", () => {
       editorProbe: runtime,
     });
     expect(check(report, "embedded-editor")).toMatchObject({
+      label: "VSCode",
       severity: "error",
       status: "broken",
       detail: "Repair the editor",
@@ -183,6 +184,10 @@ describe("runDoctor", () => {
     const codex = await probed("codex");
     expect(codex.apps).toEqual([]);
     expect(codex.clis).toContain("codex");
+
+    const openCode = await probed("opencode-web");
+    expect(openCode.apps).toEqual([]);
+    expect(openCode.clis).toContain("opencode");
   });
 
   it("treats a missing editor CLI as an error and a missing optional one as a warning", async () => {

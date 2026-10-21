@@ -164,7 +164,7 @@ const CLI_TOOLS: Record<string, ToolMeta> = {
   },
   opencode: {
     label: "OpenCode CLI",
-    reason: "Runs the OpenCode embedded editor option inside the app.",
+    reason: "Runs OpenCode inside the app.",
     install: "brew install opencode",
     url: "https://opencode.ai/docs",
   },
@@ -183,22 +183,11 @@ const APP_TOOLS: Record<string, ToolMeta> = {
     reason: "Your selected editor.",
     url: "https://cursor.com",
   },
-  "Visual Studio Code": {
-    label: "Visual Studio Code",
-    reason: "Your selected editor.",
-    install: "brew install --cask visual-studio-code",
-    url: "https://code.visualstudio.com",
-  },
   Zed: {
     label: "Zed",
     reason: "Your selected editor.",
     install: "brew install --cask zed",
     url: "https://zed.dev",
-  },
-  OpenCode: {
-    label: "OpenCode",
-    reason: "Your selected editor.",
-    url: "https://opencode.ai",
   },
   Obsidian: {
     label: "Obsidian",
@@ -336,9 +325,9 @@ async function checkVaultAgent(
 async function checkEmbeddedEditor(probe: () => Promise<EditorRuntime>): Promise<DependencyCheck> {
   const base = {
     id: "embedded-editor",
-    label: "VS Code embedded",
+    label: "VSCode",
     scope: "app" as const,
-    reason: "An independent VS Code editor for each task. Extensions are your choice.",
+    reason: "An independent VSCode editor for each task. Extensions are your choice.",
     url: "https://coder.com/docs/code-server",
   };
   try {

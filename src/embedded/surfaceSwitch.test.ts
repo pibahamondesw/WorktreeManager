@@ -64,7 +64,7 @@ describe("landingSurface", () => {
 describe("surfaceLabel", () => {
   it("names every surface the dialog can mention", () => {
     expect([vsCode, openCode, claudeChat, claudeTerminal, codexChat].map(surfaceLabel)).toEqual([
-      "VS Code",
+      "VSCode",
       "OpenCode",
       "Claude Code chat",
       "Claude Code terminal",

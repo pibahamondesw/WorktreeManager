@@ -34,6 +34,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("useStore workspace switching", () => {
+  it("starts with VS Code embedded and restores an existing editor preference", async () => {
+    const { result } = renderHook(() => useStore());
+
+    expect(result.current.editorApp).toBe("vscode-web");
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.editorApp).toBe("cursor");
+  });
+
   it("publishes CLI changes to React only after persistence and restores them on load", async () => {
     const { result, unmount } = renderHook(() => useStore());
     await waitFor(() => expect(result.current.loading).toBe(false));

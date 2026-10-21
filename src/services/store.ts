@@ -4,6 +4,7 @@ import {
   AgentView,
   AgentViews,
   AppState,
+  DEFAULT_EDITOR_APP,
   DEFAULT_STATE,
   EDITOR_APPS,
   EditorApp,
@@ -337,14 +338,11 @@ export async function loadCustomColors(): Promise<Record<string, string> | null>
   return (await s.get<Record<string, string>>("customTheme")) ?? null;
 }
 
-/**
- * Retired editor ids mapped to their replacement. The `+ Claude` variants launched the Claude
- * CLI alongside the editor; these editors now run Claude through their own integration (the
- * Claude Code extension in Cursor/VS Code, the agent panel in Zed).
- */
 const RETIRED_EDITOR_IDS: Record<string, EditorApp> = {
   "cursor-claude": "cursor",
-  "vscode-claude": "vscode",
+  vscode: "vscode-web",
+  "vscode-claude": "vscode-web",
+  opencode: "opencode-web",
   "zed-claude": "zed",
   "claude-chat": "claude-code",
   "codex-chat": "codex",
@@ -355,7 +353,7 @@ export async function loadEditorApp(): Promise<EditorApp> {
   const stored = await s.get<string>("editorApp");
   const editor = (stored && RETIRED_EDITOR_IDS[stored]) ?? stored;
   // Guard against stale values persisted by older builds whose editor ids no longer exist.
-  return EDITOR_APPS.some((e) => e.id === editor) ? (editor as EditorApp) : "cursor";
+  return EDITOR_APPS.some((e) => e.id === editor) ? (editor as EditorApp) : DEFAULT_EDITOR_APP;
 }
 
 export async function loadAgentViews(): Promise<AgentViews> {

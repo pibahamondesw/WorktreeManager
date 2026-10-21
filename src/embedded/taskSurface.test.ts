@@ -18,7 +18,7 @@ describe("taskSurfaceFor", () => {
   });
 
   it("keeps every other editor external", () => {
-    for (const editor of ["cursor", "vscode", "zed", "opencode"] as const) {
+    for (const editor of ["cursor", "zed"] as const) {
       expect(taskSurfaceFor(editor)).toEqual({ kind: "external" });
       expect(isEmbedded(taskSurfaceFor(editor))).toBe(false);
     }

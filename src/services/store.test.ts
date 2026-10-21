@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { EDITOR_APPS } from "../types";
+import { taskSurfaceFor } from "../embedded/taskSurface";
 
 const STORE = "store.json";
 const SIDECAR = "store.backup-preMultiRepo.json";
@@ -447,6 +449,38 @@ describe("failed store writes", () => {
     expect((await module.loadState()).workspaces[0].linearApiKey).toBe(
       original.workspaces[0].linearApiKey
     );
+  });
+});
+
+describe("loadEditorApp", () => {
+  it.each([undefined, null, "unknown-editor"])(
+    "defaults to VS Code embedded when the saved editor is %s",
+    async (editorApp) => {
+      seed(STORE, { editorApp });
+
+      expect(await (await loadModule()).loadEditorApp()).toBe("vscode-web");
+    }
+  );
+
+  it.each([
+    { editorApp: "vscode", expected: "vscode-web", kind: "editor" },
+    { editorApp: "vscode-claude", expected: "vscode-web", kind: "editor" },
+    { editorApp: "opencode", expected: "opencode-web", kind: "opencode" },
+  ])("migrates $editorApp to an embedded task surface", async ({ editorApp, expected, kind }) => {
+    seed(STORE, { editorApp });
+    const module = await loadModule();
+
+    const editor = await module.loadEditorApp();
+
+    expect(editor).toBe(expected);
+    expect(taskSurfaceFor(editor)).toEqual({ kind });
+    expect(await module.loadEditorApp()).toBe(editor);
+  });
+
+  it.each(EDITOR_APPS)("preserves the saved $id editor", async ({ id }) => {
+    seed(STORE, { editorApp: id });
+
+    expect(await (await loadModule()).loadEditorApp()).toBe(id);
   });
 });
 

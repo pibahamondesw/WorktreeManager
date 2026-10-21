@@ -1,9 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use super::agents::Agents;
 use super::login_shell::{cli_available, LoginShell};
 use super::workspace;
+
+#[cfg(not(test))]
+const GUI_LAUNCHER: &str = "open";
+#[cfg(test)]
+const GUI_LAUNCHER: &str = "true";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,15 +55,11 @@ fn open_editor_blocking(
     }
     let branch = branch_name.as_deref();
     let primary = folders[0].as_str();
-    let extra_canon: Vec<String> = folders[1..]
-        .iter()
-        .map(|d| canonical_worktree_path(d).to_string_lossy().to_string())
-        .collect();
     let multi = folders.len() > 1;
 
     match editor.as_str() {
-        "cursor" | "vscode" => {
-            let app = gui_app_name(&editor);
+        "cursor" => {
+            let app = "Cursor";
             if multi {
                 let ws = workspace::ensure_code_workspace_file(
                     workspace_name.as_deref(),
@@ -78,23 +79,8 @@ fn open_editor_blocking(
         "codex" => Err("Codex runs embedded; use terminal_open".to_string()),
         "vscode-web" => Err("VS Code runs embedded; use vscode_open".to_string()),
         "opencode-web" => Err("OpenCode runs embedded; use opencode_open".to_string()),
-        "opencode" => {
-            let mut msg = open_gui_editor("OpenCode", primary)?;
-            if multi {
-                msg = format!("{msg}\n{}", dropped_folders_hint(&extra_canon, "OpenCode"));
-            }
-            Ok(OpenEditorResult::message(msg))
-        }
         "zed" => Ok(OpenEditorResult::message(open_zed(&folders)?)),
         _ => Err(format!("Unknown editor: {}", editor)),
-    }
-}
-
-/// macOS application name for a GUI editor id.
-fn gui_app_name(editor: &str) -> &'static str {
-    match editor {
-        "vscode" => "Visual Studio Code",
-        _ => "Cursor",
     }
 }
 
@@ -149,9 +135,7 @@ fn open_zed(folders: &[String]) -> Result<String, String> {
 pub fn check_app_installed(editor: String) -> Result<bool, String> {
     match editor.as_str() {
         "cursor" => Ok(gui_app_exists("Cursor")),
-        "vscode" => Ok(gui_app_exists("Visual Studio Code")),
         "vscode-web" => Ok(true),
-        "opencode" => Ok(gui_app_exists("OpenCode")),
         "opencode-web" => Ok(cli_available("opencode")),
         "claude-code" => Ok(Agents::default().get("claude")?.installed()),
         "codex" => Ok(Agents::default().get("codex")?.installed()),
@@ -176,7 +160,7 @@ pub(crate) fn gui_app_exists(app_name: &str) -> bool {
 }
 
 fn open_gui_editor(app_name: &str, path: &str) -> Result<String, String> {
-    let output = Command::new("open")
+    let output = Command::new(GUI_LAUNCHER)
         .args(["-a", app_name, path])
         .output()
         .map_err(|e| {
@@ -199,10 +183,6 @@ fn open_gui_editor(app_name: &str, path: &str) -> Result<String, String> {
     Ok(format!("{} opened for path: {}", app_name, path))
 }
 
-fn canonical_worktree_path(path: &str) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path))
-}
-
 /// Escape for use inside AppleScript double-quoted string literals.
 fn escape_applescript_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
@@ -221,6 +201,26 @@ fn escape_applescript_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_still_opens_tasks_in_an_external_window() {
+        let opened =
+            open_editor_blocking("cursor".into(), vec!["/tmp".into()], None, None).unwrap();
+        assert_eq!(opened.message, "Cursor opened for path: /tmp");
+        assert!(opened.workspace_file.is_none());
+    }
+
+    #[test]
+    fn retired_external_editors_are_no_longer_supported() {
+        for editor in ["vscode", "opencode"] {
+            let opened = open_editor_blocking(editor.into(), vec!["/tmp".into()], None, None);
+            assert_eq!(opened.err(), Some(format!("Unknown editor: {editor}")));
+            assert_eq!(
+                check_app_installed(editor.into()),
+                Err(format!("Unknown editor: {editor}"))
+            );
+        }
+    }
 
     #[test]
     fn opencode_embedded_runs_inside_the_app_and_needs_its_cli() {

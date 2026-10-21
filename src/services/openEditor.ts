@@ -10,7 +10,7 @@ interface OpenEditorHandlers {
 
 export interface OpenEditorResult {
   message: string;
-  /** Absolute path of the generated .code-workspace, when one was used (Cursor/VS Code). */
+  /** Absolute path of the generated .code-workspace, when one was used (Cursor). */
   workspaceFile: string | null;
 }
 
@@ -18,8 +18,8 @@ export interface OpenEditorResult {
  * Open a task's folders in the given editor via the `open_editor` Tauri command.
  *
  * `folders` is the ordered set of included member paths; `folders[0]` is only the working
- * directory for CLI launches and carries no priority (there is no "main" repo). For Cursor/
- * VS Code with more than one folder the backend generates a `.code-workspace` and returns its
+ * directory for CLI launches and carries no priority (there is no "main" repo). For Cursor
+ * with more than one folder the backend generates a `.code-workspace` and returns its
  * path so the caller can persist it. Any hint the backend returns (Zed manual task, repos an
  * editor couldn't open natively) is surfaced through `onMessage`.
  */

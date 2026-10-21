@@ -583,7 +583,7 @@ export class Operations {
             throw new Error();
         }),
         this.optional(warnings, "workspace_file", undefined, async () => {
-          if (task.members.length <= 1 || !["cursor", "vscode"].includes(editor)) return;
+          if (task.members.length <= 1 || editor !== "cursor") return;
           const workspaceFilePath = await invoke<string>("prepare_task_workspace", {
             workspaceName: workspace.name,
             branchName: task.branchName,
