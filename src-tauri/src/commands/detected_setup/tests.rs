@@ -417,24 +417,18 @@ fn shell_runner_preserves_arguments_and_worktree_through_the_shared_launcher() {
 fn requirements_creates_a_usable_isolated_environment_without_network() {
     let repo = Repo::new(&["requirements.txt"]);
     let setup = PythonSetup::Requirements;
-    let output = std::process::Command::new("/bin/sh")
-        .args([
-            "-c",
-            &format!(
-                "{} && {}",
-                setup.create_env_command(),
-                setup.install_command()
-            ),
-        ])
-        .current_dir(&repo.0)
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    for command in [setup.create_env_command(), setup.install_command()] {
+        let output = python_launch(&repo.0, command)
+            .env("HOME", repo.0.to_string_lossy())
+            .env("ZDOTDIR", repo.0.to_string_lossy())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     let output = std::process::Command::new(repo.0.join(".venv/bin/python"))
         .args([
             "-c",
