@@ -23,6 +23,7 @@ pub mod python_deps;
 pub mod scripts;
 pub mod shell_env;
 pub mod terminal;
+pub mod user_file;
 pub mod vault;
 pub mod vault_agents;
 pub mod workspace;

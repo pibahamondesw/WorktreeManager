@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::agents::Agents;
+use super::user_file::UserFile;
 
 const LOCAL_PROFILE: &str = "com.worktreemanager.dev.local";
 const OWNED_COMMAND_MARKER: &str = " agent event ";
@@ -159,33 +160,31 @@ fn install_hooks(root: &mut Value, hooks: &AlertHooks, target: &str) -> Result<(
     Ok(())
 }
 
-fn load_config(path: &Path) -> Result<Option<Value>, String> {
+fn load_config(path: &Path) -> Result<Option<(String, Value)>, String> {
     match fs::read_to_string(path) {
-        Ok(content) => serde_json::from_str(&content).map(Some).map_err(|_| {
-            format!(
-                "{} is not valid JSON; fix it before changing hooks",
-                path.display()
-            )
-        }),
+        Ok(content) => serde_json::from_str(&content)
+            .map(|root| Some((content, root)))
+            .map_err(|_| {
+                format!(
+                    "{} is not valid JSON; fix it before changing hooks",
+                    path.display()
+                )
+            }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!("Cannot read {}: {error}", path.display())),
     }
 }
 
-fn write_config(path: &Path, root: &Value) -> Result<(), String> {
+fn write_config(path: &Path, original: &str, root: &Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
     }
     let out =
         serde_json::to_string_pretty(root).map_err(|e| format!("Cannot serialize config: {e}"))?;
-    let tmp = {
-        let mut p = path.to_path_buf().into_os_string();
-        p.push(".wm.tmp");
-        PathBuf::from(p)
-    };
-    fs::write(&tmp, out + "\n").map_err(|e| format!("Cannot write {}: {e}", path.display()))?;
-    fs::rename(&tmp, path).map_err(|e| format!("Cannot finalize {}: {e}", path.display()))
+    UserFile::new(path)
+        .unchanged_from(original)
+        .replace(out + "\n")
 }
 
 #[derive(Serialize, PartialEq, Debug)]
@@ -243,7 +242,7 @@ fn installed_state<R: Runtime>(app: &AppHandle<R>, agents: &Agents, agent: &str)
     let Ok(hooks) = agents.get(agent).map(|adapter| adapter.alert_hooks()) else {
         return HooksState::Missing;
     };
-    let Ok(Some(root)) = load_config(&hooks.config) else {
+    let Ok(Some((_, root))) = load_config(&hooks.config) else {
         return HooksState::Missing;
     };
     match app_hook_target(app) {
@@ -268,17 +267,18 @@ pub fn agent_hooks_install<R: Runtime>(
     replace_other_app: bool,
 ) -> Result<(), String> {
     let hooks = Agents::of(&app).get(&agent)?.alert_hooks();
-    let mut root = load_config(&hooks.config)?.unwrap_or_else(|| json!({}));
+    let (original, mut root) =
+        load_config(&hooks.config)?.unwrap_or_else(|| (String::new(), json!({})));
     let target = app_hook_target(&app)?;
     ensure_no_other_app(&root, &target, replace_other_app)?;
     install_hooks(&mut root, &hooks, &target)?;
-    write_config(&hooks.config, &root)
+    write_config(&hooks.config, &original, &root)
 }
 
 #[tauri::command]
 pub fn agent_hooks_remove<R: Runtime>(app: AppHandle<R>, agent: String) -> Result<(), String> {
     let path = Agents::of(&app).get(&agent)?.alert_hooks().config;
-    let Some(mut root) = load_config(&path)? else {
+    let Some((original, mut root)) = load_config(&path)? else {
         return Ok(());
     };
     let target = app_hook_target(&app)?;
@@ -287,7 +287,7 @@ pub fn agent_hooks_remove<R: Runtime>(app: AppHandle<R>, agent: String) -> Resul
     if root == before {
         return Ok(());
     }
-    write_config(&path, &root)
+    write_config(&path, &original, &root)
 }
 
 const SYSTEM_SOUNDS: &[&str] = &[
@@ -620,6 +620,17 @@ mod tests {
     }
 
     #[test]
+    fn load_config_rejects_invalid_json() {
+        let path = std::env::temp_dir().join(format!("wm-hooks-{}.json", uuid::Uuid::new_v4()));
+        fs::write(&path, "{invalid").unwrap();
+
+        let error = load_config(&path).unwrap_err();
+        fs::remove_file(&path).unwrap();
+
+        assert!(error.ends_with("is not valid JSON; fix it before changing hooks"));
+    }
+
+    #[test]
     fn install_rejects_unexpected_shapes() {
         assert!(install_hooks(&mut json!([]), &hooks("claude"), TARGET).is_err());
         assert!(install_hooks(&mut json!({ "hooks": [] }), &hooks("claude"), TARGET).is_err());
@@ -664,7 +675,7 @@ mod tests {
         let claude_config = home.join(".claude/settings.json");
         let mut other_app = json!({});
         install_hooks(&mut other_app, &hooks("claude"), DEV_TARGET).unwrap();
-        write_config(&claude_config, &other_app).unwrap();
+        write_config(&claude_config, "", &other_app).unwrap();
         let reported_elsewhere = HooksState::OtherApp {
             target: DEV_TARGET.into(),
         };

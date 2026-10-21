@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use super::shell_env;
+use super::user_file::UserFile;
 
 /// Slugify a string to lowercase `[a-z0-9-]`, collapsing runs of other chars into `-`.
 fn slugify(input: &str) -> String {
@@ -135,14 +136,7 @@ pub fn ensure_code_workspace_file(
     let out = serde_json::to_string_pretty(&root)
         .map_err(|e| format!("Failed to serialize workspace: {e}"))?;
 
-    // Write atomically via a temp sibling + rename.
-    let tmp = {
-        let mut p = path.clone().into_os_string();
-        p.push(".wm.tmp");
-        PathBuf::from(p)
-    };
-    fs::write(&tmp, out).map_err(|e| format!("Failed to write workspace file: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("Failed to finalize workspace file: {e}"))?;
+    UserFile::new(&path).replace(out)?;
 
     Ok(path.to_string_lossy().to_string())
 }
@@ -237,5 +231,54 @@ mod tests {
         let tasks = v["tasks"]["tasks"].as_array().unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0]["label"], json!("User Task"));
+    }
+
+    #[test]
+    fn workspace_file_is_created_and_rewritten_keeping_user_keys_in_an_isolated_process() {
+        const CHILD_HOME: &str = "WTM_WORKSPACE_TEST_CHILD_HOME";
+        if std::env::var(CHILD_HOME).is_ok() {
+            let created = ensure_code_workspace_file(
+                Some("Payments"),
+                Some("feat/a"),
+                &["/nonexistent/a".into()],
+            )
+            .unwrap();
+            let mut user: Value =
+                serde_json::from_str(&fs::read_to_string(&created).unwrap()).unwrap();
+            user["customKey"] = json!(42);
+            fs::write(&created, user.to_string()).unwrap();
+            let rewritten = ensure_code_workspace_file(
+                Some("Payments"),
+                Some("feat/a"),
+                &["/nonexistent/b".into()],
+            )
+            .unwrap();
+            let root: Value =
+                serde_json::from_str(&fs::read_to_string(&rewritten).unwrap()).unwrap();
+            assert_eq!(rewritten, created);
+            assert_eq!(root["customKey"], json!(42));
+            assert_eq!(root["folders"], json!([{ "path": "/nonexistent/b" }]));
+            return;
+        }
+
+        let home = std::env::temp_dir().join(format!("wm-workspace-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&home).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::workspace::tests::workspace_file_is_created_and_rewritten_keeping_user_keys_in_an_isolated_process",
+            ])
+            .env("HOME", &home)
+            .env(CHILD_HOME, &home)
+            .output()
+            .unwrap();
+        let workspace =
+            home.join("Documents/.worktreemanager/workspaces/payments/feat-a.code-workspace");
+        let created = workspace.exists();
+        fs::remove_dir_all(&home).unwrap();
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stderr}");
+        assert!(created);
     }
 }
