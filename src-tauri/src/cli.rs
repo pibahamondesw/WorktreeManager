@@ -1,5 +1,6 @@
 use crate::automation::{failure, read_message, socket_path, Request, MAX_MESSAGE, VERSION};
 use crate::commands::agent_alerts;
+use crate::commands::agents::Agents;
 use serde_json::{json, Map, Value};
 use std::{
     fs,
@@ -328,7 +329,7 @@ fn run_cli(
         }
     };
     if arguments.method == "agent.event" {
-        report_agent_event(arguments, read_hook_payload(), execute);
+        report_agent_event(arguments, read_hook_payload(), &Agents::default(), execute);
         return Some(0);
     }
     match execute(arguments) {
@@ -429,12 +430,20 @@ fn agent_event_origin(env: impl Fn(&str) -> Option<String>) -> Map<String, Value
 fn report_agent_event(
     mut arguments: Arguments,
     payload: Value,
+    agents: &Agents,
     deliver: impl FnOnce(Arguments) -> Result<Value, String>,
 ) {
     let origin = agent_event_origin(|key| std::env::var(key).ok());
     let Some(cwd) = agent_event_cwd(&payload) else {
         return;
     };
+    let agent = arguments.params["agent"].as_str().unwrap_or_default();
+    if agents
+        .get(agent)
+        .is_ok_and(|adapter| adapter.unattended_hook(&payload, Path::new(&cwd)))
+    {
+        return;
+    }
     let state = agent_event_state(
         arguments.params["state"].as_str().unwrap_or_default(),
         &payload,
@@ -455,6 +464,12 @@ pub fn run_if_requested() -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::agents::{claude::Claude, codex::Codex};
+
+    fn unconfigured_agents() -> Agents {
+        Agents::new(Claude::new("claude", None), Codex::new("codex", None, None))
+    }
+
     fn args(input: &str) -> Vec<String> {
         input.split_whitespace().map(str::to_owned).collect()
     }
@@ -668,13 +683,17 @@ mod tests {
                     "hook_event_name": event,
                     "tool_name": "request_user_input_async"
                 });
-                report_agent_event(arguments, payload, |_| panic!("forwarded {agent} {event}"));
+                report_agent_event(arguments, payload, &unconfigured_agents(), |_| {
+                    panic!("forwarded {agent} {event}")
+                });
             }
         }
         for event in ["SubagentStart", "SubagentStop"] {
             let arguments = parse(&args("agent event done --agent codex")).unwrap();
             let payload = json!({ "hook_event_name": event });
-            report_agent_event(arguments, payload, |_| panic!("forwarded {event}"));
+            report_agent_event(arguments, payload, &unconfigured_agents(), |_| {
+                panic!("forwarded {event}")
+            });
         }
     }
 
@@ -710,6 +729,40 @@ mod tests {
     }
 
     #[test]
+    fn auto_reviewed_codex_permission_requests_never_reach_the_app() {
+        let home = std::env::temp_dir().join(format!("wtm-cli-codex-{}", std::process::id()));
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join("config.toml"),
+            "approvals_reviewer = \"auto_review\"\n",
+        )
+        .unwrap();
+        let agents = Agents::new(
+            Claude::new("claude", None),
+            Codex::new("codex", None, Some(home.clone())),
+        );
+        let payload = |event: &str| json!({ "cwd": "/wt/shared", "hook_event_name": event });
+
+        let arguments = parse(&args("agent event waiting --agent codex")).unwrap();
+        report_agent_event(arguments, payload("PermissionRequest"), &agents, |_| {
+            panic!("forwarded an auto-reviewed permission request")
+        });
+        for (agent, event, state) in [
+            ("codex", "Stop", "done"),
+            ("claude", "PermissionRequest", "waiting"),
+        ] {
+            let arguments = parse(&args(&format!("agent event {state} --agent {agent}"))).unwrap();
+            let mut delivered = false;
+            report_agent_event(arguments, payload(event), &agents, |_| {
+                delivered = true;
+                Ok(Value::Null)
+            });
+            assert!(delivered, "{agent} {event}");
+        }
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
     fn main_thread_hooks_preserve_questions_and_survive_delivery_failures() {
         for agent in ["codex", "claude"] {
             for (event, state, tool) in [
@@ -729,7 +782,7 @@ mod tests {
                     "tool_name": tool
                 });
                 let mut delivered = false;
-                report_agent_event(arguments, payload, |arguments| {
+                report_agent_event(arguments, payload, &unconfigured_agents(), |arguments| {
                     delivered = true;
                     assert_eq!(arguments.params["cwd"], "/wt/shared");
                     assert_eq!(arguments.params["state"], state);
