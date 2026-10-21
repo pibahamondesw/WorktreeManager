@@ -20,23 +20,6 @@ static DOPPLER_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 use crate::commands::login_shell::{cli_available, LoginShell};
 
-#[derive(serde::Serialize)]
-pub struct DopplerSetupResult {
-    /// One of: `configured`, `skipped_no_config`, `skipped_no_setup_block`,
-    /// `skipped_no_cli`, `error`.
-    pub status: String,
-    pub message: String,
-}
-
-impl DopplerSetupResult {
-    fn new(status: &str, message: impl Into<String>) -> Self {
-        DopplerSetupResult {
-            status: status.to_string(),
-            message: message.into(),
-        }
-    }
-}
-
 /// Path to the committed Doppler config at the worktree root, if any.
 fn doppler_config_path(worktree_path: &str) -> Option<PathBuf> {
     let root = Path::new(worktree_path);
@@ -61,77 +44,23 @@ fn has_setup_block(config: &Path) -> bool {
 }
 
 /// Whether this repo commits a Doppler config that `doppler setup --no-interactive` can act on —
-/// the same precondition `doppler_setup` checks, exposed so the startup doctor only asks for the
+/// the same precondition detected setup checks, exposed so the startup doctor only asks for the
 /// `doppler` CLI when a repo would actually use it.
 pub(crate) fn repo_uses_doppler(repo_path: &str) -> bool {
     doppler_config_path(repo_path).is_some_and(|config| has_setup_block(&config))
 }
 
-/// Run `doppler setup --no-interactive` in the worktree when a committed Doppler config with a
-/// `setup:` block is present and the CLI is installed. Never fails hard: missing config,
-/// missing `setup:` block, or a missing CLI are reported via `status` as `skipped_*`, and a
-/// non-zero exit as `error`, so the caller can treat it as best-effort.
-#[tauri::command]
-pub async fn doppler_setup(worktree_path: String) -> Result<DopplerSetupResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        doppler_setup_blocking(worktree_path, cli_available, LoginShell::output)
-    })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))?
-}
-
-fn doppler_setup_blocking(
-    worktree_path: String,
-    available: impl FnOnce(&str) -> bool,
+pub(super) fn configure(
+    worktree_path: &Path,
     execute: impl FnOnce(&LoginShell) -> io::Result<Output>,
-) -> Result<DopplerSetupResult, String> {
-    let Some(config) = doppler_config_path(&worktree_path) else {
-        return Ok(DopplerSetupResult::new(
-            "skipped_no_config",
-            "No doppler.yaml found in worktree",
-        ));
-    };
-
-    if !has_setup_block(&config) {
-        return Ok(DopplerSetupResult::new(
-            "skipped_no_setup_block",
-            "doppler.yaml has no setup: block; nothing to configure non-interactively",
-        ));
-    }
-
-    // GUI-launched app doesn't inherit the shell PATH; resolve `doppler` through the same
-    // PATH/profile prelude used for editor launches.
-    if !available("doppler") {
-        return Ok(DopplerSetupResult::new(
-            "skipped_no_cli",
-            "doppler CLI not found on PATH",
-        ));
-    }
-
+) -> Result<Output, String> {
     let _guard = DOPPLER_CONFIG_LOCK
         .lock()
         .map_err(|_| "Doppler configuration lock unavailable")?;
-    let output = execute(
-        &LoginShell::program("doppler", ["setup", "--no-interactive"]).current_dir(&worktree_path),
+    execute(
+        &LoginShell::program("doppler", ["setup", "--no-interactive"]).current_dir(worktree_path),
     )
-    .map_err(|e| format!("Failed to run doppler setup: {e}"))?;
-
-    if output.status.success() {
-        Ok(DopplerSetupResult::new(
-            "configured",
-            "Doppler configured for worktree",
-        ))
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Ok(DopplerSetupResult::new(
-            "error",
-            if stderr.is_empty() {
-                "doppler setup exited non-zero".to_string()
-            } else {
-                stderr
-            },
-        ))
-    }
+    .map_err(|_| "Could not start Doppler setup".to_string())
 }
 
 /// Every option Doppler can store per scope (`doppler configure options`). Unsetting all of
@@ -229,60 +158,6 @@ mod tests {
             stdout: vec![],
             stderr: stderr.as_bytes().to_vec(),
         }
-    }
-
-    fn configured_worktree(name: &str) -> String {
-        let dir = temp_dir(name);
-        fs::write(dir.join("doppler.yaml"), "setup:\n  project: app\n").unwrap();
-        dir.to_string_lossy().to_string()
-    }
-
-    #[test]
-    fn setup_runs_doppler_non_interactively_in_the_worktree() {
-        let worktree = configured_worktree("setup");
-        let result = doppler_setup_blocking(
-            worktree.clone(),
-            |cli| cli == "doppler",
-            |launch| {
-                assert_eq!(
-                    *launch,
-                    LoginShell::program("doppler", ["setup", "--no-interactive"])
-                        .current_dir(&worktree)
-                );
-                Ok(output(0, ""))
-            },
-        )
-        .unwrap();
-        assert_eq!(result.status, "configured");
-    }
-
-    #[test]
-    fn setup_reports_missing_cli_and_failures() {
-        let worktree = configured_worktree("setup-failure");
-        let never = |_: &LoginShell| -> io::Result<Output> { panic!("must not run") };
-        let missing = doppler_setup_blocking(worktree.clone(), |_| false, never).unwrap();
-        assert_eq!(missing.status, "skipped_no_cli");
-        let failed = doppler_setup_blocking(
-            worktree.clone(),
-            |_| true,
-            |_| Ok(output(1, " not logged in ")),
-        )
-        .unwrap();
-        assert_eq!(
-            (failed.status.as_str(), failed.message.as_str()),
-            ("error", "not logged in")
-        );
-        let silent = doppler_setup_blocking(worktree, |_| true, |_| Ok(output(1, ""))).unwrap();
-        assert_eq!(silent.message, "doppler setup exited non-zero");
-    }
-
-    #[test]
-    fn setup_command_skips_worktrees_without_config() {
-        let dir = temp_dir("setup-skip");
-        let result =
-            tauri::async_runtime::block_on(doppler_setup(dir.to_string_lossy().to_string()))
-                .unwrap();
-        assert_eq!(result.status, "skipped_no_config");
     }
 
     #[test]

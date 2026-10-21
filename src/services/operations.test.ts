@@ -8,11 +8,16 @@ import { LinearService } from "./linear";
 import { normalizeTasks } from "../utils";
 import { taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
-import { dismissTaskSetup, getTaskSetup } from "./taskSetup";
+import { DetectedStep, dismissTaskSetup, getTaskSetup } from "./taskSetup";
 import { ResolvedScripts, resetScriptApprovalsCache } from "./repoScripts";
 import { loadScriptApprovals, persist } from "./store";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  Channel: class {
+    onmessage?: (message: unknown) => void;
+  },
+}));
 vi.mock("./store", () => ({
   persist: vi.fn(),
   loadScriptApprovals: vi.fn().mockResolvedValue({}),
@@ -81,6 +86,25 @@ function fixture(tasks: Task[] = []) {
   return { operations, save, publish };
 }
 
+const detectedOutcomes: DetectedStep[] = [
+  { stage: "doppler", status: "skipped" },
+  { stage: "node", status: "completed" },
+  { stage: "python", status: "skipped" },
+];
+
+function reportDetected(args?: Record<string, unknown>, outcomes = detectedOutcomes) {
+  const channel = args?.onStep as { onmessage: (step: DetectedStep) => void };
+  for (const outcome of outcomes) {
+    channel.onmessage({ stage: outcome.stage, status: "running" });
+    channel.onmessage(outcome);
+  }
+  return outcomes;
+}
+
+function detectedPath(args?: Record<string, unknown>) {
+  return (args?.plan as { worktreePath: string }).worktreePath;
+}
+
 async function native(command: string, args?: Record<string, unknown>) {
   if (command === "resolve_manual_worktree")
     return {
@@ -88,9 +112,12 @@ async function native(command: string, args?: Record<string, unknown>) {
       path: `${args?.worktreeBasePath}/user/${args?.rawName}`,
     };
   if (command === "git_worktree_add") return { warning: null };
-  if (command === "doppler_setup") return { status: "skipped_no_config" };
-  if (command === "install_node_deps") return { status: "installed" };
-  if (command === "install_python_deps") return { status: "skipped_no_config" };
+  if (command === "prepare_detected_setup")
+    return {
+      worktreePath: args?.worktreePath,
+      steps: detectedOutcomes.map((step) => ({ ...step, status: "pending" })),
+    };
+  if (command === "run_detected_setup") return reportDetected(args);
   if (command === "prepare_task_workspace") return "/generated/workspace.code-workspace";
   if (command === "resolve_repo_scripts") return noScripts;
   if (command === "worktree_include_paths") return null;
@@ -234,10 +261,7 @@ describe("shared operations", () => {
       command: string,
       args?: Record<string, unknown>
     ) => {
-      if (command === "install_python_deps") {
-        await setup.promise;
-        return { status: "installed" };
-      }
+      if (command === "run_detected_setup") await setup.promise;
       return native(command, args);
     }) as typeof invoke);
     let complete = false;
@@ -246,8 +270,9 @@ describe("shared operations", () => {
       return result;
     });
     await vi.waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("install_python_deps", {
-        worktreePath: "/wt/api/pedro/wor-80",
+      expect(invoke).toHaveBeenCalledWith("run_detected_setup", {
+        plan: expect.objectContaining({ worktreePath: "/wt/api/pedro/wor-80" }) as unknown,
+        onStep: expect.any(Object) as unknown,
       })
     );
     expect(complete).toBe(false);
@@ -259,10 +284,13 @@ describe("shared operations", () => {
     expect(result.data.workspaceFilePath).toBe("/generated/workspace.code-workspace");
     expect(result.setup).toHaveLength(2);
     for (const member of result.data.members) {
-      expect(invoke).toHaveBeenCalledWith("install_python_deps", { worktreePath: member.path });
+      expect(invoke).toHaveBeenCalledWith("run_detected_setup", {
+        plan: expect.objectContaining({ worktreePath: member.path }) as unknown,
+        onStep: expect.any(Object) as unknown,
+      });
       expect(result.setup?.find((entry) => entry.repoId === member.repoId)?.steps).toContainEqual({
-        stage: "install_python_deps",
-        status: "installed",
+        stage: "python",
+        status: "skipped",
       });
     }
     expect(result.warnings).toEqual([]);
@@ -325,23 +353,20 @@ describe("shared operations", () => {
       command: string,
       args?: Record<string, unknown>
     ) => {
-      if (command === "install_node_deps") await installing.promise;
+      if (command === "run_detected_setup") await installing.promise;
       return native(command, args);
     }) as typeof invoke);
     const creating = operations.createTask(input, undefined, ready);
     await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
-    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "doppler_setup")).toBe(
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "run_detected_setup")).toBe(
       false
     );
     opening.resolve();
     await vi.waitFor(() =>
       expect(
-        vi.mocked(invoke).mock.calls.filter(([command]) => command === "install_node_deps")
+        vi.mocked(invoke).mock.calls.filter(([command]) => command === "run_detected_setup")
       ).toHaveLength(2)
     );
-    expect(
-      vi.mocked(invoke).mock.calls.some(([command]) => command === "install_python_deps")
-    ).toBe(false);
     const created = operations.getState().tasks[0];
     expect(getTaskSetup(created.id)).toMatchObject({ active: true, opened: true });
     dismissTaskSetup(created.id);
@@ -394,35 +419,41 @@ describe("shared operations", () => {
     expect(ready).toHaveBeenCalledOnce();
   });
 
-  it("prepares Python environments before opening and tolerates preparation failures", async () => {
-    const { operations } = fixture();
-    const preparing = deferred();
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "prepare_python_env") {
-        await preparing.promise;
-        throw new Error("private");
-      }
-      return native(command, args);
-    }) as typeof invoke);
-    const ready = vi.fn().mockResolvedValue(true);
-    const creating = operations.createTask(input, undefined, ready);
-    await vi.waitFor(() =>
+  it.each([false, true])(
+    "waits for detected preparation before opening (failure: %s)",
+    async (fails) => {
+      const { operations } = fixture();
+      const preparing = deferred();
+      vi.mocked(invoke).mockImplementation((async (
+        command: string,
+        args?: Record<string, unknown>
+      ) => {
+        if (command === "prepare_detected_setup") {
+          await preparing.promise;
+          if (fails) throw new Error("private");
+        }
+        return native(command, args);
+      }) as typeof invoke);
+      const ready = vi.fn().mockResolvedValue(true);
+      const creating = operations.createTask(input, undefined, ready);
+      await vi.waitFor(() =>
+        expect(
+          vi.mocked(invoke).mock.calls.filter(([command]) => command === "prepare_detected_setup")
+        ).toHaveLength(2)
+      );
+      expect(ready).not.toHaveBeenCalled();
+      preparing.resolve();
+      const result = await creating;
+      expect(ready).toHaveBeenCalledOnce();
+      expect(result.warnings).toHaveLength(fails ? 2 : 0);
       expect(
-        vi.mocked(invoke).mock.calls.filter(([command]) => command === "prepare_python_env")
-      ).toHaveLength(2)
-    );
-    expect(ready).not.toHaveBeenCalled();
-    preparing.resolve();
-    const result = await creating;
-    expect(ready).toHaveBeenCalledOnce();
-    expect(result.warnings).toEqual([]);
-    expect(
-      vi.mocked(invoke).mock.calls.filter(([command]) => command === "install_python_deps")
-    ).toHaveLength(2);
-  });
+        vi.mocked(invoke).mock.calls.filter(([command]) => command === "run_detected_setup")
+      ).toHaveLength(fails ? 0 : 2);
+      expect(operations.getState().tasks).toHaveLength(1);
+      expect(JSON.stringify(result)).not.toContain("private");
+      expect(getTaskSetup(result.data.id)?.active).toBe(false);
+    }
+  );
 
   it("continues setup when opening fails and reports warnings instead of success", async () => {
     const { operations } = fixture();
@@ -431,17 +462,44 @@ describe("shared operations", () => {
       throw new Error("private");
     });
     expect(result.warnings).toContainEqual(expect.objectContaining({ stage: "open" }));
-    expect(
-      result.setup?.every((repo) => repo.steps.some((step) => step.stage === "install_python_deps"))
-    ).toBe(true);
+    expect(result.setup?.every((repo) => repo.steps.some((step) => step.stage === "python"))).toBe(
+      true
+    );
     expect(progress).toHaveBeenLastCalledWith("Setup completed with warnings");
     expect(getTaskSetup(result.data.id)).toMatchObject({ active: false, opened: false });
     expect(JSON.stringify(result)).not.toContain("private");
   });
 
-  it.each(["error", "skipped_no_cli", "rejected"])(
-    "reports %s during setup and continues other steps and repositories",
-    async (status) => {
+  it("rejects duplicate retries while detected setup is being prepared", async () => {
+    const { operations } = fixture([task]);
+    const preparing = deferred();
+    vi.mocked(invoke).mockImplementation((async (
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      if (command === "prepare_detected_setup") await preparing.promise;
+      return native(command, args);
+    }) as typeof invoke);
+    const retrying = operations.rerunRepoSetup(task.id, "api");
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("prepare_detected_setup", {
+        worktreePath: task.members[0].path,
+      })
+    );
+    await expect(operations.rerunRepoSetup(task.id, "api")).rejects.toMatchObject({
+      code: "setup_active",
+    });
+    preparing.resolve();
+    await retrying;
+    expect(getTaskSetup(task.id)?.active).toBe(false);
+    expect(
+      vi.mocked(invoke).mock.calls.filter(([command]) => command === "prepare_detected_setup")
+    ).toHaveLength(1);
+  });
+
+  it.each([false, true])(
+    "reports typed setup errors and continues other repositories (transport failure: %s)",
+    async (rejected) => {
       const { operations } = fixture();
       const remainingSetup = deferred();
       const message = "pnpm CLI not found on PATH";
@@ -449,11 +507,23 @@ describe("shared operations", () => {
         command: string,
         args?: Record<string, unknown>
       ) => {
-        if (command === "install_node_deps" && args?.worktreePath === "/wt/api/pedro/wor-80") {
-          if (status === "rejected") throw new Error("private");
-          return { status, message };
+        if (command === "run_detected_setup") {
+          if (detectedPath(args) === "/wt/api/pedro/wor-80") {
+            if (rejected) throw new Error("private");
+            reportDetected(
+              args,
+              detectedOutcomes.map((step) =>
+                step.stage === "node" ? { ...step, status: "error", message } : step
+              )
+            );
+          } else reportDetected(args);
+          await remainingSetup.promise;
+          return detectedPath(args) === "/wt/api/pedro/wor-80"
+            ? detectedOutcomes.map((step) =>
+                step.stage === "node" ? { ...step, status: "error", message } : step
+              )
+            : detectedOutcomes;
         }
-        if (command === "install_python_deps") await remainingSetup.promise;
         return native(command, args);
       }) as typeof invoke);
       const creating = operations.createTask(input);
@@ -465,12 +535,12 @@ describe("shared operations", () => {
           repos: [
             {
               steps: expect.arrayContaining([
-                expect.objectContaining({ stage: "install_node_deps", status: "error" }),
+                expect.objectContaining({ stage: "node", status: "error" }),
               ]) as unknown,
             },
             {
               steps: expect.arrayContaining([
-                expect.objectContaining({ stage: "install_node_deps", status: "completed" }),
+                expect.objectContaining({ stage: "node", status: "completed" }),
               ]) as unknown,
             },
           ],
@@ -480,15 +550,14 @@ describe("shared operations", () => {
       const result = await creating;
       const setup = getTaskSetup(result.data.id)!;
       expect(setup.active).toBe(false);
-      expect(setup.repos[0].steps.find((step) => step.stage === "install_node_deps")?.message).toBe(
-        status === "rejected" ? undefined : message
+      expect(setup.repos[0].steps.find((step) => step.stage === "node")?.message).toBe(
+        rejected ? undefined : message
       );
       expect(setup.warnings).toContainEqual(
-        expect.objectContaining({
-          repoId: "api",
-          stage: "install_node_deps",
-        })
+        expect.objectContaining({ repoId: "api", stage: "node" })
       );
+      expect(result.warnings.filter((warning) => warning.stage === "node")).toHaveLength(1);
+      expect(result.setup?.[1].steps).toContainEqual({ stage: "python", status: "skipped" });
       expect(JSON.stringify(result)).not.toContain(message);
       expect(JSON.stringify(setup)).not.toContain("private");
       expect(result.data).toEqual(operations.getState().tasks[0]);
@@ -551,24 +620,28 @@ describe("shared operations", () => {
     ).toBe(false);
   });
 
-  it.each([
-    ["install_node_deps", "error"],
-    ["install_python_deps", "error"],
-    ["install_python_deps", "skipped_no_cli"],
-  ])("retains a task when %s returns %s and reports the affected repo", async (stage, status) => {
-    const { operations } = fixture();
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) =>
-      command === stage
-        ? { status, message: "secret-token" }
-        : native(command, args)) as typeof invoke);
-    const result = await operations.createTask(input);
-    expect(result.warnings.map((warning) => warning.repoId)).toEqual(["api", "web"]);
-    expect(JSON.stringify(result)).not.toContain("secret-token");
-    expect(operations.getState().tasks).toHaveLength(1);
-  });
+  it.each(["doppler", "node", "python"] as const)(
+    "retains a task when %s fails and reports the affected repos",
+    async (stage) => {
+      const { operations } = fixture();
+      vi.mocked(invoke).mockImplementation((async (
+        command: string,
+        args?: Record<string, unknown>
+      ) =>
+        command === "run_detected_setup"
+          ? reportDetected(
+              args,
+              detectedOutcomes.map((step) =>
+                step.stage === stage ? { ...step, status: "error", message: "secret-token" } : step
+              )
+            )
+          : native(command, args)) as typeof invoke);
+      const result = await operations.createTask(input);
+      expect(result.warnings.map((warning) => warning.repoId)).toEqual(["api", "web"]);
+      expect(JSON.stringify(result)).not.toContain("secret-token");
+      expect(operations.getState().tasks).toHaveLength(1);
+    }
+  );
 
   it("reports created resources when persistence fails without publishing the task", async () => {
     const { operations, save, publish } = fixture();
@@ -697,9 +770,7 @@ describe("repository scripts", () => {
       CONDUCTOR_ROOT_PATH: "/repos/api",
     });
     const detectedFor = (path: string) =>
-      ["doppler_setup", "install_node_deps", "install_python_deps", "prepare_python_env"].some(
-        (command) => calls(command).some(([, args]) => args?.worktreePath === path)
-      );
+      calls("prepare_detected_setup").some(([, args]) => args?.worktreePath === path);
     expect(detectedFor(created.members[0].path)).toBe(false);
     expect(detectedFor(created.members[1].path)).toBe(true);
     expect(result.setup?.[0].steps).toEqual([
@@ -772,11 +843,7 @@ describe("repository scripts", () => {
     vi.mocked(invoke).mockClear();
     const rerun = await operations.rerunRepoSetup(created.id, "api", "detected");
     expect(calls("run_task_script")).toEqual([]);
-    expect(rerun.data.steps.map((step) => step.stage)).toEqual([
-      "doppler_setup",
-      "install_node_deps",
-      "install_python_deps",
-    ]);
+    expect(rerun.data.steps.map((step) => step.stage)).toEqual(["doppler", "node", "python"]);
   });
 
   it("trusts app overrides and reports failing or stopped scripts as warnings", async () => {
@@ -825,9 +892,7 @@ describe("repository scripts", () => {
     const result = await operations.createTask(input);
     expect(result.setup?.[0].steps).toContainEqual({ stage: "script", status: "error" });
     expect(
-      calls("install_node_deps").some(([, args]) =>
-        String(args?.worktreePath).startsWith("/wt/api")
-      )
+      calls("run_detected_setup").some(([, args]) => detectedPath(args).startsWith("/wt/api"))
     ).toBe(false);
     expect(result.warnings).toContainEqual({
       stage: "script",

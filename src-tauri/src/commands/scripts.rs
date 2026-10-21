@@ -16,9 +16,9 @@ use serde::Serialize;
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 
+use super::detected_setup::detect_package_manager;
 use super::doppler::repo_uses_doppler;
 use super::git::git_command;
-use super::node_deps::detect_package_manager;
 
 pub const CONFIG_FILE: &str = ".worktreemanager.toml";
 pub const INCLUDE_FILE: &str = ".worktreeinclude";

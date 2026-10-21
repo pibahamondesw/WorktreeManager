@@ -7,7 +7,7 @@ import {
   refreshGithubRepo,
   setPrReadyPending,
 } from "./github";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { v4 as uuid } from "uuid";
 import {
   PullRequestInfo,
@@ -29,7 +29,8 @@ import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
 import {
   SETUP_STAGES,
   SetupStatus,
-  DETECTED_STAGES,
+  DetectedSetupPlan,
+  DetectedStep,
   initializeTaskSetup,
   getTaskSetup,
   updateTaskSetup,
@@ -548,6 +549,7 @@ export class Operations {
       steps: [],
     }));
     const resolutions = new Map<string, RepoScriptsResolution>();
+    const detectedPlans = new Map<string, DetectedSetupPlan | null>();
     try {
       progress("Copying local configuration…");
       await Promise.all([
@@ -573,10 +575,15 @@ export class Operations {
             copied ? "completed" : "error",
             warnings
           );
-          if (!this.setupScript(member.repoId, workspace, resolution))
-            await invoke("prepare_python_env", { worktreePath: member.path }).catch(
-              () => undefined
+          if (!this.setupScript(member.repoId, workspace, resolution)) {
+            updateSetupStep(task.id, member.repoId, "detected", "running", warnings);
+            detectedPlans.set(
+              member.repoId,
+              await invoke<DetectedSetupPlan>("prepare_detected_setup", {
+                worktreePath: member.path,
+              }).catch(() => null)
             );
+          }
         }),
         this.optional(warnings, "note", undefined, async () => {
           if (vault.enabled && vault.path && !(await ensureTaskNote(vault, workspace, task)))
@@ -611,7 +618,9 @@ export class Operations {
             resolutions.get(member.repoId)!,
             warnings,
             setup[index].steps,
-            progress
+            progress,
+            "retry",
+            detectedPlans.get(member.repoId)
           )
         )
       );
@@ -650,7 +659,8 @@ export class Operations {
     warnings: OperationWarning[],
     steps: SetupSteps,
     progress: (message: string) => void = () => undefined,
-    choice: SetupRetry = "retry"
+    choice: SetupRetry = "retry",
+    detectedPlan?: DetectedSetupPlan | null
   ) {
     const workspace = this.getState().workspaces.find((item) => item.id === task.workspaceId);
     const script =
@@ -663,8 +673,7 @@ export class Operations {
       return;
     }
     if (!script) {
-      planRepoSetup(task.id, member.repoId, DETECTED_STAGES);
-      await this.runDetectedSetup(task, member, warnings, steps, progress);
+      await this.runDetectedSetup(task, member, warnings, steps, progress, detectedPlan);
       return;
     }
     planRepoSetup(task.id, member.repoId, ["script"], script.source);
@@ -702,37 +711,68 @@ export class Operations {
     member: TaskMember,
     warnings: OperationWarning[],
     steps: SetupSteps,
-    progress: (message: string) => void
+    progress: (message: string) => void,
+    preparedPlan?: DetectedSetupPlan | null
   ) {
-    for (const stage of DETECTED_STAGES) {
-      progress(`${member.repoName} · ${SETUP_STAGES[stage]}…`);
-      updateSetupStep(task.id, member.repoId, stage, "running", warnings);
-      let status = "error";
-      let message: string | undefined;
-      await this.optional(warnings, stage, member.repoId, async () => {
-        const result = await invoke<{ status: string; message?: string }>(stage, {
-          worktreePath: member.path,
-        });
-        status = result.status;
-        if (status === "error" || status === "skipped_no_cli") {
-          message = result.message;
-          throw new Error();
-        }
+    planRepoSetup(task.id, member.repoId, ["detected"]);
+    updateSetupStep(task.id, member.repoId, "detected", "running", warnings);
+    const plan =
+      preparedPlan === undefined
+        ? await invoke<DetectedSetupPlan>("prepare_detected_setup", {
+            worktreePath: member.path,
+          }).catch(() => null)
+        : preparedPlan;
+    if (!plan) {
+      warnings.push({
+        stage: "detected",
+        repoId: member.repoId,
+        message: "Detected setup preparation did not complete; retry this setup step manually.",
       });
-      steps.push({ stage, status });
+      steps.push({ stage: "detected", status: "error" });
+      updateSetupStep(task.id, member.repoId, "detected", "error", warnings);
+      return;
+    }
+    planRepoSetup(
+      task.id,
+      member.repoId,
+      plan.steps.map((step) => step.stage)
+    );
+    const outcomes = new Map<DetectedStep["stage"], DetectedStep>();
+    const report = (outcome: DetectedStep) => {
+      const previous = outcomes.get(outcome.stage);
+      if (previous && previous.status !== "running") return;
+      outcomes.set(outcome.stage, outcome);
+      if (outcome.status === "running")
+        progress(`${member.repoName} · ${SETUP_STAGES[outcome.stage]}…`);
+      if (outcome.status === "error")
+        warnings.push({
+          stage: outcome.stage,
+          repoId: member.repoId,
+          message: `${SETUP_STAGES[outcome.stage]} did not complete; retry this setup step manually.`,
+        });
       updateSetupStep(
         task.id,
         member.repoId,
-        stage,
-        status === "error" || status === "skipped_no_cli"
-          ? "error"
-          : status.startsWith("skipped_")
-            ? "skipped"
-            : "completed",
+        outcome.stage,
+        outcome.status,
         warnings,
-        message
+        outcome.message
       );
+    };
+    const channel = new Channel<DetectedStep>();
+    channel.onmessage = report;
+    try {
+      const results = await invoke<DetectedStep[]>("run_detected_setup", { plan, onStep: channel });
+      results.forEach(report);
+    } catch {
+      for (const step of plan.steps)
+        report({
+          stage: step.stage,
+          status: step.status === "pending" ? "error" : step.status,
+        });
     }
+    for (const outcome of outcomes.values())
+      steps.push({ stage: outcome.stage, status: outcome.status });
   }
 
   /**

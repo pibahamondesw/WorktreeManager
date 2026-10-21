@@ -33,8 +33,8 @@ it("keeps applicable setup progress across navigation and hides skipped steps", 
   expect(screen.getByRole("status")).toHaveTextContent("Setup running");
   act(() => {
     updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, opened: true });
-    updateSetupStep("progress-test", "api", "install_python_deps", "skipped", []);
-    updateSetupStep("progress-test", "api", "install_node_deps", "running", []);
+    updateSetupStep("progress-test", "api", "python", "skipped", []);
+    updateSetupStep("progress-test", "api", "node", "running", []);
   });
   expect(screen.getByRole("status")).toHaveTextContent("Workspace opened · Setup running");
   expect(screen.queryByText(/API · Installing Python dependencies/)).not.toBeInTheDocument();
@@ -64,12 +64,12 @@ it("shows errors immediately and retains their details after setup and navigatio
     updateSetupStep(
       "progress-test",
       "api",
-      "install_node_deps",
+      "node",
       "error",
       [],
       "pnpm install failed: registry unavailable"
     );
-    updateSetupStep("progress-test", "api", "install_python_deps", "running", []);
+    updateSetupStep("progress-test", "api", "python", "running", []);
   });
   expect(screen.getByRole("status")).toHaveTextContent("Setup running · Errors detected");
   expect(screen.getByRole("status")).toHaveClass("text-danger");
@@ -96,12 +96,12 @@ it.each([true, false])(
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(getTaskSetup("progress-test")).toMatchObject({ active, dismissed: true });
     act(() => {
-      updateSetupStep("progress-test", "api", "install_node_deps", "completed", []);
+      updateSetupStep("progress-test", "api", "node", "completed", []);
       updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, active: false });
     });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(getTaskSetup("progress-test")?.repos[0].steps).toContainEqual({
-      stage: "install_node_deps",
+      stage: "node",
       status: "completed",
     });
     view.unmount();
@@ -171,7 +171,7 @@ it.each(["error", "warning"])("keeps logs with a setup %s visible", (failure) =>
   startSetup();
   act(() => {
     if (failure === "error") {
-      updateSetupStep("progress-test", "api", "install_node_deps", "error", [], "Install failed");
+      updateSetupStep("progress-test", "api", "node", "error", [], "Install failed");
     } else {
       updateTaskSetup("progress-test", {
         ...getTaskSetup("progress-test")!,
@@ -190,7 +190,7 @@ it("cancels an active countdown if an error arrives", () => {
   completeSetup();
   void act(() => vi.advanceTimersByTime(2000));
   act(() => {
-    updateSetupStep("progress-test", "api", "install_node_deps", "error", [], "Install failed");
+    updateSetupStep("progress-test", "api", "node", "error", [], "Install failed");
   });
   void act(() => vi.advanceTimersByTime(10000));
   expect(screen.getByRole("status")).toHaveTextContent("Setup completed with errors");
