@@ -44,6 +44,26 @@ function ids(overrides: Partial<Parameters<typeof buildCommands>[0]> = {}) {
 }
 
 describe("buildCommands", () => {
+  it.each([
+    { label: "VSCode", editor: "vscode-web" },
+    { label: "OpenCode", editor: "opencode-web" },
+  ] as const)("offers $label with the existing embedded editor preference", ({ label, editor }) => {
+    const commands = buildCommands({
+      workspaces,
+      selectedWorkspaceId: "ws-1",
+      tasks: [task],
+      themeId: "default",
+      editorApp: editor,
+    });
+
+    expect(commands.filter((command) => command.label === `Editor: ${label}`)).toEqual([
+      expect.objectContaining({
+        hint: "current",
+        action: { type: "set-editor", editor },
+      }),
+    ]);
+  });
+
   it("exposes switch/edit/remove for each workspace and settings", () => {
     const all = ids();
     expect(all).toEqual(

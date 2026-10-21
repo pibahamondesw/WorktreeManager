@@ -19,6 +19,7 @@ import {
   AgentViews,
   AppState,
   DEFAULT_AGENT_VIEWS,
+  DEFAULT_EDITOR_APP,
   DEFAULT_STATE,
   EditorApp,
   VaultConfig,
@@ -30,7 +31,7 @@ import { applyTheme, presetFor, CUSTOM_THEME_ID, SYSTEM_THEME_ID } from "../them
 export function useStore() {
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [loading, setLoading] = useState(true);
-  const [editorApp, setEditorAppState] = useState<EditorApp>("cursor");
+  const [editorApp, setEditorAppState] = useState<EditorApp>(DEFAULT_EDITOR_APP);
   const [agentViews, setAgentViews] = useState<AgentViews>(DEFAULT_AGENT_VIEWS);
   const agentViewsRef = useRef(agentViews);
   const [themeId, setThemeIdState] = useState(SYSTEM_THEME_ID);

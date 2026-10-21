@@ -43,14 +43,14 @@ const vsCodeNeedsInstall = async () => {
 export const embeddedSurfaces = {
   editor: {
     kind: "editor",
-    name: "VS Code",
+    name: "VSCode",
     testId: "editor-pane",
     restartLabel: "Restart editor",
     open: ({ taskId, workspaceId, folders }) => editorOpen(taskId, workspaceId, folders),
     close: editorClose,
     onSession: onEditorSession,
     install: {
-      prompt: "Set up VS Code embedded.",
+      prompt: "Set up VSCode.",
       needed: vsCodeNeedsInstall,
       Setup: EditorInstallation,
     },

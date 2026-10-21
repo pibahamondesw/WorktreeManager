@@ -91,7 +91,6 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
           <path d="M2 2l12 6-12 6V9l7-1-7-1V2z" />
         </svg>
       );
-    case "vscode":
     case "vscode-web":
       return (
         <svg width={s} height={s} viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0">
@@ -114,7 +113,6 @@ function EditorIcon({ editor, size }: { editor: EditorApp; size: number }) {
         </svg>
       );
     case "codex":
-    case "opencode":
     case "opencode-web":
       return (
         <svg

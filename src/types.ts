@@ -125,15 +125,9 @@ export interface IssueLinearInfo {
   prs: PullRequestInfo[];
 }
 
-export type EditorApp =
-  | "cursor"
-  | "vscode"
-  | "vscode-web"
-  | "claude-code"
-  | "codex"
-  | "opencode"
-  | "opencode-web"
-  | "zed";
+export type EditorApp = "cursor" | "vscode-web" | "claude-code" | "codex" | "opencode-web" | "zed";
+
+export const DEFAULT_EDITOR_APP: EditorApp = "vscode-web";
 
 /** CLI agents that can run inside an embedded terminal or chat. */
 export type AgentId = "claude" | "codex";
@@ -158,11 +152,9 @@ export const DEFAULT_AGENT_VIEWS: AgentViews = { claude: "chat", codex: "chat" }
  */
 export const EDITOR_CONFIG_PATHS: Record<EditorApp, string[]> = {
   cursor: [".cursor", ".claude"],
-  vscode: [".vscode", ".claude"],
   "vscode-web": [".vscode", ".claude"],
   "claude-code": [".claude"],
   codex: [".codex", ".agents"],
-  opencode: [".opencode"],
   "opencode-web": [".opencode"],
   zed: [".zed", ".claude"],
 };
@@ -180,21 +172,17 @@ export const EDITOR_REQUIREMENTS: Record<
   { apps: string[]; clis: string[]; optionalClis: string[] }
 > = {
   cursor: { apps: ["Cursor"], clis: [], optionalClis: [] },
-  vscode: { apps: ["Visual Studio Code"], clis: [], optionalClis: [] },
   "vscode-web": { apps: [], clis: [], optionalClis: [] },
   "claude-code": { apps: [], clis: ["claude"], optionalClis: [] },
   codex: { apps: [], clis: ["codex"], optionalClis: [] },
-  opencode: { apps: ["OpenCode"], clis: [], optionalClis: [] },
   "opencode-web": { apps: [], clis: ["opencode"], optionalClis: [] },
   zed: { apps: ["Zed"], clis: [], optionalClis: ["zed"] },
 };
 
 export const EDITOR_APPS: { id: EditorApp; label: string; isCli: boolean }[] = [
+  { id: "vscode-web", label: "VSCode", isCli: false },
   { id: "cursor", label: "Cursor", isCli: false },
-  { id: "vscode", label: "VS Code", isCli: false },
-  { id: "vscode-web", label: "VS Code embedded", isCli: false },
-  { id: "opencode", label: "OpenCode", isCli: false },
-  { id: "opencode-web", label: "OpenCode embedded", isCli: false },
+  { id: "opencode-web", label: "OpenCode", isCli: false },
   { id: "claude-code", label: "Claude Code", isCli: true },
   { id: "codex", label: "Codex", isCli: true },
   { id: "zed", label: "Zed", isCli: false },
