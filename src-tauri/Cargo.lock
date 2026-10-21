@@ -6275,6 +6275,7 @@ dependencies = [
  "mac-notification-sys",
  "md5",
  "objc2",
+ "objc2-foundation",
  "portable-pty",
  "reqwest",
  "serde",

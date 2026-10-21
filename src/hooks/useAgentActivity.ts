@@ -17,6 +17,7 @@ import {
   pruneActivities,
   taskForCwd,
   pendingInputCount,
+  settledAlerts,
 } from "../services/agentActivity";
 import { sessionRegistry } from "../embedded/sessionTransports";
 import { onOpenCodeActivity } from "../services/opencode";
@@ -149,6 +150,14 @@ export function useAgentActivity({
     window.addEventListener("focus", markSeen);
     return () => window.removeEventListener("focus", markSeen);
   }, [openedTaskId, activities]);
+
+  const notifiedActivities = useRef(activities);
+  useEffect(() => {
+    const settled = settledAlerts(notifiedActivities.current, activities);
+    notifiedActivities.current = activities;
+    if (settled.length > 0)
+      void invoke("agent_dismiss_notifications", { taskIds: settled }).catch(() => undefined);
+  }, [activities]);
 
   const unread = pendingInputCount(activities);
   useEffect(() => {

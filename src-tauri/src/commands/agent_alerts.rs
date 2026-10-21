@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use super::agent_notifications;
 use super::agents::Agents;
 use super::user_file::UserFile;
 
@@ -323,7 +324,7 @@ pub fn play_sound(sound: &str) {
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationTarget {
-    task_id: String,
+    pub(crate) task_id: String,
     surface: String,
     agent: String,
 }
@@ -346,7 +347,7 @@ fn app_in_foreground(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn reveal_target(app: &AppHandle, target: &NotificationTarget) {
+pub(crate) fn reveal_target(app: &AppHandle, target: &NotificationTarget) {
     if let Some(window) = app.get_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
@@ -358,81 +359,6 @@ fn reveal_target(app: &AppHandle, target: &NotificationTarget) {
 fn hidden_by_open_task(task_open: bool, app_in_foreground: bool) -> bool {
     task_open && app_in_foreground
 }
-
-/// `mac-notification-sys` uses `NSUserNotificationCenter`, which hides banners while the app is
-/// active unless the delegate implements `userNotificationCenter:shouldPresentNotification:`.
-/// Its delegate class lacks that method, so it is added once at runtime.
-#[cfg(target_os = "macos")]
-fn present_banners_while_active() {
-    use objc2::encode::{Encode, Encoding};
-    use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Sel};
-    use objc2::{ffi, sel};
-
-    extern "C-unwind" fn should_present(
-        _delegate: *mut AnyObject,
-        _cmd: Sel,
-        _center: *mut AnyObject,
-        _notification: *mut AnyObject,
-    ) -> Bool {
-        Bool::YES
-    }
-
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let Some(class) = AnyClass::get(c"NotificationCenterDelegate") else {
-            return;
-        };
-        let Ok(types) = std::ffi::CString::new(format!(
-            "{}{}{}{}{}",
-            Bool::ENCODING,
-            Encoding::Object,
-            Encoding::Sel,
-            Encoding::Object,
-            Encoding::Object
-        )) else {
-            return;
-        };
-        unsafe {
-            let imp: Imp = std::mem::transmute(
-                should_present
-                    as extern "C-unwind" fn(
-                        *mut AnyObject,
-                        Sel,
-                        *mut AnyObject,
-                        *mut AnyObject,
-                    ) -> Bool,
-            );
-            ffi::class_addMethod(
-                class as *const AnyClass as *mut AnyClass,
-                sel!(userNotificationCenter:shouldPresentNotification:),
-                imp,
-                types.as_ptr(),
-            );
-        }
-    });
-}
-
-#[cfg(target_os = "macos")]
-fn send_notification(app: AppHandle, notification: AgentNotification) {
-    std::thread::spawn(move || {
-        let _ = mac_notification_sys::set_application(&app.config().identifier);
-        present_banners_while_active();
-        let response = mac_notification_sys::Notification::new()
-            .title(&notification.title)
-            .message(&notification.body)
-            .wait_for_click(true)
-            .send();
-        if matches!(
-            response,
-            Ok(mac_notification_sys::NotificationResponse::Click)
-        ) {
-            reveal_target(&app, &notification.target);
-        }
-    });
-}
-
-#[cfg(not(target_os = "macos"))]
-fn send_notification(_app: AppHandle, _notification: AgentNotification) {}
 
 /// Sound for a finished or waiting agent, plus a system notification that opens the task when
 /// clicked. The notification is skipped while its task is open in the focused app.
@@ -448,8 +374,18 @@ pub fn agent_attention(
     if let Some(notification) =
         notification.filter(|n| !hidden_by_open_task(n.task_open, app_in_foreground(&app)))
     {
-        send_notification(app, notification);
+        agent_notifications::deliver(
+            &app,
+            notification.title,
+            notification.body,
+            notification.target,
+        );
     }
+}
+
+#[tauri::command]
+pub fn agent_dismiss_notifications(app: AppHandle, task_ids: Vec<String>) {
+    agent_notifications::dismiss(&app, task_ids);
 }
 
 #[tauri::command]

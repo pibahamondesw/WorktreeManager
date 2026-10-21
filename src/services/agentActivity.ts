@@ -228,6 +228,16 @@ export function chatActivityEvent(
   return null;
 }
 
+const needsAttention = (activity: AgentActivity | undefined) =>
+  !!activity && activity.unread && activity.state !== "working";
+
+/** Tasks whose alert is now stale: they were read, went back to work, ended or were deleted. */
+export function settledAlerts(previous: AgentActivities, next: AgentActivities): string[] {
+  return Object.keys(previous).filter(
+    (taskId) => needsAttention(previous[taskId]) && !needsAttention(next[taskId])
+  );
+}
+
 /** The Dock badge counts only unread tasks whose agent is still waiting on you. */
 export function pendingInputCount(activities: AgentActivities): number {
   return Object.values(activities).filter(
