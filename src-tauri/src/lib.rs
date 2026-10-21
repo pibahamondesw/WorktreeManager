@@ -26,7 +26,6 @@ pub fn run() {
                     .map_err(std::io::Error::other)?,
             );
             menu::setup(app)?;
-            commands::agent_notifications::install(app.handle());
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;

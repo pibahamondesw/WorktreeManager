@@ -341,13 +341,13 @@ pub struct AgentNotification {
 
 /// `get_window`, not `get_webview_window`: once embedded VS Code adds a child webview, the main
 /// window hosts several webviews and is no longer returned as a webview window.
-fn app_in_foreground(app: &AppHandle) -> bool {
+fn app_in_foreground<R: Runtime>(app: &AppHandle<R>) -> bool {
     app.get_window("main")
         .and_then(|window| window.is_focused().ok())
         .unwrap_or(false)
 }
 
-pub(crate) fn reveal_target(app: &AppHandle, target: &NotificationTarget) {
+pub(crate) fn reveal_target<R: Runtime>(app: &AppHandle<R>, target: &NotificationTarget) {
     if let Some(window) = app.get_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
@@ -363,8 +363,8 @@ fn hidden_by_open_task(task_open: bool, app_in_foreground: bool) -> bool {
 /// Sound for a finished or waiting agent, plus a system notification that opens the task when
 /// clicked. The notification is skipped while its task is open in the focused app.
 #[tauri::command]
-pub fn agent_attention(
-    app: AppHandle,
+pub fn agent_attention<R: Runtime>(
+    app: AppHandle<R>,
     sound: Option<String>,
     notification: Option<AgentNotification>,
 ) {
@@ -384,7 +384,7 @@ pub fn agent_attention(
 }
 
 #[tauri::command]
-pub fn agent_dismiss_notifications(app: AppHandle, task_ids: Vec<String>) {
+pub fn agent_dismiss_notifications<R: Runtime>(app: AppHandle<R>, task_ids: Vec<String>) {
     agent_notifications::dismiss(&app, task_ids);
 }
 
@@ -408,6 +408,31 @@ mod tests {
 
     fn command(state: &str) -> String {
         hook_command(TARGET, "claude", state)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn attention_notifies_once_per_task_until_dismissed() {
+        use super::agent_notifications::tests::{delivered_identifiers, mock_app, use_fake_center};
+
+        let center = use_fake_center();
+        let app = mock_app();
+        let notification = |task_id: &str| {
+            serde_json::from_value::<AgentNotification>(json!({
+                "title": "Claude finished",
+                "body": "WOR-1",
+                "target": { "taskId": task_id, "surface": "terminal", "agent": "claude" },
+                "taskOpen": true
+            }))
+            .unwrap()
+        };
+        agent_attention(app.handle().clone(), None, Some(notification("t1")));
+        agent_attention(app.handle().clone(), None, Some(notification("t1")));
+        agent_attention(app.handle().clone(), None, None);
+        assert_eq!(delivered_identifiers(&center), ["wtm-agent-task:t1"]);
+
+        agent_dismiss_notifications(app.handle().clone(), vec!["t1".into()]);
+        assert!(delivered_identifiers(&center).is_empty());
     }
 
     #[test]
