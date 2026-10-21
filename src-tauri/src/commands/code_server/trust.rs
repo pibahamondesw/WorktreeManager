@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use super::{profile, runtime};
 use crate::commands::embedded::EditorRegistry;
+use crate::commands::user_file::UserFile;
 
 const BRIDGE_PATH: &str = "/__worktreemanager_trust";
 static STORAGE_LOCK: Mutex<()> = Mutex::new(());
@@ -140,14 +141,8 @@ fn update(root: &Path, task: &str, change: Change) -> Result<Snapshot, String> {
     }
     state.revision += 1;
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let temporary = directory.join(format!("workspace-trust-{}.tmp", runtime::random_id()?));
     let bytes = serde_json::to_vec(&state).map_err(|error| error.to_string())?;
-    let result = runtime::write_new(&temporary, &bytes, true)
-        .and_then(|_| fs::rename(&temporary, path).map_err(|error| error.to_string()));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result?;
+    UserFile::new(&path).private().replace(bytes)?;
     Ok(Snapshot {
         revision: state.revision,
         paths: state.paths,
