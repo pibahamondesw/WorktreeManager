@@ -3,34 +3,37 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::user_file::UserFile;
+
 /// Path to Claude Code's global config, `~/.claude.json`.
 fn claude_json_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home).join(".claude.json")
 }
 
+struct ClaudeJson {
+    original: String,
+    root: Value,
+}
+
 /// Read and parse `~/.claude.json`. Returns `None` when the file is absent or malformed —
 /// both are treated as "nothing to do" so cleanup never blocks and never risks clobbering a
 /// config we can't understand.
-fn load_claude_json(config_path: &Path) -> Option<Value> {
-    let content = fs::read_to_string(config_path).ok()?;
-    serde_json::from_str(&content).ok()
+fn load_claude_json(config_path: &Path) -> Option<ClaudeJson> {
+    let original = fs::read_to_string(config_path).ok()?;
+    let root = serde_json::from_str(&original).ok()?;
+    Some(ClaudeJson { original, root })
 }
 
-/// Write `root` back to `~/.claude.json` atomically (temp sibling + rename), matching the
-/// existing pretty-printed 2-space format so a concurrent Claude Code write can never observe
-/// a half-written file.
-fn write_claude_json(config_path: &Path, root: &Value) -> Result<(), String> {
-    let out = serde_json::to_string_pretty(root)
+/// Write `config.root` back in the existing pretty-printed 2-space format. Claude Code writes
+/// this file constantly, so a concurrent change since the read aborts instead of being lost.
+fn write_claude_json(config_path: &Path, config: &ClaudeJson) -> Result<(), String> {
+    let out = serde_json::to_string_pretty(&config.root)
         .map_err(|e| format!("Failed to serialize Claude config: {e}"))?;
-    let tmp = {
-        let mut p = config_path.as_os_str().to_os_string();
-        p.push(".wm.tmp");
-        PathBuf::from(p)
-    };
-    fs::write(&tmp, out).map_err(|e| format!("Failed to write Claude config: {e}"))?;
-    fs::rename(&tmp, config_path).map_err(|e| format!("Failed to finalize Claude config: {e}"))?;
-    Ok(())
+    UserFile::new(config_path)
+        .unchanged_from(&config.original)
+        .replace(out)
+        .map_err(|e| format!("Failed to save Claude config: {e}"))
 }
 
 /// Whether `path` sits strictly inside directory `base` (never `base` itself).
@@ -100,14 +103,14 @@ fn cleanup_claude_json_at_path(
     config_path: &Path,
     paths: &[String],
 ) -> Result<Vec<String>, String> {
-    let Some(mut root) = load_claude_json(config_path) else {
+    let Some(mut config) = load_claude_json(config_path) else {
         return Ok(Vec::new());
     };
-    let removed = prune_project_entries(&mut root, paths, |p| Path::new(p).exists());
+    let removed = prune_project_entries(&mut config.root, paths, |p| Path::new(p).exists());
     if removed.is_empty() {
         return Ok(removed); // nothing changed → leave the file untouched
     }
-    write_claude_json(config_path, &root)?;
+    write_claude_json(config_path, &config)?;
     Ok(removed)
 }
 
@@ -137,15 +140,15 @@ fn cleanup_claude_json_stale_at_path(
         return Ok(Vec::new());
     }
 
-    let Some(mut root) = load_claude_json(config_path) else {
+    let Some(mut config) = load_claude_json(config_path) else {
         return Ok(Vec::new());
     };
-    let candidates = entries_under_bases(&root, &base_paths);
-    let removed = prune_project_entries(&mut root, &candidates, |p| Path::new(p).exists());
+    let candidates = entries_under_bases(&config.root, &base_paths);
+    let removed = prune_project_entries(&mut config.root, &candidates, |p| Path::new(p).exists());
     if removed.is_empty() {
         return Ok(removed);
     }
-    write_claude_json(config_path, &root)?;
+    write_claude_json(config_path, &config)?;
     Ok(removed)
 }
 
@@ -153,6 +156,7 @@ fn cleanup_claude_json_stale_at_path(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     struct TestDirectory(PathBuf);
 
@@ -166,6 +170,21 @@ mod tests {
 
         fn config_path(&self) -> PathBuf {
             self.0.join(".claude.json")
+        }
+
+        fn config_inode(&self) -> u64 {
+            fs::metadata(self.config_path()).unwrap().ino()
+        }
+
+        fn entry_count(&self) -> usize {
+            fs::read_dir(&self.0).unwrap().count()
+        }
+
+        fn read_only<T>(&self, run: impl FnOnce() -> T) -> T {
+            fs::set_permissions(&self.0, fs::Permissions::from_mode(0o500)).unwrap();
+            let result = run();
+            fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700)).unwrap();
+            result
         }
     }
 
@@ -300,7 +319,7 @@ mod tests {
                 .unwrap()
                 .is_empty());
             assert_eq!(fs::read_to_string(&config_path).unwrap(), contents);
-            assert!(!directory.0.join(".claude.json.wm.tmp").exists());
+            assert_eq!(directory.entry_count(), 1);
         }
     }
 
@@ -334,12 +353,13 @@ mod tests {
         let persisted = fs::read_to_string(&config_path).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&persisted).unwrap(), expected);
         assert_eq!(persisted, serde_json::to_string_pretty(&expected).unwrap());
-        assert!(!directory.0.join(".claude.json.wm.tmp").exists());
+        assert_eq!(directory.entry_count(), 2);
 
-        fs::create_dir(directory.0.join(".claude.json.wm.tmp")).unwrap();
+        let inode = directory.config_inode();
         assert!(cleanup_claude_json_at_path(&config_path, &paths)
             .unwrap()
             .is_empty());
+        assert_eq!(directory.config_inode(), inode);
         assert_eq!(fs::read_to_string(&config_path).unwrap(), persisted);
     }
 
@@ -378,12 +398,13 @@ mod tests {
         expected["projects"].as_object_mut().unwrap().remove(&gone);
         let persisted = fs::read_to_string(&config_path).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&persisted).unwrap(), expected);
-        assert!(!directory.0.join(".claude.json.wm.tmp").exists());
+        assert_eq!(directory.entry_count(), 2);
 
-        fs::create_dir(directory.0.join(".claude.json.wm.tmp")).unwrap();
+        let inode = directory.config_inode();
         assert!(cleanup_claude_json_stale_at_path(&config_path, &bases)
             .unwrap()
             .is_empty());
+        assert_eq!(directory.config_inode(), inode);
         assert_eq!(fs::read_to_string(&config_path).unwrap(), persisted);
     }
 
@@ -403,17 +424,18 @@ mod tests {
     }
 
     #[test]
-    fn failed_temporary_write_preserves_original_config() {
+    fn failed_write_preserves_original_config() {
         let directory = TestDirectory::new();
         let config_path = directory.config_path();
         let gone = directory.0.join("gone").to_string_lossy().into_owned();
         let contents = json!({ "projects": { (gone.clone()): {} } }).to_string();
         fs::write(&config_path, &contents).unwrap();
-        fs::create_dir(directory.0.join(".claude.json.wm.tmp")).unwrap();
 
-        let error = cleanup_claude_json_at_path(&config_path, &[gone]).unwrap_err();
+        let error = directory
+            .read_only(|| cleanup_claude_json_at_path(&config_path, &[gone]))
+            .unwrap_err();
 
-        assert!(error.starts_with("Failed to write Claude config:"));
+        assert!(error.starts_with("Failed to save Claude config:"));
         assert_eq!(fs::read_to_string(&config_path).unwrap(), contents);
     }
 
@@ -424,31 +446,13 @@ mod tests {
         let base = directory.0.join("worktrees").to_string_lossy().into_owned();
         let contents = json!({ "projects": { (format!("{base}/gone")): {} } }).to_string();
         fs::write(&config_path, &contents).unwrap();
-        fs::create_dir(directory.0.join(".claude.json.wm.tmp")).unwrap();
 
-        let error = cleanup_claude_json_stale_at_path(&config_path, &[base]).unwrap_err();
+        let error = directory
+            .read_only(|| cleanup_claude_json_stale_at_path(&config_path, &[base]))
+            .unwrap_err();
 
-        assert!(error.starts_with("Failed to write Claude config:"));
+        assert!(error.starts_with("Failed to save Claude config:"));
         assert_eq!(fs::read_to_string(&config_path).unwrap(), contents);
-    }
-
-    #[test]
-    fn failed_rename_keeps_destination_directory_and_temporary_contents() {
-        let directory = TestDirectory::new();
-        let config_path = directory.config_path();
-        fs::create_dir(&config_path).unwrap();
-        let marker = config_path.join("preserve");
-        fs::write(&marker, "original").unwrap();
-        let root = json!({ "projects": {} });
-
-        let error = write_claude_json(&config_path, &root).unwrap_err();
-
-        assert!(error.starts_with("Failed to finalize Claude config:"));
-        assert_eq!(fs::read_to_string(marker).unwrap(), "original");
-        assert_eq!(
-            fs::read_to_string(directory.0.join(".claude.json.wm.tmp")).unwrap(),
-            serde_json::to_string_pretty(&root).unwrap()
-        );
     }
 
     #[test]
@@ -500,7 +504,7 @@ mod tests {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(output.status.success(), "{stderr}");
         assert_eq!(
-            load_claude_json(&directory.config_path()).unwrap(),
+            load_claude_json(&directory.config_path()).unwrap().root,
             json!({ "numStartups": 3, "projects": { (live): { "keep": true }, (unrelated): { "keep": true } } })
         );
     }
