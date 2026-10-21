@@ -683,17 +683,15 @@ mod tests {
                     "hook_event_name": event,
                     "tool_name": "request_user_input_async"
                 });
-                report_agent_event(arguments, payload, &unconfigured_agents(), |_| {
-                    panic!("forwarded {agent} {event}")
-                });
+                let forwarded = |_| panic!("forwarded {agent} {event}");
+                report_agent_event(arguments, payload, &unconfigured_agents(), forwarded);
             }
         }
         for event in ["SubagentStart", "SubagentStop"] {
             let arguments = parse(&args("agent event done --agent codex")).unwrap();
             let payload = json!({ "hook_event_name": event });
-            report_agent_event(arguments, payload, &unconfigured_agents(), |_| {
-                panic!("forwarded {event}")
-            });
+            let forwarded = |_| panic!("forwarded {event}");
+            report_agent_event(arguments, payload, &unconfigured_agents(), forwarded);
         }
     }
 
@@ -744,9 +742,8 @@ mod tests {
         let payload = |event: &str| json!({ "cwd": "/wt/shared", "hook_event_name": event });
 
         let arguments = parse(&args("agent event waiting --agent codex")).unwrap();
-        report_agent_event(arguments, payload("PermissionRequest"), &agents, |_| {
-            panic!("forwarded an auto-reviewed permission request")
-        });
+        let forwarded = |_| panic!("forwarded an auto-reviewed permission request");
+        report_agent_event(arguments, payload("PermissionRequest"), &agents, forwarded);
         for (agent, event, state) in [
             ("codex", "Stop", "done"),
             ("claude", "PermissionRequest", "waiting"),
