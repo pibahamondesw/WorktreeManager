@@ -1,18 +1,14 @@
 //! Owned global instructions linking agent sessions to the user's Obsidian vault.
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Mutex,
-};
+use std::sync::Mutex;
 
 use super::login_shell::LoginShell;
+use super::user_file::UserFile;
 
 const START: &str = "<!-- worktreemanager:obsidian:start -->";
 const END: &str = "<!-- worktreemanager:obsidian:end -->";
 static LOCK: Mutex<()> = Mutex::new(());
-static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(serde::Serialize)]
 pub struct VaultAgentProbe {
@@ -173,40 +169,10 @@ fn write_instructions(path: &Path, original: &str, contents: &str) -> Result<(),
     }
     fs::create_dir_all(path.parent().ok_or("Missing agent config directory")?)
         .map_err(|e| format!("Create agent config directory: {e}"))?;
-    // Follow existing symlinks instead of replacing a user's link.
-    let target = if path.exists() {
-        fs::canonicalize(path).map_err(|e| format!("Resolve {}: {e}", path.display()))?
-    } else {
-        path.to_path_buf()
-    };
-    let tmp = target.with_file_name(format!(
-        ".wtm-vault-agent-{}-{}.tmp",
-        std::process::id(),
-        NEXT_FILE.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
-        .map_err(|e| format!("Write agent instructions: {e}"))?;
-    let result = (|| {
-        if let Ok(metadata) = fs::metadata(&target) {
-            file.set_permissions(metadata.permissions())
-                .map_err(|e| format!("Preserve Codex file permissions: {e}"))?;
-        }
-        file.write_all(contents.as_bytes())
-            .map_err(|e| format!("Write agent instructions: {e}"))?;
-        file.sync_all()
-            .map_err(|e| format!("Flush agent instructions: {e}"))?;
-        if read_optional(path)? != original {
-            return Err(
-                "agent instructions changed during setup; retry without editing the file".into(),
-            );
-        }
-        fs::rename(&tmp, &target).map_err(|e| format!("Save agent instructions: {e}"))
-    })();
-    let _ = fs::remove_file(tmp);
-    result
+    UserFile::new(path)
+        .unchanged_from(original)
+        .replace(contents)
+        .map_err(|e| format!("Save agent instructions: {e}"))
 }
 
 fn validate_vault(vault: &Path) -> Result<(), String> {
@@ -342,6 +308,9 @@ pub async fn probe_vault_agent(
 mod tests {
     use super::*;
     use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
     struct Fixture {
         root: PathBuf,
