@@ -84,6 +84,7 @@ pub fn run() {
                 commands::agent_alerts::agent_hooks_remove,
                 commands::agent_alerts::agent_attention,
                 commands::agent_alerts::agent_badge,
+                commands::agent_alerts::agent_dismiss_notifications,
                 commands::keychain::keychain_get,
                 commands::keychain::keychain_set,
                 commands::terminal::terminal_open,

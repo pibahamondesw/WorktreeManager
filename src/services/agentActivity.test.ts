@@ -19,6 +19,7 @@ import {
   taskForCwd,
   taskIndicator,
   pendingInputCount,
+  settledAlerts,
 } from "./agentActivity";
 import { ChatInfo } from "./chat";
 
@@ -153,6 +154,25 @@ describe("activity lifecycle", () => {
       "unlistedTerminal",
     ]);
     expect(Object.keys(pruneActivities(next, [task("editor", [])]))).toEqual(["editor"]);
+  });
+});
+
+describe("settledAlerts", () => {
+  it("dismisses alerts once their task is read, working again, ended or deleted", () => {
+    const previous: AgentActivities = {
+      read: activity({ state: "waiting", unread: true }),
+      resumed: activity({ state: "done", unread: true }),
+      deleted: activity({ state: "done", unread: true }),
+      stillWaiting: activity({ state: "waiting", unread: true }),
+      neverAlerted: activity({ state: "working" }),
+    };
+    const next: AgentActivities = {
+      read: activity({ state: "waiting", unread: false }),
+      resumed: activity({ state: "working", at: 2 }),
+      stillWaiting: activity({ state: "done", unread: true, at: 2 }),
+    };
+    expect(settledAlerts(previous, next).sort()).toEqual(["deleted", "read", "resumed"]);
+    expect(settledAlerts(next, next)).toEqual([]);
   });
 });
 
