@@ -9,6 +9,7 @@ pub mod codex;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime};
 
 use super::agent_alerts::AlertHooks;
@@ -83,6 +84,10 @@ pub(crate) trait AgentAdapter: Send + Sync {
     fn live_session_renames_itself(&self) -> bool;
 
     fn alert_hooks(&self) -> AlertHooks;
+    /// A hook event the agent resolves without the user, so it must not alert.
+    fn unattended_hook(&self, _payload: &Value, _cwd: &Path) -> bool {
+        false
+    }
     fn usage_source(&self) -> Box<dyn UsageSource>;
 }
 

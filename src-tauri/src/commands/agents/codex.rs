@@ -1,7 +1,8 @@
 //! Codex. Chat and the past-conversation catalogue speak JSON-RPC to `codex app-server`; forks
 //! happen inside the running session. The embedded terminal resumes the worktree's last session.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
@@ -173,6 +174,61 @@ impl AgentAdapter for Codex {
             self.codex_home.as_ref().map(|home| home.join("sessions")),
         ))
     }
+
+    /// Codex runs `PermissionRequest` hooks before handing the request to its reviewer, so with
+    /// `auto_review` they fire for approvals the user never sees.
+    fn unattended_hook(&self, payload: &Value, cwd: &Path) -> bool {
+        payload["hook_event_name"] == "PermissionRequest"
+            && self
+                .codex_home
+                .as_deref()
+                .is_some_and(|home| approvals_reviewer(home, cwd).as_deref() == Some("auto_review"))
+    }
+}
+
+fn read_toml(path: &Path) -> Option<toml::Table> {
+    fs::read_to_string(path).ok()?.parse().ok()
+}
+
+/// The user config, then the project configs from the outermost directory to `cwd`; later layers
+/// win, and the active profile overrides the top-level value.
+fn approvals_reviewer(codex_home: &Path, cwd: &Path) -> Option<String> {
+    let user_config = codex_home.join("config.toml");
+    let mut project_configs: Vec<PathBuf> = cwd
+        .ancestors()
+        .map(|dir| dir.join(".codex").join("config.toml"))
+        .filter(|path| *path != user_config)
+        .collect();
+    project_configs.reverse();
+    let mut reviewer = None;
+    let mut profile = None;
+    let mut profiles = toml::Table::new();
+    for layer in std::iter::once(user_config)
+        .chain(project_configs)
+        .filter_map(|path| read_toml(&path))
+    {
+        if let Some(value) = layer
+            .get("approvals_reviewer")
+            .and_then(toml::Value::as_str)
+        {
+            reviewer = Some(value.to_string());
+        }
+        if let Some(value) = layer.get("profile").and_then(toml::Value::as_str) {
+            profile = Some(value.to_string());
+        }
+        if let Some(table) = layer.get("profiles").and_then(toml::Value::as_table) {
+            profiles.extend(table.clone());
+        }
+    }
+    profile
+        .and_then(|name| {
+            profiles
+                .get(&name)?
+                .get("approvals_reviewer")?
+                .as_str()
+                .map(String::from)
+        })
+        .or(reviewer)
 }
 
 fn terminal_session(program: &str, ctx: &LaunchContext) -> LoginShell {
@@ -211,7 +267,48 @@ fn threads(result: &Value, current: Option<&str>) -> Vec<SessionSummary> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wtm-codex-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_config(dir: &Path, contents: &str) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("config.toml"), contents).unwrap();
+    }
+
+    fn permission_request() -> Value {
+        json!({ "hook_event_name": "PermissionRequest", "tool_name": "Bash" })
+    }
+
+    #[test]
+    fn permission_requests_are_unattended_only_under_auto_review() {
+        let root = temp_dir("auto-review");
+        let home = root.join("codex-home");
+        let project = root.join("repo");
+        let cwd = project.join("app");
+        fs::create_dir_all(&cwd).unwrap();
+        let codex = Codex::new("codex", None, Some(home.clone()));
+
+        assert!(!codex.unattended_hook(&permission_request(), &cwd));
+
+        write_config(&home, "approvals_reviewer = \"auto_review\"\n");
+        assert!(codex.unattended_hook(&permission_request(), &cwd));
+        assert!(!codex.unattended_hook(&json!({ "hook_event_name": "Stop" }), &cwd));
+        assert!(!Codex::new("codex", None, None).unattended_hook(&permission_request(), &cwd));
+
+        write_config(&project.join(".codex"), "approvals_reviewer = \"user\"\n");
+        assert!(!codex.unattended_hook(&permission_request(), &cwd));
+        write_config(
+            &cwd.join(".codex"),
+            "profile = \"auto\"\n[profiles.auto]\napprovals_reviewer = \"auto_review\"\n",
+        );
+        assert!(codex.unattended_hook(&permission_request(), &cwd));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn terminal_resumes_only_the_current_worktree_with_every_task_folder() {
