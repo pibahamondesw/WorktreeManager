@@ -2,7 +2,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use super::notes::write_atomic;
+use super::user_file::UserFile;
 
 /// Vault assets, embedded at build time. `vault-kit/vault/` in the repo is the
 /// single source of truth: everything under it is scaffolded verbatim.
@@ -122,7 +122,9 @@ fn ensure_task_note_support(root: &Path) -> Result<(), String> {
         }
         fs::create_dir_all(path.parent().unwrap())
             .map_err(|e| format!("create task note support: {e}"))?;
-        write_atomic(&path, file.contents)?;
+        UserFile::new(&path)
+            .unchanged_from("")
+            .replace(file.contents)?;
         if file.executable {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
                 .map_err(|e| format!("chmod {}: {e}", path.display()))?;
@@ -132,7 +134,9 @@ fn ensure_task_note_support(root: &Path) -> Result<(), String> {
     if agents.exists() {
         let contents = fs::read_to_string(&agents).map_err(|e| format!("read AGENTS.md: {e}"))?;
         if !contents.contains("[skills/task-log/SKILL.md](skills/task-log/SKILL.md)") {
-            write_atomic(&agents, &format!("{contents}{TASK_NOTE_GUIDE}"))?;
+            UserFile::new(&agents)
+                .unchanged_from(&contents)
+                .replace(format!("{contents}{TASK_NOTE_GUIDE}"))?;
         }
     }
     Ok(())
@@ -151,7 +155,9 @@ pub(crate) fn scaffold_vault_at(root: &Path) -> Result<(), String> {
         if path.exists() {
             continue;
         }
-        write_atomic(&path, file.contents)?;
+        UserFile::new(&path)
+            .unchanged_from("")
+            .replace(file.contents)?;
         if file.executable {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
                 .map_err(|e| format!("chmod {}: {e}", path.display()))?;
@@ -177,9 +183,15 @@ fn register_vault_at(config_path: &Path, vault_path: &str) -> Result<bool, Strin
         .ok_or("Missing Obsidian config directory")?;
     fs::create_dir_all(config_dir).map_err(|e| format!("create {}: {e}", config_dir.display()))?;
 
-    let mut config: serde_json::Value = match fs::read_to_string(config_path) {
-        Ok(raw) => serde_json::from_str(&raw).map_err(|e| format!("parse obsidian.json: {e}"))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+    let (original, mut config) = match fs::read_to_string(config_path) {
+        Ok(raw) => {
+            let config: serde_json::Value =
+                serde_json::from_str(&raw).map_err(|e| format!("parse obsidian.json: {e}"))?;
+            (raw, config)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            (String::new(), serde_json::json!({}))
+        }
         Err(e) => return Err(format!("read {}: {e}", config_path.display())),
     };
 
@@ -214,7 +226,9 @@ fn register_vault_at(config_path: &Path, vault_path: &str) -> Result<bool, Strin
     vaults.insert(id, serde_json::json!({ "path": normalized, "ts": ts }));
     let serialized =
         serde_json::to_string(&config).map_err(|e| format!("serialize obsidian.json: {e}"))?;
-    write_atomic(&config_path.to_path_buf(), &serialized)?;
+    UserFile::new(config_path)
+        .unchanged_from(&original)
+        .replace(serialized)?;
     Ok(true)
 }
 

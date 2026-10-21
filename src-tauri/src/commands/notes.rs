@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
+use super::user_file::UserFile;
+
 /// Reject a note name that could escape the notes folder. Notes live flat in
 /// `<notes_path>/`, so any separator or `..` is invalid rather than merely unusual.
 fn validate_file_name(file_name: &str) -> Result<(), String> {
@@ -35,18 +37,6 @@ fn note_dirs(notes_path: &str, note_folder: Option<&str>) -> Result<(PathBuf, Pa
     }
 }
 
-/// Write `contents` to `path` via a temp sibling + rename, so a reader never sees
-/// a half-written note.
-pub(crate) fn write_atomic(path: &PathBuf, contents: &str) -> Result<(), String> {
-    let tmp = {
-        let mut p = path.clone().into_os_string();
-        p.push(".wm.tmp");
-        PathBuf::from(p)
-    };
-    fs::write(&tmp, contents).map_err(|e| format!("Failed to write note: {e}"))?;
-    fs::rename(&tmp, path).map_err(|e| format!("Failed to finalize note: {e}"))
-}
-
 /// Create the task note if it does not exist yet, and return its absolute path.
 ///
 /// Idempotent by design: an existing note — active or already archived — is returned
@@ -74,7 +64,9 @@ pub fn ensure_task_note(
     }
 
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create notes folder: {e}"))?;
-    write_atomic(&active, &contents)?;
+    UserFile::new(&active)
+        .unchanged_from("")
+        .replace(&contents)?;
     Ok(active.to_string_lossy().to_string())
 }
 
@@ -141,7 +133,9 @@ pub fn archive_task_note(
         .map_err(|e| format!("Failed to create archive folder: {e}"))?;
     if src.exists() {
         let contents = fs::read_to_string(&src).map_err(|e| format!("Failed to read note: {e}"))?;
-        write_atomic(&src, &archive_frontmatter(&contents, &today))?;
+        UserFile::new(&src)
+            .unchanged_from(&contents)
+            .replace(archive_frontmatter(&contents, &today))?;
     }
     fs::rename(&source, &target).map_err(|e| format!("Failed to archive note: {e}"))?;
     Ok(Some(dest.to_string_lossy().to_string()))
