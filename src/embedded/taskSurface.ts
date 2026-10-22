@@ -13,15 +13,19 @@ export const agentSurface = (
   agent,
 });
 
-/** The single place that decides whether an editor choice opens a task inside the app. */
+/**
+ * The single place that decides whether an editor choice opens a task inside the app. An agent
+ * choice reopens the agent the task last used.
+ */
 export function taskSurfaceFor(
   editor: EditorApp,
-  views: AgentViews = DEFAULT_AGENT_VIEWS
+  views: AgentViews = DEFAULT_AGENT_VIEWS,
+  taskAgent?: AgentId
 ): TaskSurface {
   if (editor === "vscode-web") return { kind: "editor" };
   if (editor === "opencode-web") return { kind: "opencode" };
   const agent = EDITOR_AGENTS[editor];
-  return agent ? agentSurface(agent, views) : { kind: "external" };
+  return agent ? agentSurface(taskAgent ?? agent, views) : { kind: "external" };
 }
 
 export const isEmbedded = (surface: TaskSurface): boolean => surface.kind !== "external";

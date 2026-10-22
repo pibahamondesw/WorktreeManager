@@ -192,6 +192,55 @@ describe("TaskView", () => {
     expect(onSwitchSurface).not.toHaveBeenCalled();
   });
 
+  it("hands the chat to the other agent after stopping the current one", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open"
+        ? Promise.resolve({
+            generation: 1,
+            status: { kind: "idle" },
+            items: [{ id: "u", kind: "user", text: "Plan it" }],
+            pending: [],
+            controls: {
+              models: [],
+              model: null,
+              effort: null,
+              modes: [],
+              mode: null,
+              commands: [],
+              todos: [],
+              context: null,
+            },
+          })
+        : Promise.resolve(command === "check_app_installed" || undefined)
+    );
+    const onSwitchSurface = vi.fn();
+    const props = {
+      task,
+      sidebarCollapsed: false,
+      onExpandSidebar: vi.fn(),
+      onBack: vi.fn(),
+      onSwitchSurface,
+    };
+    const { rerender } = render(
+      <TaskView {...props} surface={{ kind: "chat", agent: "claude" }} />
+    );
+    await screen.findByText("Plan it");
+    fireEvent.click(screen.getByRole("button", { name: "Agent: Claude" }));
+    fireEvent.mouseDown(within(screen.getByRole("listbox", { name: "Agent" })).getByText("Codex"));
+    fireEvent.click(screen.getByRole("button", { name: "Continue in Codex" }));
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", { taskId: "t1", agent: "claude" });
+    await waitFor(() =>
+      expect(onSwitchSurface).toHaveBeenCalledWith({ kind: "chat", agent: "codex" })
+    );
+    rerender(<TaskView {...props} surface={{ kind: "chat", agent: "codex" }} />);
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "chat_open",
+        expect.objectContaining({ agent: "codex", mode: "fresh", handoffFrom: "claude" })
+      )
+    );
+  });
+
   it("ends the agent's chat process before returning to the task list", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"

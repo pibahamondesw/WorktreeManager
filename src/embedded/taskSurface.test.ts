@@ -11,6 +11,20 @@ describe("taskSurfaceFor", () => {
     expect(taskSurfaceFor("codex", views)).toEqual({ kind: "chat", agent: "codex" });
   });
 
+  it("reopens the agent a task last used, only when an agent is the editor choice", () => {
+    expect(taskSurfaceFor("claude-code", undefined, "codex")).toEqual({
+      kind: "chat",
+      agent: "codex",
+    });
+    const views = { claude: "chat", codex: "terminal" } as const;
+    expect(taskSurfaceFor("claude-code", views, "codex")).toEqual({
+      kind: "terminal",
+      agent: "codex",
+    });
+    expect(taskSurfaceFor("cursor", views, "codex")).toEqual({ kind: "external" });
+    expect(taskSurfaceFor("vscode-web", views, "codex")).toEqual({ kind: "editor" });
+  });
+
   it("opens the embedded editors inside the app", () => {
     expect(taskSurfaceFor("vscode-web")).toEqual({ kind: "editor" });
     expect(taskSurfaceFor("opencode-web")).toEqual({ kind: "opencode" });

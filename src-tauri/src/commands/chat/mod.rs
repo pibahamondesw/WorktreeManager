@@ -13,6 +13,7 @@ mod codex_hooks;
 pub use codex::purge_stale_chat_images;
 mod conversations;
 mod files;
+mod handoff;
 pub mod history;
 #[cfg(test)]
 mod history_tests;
@@ -21,7 +22,7 @@ mod model;
 mod sessions;
 
 pub(crate) use conversations::ConversationFork;
-pub(crate) use model::{PlanUsage, UsageWindow};
+pub(crate) use model::{ChatItem, ItemKind, PlanUsage, UsageWindow};
 pub(crate) use sessions::{exchange, truncate, SessionList, SessionSummary, LIST_LIMIT};
 
 use std::collections::HashMap;
@@ -41,6 +42,7 @@ use super::agent_alerts;
 use super::agents::{Agents, ChatRequest};
 use super::process::OwnedProcess;
 use conversations::{Conversation, ConversationStore};
+use handoff::{Handoff, HandoffLink, HandoffStore};
 use model::{
     ChatEvent, ChatImage, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus,
     ProviderOutput, ReviewTarget,
@@ -90,6 +92,8 @@ struct Shared {
     turn_messages: Vec<String>,
     history_reply: Option<std::sync::mpsc::Sender<Result<(), String>>>,
     history_busy: bool,
+    /// The conversation from another agent that this one continues.
+    handoff: Option<Handoff>,
 }
 
 type Notify = Arc<dyn Fn(ChatActivity) + Send + Sync>;
@@ -160,6 +164,12 @@ impl Shared {
                     .map(|turn| turn.after)
                     .or_else(|| item.checkpoint.clone())
             })
+    }
+
+    fn prepend_carried(&self, items: &mut Vec<model::ChatItem>) {
+        if let Some(handoff) = &self.handoff {
+            items.splice(0..0, handoff.carried.iter().cloned());
+        }
     }
 
     fn commit(&mut self, out: ProviderOutput, conversation: &dyn Fn(String), notify: &Notify) {
@@ -250,6 +260,7 @@ impl Shared {
                         }
                     }
                     self.last_checkpoint = self.last_history_checkpoint(items);
+                    self.prepend_carried(items);
                 }
                 _ => {}
             }
@@ -314,6 +325,7 @@ impl ChatSession {
             turn_messages: Vec::new(),
             history_reply: None,
             history_busy: false,
+            handoff: None,
         }));
         let process = Arc::new(Mutex::new(Some(process)));
         let session = Self {
@@ -561,6 +573,13 @@ fn conversation_store<R: Runtime>(app: &AppHandle<R>) -> Result<ConversationStor
         .map_err(|e| format!("app data dir: {e}"))
 }
 
+fn handoff_store<R: Runtime>(app: &AppHandle<R>) -> Result<HandoffStore, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| HandoffStore::new(&dir))
+        .map_err(|e| format!("app data dir: {e}"))
+}
+
 fn canonical(path: &str) -> String {
     std::fs::canonicalize(path)
         .unwrap_or_else(|_| PathBuf::from(path))
@@ -575,6 +594,7 @@ pub(crate) struct Launch {
 }
 
 /// Attach to the running session, restart it on the same conversation, or start a fresh one.
+/// A fresh one may continue the current conversation of `handoff_from`, another agent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OpenMode {
@@ -593,9 +613,14 @@ pub async fn chat_open<R: Runtime>(
     folders: Vec<String>,
     mode: OpenMode,
     conversation: Option<String>,
+    handoff_from: Option<String>,
     on_event: Channel<LiveEvent>,
 ) -> Result<ChatSnapshot, String> {
-    let adapter = Agents::of(&app).get(&agent)?;
+    let agents = Agents::of(&app);
+    let adapter = agents.get(&agent)?;
+    if handoff_from.as_deref() == Some(agent.as_str()) {
+        return Err("A conversation already continues in its own agent".into());
+    }
     let key = (task_id.clone(), agent.clone());
     let open_lock = registry.open_lock(&key);
     let _opening = open_lock.lock().await;
@@ -619,11 +644,23 @@ pub async fn chat_open<R: Runtime>(
     let cwd = canonical_folders.next().ok_or("No folders for this task")?;
     let extra_dirs: Vec<String> = canonical_folders.collect();
     let store = Arc::new(conversation_store(&app)?);
+    let handoffs = Arc::new(handoff_store(&app)?);
     let pinned = mode != OpenMode::Fresh && conversation.is_some();
     let resume = match (mode, conversation) {
         (OpenMode::Fresh, _) => None,
         (_, Some(conversation)) => Some(conversation),
         _ => store.get(&task_id, &agent, &cwd),
+    };
+    let link = match handoff_from {
+        Some(source) => Some(HandoffLink {
+            conversation_id: store
+                .get(&task_id, &source, &cwd)
+                .ok_or("There is no conversation to continue")?,
+            agent: source,
+        }),
+        None => resume
+            .as_deref()
+            .and_then(|id| handoffs.source(&task_id, &agent, id)),
     };
     let generation = registry.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let fork = store
@@ -632,25 +669,56 @@ pub async fn chat_open<R: Runtime>(
         .and_then(|entry| entry.fork);
     let expected_conversation = resume.clone();
 
-    let request = ChatRequest {
-        cwd: cwd.clone(),
-        extra_dirs,
-        resume,
-        pinned,
-        fork,
+    let pending_fork = link.as_ref().and_then(|link| {
+        store
+            .entry(&task_id, &link.agent, &cwd)
+            .filter(|entry| entry.conversation_id == link.conversation_id)
+            .and_then(|entry| entry.fork)
+    });
+    let (handoff, launch) = {
+        let (handoffs, task_id, agent, cwd) = (
+            handoffs.clone(),
+            task_id.clone(),
+            agent.clone(),
+            cwd.clone(),
+        );
+        tauri::async_runtime::spawn_blocking(move || {
+            let handoff = link.map(|link| {
+                let first = link.clone();
+                handoff::resolve(&handoffs, &task_id, &agent, link, |source| {
+                    let fork = pending_fork.as_ref().filter(|_| *source == first);
+                    agents
+                        .get(&source.agent)?
+                        .history(&cwd, &source.conversation_id, fork)
+                })
+            });
+            let request = ChatRequest {
+                cwd,
+                extra_dirs,
+                resume,
+                pinned,
+                fork,
+                handoff: handoff.as_ref().map(|handoff| handoff.digest.clone()),
+            };
+            adapter.chat_launch(request).map(|launch| (handoff, launch))
+        })
+        .await
+        .map_err(|e| format!("Task failed: {e}"))??
     };
     let Launch {
         mut command,
         provider,
         history,
-    } = tauri::async_runtime::spawn_blocking(move || adapter.chat_launch(request))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))??;
+    } = launch;
 
     let remember: Arc<dyn Fn(String) + Send + Sync> = {
         let (store, task_id, agent, cwd) =
             (store.clone(), task_id.clone(), agent.clone(), cwd.clone());
+        let link = handoff.as_ref().map(|handoff| handoff.link.clone());
         Arc::new(move |conversation_id| {
+            if let Some(link) = &link {
+                handoffs.link(&task_id, &agent, &conversation_id, link);
+            }
             let conversation = Conversation {
                 conversation_id,
                 cwd: cwd.clone(),
@@ -703,6 +771,8 @@ pub async fn chat_open<R: Runtime>(
             }
         }
         state.last_checkpoint = state.last_history_checkpoint(&items);
+        state.handoff = handoff;
+        state.prepend_carried(&mut items);
         state.snapshot.items = items;
     }
     let snapshot = session.attach(on_event);
@@ -959,6 +1029,9 @@ pub async fn chat_close<R: Runtime>(
                 log::warn!("could not forget chat conversations: {error}");
             }
         }
+        if let Ok(store) = handoff_store(&app) {
+            store.forget_task(&task_id);
+        }
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))
@@ -1005,6 +1078,7 @@ mod tests {
             turn_messages: Vec::new(),
             history_reply: None,
             history_busy: false,
+            handoff: None,
         }
     }
 
@@ -1147,6 +1221,7 @@ mod tests {
             turn_messages: Vec::new(),
             history_reply: None,
             history_busy: false,
+            handoff: None,
         };
         let commit = |shared: &mut Shared, status: ChatStatus, background_agents: Option<bool>| {
             let mut out = ProviderOutput {
@@ -1207,6 +1282,7 @@ mod tests {
             turn_messages: Vec::new(),
             history_reply: None,
             history_busy: false,
+            handoff: None,
         };
         let mut out = ProviderOutput::default();
         out.event(ChatEvent::Status {

@@ -19,7 +19,8 @@ type ChatItemKind =
   | "tool"
   | "error"
   | "notice"
-  | "review";
+  | "review"
+  | "handoff";
 
 export interface ChatItem {
   id: string;
@@ -29,6 +30,8 @@ export interface ChatItem {
   detail?: string;
   status?: string;
   checkpoint?: string;
+  /** Carried from this agent's conversation; read-only here. */
+  origin?: AgentId;
 }
 
 export interface ChatQuestion {
@@ -236,12 +239,23 @@ export function applyChatEvent(snapshot: ChatSnapshot, event: ChatEvent): ChatSn
   }
 }
 
+export type ChatOpenMode = "attach" | "restart" | "fresh";
+
+/** How a chat pane opens: a picked conversation, or a fresh one continuing another agent's. */
+export interface ChatOpenIntent {
+  agent: AgentId;
+  mode: ChatOpenMode;
+  conversation?: string;
+  handoffFrom?: AgentId;
+}
+
 interface ChatOpenArgs {
   taskId: string;
   agent: AgentId;
   folders: string[];
-  mode: "attach" | "restart" | "fresh";
+  mode: ChatOpenMode;
   conversation?: string;
+  handoffFrom?: AgentId;
   onEvent: (generation: number, event: ChatEvent) => void;
 }
 

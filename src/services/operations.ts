@@ -10,6 +10,7 @@ import {
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { v4 as uuid } from "uuid";
 import {
+  AgentId,
   PullRequestInfo,
   AppState,
   Task,
@@ -335,6 +336,15 @@ export class Operations {
       );
       const pinOrder = pinned ? Math.max(-1, ...pins.map((item) => item.pinOrder!)) + 1 : undefined;
       return { tasks: state.tasks.map((item) => (item.id === id ? { ...item, pinOrder } : item)) };
+    });
+  }
+
+  setTaskAgent(id: string, agent: AgentId) {
+    return this.enqueue(async () => {
+      if (this.task(id).agent === agent) return;
+      await this.write({
+        tasks: this.getState().tasks.map((item) => (item.id === id ? { ...item, agent } : item)),
+      });
     });
   }
 

@@ -65,6 +65,8 @@ for line in sys.stdin:
             if settings.get('timeout_fork'):
                 continue
             result = {'thread': thread('fork', 1)}
+        elif method == 'thread/read':
+            result = {'thread': thread(message['params']['threadId'], 1)}
         elif method in ['thread/start', 'thread/resume']:
             result = {'thread': thread(message.get('params', {}).get('threadId', 'fresh'), 0 if method == 'thread/start' else 2)}
         elif method == 'thread/list':
@@ -228,6 +230,7 @@ impl Fixture {
             agent.into(),
             self.repositories.folders.clone(),
             mode,
+            None,
             None,
             Channel::new(|_| Ok(())),
         ))?;
@@ -877,6 +880,7 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         resume: resume.map(String::from),
         pinned: resume.is_some(),
         fork: None,
+        handoff: None,
     };
     let missing = Codex::new("/missing-test-agent", None, None);
     assert!(missing.chat_launch(request(None)).is_err());
@@ -1266,5 +1270,161 @@ fn terminal_launches_run_the_configured_agent_with_its_arguments() {
             "--add-dir",
             folders[1]
         ])
+    );
+}
+
+#[test]
+fn continuing_in_another_agent_seeds_it_and_keeps_the_earlier_items_read_only() {
+    let fixture = Fixture::new();
+    let open = |mode: OpenMode, handoff_from: Option<&str>| {
+        tauri::async_runtime::block_on(chat_open(
+            fixture.app.handle().clone(),
+            fixture.app.state(),
+            "task".into(),
+            "codex".into(),
+            fixture.repositories.folders.clone(),
+            mode,
+            None,
+            handoff_from.map(String::from),
+            Channel::new(|_| Ok(())),
+        ))
+    };
+    assert!(open(OpenMode::Fresh, Some("codex"))
+        .unwrap_err()
+        .contains("its own agent"));
+    open(OpenMode::Fresh, Some("claude")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while fixture.snapshot("codex").status != ChatStatus::Idle {
+        assert!(Instant::now() < deadline, "codex did not take the handoff");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let carried = |snapshot: &ChatSnapshot| {
+        snapshot
+            .items
+            .iter()
+            .map(|item| (item.text.clone(), item.origin.clone()))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![
+        ("first".to_string(), Some("claude".to_string())),
+        ("answer".into(), Some("claude".into())),
+        ("second".into(), Some("claude".into())),
+        ("Continued in Codex".into(), None),
+    ];
+    assert_eq!(carried(&fixture.snapshot("codex")), expected);
+    let inject = fixture
+        .logged("requests.jsonl")
+        .into_iter()
+        .find(|request| request["method"] == "thread/inject_items")
+        .unwrap();
+    let digest = inject["params"]["items"][0]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(digest.contains("[User]\nfirst") && digest.contains("[Claude Code]\nanswer"));
+
+    let generation = fixture.snapshot("codex").generation;
+    assert!(chat_rewind_preview(
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        generation,
+        "carried:parent:u1".into(),
+    )
+    .is_err());
+
+    open(OpenMode::Restart, None).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while fixture.snapshot("codex").items.len() <= expected.len() {
+        assert!(Instant::now() < deadline, "codex did not resume");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut resumed = expected.clone();
+    resumed.extend([
+        ("message 1".to_string(), None),
+        ("message 2".to_string(), None),
+    ]);
+    assert_eq!(carried(&fixture.snapshot("codex")), resumed);
+
+    tauri::async_runtime::block_on(chat_close(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+    ))
+    .unwrap();
+    let store = handoff_store(fixture.app.handle()).unwrap();
+    assert_eq!(store.source("task", "codex", "fresh"), None);
+}
+
+#[test]
+fn rewinding_a_continuation_keeps_its_source_and_a_pending_fork_can_be_continued() {
+    let fixture = Fixture::new();
+    let cwd = fixture.repositories.folders[0].clone();
+    let codex_source = handoff::HandoffLink {
+        agent: "codex".into(),
+        conversation_id: "th0".into(),
+    };
+    let handoffs = handoff_store(fixture.app.handle()).unwrap();
+    handoffs.link("task", "claude", "parent", &codex_source);
+    let snapshot = fixture.open("claude", OpenMode::Restart).unwrap();
+    let texts = |snapshot: &ChatSnapshot| {
+        snapshot
+            .items
+            .iter()
+            .map(|item| item.text.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        texts(&snapshot)[..2],
+        ["message 1".to_string(), "Continued in Claude Code".into()]
+    );
+
+    fixture
+        .apply("claude", "u2", HistoryAction::Conversation, None)
+        .unwrap();
+    let fork = conversation_store(fixture.app.handle())
+        .unwrap()
+        .get("task", "claude", &cwd)
+        .unwrap();
+    assert_ne!(fork, "parent");
+    assert_eq!(handoffs.source("task", "claude", &fork), Some(codex_source));
+    assert_eq!(
+        texts(&fixture.snapshot("claude")),
+        ["message 1", "Continued in Claude Code", "first", "answer"]
+    );
+
+    tauri::async_runtime::block_on(chat_stop(
+        fixture.app.state(),
+        "task".into(),
+        "claude".into(),
+    ))
+    .unwrap();
+    tauri::async_runtime::block_on(chat_open(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        fixture.repositories.folders.clone(),
+        OpenMode::Fresh,
+        None,
+        Some("claude".into()),
+        Channel::new(|_| Ok(())),
+    ))
+    .unwrap();
+    fixture.settings(json!({ "fail_method": "thread/read" }));
+    let codex = fixture.app.state::<Agents>().get("codex").unwrap();
+    assert_eq!(
+        codex.history(&cwd, "th0", None),
+        Err("test thread/read failed".to_string())
+    );
+    let carried = texts(&fixture.snapshot("codex"));
+    assert_eq!(
+        carried,
+        [
+            "message 1",
+            "Continued in Claude Code",
+            "first",
+            "answer",
+            "Continued in Codex"
+        ]
     );
 }

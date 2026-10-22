@@ -19,10 +19,10 @@ import {
   ReviewTarget,
   ChatSetting,
   ChatSnapshot,
+  ChatOpenIntent,
+  ChatOpenMode,
   EMPTY_CONTROLS,
 } from "../services/chat";
-
-type OpenMode = "attach" | "restart" | "fresh";
 
 const CONNECTING: ChatSnapshot = {
   generation: 0,
@@ -35,12 +35,18 @@ const CONNECTING: ChatSnapshot = {
 /**
  * Attaches to the task agent's chat session. The session outlives this hook: unmounting only
  * detaches the sink. Events from an older generation (a session replaced by a restart) are
- * dropped, and events that race the snapshot are queued and replayed on top of it.
+ * dropped, and events that race the snapshot are queued and replayed on top of it. The first
+ * open follows `takeIntent` when the pane was mounted to resume or continue a conversation.
  */
-export function useChatSession(taskId: string, agent: AgentId, folders: string[]) {
+export function useChatSession(
+  taskId: string,
+  agent: AgentId,
+  folders: string[],
+  takeIntent?: () => ChatOpenIntent | null
+) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>(CONNECTING);
   const [error, setError] = useState<string | null>(null);
-  const openRef = useRef<(mode: OpenMode, conversation?: string) => Promise<void>>(
+  const openRef = useRef<(mode: ChatOpenMode, conversation?: string) => Promise<void>>(
     async () => undefined
   );
   const foldersKey = folders.join("\n");
@@ -49,7 +55,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
     let disposed = false;
     let generation = 0;
 
-    const open = async (mode: OpenMode, conversation?: string) => {
+    const open = async (mode: ChatOpenMode, conversation?: string, handoffFrom?: AgentId) => {
       if (disposed) return;
       const early: { generation: number; apply: (s: ChatSnapshot) => ChatSnapshot }[] = [];
       let ready = false;
@@ -62,6 +68,7 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
           folders: foldersKey.split("\n"),
           mode,
           conversation,
+          handoffFrom,
           onEvent: (eventGeneration, event) => {
             if (disposed) return;
             const apply = (s: ChatSnapshot) => applyChatEvent(s, event);
@@ -84,13 +91,15 @@ export function useChatSession(taskId: string, agent: AgentId, folders: string[]
       }
     };
     openRef.current = open;
-    void open("attach");
+    const taken = takeIntent?.();
+    const intent = taken?.agent === agent ? taken : undefined;
+    void open(intent?.mode ?? "attach", intent?.conversation, intent?.handoffFrom);
 
     return () => {
       disposed = true;
       if (generation) void chatDetach(taskId, agent, generation);
     };
-  }, [taskId, agent, foldersKey]);
+  }, [taskId, agent, foldersKey, takeIntent]);
 
   const restart = useCallback(() => openRef.current("restart"), []);
   const startFresh = useCallback(() => openRef.current("fresh"), []);

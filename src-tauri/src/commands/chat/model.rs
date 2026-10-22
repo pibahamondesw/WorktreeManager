@@ -34,6 +34,8 @@ pub enum ItemKind {
     Error,
     Notice,
     Review,
+    /// Where a conversation continues in another agent, after the items carried from it.
+    Handoff,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -50,6 +52,9 @@ pub struct ChatItem {
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<String>,
+    /// The agent whose conversation this item was carried from; read-only in this one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 impl ChatItem {
@@ -62,6 +67,7 @@ impl ChatItem {
             detail: None,
             status: None,
             checkpoint: None,
+            origin: None,
         }
     }
 

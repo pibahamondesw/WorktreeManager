@@ -17,6 +17,8 @@
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-danger-hover: #dc2626;
+  --color-agent-claude: #d97757;
+  --color-agent-codex: #5b8def;
 
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);

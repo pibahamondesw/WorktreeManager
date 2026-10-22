@@ -237,6 +237,7 @@ export function normalizeTasks(raw: unknown): Task[] {
         typeof t.pinOrder === "number" && Number.isSafeInteger(t.pinOrder) && t.pinOrder >= 0
           ? t.pinOrder
           : undefined,
+      agent: t.agent === "claude" || t.agent === "codex" ? t.agent : undefined,
       createdAt: persistedString(t.createdAt) ?? new Date().toISOString(),
       members: persistedArray(t.members).map((value) => {
         const m = persistedRecord(value);

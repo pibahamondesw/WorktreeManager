@@ -15,14 +15,17 @@ use std::time::UNIX_EPOCH;
 use serde_json::{json, Value};
 
 use super::{
-    AgentAdapter, ChatRequest, ForkLaunch, ForkMethod, ForkRequest, LaunchContext, LaunchSpec,
+    AgentAdapter, ChatRequest, ConversationFork, ForkLaunch, ForkMethod, ForkRequest,
+    LaunchContext, LaunchSpec,
 };
 use crate::commands::agent_alerts::{AlertHooks, HookSpec};
 use crate::commands::agent_usage::UsageSource;
 use crate::commands::chat::claude::{
     fork_point, history, launch_args, projects_dir, session_exists, ClaudeProvider, HEADLESS_ARGS,
 };
-use crate::commands::chat::{exchange, truncate, Launch, SessionList, SessionSummary, LIST_LIMIT};
+use crate::commands::chat::{
+    exchange, truncate, ChatItem, ItemKind, Launch, SessionList, SessionSummary, LIST_LIMIT,
+};
 use crate::commands::claude_usage::ClaudeUsage;
 use crate::commands::login_shell::{cli_available, LoginShell};
 
@@ -113,9 +116,13 @@ impl Claude {
         } else {
             launch_args(request.fork_id, false, request.extra_dirs)
         };
+        let mut provider = ClaudeProvider::new(request.fork_id.to_string()).forking();
+        if !history.iter().any(|item| item.kind == ItemKind::User) {
+            provider = provider.continuing(request.handoff.map(String::from));
+        }
         Ok(Launch {
             command: self.cli(request.cwd, &args).command(),
-            provider: Box::new(ClaudeProvider::new(request.fork_id.to_string()).forking()),
+            provider: Box::new(provider),
             history,
         })
     }
@@ -186,6 +193,7 @@ impl AgentAdapter for Claude {
                     source: &fork.source,
                     pending_source: None,
                     item_id: &fork.item_id,
+                    handoff: request.handoff.as_deref(),
                 };
                 return self.fork(&fork_request, &fork.source);
             }
@@ -207,7 +215,10 @@ impl AgentAdapter for Claude {
                     launch_args(&session_id, resume.is_some(), &request.extra_dirs),
                 )
                 .command(),
-            provider: Box::new(ClaudeProvider::new(session_id)),
+            provider: Box::new(
+                ClaudeProvider::new(session_id)
+                    .continuing(request.handoff.filter(|_| resume.is_none())),
+            ),
             history,
         })
     }
@@ -255,6 +266,21 @@ impl AgentAdapter for Claude {
             can_rename: self.can_rename(),
             can_archive: false,
         })
+    }
+
+    fn history(
+        &self,
+        cwd: &str,
+        id: &str,
+        fork: Option<&ConversationFork>,
+    ) -> Result<Vec<ChatItem>, String> {
+        match fork {
+            Some(fork) if !self.session_exists(cwd, id) => {
+                fork_point(self.home(), cwd, &fork.source, &fork.item_id)
+                    .map(|(_, history)| history)
+            }
+            _ => Ok(history(self.home(), cwd, id)),
+        }
     }
 
     fn rename_session(&self, cwd: &str, id: &str, title: &str) -> Result<(), String> {
@@ -329,8 +355,9 @@ fn user_text(content: &Value) -> Option<String> {
         Value::String(text) => Some(text.as_str()),
         Value::Array(blocks) => blocks
             .iter()
-            .find(|block| block["type"] == "text")
-            .and_then(|block| block["text"].as_str()),
+            .filter(|block| block["type"] == "text")
+            .filter_map(|block| block["text"].as_str())
+            .find(|text| !text.starts_with('<')),
         _ => None,
     }?;
     (!text.starts_with('<') && !text.trim().is_empty()).then(|| text.to_string())
@@ -740,6 +767,7 @@ mod tests {
                 resume: None,
                 pinned: false,
                 fork: None,
+                handoff: None,
             })
             .is_err());
     }

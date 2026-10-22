@@ -53,6 +53,7 @@ fn base_commands() -> Vec<CommandOption> {
 
 enum Call {
     Fork(usize),
+    Inject,
     Initialize,
     Account,
     Resume,
@@ -101,6 +102,8 @@ pub struct CodexProvider {
     usage: PlanUsage,
     image_dir: PathBuf,
     pinned: bool,
+    /// Digest of the conversation this one continues, injected into every new thread.
+    handoff: Option<String>,
 }
 
 impl Drop for CodexProvider {
@@ -119,6 +122,7 @@ impl CodexProvider {
             resume,
             image_dir: chat_images_root().join(uuid::Uuid::new_v4().to_string()),
             pinned: false,
+            handoff: None,
             next_id: 0,
             calls: HashMap::new(),
             requests: HashMap::new(),
@@ -356,6 +360,30 @@ impl CodexProvider {
         self
     }
 
+    pub fn continuing(mut self, handoff: Option<String>) -> Self {
+        self.handoff = handoff;
+        self
+    }
+
+    /// Seeds a new thread with the earlier conversation as model-visible history. The chat stays
+    /// starting until Codex has it, so the first message cannot overtake it.
+    fn inject_handoff(&mut self, out: &mut ProviderOutput) -> bool {
+        let (Some(handoff), Some(thread_id)) = (&self.handoff, &self.thread_id) else {
+            return false;
+        };
+        let params = json!({
+            "threadId": thread_id,
+            "items": [{
+                "type": "message",
+                "role": "user",
+                "content": [{ "type": "input_text", "text": handoff }],
+            }],
+        });
+        self.call(out, Call::Inject, "thread/inject_items", params);
+        out.status(ChatStatus::Starting);
+        true
+    }
+
     fn start_thread(&mut self, out: &mut ProviderOutput) {
         match self.resume.take() {
             Some(thread_id) => {
@@ -397,14 +425,9 @@ impl CodexProvider {
         out.conversation = Some(id.to_string());
         let cwd = self.cwd.clone();
         self.call(out, Call::Skills, "skills/list", json!({ "cwds": [cwd] }));
-        let items = thread["turns"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
-            .filter_map(map_item)
-            .collect::<Vec<_>>();
-        out.event(ChatEvent::Items { items });
+        out.event(ChatEvent::Items {
+            items: thread_items(thread),
+        });
         let active = thread["status"]["type"] == "active";
         self.busy = active;
         if active {
@@ -482,6 +505,9 @@ impl CodexProvider {
                 };
                 self.busy = false;
                 out.status(ChatStatus::Idle);
+                if result.is_ok() && expected == 0 {
+                    self.inject_handoff(out);
+                }
                 out.history_result = Some(result);
             }
             Call::Initialize => match error {
@@ -554,8 +580,18 @@ impl CodexProvider {
                 None => {
                     self.config_sandbox = Some(result["sandbox"].clone()).filter(|v| !v.is_null());
                     self.adopt_thread(&result["thread"], out);
+                    self.inject_handoff(out);
                 }
             },
+            Call::Inject => {
+                if let Some(error) = error {
+                    let item = self.error_item(format!(
+                        "Codex did not receive the earlier conversation ({error}); it starts without that context."
+                    ));
+                    out.upsert(item);
+                }
+                out.status(ChatStatus::Idle);
+            }
             Call::Turn | Call::Review => match error {
                 Some(error) => {
                     out.completes_turn = true;
@@ -1346,6 +1382,16 @@ fn purge_stale_images(root: &Path, max_age: std::time::Duration) {
     }
 }
 
+pub(crate) fn thread_items(thread: &Value) -> Vec<ChatItem> {
+    thread["turns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+        .filter_map(map_item)
+        .collect()
+}
+
 pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
     let id = item["id"].as_str()?;
     let text = |key: &str| item[key].as_str().unwrap_or_default().to_string();
@@ -1525,6 +1571,57 @@ mod tests {
             request(&out, "skills/list")["params"]["cwds"],
             json!(["/wt/a"])
         );
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+    }
+
+    #[test]
+    fn a_continued_conversation_seeds_new_threads_before_accepting_messages() {
+        let (provider, mut snapshot) = ready(None);
+        let mut provider = provider.continuing(Some("<prior_conversation/>".into()));
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": 2, "result": { "account": {} } }),
+        );
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": THREAD_CALL, "result": { "thread": { "id": "th1", "status": { "type": "idle" }, "turns": [] } } }),
+        );
+        let inject = request(&out, "thread/inject_items");
+        assert_eq!(inject["params"]["threadId"], "th1");
+        assert_eq!(
+            inject["params"]["items"][0]["content"][0]["text"],
+            "<prior_conversation/>"
+        );
+        assert_eq!(snapshot.status, ChatStatus::Starting);
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": inject["id"], "error": { "code": -32601, "message": "unknown method" } }),
+        );
+        assert!(out.writes.is_empty());
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        assert_eq!(snapshot.items[0].kind, ItemKind::Error);
+    }
+
+    #[test]
+    fn a_resumed_continuation_already_holds_its_context() {
+        let (provider, mut snapshot) = ready(Some("th1"));
+        let mut provider = provider.continuing(Some("<prior_conversation/>".into()));
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": 2, "result": { "account": {} } }),
+        );
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": THREAD_CALL, "result": { "thread": { "id": "th1", "status": { "type": "idle" }, "turns": [] } } }),
+        );
+        assert!(written(&out)
+            .iter()
+            .all(|w| w["method"] != "thread/inject_items"));
         assert_eq!(snapshot.status, ChatStatus::Idle);
     }
 

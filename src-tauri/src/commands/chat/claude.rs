@@ -48,6 +48,8 @@ pub struct ClaudeProvider {
     last_event_usage_request: Option<Instant>,
     /// Background subagents still run, per the last `background_tasks_changed`.
     background_agents: bool,
+    /// Digest of the conversation this one continues, sent ahead of the first message.
+    handoff: Option<String>,
 }
 
 struct QueuedMessage {
@@ -111,11 +113,17 @@ impl ClaudeProvider {
             usage_in_flight: false,
             last_event_usage_request: None,
             background_agents: false,
+            handoff: None,
         }
     }
 
     pub fn forking(mut self) -> Self {
         self.fork_start = true;
+        self
+    }
+
+    pub fn continuing(mut self, handoff: Option<String>) -> Self {
+        self.handoff = handoff;
         self
     }
 
@@ -629,9 +637,13 @@ impl ChatProvider for ClaudeProvider {
             ItemKind::User,
             user_display_text(text, images.len()),
         );
+        let content = user_content(text, images);
         let message = QueuedMessage {
             item,
-            content: user_content(text, images),
+            content: match self.handoff.take() {
+                Some(handoff) => with_context(handoff, content),
+                None => content,
+            },
         };
         if self.turns > 0 {
             out.upsert(message.item.clone().with_status("queued"));
@@ -1221,6 +1233,15 @@ fn parse_history(text: &str) -> Vec<ChatItem> {
         .collect()
 }
 
+/// Context goes in its own leading block; transcripts hide blocks that start with `<`.
+fn with_context(context: String, content: Value) -> Value {
+    let rest = match content {
+        Value::Array(rest) => rest,
+        text => vec![json!({ "type": "text", "text": text })],
+    };
+    Value::Array([vec![json!({ "type": "text", "text": context })], rest].concat())
+}
+
 fn user_content(text: &str, images: &[ChatImage]) -> Value {
     if images.is_empty() {
         return json!(text);
@@ -1269,6 +1290,50 @@ mod tests {
         assert!(fork_point_in(&unsafe_parent, "u2")
             .unwrap_err()
             .contains("safe fork point"));
+    }
+
+    #[test]
+    fn a_continued_conversation_sends_its_context_once_and_hides_it_from_history() {
+        let (provider, snapshot) = started();
+        let mut provider = provider.continuing(Some(
+            "<prior_conversation>earlier</prior_conversation>".into(),
+        ));
+        let mut out = ProviderOutput::default();
+        provider.send("next step", &[], &mut out).unwrap();
+        let first = &written(&out)[0]["message"]["content"];
+        assert_eq!(
+            *first,
+            json!([
+                { "type": "text", "text": "<prior_conversation>earlier</prior_conversation>" },
+                { "type": "text", "text": "next step" },
+            ])
+        );
+        assert!(out.events.iter().any(|event| matches!(
+            event,
+            ChatEvent::Upsert { item } if item.kind == ItemKind::User && item.text == "next step"
+        )));
+        let result = json!({ "type": "result" }).to_string();
+        provider.handle_line(&result, &snapshot, &mut ProviderOutput::default());
+        let mut out = ProviderOutput::default();
+        provider.send("again", &[], &mut out).unwrap();
+        assert_eq!(
+            written(&out).last().unwrap()["message"]["content"],
+            json!("again")
+        );
+
+        let transcript = json!({ "type": "user", "uuid": "u1", "message": { "content": first } });
+        let history = parse_history(&transcript.to_string());
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].text, "next step");
+
+        let image = ChatImage {
+            media_type: "image/png".into(),
+            data: "aGk=".into(),
+        };
+        let content = with_context("<ctx/>".into(), user_content("", &[image]));
+        assert_eq!(content[0]["text"], "<ctx/>");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content.as_array().unwrap().len(), 2);
     }
 
     #[test]
