@@ -22,6 +22,7 @@ import {
 } from "../types";
 import { compareTaskPins } from "../utils";
 import { LinearService } from "./linear";
+import { taskLinearStore } from "./taskLinear";
 import { persist } from "./store";
 import { archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
@@ -178,14 +179,14 @@ export class Operations {
           "The pull request is no longer linked to this task."
         );
       }
-      const info = await new LinearService(workspace.linearApiKey).fetchIssueLinearInfoBatch([
-        task.linearIssueId,
-      ]);
+      const info = await taskLinearStore.refreshIssues(workspace, [task.linearIssueId], true);
       const linked = info[task.linearIssueId]?.prs ?? [];
       if (
         !linked.some((candidate) => prKey(candidate) === key) ||
         this.getState().tasks.find((current) => current.id === taskId)?.linearIssueId !==
-          task.linearIssueId
+          task.linearIssueId ||
+        this.getState().workspaces.find((current) => current.id === workspace.id)?.linearApiKey !==
+          workspace.linearApiKey
       ) {
         throw new OperationError(
           "invalid_input",
@@ -905,10 +906,14 @@ export class Operations {
     const workspace = this.getState().workspaces.find((item) => item.id === workspaceId);
     if (!workspace?.linearApiKey) return;
     const tasks = this.getState().tasks.filter((task) => task.workspaceId === workspaceId);
-    const issueIds = tasks.flatMap((task) => (task.linearIssueId ? [task.linearIssueId] : []));
-    const info = await new LinearService(workspace.linearApiKey).fetchIssueLinearInfoBatch(
-      issueIds
-    );
+    await taskLinearStore.refreshWorkspace(workspace, tasks, true);
+    return this.syncTaskProjects(workspaceId);
+  }
+
+  syncTaskProjects(workspaceId: string) {
+    const workspace = this.getState().workspaces.find((item) => item.id === workspaceId);
+    if (!workspace?.linearApiKey) return Promise.resolve();
+    const info = taskLinearStore.info(workspace);
     return this.enqueue(async () => {
       if (
         this.getState().workspaces.find((item) => item.id === workspaceId)?.linearApiKey !==

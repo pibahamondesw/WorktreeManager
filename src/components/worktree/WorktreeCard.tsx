@@ -16,7 +16,6 @@ import {
 } from "../ui/Icons";
 import {
   Task,
-  TaskMember,
   VaultConfig,
   Workspace,
   GitStatus,
@@ -25,6 +24,7 @@ import {
 } from "../../types";
 import { PullRequestLinks } from "./PullRequestLinks";
 import { ensureTaskNote, taskNoteUri } from "../../services/notes";
+import { groupTaskPrs } from "../../services/taskLinear";
 import { openCreatePr } from "../../services/pullRequest";
 import { linearIssueUrl, timeAgo } from "../../utils";
 import { TerminalStatus } from "../../services/terminal";
@@ -175,23 +175,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     setTeardownBlock(null);
   };
 
-  const prsForMember = (m: TaskMember): PullRequestInfo[] => {
-    const slug = repoSlugs?.[m.repoId];
-    if (!slug || !prs) return [];
-    return prs.filter((p) => p.repoSlug.toLowerCase() === slug);
-  };
-
-  // PRs attached to the Linear issue whose repo doesn't match any member's remote
-  // (e.g. a fork, or a repo not part of this workspace) — still shown, never dropped.
-  const memberSlugSet = new Set(Object.values(repoSlugs ?? {}));
-  const unmatchedPrs =
-    prs && repoSlugs !== null
-      ? prs.filter((p) => !memberSlugSet.has(p.repoSlug.toLowerCase()))
-      : [];
-  const unmatchedPrsByRepo = new Map<string, PullRequestInfo[]>();
-  for (const p of unmatchedPrs) {
-    unmatchedPrsByRepo.set(p.repoSlug, [...(unmatchedPrsByRepo.get(p.repoSlug) ?? []), p]);
-  }
+  const { byMember, unmatched: unmatchedPrsByRepo } = groupTaskPrs(task, prs ?? [], repoSlugs);
   const createPrForPrimaryRepo = (event: React.MouseEvent) => {
     event.stopPropagation();
     if (primaryRepo) void openCreatePr(task.branchName, primaryRepo);
@@ -403,7 +387,7 @@ export const WorktreeCard = memo(function WorktreeCard({
               className="mt-2 flex flex-col gap-1 text-left pointer-events-none"
             >
               {task.members.map((m) => {
-                const memberPrs = prsForMember(m);
+                const memberPrs = byMember[m.repoId] ?? [];
                 return (
                   <div key={m.repoId} className="flex flex-wrap items-center gap-1.5 text-xs">
                     <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />

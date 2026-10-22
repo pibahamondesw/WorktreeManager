@@ -18,7 +18,6 @@ vi.mock("../../hooks/useWorktreeData", () => ({
     handleRefresh: vi.fn(),
   }),
 }));
-vi.mock("../../hooks/useRepoSlugs", () => ({ useRepoSlugs: () => ({}) }));
 vi.mock("../../hooks/useWorktreeListKeyboardShortcuts", () => ({
   useWorktreeListKeyboardShortcuts: vi.fn(),
 }));

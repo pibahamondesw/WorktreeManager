@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { taskLinearStore } from "../../services/taskLinear";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
@@ -84,6 +85,7 @@ function renderModal(props: Partial<React.ComponentProps<typeof QuickSearchModal
 
 afterEach(() => {
   cleanup();
+  taskLinearStore.reset();
   setShortcutOverrides({});
 });
 

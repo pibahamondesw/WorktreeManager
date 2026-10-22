@@ -1,3 +1,4 @@
+import { githubSlugFromRemote } from "./utils";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   timeAgo,
@@ -444,4 +445,11 @@ describe("persisted input validation", () => {
   ])("rejects incompatible data instead of discarding it: $input", ({ normalize, input }) => {
     expect(() => normalize(input)).toThrow();
   });
+});
+
+it("normalizes GitHub SSH and HTTPS remotes and rejects other hosts", () => {
+  expect(githubSlugFromRemote("git@github.com:Fintoc/Rails.git")).toBe("fintoc/rails");
+  expect(githubSlugFromRemote("https://github.com/fintoc/rails")).toBe("fintoc/rails");
+  expect(githubSlugFromRemote("https://github.com/fintoc/fintoc.js")).toBe("fintoc/fintoc.js");
+  expect(githubSlugFromRemote("https://gitlab.com/x/y")).toBeNull();
 });

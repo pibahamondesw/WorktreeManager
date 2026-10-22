@@ -2,12 +2,11 @@ import { ProjectFilter } from "../ui/ProjectFilter";
 import { matchesProject } from "../../search/projects";
 import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { LinearProvider } from "../../contexts/LinearContext";
-import { LinearService } from "../../services/linear";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { useRevealRing } from "../../hooks/useRevealRing";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { useWorktreeData } from "../../hooks/useWorktreeData";
-import { useRepoSlugs } from "../../hooks/useRepoSlugs";
+import { taskLinearStore } from "../../services/taskLinear";
 import { WorktreeCard } from "./WorktreeCard";
 import { cardScrollDelta } from "./cardScroll";
 import { WorktreeCardSkeleton } from "./WorktreeCardSkeleton";
@@ -197,17 +196,9 @@ export function WorktreeList({
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const linearApiKey = workspace?.linearApiKey;
-  const linearService = useMemo(
-    () => (linearApiKey ? new LinearService(linearApiKey) : null),
-    [linearApiKey]
-  );
-
-  const repoSlugs = useRepoSlugs(workspace);
   const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(
     allTasks,
     workspace,
-    linearService,
     onWorkspaceReady
   );
 
@@ -337,7 +328,7 @@ export function WorktreeList({
       onPrReady={onPrReady ? (pr) => onPrReady(task.id, pr) : undefined}
       onToast={showToast}
       onOpen={() => void onOpenTask(task, { onMessage: showToast, onError: showToast })}
-      repoSlugs={repoSlugs}
+      repoSlugs={taskLinearStore.repoSlugs(task.members)}
       requestDelete={i >= 0 && i === selectedIndex && deleteRequested}
       onRequestDeleteHandled={() => setDeleteRequested(false)}
     />

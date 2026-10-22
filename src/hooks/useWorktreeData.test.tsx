@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { LinearService } from "../services/linear";
 import { IssueLinearInfo, Task, Workspace } from "../types";
 import { resetGithubCache } from "../services/github";
+import { taskLinearStore } from "../services/taskLinear";
 import { useWorktreeData } from "./useWorktreeData";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -24,22 +25,24 @@ const task: Task = {
   createdAt: "2026-10-07",
 };
 const tasks = [task];
-const workspace: Workspace = { id: "w1", name: "One", repos: [] };
+const workspace: Workspace = { id: "w1", name: "One", repos: [], linearApiKey: "key" };
 let fetchInfo: ReturnType<typeof vi.fn<LinearService["fetchIssueLinearInfoBatch"]>>;
-let linear: LinearService;
 
 beforeEach(() => {
   resetGithubCache();
+  taskLinearStore.reset();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-07"));
   vi.mocked(invoke).mockReset().mockResolvedValue({});
-  fetchInfo = vi.fn().mockResolvedValue({ i1: { status: null, prs: [pr] } });
-  linear = { fetchIssueLinearInfoBatch: fetchInfo } as unknown as LinearService;
+  fetchInfo = vi
+    .spyOn(LinearService.prototype, "fetchIssueLinearInfoBatch")
+    .mockResolvedValue({ i1: { status: null, prs: [pr] } });
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
 });
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 async function settle() {
@@ -49,7 +52,7 @@ async function settle() {
 }
 
 it("refreshes GitHub at five minutes while retaining the fifteen-minute Linear interval", async () => {
-  const { result } = renderHook(() => useWorktreeData(tasks, workspace, linear));
+  const { result } = renderHook(() => useWorktreeData(tasks, workspace));
   await settle();
   expect(invoke).toHaveBeenCalledOnce();
   await act(() => vi.advanceTimersByTimeAsync(4 * 60 * 1000));
@@ -63,7 +66,7 @@ it("refreshes GitHub at five minutes while retaining the fifteen-minute Linear i
 });
 
 it("pauses while hidden and refreshes on visibility when due", async () => {
-  renderHook(() => useWorktreeData(tasks, workspace, linear));
+  renderHook(() => useWorktreeData(tasks, workspace));
   await settle();
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
   await act(() => vi.advanceTimersByTimeAsync(6 * 60 * 1000));
@@ -75,7 +78,7 @@ it("pauses while hidden and refreshes on visibility when due", async () => {
   expect(invoke).toHaveBeenCalledTimes(2);
 });
 
-it("refreshes on workspace switch and ignores delayed Linear results from the old workspace", async () => {
+it("keeps delayed results in their workspace cache after switching", async () => {
   let resolve!: (info: Record<string, IssueLinearInfo>) => void;
   fetchInfo.mockImplementationOnce(
     () =>
@@ -88,16 +91,17 @@ it("refreshes on workspace switch and ignores delayed Linear results from the ol
   const otherWorkspace = { ...workspace, id: "w2" };
   fetchInfo.mockResolvedValue({ i2: { status: null, prs: [{ ...pr, repoSlug: "other/repo" }] } });
   const { rerender } = renderHook(
-    ({ currentTasks, currentWorkspace }) => useWorktreeData(currentTasks, currentWorkspace, linear),
+    ({ currentTasks, currentWorkspace }) => useWorktreeData(currentTasks, currentWorkspace),
     { initialProps: { currentTasks: tasks, currentWorkspace: workspace } }
   );
+  await settle();
   rerender({ currentTasks: otherTasks, currentWorkspace: otherWorkspace });
   await settle();
   await act(async () => {
     resolve({ i1: { status: null, prs: [pr] } });
   });
   await act(() => vi.advanceTimersByTimeAsync(5 * 60 * 1000));
-  expect(invoke).toHaveBeenCalledTimes(2);
+  expect(invoke).toHaveBeenCalledTimes(3);
   expect(invoke).toHaveBeenLastCalledWith("github_pr_status_batch", {
     repoSlug: "other/repo",
     prNumbers: [1],
@@ -107,14 +111,14 @@ it("refreshes on workspace switch and ignores delayed Linear results from the ol
 it("notifies workspace readiness even if Linear fails", async () => {
   fetchInfo.mockRejectedValue(new Error("offline"));
   const onReady = vi.fn();
-  renderHook(() => useWorktreeData(tasks, workspace, linear, onReady));
+  renderHook(() => useWorktreeData(tasks, workspace, onReady));
   await settle();
   expect(onReady).toHaveBeenCalledWith("w1");
   expect(invoke).not.toHaveBeenCalled();
 });
 
 it("refreshes known PRs manually even when Linear is unavailable", async () => {
-  const { result } = renderHook(() => useWorktreeData(tasks, workspace, linear));
+  const { result } = renderHook(() => useWorktreeData(tasks, workspace));
   await settle();
   fetchInfo.mockRejectedValue(new Error("offline"));
   await act(() => result.current.handleRefresh());
@@ -123,4 +127,25 @@ it("refreshes known PRs manually even when Linear is unavailable", async () => {
     repoSlug: "org/repo",
     prNumbers: [1],
   });
+});
+
+it("notifies workspace readiness while an optional GitHub refresh is still pending", async () => {
+  let resolve!: (statuses: Record<string, never>) => void;
+  const pending = new Promise<Record<string, never>>((done) => {
+    resolve = done;
+  });
+  vi.mocked(invoke).mockReturnValueOnce(pending);
+  const onReady = vi.fn();
+  renderHook(() => useWorktreeData(tasks, workspace, onReady));
+  await settle();
+  try {
+    expect(invoke).toHaveBeenCalledWith("github_pr_status_batch", {
+      repoSlug: "org/repo",
+      prNumbers: [1],
+    });
+    expect(onReady).toHaveBeenCalledWith("w1");
+  } finally {
+    resolve({});
+    await settle();
+  }
 });

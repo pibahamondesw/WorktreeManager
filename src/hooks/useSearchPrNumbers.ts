@@ -1,46 +1,17 @@
-import { refreshGithubPrs } from "../services/github";
-import { useEffect, useState } from "react";
-import { LinearService } from "../services/linear";
+import { taskLinearStore } from "../services/taskLinear";
 import { PullRequestInfo, Task, Workspace } from "../types";
+import { useTaskLinearData } from "./useTaskLinearData";
+
+const NO_TASKS: Task[] = [];
+const NO_WORKSPACES: Workspace[] = [];
 
 export function useSearchPrNumbers(open: boolean, tasks: Task[], workspaces: Workspace[]) {
-  const [prsByTask, setPrsByTask] = useState<Record<string, PullRequestInfo[]>>({});
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-
-    void Promise.all(
-      workspaces.map(async (workspace): Promise<Record<string, PullRequestInfo[]>> => {
-        if (!workspace.linearApiKey) return {};
-        const linkedTasks = tasks.filter(
-          (task) => task.workspaceId === workspace.id && task.linearIssueId
-        );
-        const issueIds = [...new Set(linkedTasks.map((task) => task.linearIssueId!))];
-        if (issueIds.length === 0) return {};
-        try {
-          const info = await new LinearService(workspace.linearApiKey).fetchIssueLinearInfoBatch(
-            issueIds
-          );
-          return Object.fromEntries(
-            linkedTasks.map((task) => [task.id, info[task.linearIssueId!]?.prs ?? []])
-          );
-        } catch {
-          return {};
-        }
-      })
-    ).then((results) => {
-      if (cancelled) return;
-      const prs = Object.fromEntries(results.flatMap((result) => Object.entries(result)));
-      setPrsByTask(prs);
-      void refreshGithubPrs(Object.values(prs).flat());
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open, tasks, workspaces]);
-
+  useTaskLinearData(open ? tasks : NO_TASKS, open ? workspaces : NO_WORKSPACES);
+  const prsByTask: Record<string, PullRequestInfo[]> = {};
+  for (const task of tasks) {
+    const workspace = workspaces.find((workspace) => workspace.id === task.workspaceId);
+    prsByTask[task.id] = taskLinearStore.taskInfo(task, workspace)?.prs ?? [];
+  }
   return {
     prsByTask,
     prNumbersByTask: Object.fromEntries(

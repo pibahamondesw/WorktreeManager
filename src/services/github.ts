@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
 import { GithubPrStatus, PullRequestInfo } from "../types";
 
-export const GITHUB_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const GITHUB_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 interface Entry {
   status?: GithubPrStatus;
   fetchedAt: number;
