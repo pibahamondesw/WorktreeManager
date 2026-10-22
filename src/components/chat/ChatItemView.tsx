@@ -177,6 +177,21 @@ export function ChatItemView({
           <span className="whitespace-pre-wrap">{item.text}</span>
         </div>
       );
+    case "handoff":
+      return (
+        <div role="separator" aria-label={item.text} className="flex flex-col gap-1 py-2">
+          <div className="flex items-center gap-2 text-xs font-medium text-text-secondary">
+            <span className="h-px flex-1 bg-border" />
+            <span className="select-text">{item.text}</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          {item.detail && (
+            <p className="text-center text-[0.6875rem] text-text-muted select-text">
+              {item.detail}
+            </p>
+          )}
+        </div>
+      );
     case "review":
       return (
         <section

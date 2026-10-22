@@ -88,6 +88,7 @@ beforeEach(() => {
   mocks.channels.length = 0;
   mocks.invoke.mockReset().mockImplementation((command: string) => {
     if (command === "chat_open") return Promise.resolve(snapshot());
+    if (command === "check_app_installed") return Promise.resolve(true);
     return Promise.resolve(undefined);
   });
 });
@@ -706,8 +707,11 @@ describe("ChatPane", () => {
   });
 
   it("lists the worktree's conversations, resumes one and renames another", async () => {
-    mocks.invoke.mockImplementation((command: string) => {
+    mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
       if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "check_app_installed") return Promise.resolve(true);
+      if (command === "chat_sessions" && args?.agent === "codex")
+        return Promise.reject("codex app-server crashed");
       if (command === "chat_sessions")
         return Promise.resolve({
           sessions: [
@@ -725,6 +729,7 @@ describe("ChatPane", () => {
     const list = await screen.findByRole("list", { name: "Conversations" });
     expect(within(list).queryByRole("button", { name: "Archive" })).toBeNull();
     expect(within(list).getByRole("button", { name: /Current work/ })).toBeDisabled();
+    expect(screen.getByText("Codex: codex app-server crashed")).toBeInTheDocument();
 
     fireEvent.click(within(list).getAllByRole("button", { name: "Rename" })[1]);
     const name = screen.getByLabelText("Conversation name");
@@ -942,3 +947,167 @@ it.each(["claude", "codex"] as const)(
     }
   }
 );
+
+describe("switching agents", () => {
+  it("offers only installed agents and lists only their conversations", async () => {
+    mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "check_app_installed") return Promise.resolve(false);
+      if (command === "chat_sessions")
+        return args?.agent === "claude"
+          ? Promise.resolve({ sessions: [], canRename: false, canArchive: false })
+          : Promise.reject("codex CLI not found");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} onSwitchAgent={vi.fn()} />);
+    await screen.findByText("Fix the bug");
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("check_app_installed", { editor: "codex" })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Agent: Claude" }));
+    expect(
+      within(screen.getByRole("listbox", { name: "Agent" })).getAllByRole("option")
+    ).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
+    expect(await screen.findByText("No conversations in this worktree yet.")).toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      "chat_sessions",
+      expect.objectContaining({ agent: "codex" })
+    );
+  });
+
+  const pickAgent = async (label: string) => {
+    fireEvent.click(await screen.findByRole("button", { name: /^Agent: / }));
+    fireEvent.mouseDown(within(screen.getByRole("listbox", { name: "Agent" })).getByText(label));
+  };
+
+  it("asks before handing a conversation in progress to the other agent", async () => {
+    const onSwitchAgent = vi.fn();
+    render(
+      <ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} onSwitchAgent={onSwitchAgent} />
+    );
+    await screen.findByText("Fix the bug");
+    expect(screen.getByRole("button", { name: "Agent: Claude" })).toHaveClass("text-agent-claude");
+    await pickAgent("Codex");
+    const dialog = screen.getByRole("dialog", { name: "Switch to Codex?" });
+    expect(dialog).toHaveTextContent("reasoning, raw tool output");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Continue in Codex" }));
+    expect(onSwitchAgent).toHaveBeenLastCalledWith({
+      agent: "codex",
+      mode: "fresh",
+      handoffFrom: "claude",
+    });
+
+    await pickAgent("Codex");
+    fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+    expect(onSwitchAgent).toHaveBeenLastCalledWith({
+      agent: "codex",
+      mode: "fresh",
+      handoffFrom: undefined,
+    });
+  });
+
+  it("switches an empty chat directly and refuses while the agent works", async () => {
+    const onSwitchAgent = vi.fn();
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({ items: [] })
+          : command === "check_app_installed" || undefined
+      )
+    );
+    render(
+      <ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} onSwitchAgent={onSwitchAgent} />
+    );
+    await pickAgent("Claude");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onSwitchAgent).toHaveBeenCalledWith({ agent: "claude", mode: "fresh" });
+
+    onSwitchAgent.mockClear();
+    emit(3, { type: "status", status: { kind: "busy" } });
+    await pickAgent("Claude");
+    expect(onSwitchAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Wait for Codex to finish");
+  });
+
+  it("opens as the remounting switch asked, once", async () => {
+    const takeOpenIntent = vi
+      .fn()
+      .mockReturnValueOnce({ agent: "codex", mode: "fresh", handoffFrom: "claude" })
+      .mockReturnValue(null);
+    render(
+      <ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} takeOpenIntent={takeOpenIntent} />
+    );
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "chat_open",
+        expect.objectContaining({ agent: "codex", mode: "fresh", handoffFrom: "claude" })
+      )
+    );
+  });
+
+  it("shows carried messages read-only after the switch divider", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({
+              items: [
+                { id: "carried:s:u", kind: "user", text: "Earlier ask", origin: "claude" },
+                {
+                  id: "handoff:s",
+                  kind: "handoff",
+                  text: "Continued in Codex",
+                  detail: "Earlier messages are from Claude Code.",
+                },
+                { id: "u", kind: "user", text: "Now this", checkpoint: "c1" },
+              ],
+            })
+          : undefined
+      )
+    );
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    const carried = await screen.findByText("Earlier ask");
+    expect(carried.closest("[data-origin]")).toHaveAttribute("data-origin", "claude");
+    expect(screen.getByRole("separator", { name: "Continued in Codex" })).toHaveTextContent(
+      "Earlier messages are from Claude Code."
+    );
+    expect(screen.getAllByRole("button", { name: "Rewind or fork" })).toHaveLength(1);
+  });
+
+  it("resumes another agent's conversation from the shared list", async () => {
+    const onSwitchAgent = vi.fn();
+    mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "check_app_installed") return Promise.resolve(true);
+      if (command === "chat_sessions")
+        return Promise.resolve({
+          sessions:
+            args?.agent === "codex"
+              ? [{ id: "th1", title: "Codex thread", updatedAt: 30, current: true }]
+              : [{ id: "c1", title: "Claude session", updatedAt: 20, current: true }],
+          canRename: false,
+          canArchive: false,
+        });
+      return Promise.resolve(undefined);
+    });
+    render(
+      <ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} onSwitchAgent={onSwitchAgent} />
+    );
+    await screen.findByText("Fix the bug");
+    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
+    const list = await screen.findByRole("list", { name: "Conversations" });
+    const rows = within(list).getAllByRole("button");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Codex thread"),
+      expect.stringContaining("Claude session"),
+    ]);
+    expect(rows[0]).toBeEnabled();
+    expect(rows[1]).toBeDisabled();
+    fireEvent.click(rows[0]);
+    expect(onSwitchAgent).toHaveBeenCalledWith({
+      agent: "codex",
+      mode: "restart",
+      conversation: "th1",
+    });
+  });
+});

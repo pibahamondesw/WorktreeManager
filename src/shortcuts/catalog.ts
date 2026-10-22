@@ -119,6 +119,7 @@ export const bindings: Binding[] = [
   }),
   ...(
     [
+      ["agent", "a"],
       ["mode", "m"],
       ["model", "i"],
       ["effort", "e"],

@@ -8,6 +8,7 @@ import { TodoPanel } from "./TodoPanel";
 import { UsageDialog } from "./UsageDialog";
 import { HooksDialog } from "./HooksDialog";
 import { HistoryDialog } from "./HistoryDialog";
+import { HandoffChoice, HandoffDialog } from "./HandoffDialog";
 import { ChangeSummaryCard, ChangesPanel, ChangesScope, LineCounts } from "./ChangesPanel";
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 import { MarkdownPreviewContext, MarkdownPreviewRequest } from "./markdownPreviewContext";
@@ -20,6 +21,7 @@ import {
   ChatChanges,
   ChatImage,
   ChatItem,
+  ChatOpenIntent,
   ChatStatus,
   HistoryAction,
   isLive,
@@ -33,6 +35,9 @@ interface ChatPaneProps {
   agent: AgentId;
   folders: string[];
   onStatusChange?: (status: SessionStatus) => void;
+  /** Hands the chat to another agent; the pane remounts for it. */
+  onSwitchAgent?: (intent: ChatOpenIntent) => void;
+  takeOpenIntent?: () => ChatOpenIntent | null;
 }
 
 function sessionStatus(status: ChatStatus): SessionStatus {
@@ -59,13 +64,21 @@ function turnEnds(items: ChatItem[], changes: ChatChanges | null) {
   return ends;
 }
 
-export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPaneProps) {
-  const session = useChatSession(taskId, agent, folders);
+export function ChatPane({
+  taskId,
+  agent,
+  folders,
+  onStatusChange,
+  onSwitchAgent,
+  takeOpenIntent,
+}: ChatPaneProps) {
+  const session = useChatSession(taskId, agent, folders, takeOpenIntent);
   const { snapshot, error, restart, respond } = session;
   const [actionError, setActionError] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [hooksSession, setHooksSession] = useState<string | null>(null);
+  const [handoffTarget, setHandoffTarget] = useState<AgentId | null>(null);
   const sessionKey = `${taskId}:${agent}:${snapshot.generation}`;
   const [historyPending, setHistoryPending] = useState<string | null>(null);
   const [historyItem, setHistoryItem] = useState<{
@@ -105,6 +118,36 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
   const previewRequest = preview?.requestId
     ? pending.find((request) => request.id === preview.requestId)
     : undefined;
+
+  const switchBlocker =
+    busy || status.kind === "starting" || pending.length > 0 || historyPending !== null
+      ? `Wait for ${AGENTS[agent].label} to finish or stop it before switching agents.`
+      : null;
+
+  /** Opens `intent.agent` in place of this agent, unless this chat is in the middle of work. */
+  const switchTo = (intent: ChatOpenIntent) => {
+    if (!onSwitchAgent) return;
+    if (switchBlocker) return setActionError(switchBlocker);
+    onSwitchAgent(intent);
+  };
+
+  const requestAgent = (target: AgentId) => {
+    if (target === agent) return;
+    if (switchBlocker) return setActionError(switchBlocker);
+    if (items.some((item) => item.kind === "user")) setHandoffTarget(target);
+    else switchTo({ agent: target, mode: "fresh" });
+  };
+
+  const chooseHandoff = (choice: HandoffChoice) => {
+    const target = handoffTarget;
+    setHandoffTarget(null);
+    if (!target) return;
+    switchTo({
+      agent: target,
+      mode: "fresh",
+      handoffFrom: choice === "continue" ? agent : undefined,
+    });
+  };
 
   useEffect(() => onStatusChange?.(sessionStatus(status)), [status, onStatusChange]);
 
@@ -173,12 +216,12 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
           open={sessionsOpen}
           taskId={taskId}
           agent={agent}
-          agentLabel={AGENTS[agent].label}
           folders={folders}
           onClose={() => setSessionsOpen(false)}
-          onPick={(id) => {
+          onPick={(owner, id) => {
             setSessionsOpen(false);
-            void session.resume(id);
+            if (owner === agent) void session.resume(id);
+            else switchTo({ agent: owner, mode: "restart", conversation: id });
           }}
           onNew={() => {
             setSessionsOpen(false);
@@ -205,19 +248,34 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
               if (isPlanItem(item) && pendingPlans.has(item.text)) return null;
               const turn = ends.get(index);
               const turnChanges = turn === undefined ? undefined : changes?.turns[turn]?.changes;
+              const view = (
+                <ChatItemView
+                  item={item}
+                  historyDisabled={
+                    status.kind !== "idle" ||
+                    pending.length > 0 ||
+                    historyPending === `${taskId}:${agent}`
+                  }
+                  onHistory={
+                    item.kind === "user" && !item.origin
+                      ? (action) => pickHistory(item, action)
+                      : undefined
+                  }
+                />
+              );
               return (
                 <Fragment key={item.id}>
-                  <ChatItemView
-                    item={item}
-                    historyDisabled={
-                      status.kind !== "idle" ||
-                      pending.length > 0 ||
-                      historyPending === `${taskId}:${agent}`
-                    }
-                    onHistory={
-                      item.kind === "user" ? (action) => pickHistory(item, action) : undefined
-                    }
-                  />
+                  {item.origin ? (
+                    <div
+                      data-origin={item.origin}
+                      title={`From the ${AGENTS[item.origin].label} conversation`}
+                      className="flex flex-col opacity-70"
+                    >
+                      {view}
+                    </div>
+                  ) : (
+                    view
+                  )}
                   {turn !== undefined && turnChanges && turnChanges.files.length > 0 && (
                     <ChangeSummaryCard changes={turnChanges} onOpen={() => setChangesScope(turn)} />
                   )}
@@ -273,8 +331,8 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
           )}
           <Composer
             key={`${taskId}:${agent}`}
-            memoryKey={`${taskId}:${agent}`}
-            agentLabel={AGENTS[agent].label}
+            memoryKey={taskId}
+            agent={agent}
             status={status}
             controls={controls}
             folders={folders}
@@ -287,6 +345,7 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
               startFresh: session.startFresh,
               showUsage: () => setUsageOpen(true),
               showHooks: () => setHooksSession(sessionKey),
+              switchAgent: onSwitchAgent ? requestAgent : undefined,
             }}
             onError={setActionError}
           />
@@ -333,6 +392,14 @@ export function ChatPane({ taskId, agent, folders, onStatusChange }: ChatPanePro
             hooks={controls.hooks}
             onConfigure={session.configure}
             onClose={() => setHooksSession(null)}
+          />
+        )}
+        {handoffTarget && (
+          <HandoffDialog
+            from={agent}
+            to={handoffTarget}
+            onChoose={chooseHandoff}
+            onClose={() => setHandoffTarget(null)}
           />
         )}
         <UsageDialog

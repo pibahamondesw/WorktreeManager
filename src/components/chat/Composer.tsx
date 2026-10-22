@@ -25,8 +25,10 @@ import {
   FileMatch,
   ReviewTarget,
 } from "../../services/chat";
+import { AGENTS, installedAgents } from "../../services/agents";
+import { AgentId } from "../../types";
 
-type Picker = "model" | "effort" | "mode" | "review";
+type Picker = "agent" | "model" | "effort" | "mode" | "review";
 
 interface ComposerActions {
   send: (text: string, images: ChatImage[]) => Promise<void>;
@@ -37,11 +39,12 @@ interface ComposerActions {
   startFresh: () => Promise<void>;
   showUsage: () => void;
   showHooks: () => void;
+  switchAgent?: (agent: AgentId) => void;
 }
 
 interface ComposerProps {
   memoryKey: string;
-  agentLabel: string;
+  agent: AgentId;
   status: ChatStatus;
   controls: ChatControls;
   folders: string[];
@@ -50,6 +53,7 @@ interface ComposerProps {
 }
 
 const PICKER_LABEL: Record<Picker, string> = {
+  agent: "Agent",
   model: "Model",
   effort: "Reasoning effort",
   mode: "Permissions",
@@ -61,13 +65,14 @@ const labelFor = (options: { id: string; label: string }[], id: string | null) =
 
 export function Composer({
   memoryKey,
-  agentLabel,
+  agent,
   status,
   controls,
   folders,
   actions,
   onError,
 }: ComposerProps) {
+  const agentLabel = AGENTS[agent].label;
   const editorRef = useRef<ComposerEditorHandle>(null);
   const sendingRef = useRef(false);
   const [text, setText] = useState(() => promptMemory.draft(memoryKey));
@@ -79,6 +84,8 @@ export function Composer({
   const [recall, setRecall] = useState<number | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [dragDepth, setDragDepth] = useState(0);
+  const [agents, setAgents] = useState<AgentId[]>([agent]);
+  const canSwitchAgent = !!actions.switchAgent;
   const dragging = dragDepth > 0;
   const busy = status.kind === "busy";
   const ready = status.kind === "idle" || busy;
@@ -91,6 +98,15 @@ export function Composer({
   const foldersKey = folders.join("\n");
 
   useEffect(() => promptMemory.saveDraft(memoryKey, text), [memoryKey, text]);
+
+  useEffect(() => {
+    if (!canSwitchAgent) return;
+    let stale = false;
+    void installedAgents(agent).then((found) => !stale && setAgents(found));
+    return () => {
+      stale = true;
+    };
+  }, [agent, canSwitchAgent]);
 
   useEffect(() => {
     if (ready && nothingFocused()) editorRef.current?.focus();
@@ -114,7 +130,7 @@ export function Composer({
     trigger?.kind === "slash" ? filterCommands(controls.commands, trigger.query) : [];
 
   const options: MenuOption[] = picker
-    ? pickerOptions(picker, controls, efforts)
+    ? pickerOptions(picker, controls, efforts, agent, agents)
     : trigger?.kind === "slash"
       ? slashCommands.map((command) => ({
           id: command.name,
@@ -180,6 +196,7 @@ export function Composer({
     if (picker) {
       setPicker(null);
       if (picker === "review") pickReview(option.id);
+      else if (picker === "agent") actions.switchAgent?.(option.id as AgentId);
       else {
         void configure(picker, option.id);
         focus();
@@ -289,6 +306,7 @@ export function Composer({
 
   const shortcutLabel = useShortcutLabels();
   useShortcutActions({
+    "chat.agent": { handler: () => openPicker("agent"), enabled: !!actions.switchAgent },
     "chat.mode": { handler: () => openPicker("mode") },
     "chat.model": { handler: () => openPicker("model") },
     "chat.effort": { handler: () => openPicker("effort"), enabled: efforts.length > 0 },
@@ -364,7 +382,7 @@ export function Composer({
           onDragEnter={onDragEnter}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
-          className={`rounded-lg bg-bg-secondary border focus-within:border-accent ${
+          className={`rounded-lg bg-bg-secondary border ${AGENTS[agent].tone.focus} ${
             dragging ? "border-accent" : "border-border"
           }`}
         >
@@ -410,6 +428,15 @@ export function Composer({
             placeholder={placeholder}
           />
           <div className="flex items-center gap-1 px-1.5 pb-1.5">
+            {actions.switchAgent && (
+              <Chip
+                label="Agent"
+                shortcut={shortcutLabel("chat.agent")}
+                value={agentLabel}
+                tone={AGENTS[agent].tone}
+                onClick={() => openPicker("agent")}
+              />
+            )}
             {controls.modes.length > 0 && (
               <Chip
                 label="Permissions"
@@ -477,8 +504,20 @@ export function Composer({
 
 const nothingFocused = () => !document.activeElement || document.activeElement === document.body;
 
-function pickerOptions(picker: Picker, controls: ChatControls, efforts: string[]): MenuOption[] {
+function pickerOptions(
+  picker: Picker,
+  controls: ChatControls,
+  efforts: string[],
+  agent: AgentId,
+  agents: AgentId[]
+): MenuOption[] {
   if (picker === "review") return REVIEW_CHOICES;
+  if (picker === "agent")
+    return agents.map((id) => ({
+      id,
+      label: AGENTS[id].label,
+      selected: id === agent,
+    }));
   if (picker === "model")
     return controls.models.map((model) => ({
       id: model.id,
@@ -505,12 +544,14 @@ function Chip({
   value,
   shortcut,
   highlighted,
+  tone,
   onClick,
 }: {
   label: string;
   value: string;
   shortcut: string;
   highlighted?: boolean;
+  tone?: { chip: string; dot: string };
   onClick: () => void;
 }) {
   return (
@@ -521,11 +562,14 @@ function Chip({
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className={`h-6 flex items-center gap-1 px-2 rounded-md text-[0.6875rem] cursor-pointer transition-colors ${
-        highlighted
-          ? "bg-accent/15 text-accent-hover"
-          : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+        tone
+          ? `${tone.chip} font-medium`
+          : highlighted
+            ? "bg-accent/15 text-accent-hover"
+            : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
       }`}
     >
+      {tone && <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />}
       <span className="max-w-[160px] truncate">{value}</span>
       <ChevronDownIcon className="opacity-50" />
     </button>

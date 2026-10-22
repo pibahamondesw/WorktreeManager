@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { SetupControls, TaskSetupProgress } from "./TaskSetupProgress";
 import { TaskHeader } from "./TaskHeader";
 import { TerminalPane } from "../terminal/TerminalPane";
@@ -11,6 +11,7 @@ import { useShortcutActions } from "../../shortcuts/runtime";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { GitStatus, IssueLinearInfo, Task, TaskSurface } from "../../types";
 import { AgentActivity } from "../../services/agentActivity";
+import { ChatOpenIntent } from "../../services/chat";
 
 interface TaskViewProps {
   task: Task;
@@ -47,6 +48,13 @@ export function TaskView({
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
 
+  const chatIntent = useRef<ChatOpenIntent | null>(null);
+  const takeChatIntent = useCallback(() => {
+    const intent = chatIntent.current;
+    chatIntent.current = null;
+    return intent;
+  }, []);
+
   const stopSurface = () => sessionRegistry.stop(task.id, surface);
 
   /** Chat and terminal are exclusive: stop the running one before the other takes over. */
@@ -57,10 +65,17 @@ export function TaskView({
       await stopSurface();
       onSwitchSurface(to);
     } catch (error) {
+      chatIntent.current = null;
       setCloseError(String(error));
     } finally {
       setSwitching(false);
     }
+  };
+
+  /** The chat changes agent: the current one stops, the next opens as `intent` asks. */
+  const switchChatAgent = (intent: ChatOpenIntent) => {
+    chatIntent.current = intent;
+    void switchSurface({ kind: "chat", agent: intent.agent });
   };
 
   const closeEditor = async () => {
@@ -118,6 +133,8 @@ export function TaskView({
         surface={surface}
         closing={closing}
         onStatusChange={setSessionStatus}
+        onSwitchChatAgent={switchChatAgent}
+        takeChatIntent={takeChatIntent}
       />
     </div>
   );
@@ -128,11 +145,15 @@ function TaskSurfaceView({
   surface,
   closing,
   onStatusChange,
+  onSwitchChatAgent,
+  takeChatIntent,
 }: {
   task: Task;
   surface: TaskSurface;
   closing: boolean;
   onStatusChange: (status: SessionStatus) => void;
+  onSwitchChatAgent: (intent: ChatOpenIntent) => void;
+  takeChatIntent: () => ChatOpenIntent | null;
 }) {
   switch (surface.kind) {
     case "editor":
@@ -166,6 +187,8 @@ function TaskSurfaceView({
           agent={surface.agent}
           folders={task.members.map((m) => m.path)}
           onStatusChange={onStatusChange}
+          onSwitchAgent={onSwitchChatAgent}
+          takeOpenIntent={takeChatIntent}
         />
       );
     default:
