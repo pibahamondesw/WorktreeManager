@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { taskLinearStore } from "./taskLinear";
 import { Task, TaskMember, Workspace } from "../types";
 
 const mocks = vi.hoisted(() => ({
@@ -42,6 +43,7 @@ const workspace: Workspace = {
 };
 
 beforeEach(() => {
+  taskLinearStore.reset();
   mocks.invoke.mockReset().mockResolvedValue("https://github.com/org/web");
   mocks.openUrl.mockReset().mockResolvedValue(undefined);
   mocks.fetchIssueLinearInfoBatch.mockReset();
@@ -86,4 +88,34 @@ describe("openPrForMember", () => {
       "https://github.com/org/web/compare/feat/palette?expand=1"
     );
   });
+});
+
+it("opens a member PR without waiting for other repositories and reuses the remote cache", async () => {
+  mocks.invoke.mockResolvedValue("git@github.com:Org/Web.git");
+  mocks.fetchIssueLinearInfoBatch.mockResolvedValue({
+    "issue-1": {
+      status: null,
+      prs: [
+        {
+          url: "https://github.com/org/web/pull/12",
+          title: "Feature",
+          state: "open",
+          number: 12,
+          repoSlug: "ORG/WEB",
+        },
+      ],
+    },
+  });
+  const multiRepo = {
+    ...task,
+    members: [member, { ...member, repoId: "api", localPath: "/repos/api" }],
+  };
+  await openPrForMember(multiRepo, member, workspace);
+  expect(mocks.openUrl).toHaveBeenLastCalledWith("https://github.com/org/web/pull/12");
+  await openCreatePr("feature", member);
+  expect(mocks.openUrl).toHaveBeenLastCalledWith(
+    "https://github.com/org/web/compare/feature?expand=1"
+  );
+  expect(mocks.invoke).toHaveBeenCalledOnce();
+  expect(mocks.fetchIssueLinearInfoBatch).toHaveBeenCalledOnce();
 });

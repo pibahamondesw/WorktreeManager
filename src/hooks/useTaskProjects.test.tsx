@@ -1,23 +1,28 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useTaskProjects } from "./useTaskProjects";
 import { Operations } from "../services/operations";
-import { DEFAULT_STATE, Task } from "../types";
+import { LinearService } from "../services/linear";
+import { taskLinearStore } from "../services/taskLinear";
+import { AppState, DEFAULT_STATE, Task } from "../types";
 
+beforeEach(() => {
+  taskLinearStore.reset();
+  vi.useFakeTimers();
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+});
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
-it("refreshes configured workspaces on mount, issue changes and interval without looping on metadata updates", () => {
-  vi.useFakeTimers();
-  const operations = new Operations(
-    () => DEFAULT_STATE,
-    vi.fn(),
-    () => "cursor"
-  );
-  const refresh = vi.spyOn(operations, "refreshTaskProjects").mockResolvedValue(undefined);
+it("persists shared project updates without refetching on metadata changes and refreshes on the shared interval", async () => {
+  const fetch = vi.spyOn(LinearService.prototype, "fetchIssueLinearInfoBatch").mockResolvedValue({
+    issue: { status: null, prs: [], project: { id: "p1", name: "Payments" } },
+    "new-issue": { status: null, prs: [], project: { id: "p2", name: "API" } },
+  });
   const workspaces = [
     { id: "configured", name: "API", repos: [], linearApiKey: "test-key" },
     { id: "manual", name: "Manual", repos: [] },
@@ -30,18 +35,41 @@ it("refreshes configured workspaces on mount, issue changes and interval without
     createdAt: "2026-01-01",
     members: [],
   };
+  let state: AppState = { ...DEFAULT_STATE, tasks: [task], workspaces };
+  const save = vi.fn().mockResolvedValue(undefined);
+  const operations = new Operations(
+    () => state,
+    (next) => {
+      state = next;
+    },
+    () => "cursor",
+    save
+  );
   const { rerender, unmount } = renderHook(
     ({ tasks }) => useTaskProjects(tasks, workspaces, operations),
-    { initialProps: { tasks: [task] } }
+    { initialProps: { tasks: state.tasks } }
   );
-  expect(refresh).toHaveBeenCalledExactlyOnceWith("configured");
-  rerender({ tasks: [{ ...task, linearProjectName: "Payments" }] });
-  expect(refresh).toHaveBeenCalledTimes(1);
-  rerender({ tasks: [{ ...task, linearIssueId: "new-issue" }] });
-  expect(refresh).toHaveBeenCalledTimes(2);
-  void act(() => vi.advanceTimersByTime(15 * 60 * 1000));
-  expect(refresh).toHaveBeenCalledTimes(3);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(state.tasks[0].linearProjectName).toBe("Payments");
+  expect(fetch).toHaveBeenCalledExactlyOnceWith(["issue"]);
+  rerender({ tasks: state.tasks });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(save).toHaveBeenCalledOnce();
+  state = { ...state, tasks: [{ ...task, linearIssueId: "new-issue" }] };
+  rerender({ tasks: state.tasks });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(state.tasks[0].linearProjectName).toBe("API");
+  await act(() => vi.advanceTimersByTimeAsync(15 * 60 * 1000));
+  expect(fetch).toHaveBeenCalledTimes(3);
   unmount();
-  void act(() => vi.advanceTimersByTime(15 * 60 * 1000));
-  expect(refresh).toHaveBeenCalledTimes(3);
+  await act(() => vi.advanceTimersByTimeAsync(15 * 60 * 1000));
+  expect(fetch).toHaveBeenCalledTimes(3);
 });

@@ -1,3 +1,4 @@
+import { taskLinearStore } from "./taskLinear";
 import { githubPrStatus, refreshGithubPrs, resetGithubCache } from "./github";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -134,6 +135,7 @@ const noScripts: ResolvedScripts = {
 };
 
 beforeEach(() => {
+  taskLinearStore.reset();
   vi.clearAllMocks();
   resetScriptApprovalsCache();
   vi.mocked(loadScriptApprovals).mockResolvedValue({});
@@ -1224,6 +1226,30 @@ describe("markPrReady", () => {
   it("rejects a removed attachment before mutating GitHub", async () => {
     fetchInfo.mockResolvedValue({ i1: { status: null, prs: [] } });
     await expect(operations.markPrReady(task.id, pr)).rejects.toThrow("no longer linked");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("does not use cached attachments to validate a ready action after an empty refresh", async () => {
+    const workspace = operations.getState().workspaces[0];
+    await taskLinearStore.refreshIssues(workspace, ["i1"]);
+    fetchInfo.mockResolvedValue({});
+    await expect(operations.markPrReady(task.id, pr)).rejects.toThrow("no longer linked");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("rejects a ready action if credentials change while validating the attachment", async () => {
+    let resolve!: (info: Awaited<ReturnType<LinearService["fetchIssueLinearInfoBatch"]>>) => void;
+    fetchInfo.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        })
+    );
+    const request = operations.markPrReady(task.id, pr);
+    await Promise.resolve();
+    operations.getState().workspaces[0] = { ...workspace, linearApiKey: "new-key" };
+    resolve({ i1: { status: null, prs: [pr] } });
+    await expect(request).rejects.toThrow("no longer linked");
     expect(invoke).not.toHaveBeenCalled();
   });
 
