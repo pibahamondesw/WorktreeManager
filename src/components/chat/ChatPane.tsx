@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { ChatItemView } from "./ChatItemView";
 import { Composer } from "./Composer";
@@ -29,6 +29,10 @@ import {
 } from "../../services/chat";
 import { AGENTS } from "../../services/agents";
 import { AgentId } from "../../types";
+
+const CHAT_PAGE_SIZE = 50;
+const LOAD_EARLIER_THRESHOLD_PX = 400;
+const STICK_TO_BOTTOM_THRESHOLD_PX = 40;
 
 interface ChatPaneProps {
   taskId: string;
@@ -99,10 +103,14 @@ export function ChatPane({
   } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const [windowStartId, setWindowStartId] = useState<string | null>(null);
+  const distanceFromBottomRef = useRef<number | null>(null);
   const { status, items, pending, controls } = snapshot;
   const busy = status.kind === "busy";
   const live = isLive(status);
   const ends = turnEnds(items, changes);
+  const pinnedStart = windowStartId ? items.findIndex((item) => item.id === windowStartId) : -1;
+  const firstVisible = pinnedStart >= 0 ? pinnedStart : Math.max(0, items.length - CHAT_PAGE_SIZE);
   const users = items.filter((item) => item.kind === "user").length;
   const showOutgoing =
     outgoing !== null &&
@@ -152,9 +160,37 @@ export function ChatPane({
   useEffect(() => onStatusChange?.(sessionStatus(status)), [status, onStatusChange]);
 
   useEffect(() => {
+    stickRef.current = true;
+    setWindowStartId(null);
+  }, [snapshot.generation]);
+
+  useEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [items, pending, outgoing]);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const distanceFromBottom = distanceFromBottomRef.current;
+    if (!el || distanceFromBottom === null) return;
+    distanceFromBottomRef.current = null;
+    el.scrollTop = el.scrollHeight - distanceFromBottom;
+  }, [firstVisible]);
+
+  const showEarlier = () => {
+    const el = scrollRef.current;
+    if (!el || firstVisible === 0 || distanceFromBottomRef.current !== null) return;
+    distanceFromBottomRef.current = el.scrollHeight - el.scrollTop;
+    setWindowStartId(items[Math.max(0, firstVisible - CHAT_PAGE_SIZE)].id);
+  };
+
+  const onScroll = (el: HTMLDivElement) => {
+    stickRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_THRESHOLD_PX;
+    if (stickRef.current) setWindowStartId(null);
+    else if (el.scrollTop < LOAD_EARLIER_THRESHOLD_PX) showEarlier();
+    else if (!windowStartId && items[firstVisible]) setWindowStartId(items[firstVisible].id);
+  };
 
   const run = async (action: () => Promise<void>) => {
     setActionError(null);
@@ -230,10 +266,7 @@ export function ChatPane({
         />
         <div
           ref={scrollRef}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-          }}
+          onScroll={(e) => onScroll(e.currentTarget)}
           className="chat-scroll flex-1 min-h-0 overflow-y-auto"
         >
           <div className="max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
@@ -244,7 +277,17 @@ export function ChatPane({
                   : `Ask ${AGENTS[agent].label} to work on this task.`}
               </p>
             )}
-            {items.map((item, index) => {
+            {firstVisible > 0 && (
+              <Button
+                variant="ghost"
+                onClick={showEarlier}
+                className="self-center h-7 px-2 text-xs"
+              >
+                Show earlier messages ({firstVisible})
+              </Button>
+            )}
+            {items.slice(firstVisible).map((item, visibleIndex) => {
+              const index = firstVisible + visibleIndex;
               if (isPlanItem(item) && pendingPlans.has(item.text)) return null;
               const turn = ends.get(index);
               const turnChanges = turn === undefined ? undefined : changes?.turns[turn]?.changes;
