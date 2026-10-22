@@ -1113,6 +1113,18 @@ describe("pinned tasks", () => {
     expect(save).toHaveBeenCalled();
   });
 
+  it("remembers the task's agent and skips the write when it is unchanged", async () => {
+    const { operations, save } = fixture([task]);
+    await operations.setTaskAgent("t1", "codex");
+    expect(normalizeTasks(operations.getState().tasks)[0].agent).toBe("codex");
+    save.mockClear();
+    await operations.setTaskAgent("t1", "codex");
+    expect(save).not.toHaveBeenCalled();
+    await expect(operations.setTaskAgent("missing", "claude")).rejects.toMatchObject({
+      code: "not_found",
+    });
+  });
+
   it("rejects cross-workspace and unpinned drops", async () => {
     const { operations, save } = fixture([
       { ...task, pinOrder: 0 },

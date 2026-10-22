@@ -233,6 +233,15 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     expect(legacy.noteFolder).toBeUndefined();
   });
 
+  it("keeps only known task agents", () => {
+    const [codex, unknown] = normalizeTasks([
+      { id: "a", workspaceId: "w1", agent: "codex" },
+      { id: "b", workspaceId: "w1", agent: "gemini" },
+    ]);
+    expect(codex.agent).toBe("codex");
+    expect(unknown.agent).toBeUndefined();
+  });
+
   it("returns empty arrays for nullish input", () => {
     expect(normalizeWorkspaces(undefined)).toEqual([]);
     expect(normalizeTasks(null)).toEqual([]);

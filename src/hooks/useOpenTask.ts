@@ -188,7 +188,7 @@ export function useOpenTask({
       const request = supersede();
       const requested = options.agent
         ? agentSurface(options.agent, agentViews)
-        : taskSurfaceFor(editorApp, agentViews);
+        : taskSurfaceFor(editorApp, agentViews, task.agent);
       if (isEmbedded(requested)) {
         const surface = await settleSurface(task, requested, request);
         if (!surface) return false;
@@ -244,7 +244,7 @@ export function useOpenTask({
   const restoreTask = useCallback(
     (task: Task) => {
       const request = supersede();
-      const requested = taskSurfaceFor(editorApp, agentViews);
+      const requested = taskSurfaceFor(editorApp, agentViews, task.agent);
       void liveSurfaces(task.id).then((live) => {
         if (request !== latestRequest.current) return;
         const surface = landingSurface(live, requested);

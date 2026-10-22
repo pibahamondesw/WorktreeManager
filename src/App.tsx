@@ -471,8 +471,10 @@ function App() {
             onCloseTask={closeTask}
             onSwitchSurface={(taskId, surface) => {
               switchSurface(taskId, surface);
-              if (surface.kind === "chat" || surface.kind === "terminal")
+              if (surface.kind === "chat" || surface.kind === "terminal") {
                 void updateAgentView(surface.agent, surface.kind);
+                void operations.setTaskAgent(taskId, surface.agent).catch(() => undefined);
+              }
             }}
             canGoBack={history.canGoBack}
             canGoForward={history.canGoForward}

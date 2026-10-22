@@ -54,6 +54,8 @@ export interface Task {
   noteFolder?: string;
   noteFileName?: string;
   pinOrder?: number;
+  /** Agent the task's chat or terminal last used; reopening the task picks it again. */
+  agent?: AgentId;
   createdAt: string;
 }
 
