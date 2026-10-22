@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use super::{AgentAdapter, ChatRequest, ForkMethod, LaunchContext, LaunchSpec};
+use super::{AgentAdapter, ChatRequest, ConversationFork, ForkMethod, LaunchContext, LaunchSpec};
 use crate::commands::agent_alerts::{AlertHooks, HookSpec};
 use crate::commands::agent_usage::UsageSource;
-use crate::commands::chat::codex::{initialize_params, CodexProvider};
-use crate::commands::chat::{exchange, truncate, Launch, SessionList, SessionSummary, LIST_LIMIT};
+use crate::commands::chat::codex::{initialize_params, thread_items, CodexProvider};
+use crate::commands::chat::{
+    exchange, truncate, ChatItem, Launch, SessionList, SessionSummary, LIST_LIMIT,
+};
 use crate::commands::codex_usage::CodexUsage;
 use crate::commands::login_shell::{cli_available, LoginShell};
 
@@ -103,7 +105,8 @@ impl AgentAdapter for Codex {
 
     fn chat_launch(&self, request: ChatRequest) -> Result<Launch, String> {
         self.require_cli()?;
-        let provider = CodexProvider::new(request.cwd.clone(), request.extra_dirs, request.resume);
+        let provider = CodexProvider::new(request.cwd.clone(), request.extra_dirs, request.resume)
+            .continuing(request.handoff);
         Ok(Launch {
             command: self.app_server(&request.cwd),
             provider: Box::new(if request.pinned {
@@ -135,6 +138,21 @@ impl AgentAdapter for Codex {
             can_rename: true,
             can_archive: true,
         })
+    }
+
+    fn history(
+        &self,
+        cwd: &str,
+        id: &str,
+        _fork: Option<&ConversationFork>,
+    ) -> Result<Vec<ChatItem>, String> {
+        self.require_cli()?;
+        let result = self.call(
+            cwd,
+            "thread/read",
+            json!({ "threadId": id, "includeTurns": true }),
+        )?;
+        Ok(thread_items(&result["thread"]))
     }
 
     fn rename_session(&self, cwd: &str, id: &str, title: &str) -> Result<(), String> {
@@ -387,6 +405,7 @@ mod tests {
             source: "source",
             pending_source: None,
             item_id: "u1",
+            handoff: None,
         };
         assert!(codex.fork_launch(fork).is_err());
     }
@@ -408,6 +427,7 @@ mod tests {
                 resume: None,
                 pinned: false,
                 fork: None,
+                handoff: None,
             })
             .is_err());
     }

@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use super::agent_alerts::AlertHooks;
 use super::agent_usage::UsageSource;
-use super::chat::{ConversationFork, Launch, SessionList};
+use super::chat::{ChatItem, ConversationFork, Launch, SessionList};
 
 pub use super::login_shell::LaunchSpec;
 
@@ -27,13 +27,15 @@ pub struct LaunchContext<'a> {
 }
 
 /// What a chat open asks for: the conversation to resume (if any), whether the user picked it
-/// explicitly, and a saved fork that the agent may not have persisted yet.
+/// explicitly, a saved fork that the agent may not have persisted yet, and the digest of the
+/// conversation it continues from another agent, for a conversation that has not received it.
 pub(crate) struct ChatRequest {
     pub cwd: String,
     pub extra_dirs: Vec<String>,
     pub resume: Option<String>,
     pub pinned: bool,
     pub fork: Option<ConversationFork>,
+    pub handoff: Option<String>,
 }
 
 /// A new conversation `fork_id` holding `source` up to (excluding) the user message `item_id`.
@@ -46,6 +48,8 @@ pub(crate) struct ForkRequest<'a> {
     pub source: &'a str,
     pub pending_source: Option<&'a str>,
     pub item_id: &'a str,
+    /// Digest the fork must be seeded with when it keeps no message that carried it.
+    pub handoff: Option<&'a str>,
 }
 
 pub(crate) struct ForkLaunch {
@@ -76,6 +80,14 @@ pub(crate) trait AgentAdapter: Send + Sync {
     fn forget_terminal_session(&self, _ctx: &LaunchContext) {}
 
     fn sessions(&self, cwd: &str, current: Option<&str>) -> Result<SessionList, String>;
+    /// A past conversation's visible items, read without resuming it. `fork` is the saved fork
+    /// the agent may not have persisted yet for `id`.
+    fn history(
+        &self,
+        cwd: &str,
+        id: &str,
+        fork: Option<&ConversationFork>,
+    ) -> Result<Vec<ChatItem>, String>;
     fn rename_session(&self, cwd: &str, id: &str, title: &str) -> Result<(), String>;
     fn archive_session(&self, _cwd: &str, _id: &str) -> Result<(), String> {
         Err("This agent cannot archive conversations".into())
