@@ -105,3 +105,9 @@ it("omits the PR links when the issue has none", () => {
   renderHeader({ ...linearInfo, prs: [] });
   expect(screen.queryByTitle(/^#\d+:/)).not.toBeInTheDocument();
 });
+
+it("shows the full title and branch name on hover", () => {
+  renderHeader(undefined, null, { ...task, linearIssueTitle: "A long title" });
+  expect(screen.getByTitle("A long title")).toHaveClass("truncate");
+  expect(screen.getByTitle("feat/x")).toHaveClass("truncate");
+});
