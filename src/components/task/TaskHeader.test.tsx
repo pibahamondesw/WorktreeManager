@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -38,18 +38,61 @@ const linearInfo: IssueLinearInfo = {
 } as unknown as IssueLinearInfo;
 
 afterEach(cleanup);
+beforeEach(() => vi.mocked(openUrl).mockReset().mockResolvedValue(undefined));
 
-const renderHeader = (info?: IssueLinearInfo) =>
+const renderHeader = (info?: IssueLinearInfo, orgUrlKey?: string | null, headerTask = task) =>
   render(
     <TaskHeader
-      task={task}
+      task={headerTask}
       linearInfo={info}
+      linearOrgUrlKey={orgUrlKey}
       sessionStatus={{ kind: "running" }}
       sidebarCollapsed={false}
       onExpandSidebar={vi.fn()}
       onBack={vi.fn()}
     />
   );
+
+it.each([
+  [undefined, "https://linear.app/issue/WOR-79"],
+  ["my-org", "https://linear.app/my-org/issue/WOR-79"],
+])("opens the Linear issue with organization %s before issue details load", (orgUrlKey, url) => {
+  renderHeader(undefined, orgUrlKey);
+  const link = screen.getByRole("link", { name: "WOR-79" });
+  expect(link).toHaveAttribute("href", url);
+  expect(fireEvent.click(link)).toBe(false);
+  expect(openUrl).toHaveBeenCalledExactlyOnceWith(url);
+});
+
+it("handles modified and middle clicks without navigating the webview", () => {
+  renderHeader();
+  const link = screen.getByRole("link", { name: "WOR-79" });
+  expect(fireEvent.click(link, { metaKey: true })).toBe(false);
+  expect(
+    fireEvent(link, new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }))
+  ).toBe(false);
+  fireEvent(link, new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 2 }));
+  expect(openUrl).toHaveBeenCalledTimes(2);
+});
+
+it("reports opening failures and lets the user retry", async () => {
+  vi.mocked(openUrl).mockRejectedValueOnce(new Error("Browser unavailable"));
+  renderHeader();
+  fireEvent.click(screen.getByRole("link", { name: "WOR-79" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not open Linear");
+  fireEvent.click(screen.getByRole("link", { name: "WOR-79" }));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(openUrl).toHaveBeenCalledTimes(2);
+});
+
+it("omits the Linear link for tasks without an issue", () => {
+  renderHeader(undefined, "my-org", {
+    ...task,
+    linearIssueId: undefined,
+    linearIssueIdentifier: undefined,
+  });
+  expect(screen.queryByRole("link")).not.toBeInTheDocument();
+});
 
 it("links every attached PR by number with its full title on hover", () => {
   renderHeader(linearInfo);
