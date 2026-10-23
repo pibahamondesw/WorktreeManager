@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/Button";
-import { ChatItemView } from "./ChatItemView";
+import { ChatItemView, WorkGroup } from "./ChatItemView";
+import { chatEntries } from "./chatEntries";
 import { Composer } from "./Composer";
 import { PendingRequestCard } from "./PendingRequestCard";
 import { SessionList } from "./SessionList";
@@ -109,8 +110,10 @@ export function ChatPane({
   const busy = status.kind === "busy";
   const live = isLive(status);
   const ends = turnEnds(items, changes);
-  const pinnedStart = windowStartId ? items.findIndex((item) => item.id === windowStartId) : -1;
-  const firstVisible = pinnedStart >= 0 ? pinnedStart : Math.max(0, items.length - CHAT_PAGE_SIZE);
+  const entries = useMemo(() => chatEntries(items), [items]);
+  const pinnedStart = windowStartId ? entries.findIndex((entry) => entry.id === windowStartId) : -1;
+  const firstVisible =
+    pinnedStart >= 0 ? pinnedStart : Math.max(0, entries.length - CHAT_PAGE_SIZE);
   const users = items.filter((item) => item.kind === "user").length;
   const showOutgoing =
     outgoing !== null &&
@@ -181,7 +184,7 @@ export function ChatPane({
     const el = scrollRef.current;
     if (!el || firstVisible === 0 || distanceFromBottomRef.current !== null) return;
     distanceFromBottomRef.current = el.scrollHeight - el.scrollTop;
-    setWindowStartId(items[Math.max(0, firstVisible - CHAT_PAGE_SIZE)].id);
+    setWindowStartId(entries[Math.max(0, firstVisible - CHAT_PAGE_SIZE)].id);
   };
 
   const onScroll = (el: HTMLDivElement) => {
@@ -189,7 +192,7 @@ export function ChatPane({
       el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_THRESHOLD_PX;
     if (stickRef.current) setWindowStartId(null);
     else if (el.scrollTop < LOAD_EARLIER_THRESHOLD_PX) showEarlier();
-    else if (!windowStartId && items[firstVisible]) setWindowStartId(items[firstVisible].id);
+    else if (!windowStartId && entries[firstVisible]) setWindowStartId(entries[firstVisible].id);
   };
 
   const run = async (action: () => Promise<void>) => {
@@ -286,28 +289,33 @@ export function ChatPane({
                 Show earlier messages ({firstVisible})
               </Button>
             )}
-            {items.slice(firstVisible).map((item, visibleIndex) => {
-              const index = firstVisible + visibleIndex;
-              if (isPlanItem(item) && pendingPlans.has(item.text)) return null;
-              const turn = ends.get(index);
+            {entries.slice(firstVisible).map((entry) => {
+              const turn = ends.get(entry.lastIndex);
               const turnChanges = turn === undefined ? undefined : changes?.turns[turn]?.changes;
-              const view = (
-                <ChatItemView
-                  item={item}
-                  historyDisabled={
-                    status.kind !== "idle" ||
-                    pending.length > 0 ||
-                    historyPending === `${taskId}:${agent}`
-                  }
-                  onHistory={
-                    item.kind === "user" && !item.origin
-                      ? (action) => pickHistory(item, action)
-                      : undefined
-                  }
-                />
-              );
+              const item = entry.kind === "item" ? entry.item : entry.items[0];
+              if (entry.kind === "item" && isPlanItem(item) && pendingPlans.has(item.text)) {
+                return null;
+              }
+              const view =
+                entry.kind === "work" ? (
+                  <WorkGroup items={entry.items} running={busy && entry === entries.at(-1)} />
+                ) : (
+                  <ChatItemView
+                    item={item}
+                    historyDisabled={
+                      status.kind !== "idle" ||
+                      pending.length > 0 ||
+                      historyPending === `${taskId}:${agent}`
+                    }
+                    onHistory={
+                      item.kind === "user" && !item.origin
+                        ? (action) => pickHistory(item, action)
+                        : undefined
+                    }
+                  />
+                );
               return (
-                <Fragment key={item.id}>
+                <Fragment key={entry.id}>
                   {item.origin ? (
                     <div
                       data-origin={item.origin}
