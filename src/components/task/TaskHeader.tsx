@@ -64,7 +64,7 @@ export function TaskHeader({
   const label = useShortcutLabels();
   return (
     <div
-      className="flex flex-wrap items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
+      className="flex items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
       style={{ viewTransitionName: taskTransitionName("shell") }}
       data-drag-region
     >
@@ -73,7 +73,7 @@ export function TaskHeader({
           <button
             type="button"
             onClick={onExpandSidebar}
-            className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
+            className="w-6 h-6 flex items-center justify-center flex-shrink-0 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
             title={`Expand sidebar (${label("app.sidebar")})`}
           >
             <SidebarIcon size={14} />
@@ -90,7 +90,7 @@ export function TaskHeader({
         onClick={onBack}
         aria-label={`Back to tasks (${label("native.back")})`}
         title={`Back to tasks (${label("native.back")})`}
-        className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
+        className="w-6 h-6 flex items-center justify-center flex-shrink-0 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
       >
         <ChevronLeftIcon size={14} />
       </button>
@@ -102,19 +102,25 @@ export function TaskHeader({
           onAuxClick={(event) => {
             if (event.button === 1) openIssue(event);
           }}
-          className="text-xs font-mono text-accent hover:text-accent-hover hover:underline cursor-pointer"
+          className="flex-shrink-0 whitespace-nowrap text-xs font-mono text-accent hover:text-accent-hover hover:underline cursor-pointer"
           style={{ viewTransitionName: taskTransitionName("identifier") }}
         >
           {task.linearIssueIdentifier}
         </a>
       )}
       {linkError && (
-        <span role="alert" className="text-xs text-danger select-text">
+        <span
+          role="alert"
+          className="flex-shrink-0 whitespace-nowrap text-xs text-danger select-text"
+        >
           {linkError}
         </span>
       )}
       {issueStatus && (
-        <span className="inline-flex" style={{ viewTransitionName: taskTransitionName("status") }}>
+        <span
+          className="inline-flex flex-shrink-0 whitespace-nowrap"
+          style={{ viewTransitionName: taskTransitionName("status") }}
+        >
           <Badge variant={stateVariant[issueStatus.type] ?? "default"}>{issueStatus.name}</Badge>
         </span>
       )}
@@ -126,11 +132,13 @@ export function TaskHeader({
         onError={onRenameError}
       />
       <span
-        className="flex items-center gap-1 text-xs font-mono text-text-muted truncate"
+        className="flex items-center gap-1 shrink-[999] text-xs font-mono text-text-muted whitespace-nowrap"
         style={{ viewTransitionName: taskTransitionName("branch") }}
       >
-        <BranchIcon />
-        {task.branchName}
+        <BranchIcon className="flex-shrink-0" />
+        <span className="truncate min-w-16 select-text" title={task.branchName}>
+          {task.branchName}
+        </span>
         {gitStatus && gitStatus.ahead > 0 && (
           <span className="text-success" title={`${gitStatus.ahead} ahead of main`}>
             ↑{gitStatus.ahead}
@@ -149,14 +157,14 @@ export function TaskHeader({
       </span>
       {prs.length > 0 && (
         <span
-          className="flex flex-wrap items-center gap-1.5 text-xs min-w-0"
+          className="flex items-center gap-1.5 text-xs min-w-0 overflow-hidden whitespace-nowrap"
           style={{ viewTransitionName: taskTransitionName("prs") }}
         >
           <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
           <PullRequestLinks prs={prs} />
         </span>
       )}
-      <span className="ml-auto flex items-center gap-1.5 text-xs text-text-muted flex-shrink-0">
+      <span className="ml-auto flex items-center gap-1.5 text-xs text-text-muted flex-shrink-0 whitespace-nowrap">
         {surfaceSwitcher}
         {onCloseEditor && (
           <button
