@@ -124,6 +124,47 @@ function Activity({ item }: { item: ChatItem }) {
   );
 }
 
+const isVisibleStep = (item: ChatItem) => item.kind !== "reasoning" || !!item.text;
+const isFailedStep = (item: ChatItem) => item.status === "failed" || item.status === "declined";
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+export function WorkGroup({ items, running }: { items: ChatItem[]; running: boolean }) {
+  const [open, setOpen] = useState(false);
+  const steps = items.filter(isVisibleStep);
+  const failed = steps.filter(isFailedStep).length;
+  if (steps.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="self-start flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary cursor-pointer"
+      >
+        <span className={running ? "animate-pulse" : undefined}>
+          {running ? "Working" : "Worked"} · {plural(steps.length, "step")}
+          {failed > 0 && (
+            <>
+              {" · "}
+              <span className="text-danger">{failed} failed</span>
+            </>
+          )}
+        </span>
+        <ChevronDownIcon
+          className={`opacity-50 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <div className="flex flex-col gap-2 border-l border-border pl-3">
+          {steps.map((item) => (
+            <ChatItemView key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChatItemView({
   item,
   onHistory,

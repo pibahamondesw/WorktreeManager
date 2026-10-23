@@ -197,6 +197,8 @@ describe("ChatPane", () => {
       })
     );
     expect(screen.getByText("care").tagName).toBe("STRONG");
+    expect(screen.queryByRole("button", { name: /Edited 1 file/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Worked · 1 step" }));
     fireEvent.click(screen.getByRole("button", { name: /Edited 1 file/ }));
     expect(screen.getByText("+added")).toHaveClass("text-success");
   });
@@ -255,6 +257,49 @@ describe("ChatPane", () => {
     scrollTo(scroller.scrollHeight);
     expect(screen.queryByText("Message 71")).not.toBeInTheDocument();
     expect(screen.getByText("Message 72")).toBeInTheDocument();
+  });
+
+  it("collapses each run of work items into one expandable message", async () => {
+    const work = (n: number) => {
+      if (n === 17) return [{ id: `r${n}`, kind: "reasoning", text: "" }];
+      const status = n === 18 ? "inProgress" : n === 19 ? "failed" : "completed";
+      return [
+        { id: `r${n}`, kind: "reasoning", text: `Thinking ${n}` },
+        { id: `c${n}`, kind: "command", text: `ls ${n}`, status },
+      ];
+    };
+    const turn = (n: number) => [
+      { id: `u${n}`, kind: "user", text: `Prompt ${n}` },
+      ...work(n),
+      { id: `a${n}`, kind: "assistant", text: `Answer ${n}` },
+    ];
+    const items = Array.from({ length: 20 }, (_, n) => turn(n)).flat();
+    items.push(
+      { id: "thinking", kind: "reasoning", text: "" },
+      { id: "live", kind: "tool", text: "Read file", status: "inProgress" }
+    );
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open" ? snapshot({ status: { kind: "busy" }, items }) : undefined
+      )
+    );
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    await screen.findByText("Answer 19");
+    expect(screen.getByText("Answer 3")).toBeInTheDocument();
+    expect(screen.queryByText("Prompt 3")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show earlier messages (11)" })).toBeInTheDocument();
+    expect(screen.queryByText("Thinking 19")).not.toBeInTheDocument();
+    expect(screen.queryByText("ls 19")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Working · 1 step" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Worked · 2 steps" })).toHaveLength(14);
+    expect(screen.queryByRole("button", { name: /Worked · 1 step/ })).not.toBeInTheDocument();
+
+    const failedWork = screen.getByRole("button", { name: "Worked · 2 steps · 1 failed" });
+    fireEvent.click(failedWork);
+    expect(failedWork).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Thinking 19")).toBeInTheDocument();
+    expect(screen.getByText("ls 19")).toBeInTheDocument();
+    expect(screen.queryByText("Thinking 18")).not.toBeInTheDocument();
   });
 
   it("shows the message while the turn is prepared and restores it if sending fails", async () => {
