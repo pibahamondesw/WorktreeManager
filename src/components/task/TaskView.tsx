@@ -17,6 +17,7 @@ interface TaskViewProps {
   task: Task;
   surface: TaskSurface;
   linearInfo?: IssueLinearInfo;
+  linearOrgUrlKey?: string | null;
   gitStatus?: GitStatus;
   sidebarCollapsed: boolean;
   onExpandSidebar: () => void;
@@ -33,6 +34,7 @@ export function TaskView({
   task,
   surface,
   linearInfo,
+  linearOrgUrlKey,
   gitStatus,
   sidebarCollapsed,
   onExpandSidebar,
@@ -105,6 +107,7 @@ export function TaskView({
       <TaskHeader
         task={task}
         linearInfo={linearInfo}
+        linearOrgUrlKey={linearOrgUrlKey}
         gitStatus={gitStatus}
         sessionStatus={sessionStatus}
         sidebarCollapsed={sidebarCollapsed}

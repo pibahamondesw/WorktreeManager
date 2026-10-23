@@ -345,6 +345,7 @@ export function WorktreeList({
             task={openTask}
             surface={openedTask.surface}
             linearInfo={openTask.linearIssueId ? linearInfo[openTask.linearIssueId] : undefined}
+            linearOrgUrlKey={workspace.linearOrgUrlKey}
             gitStatus={aggregateTaskStatus(openTask, gitStatuses)}
             sidebarCollapsed={sidebarCollapsed}
             onExpandSidebar={onExpandSidebar}

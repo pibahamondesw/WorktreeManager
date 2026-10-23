@@ -1,5 +1,6 @@
 import { useShortcutLabels } from "../../shortcuts/runtime";
-import { ReactNode } from "react";
+import { MouseEvent, ReactNode, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { BranchIcon, ChevronLeftIcon, PullRequestIcon, SidebarIcon } from "../ui/Icons";
 import { GitStatus, IssueLinearInfo, Task } from "../../types";
 import { Badge } from "../ui/Badge";
@@ -8,10 +9,12 @@ import { SessionStatus } from "../../hooks/useTerminalSession";
 import { taskTransitionName } from "../../services/taskTransition";
 import { PullRequestLinks } from "../worktree/PullRequestLinks";
 import { EditableTaskTitle } from "./EditableTaskTitle";
+import { linearIssueUrl } from "../../utils";
 
 interface TaskHeaderProps {
   task: Task;
   linearInfo?: IssueLinearInfo;
+  linearOrgUrlKey?: string | null;
   gitStatus?: GitStatus;
   sessionStatus: SessionStatus;
   sidebarCollapsed: boolean;
@@ -33,6 +36,7 @@ const statusLabel: Record<SessionStatus["kind"], { text: string; dot: string }> 
 export function TaskHeader({
   task,
   linearInfo,
+  linearOrgUrlKey,
   gitStatus,
   sessionStatus,
   sidebarCollapsed,
@@ -44,6 +48,16 @@ export function TaskHeader({
   onRename,
   onRenameError,
 }: TaskHeaderProps) {
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const issueUrl = task.linearIssueIdentifier
+    ? linearIssueUrl(task.linearIssueIdentifier, linearOrgUrlKey)
+    : null;
+  const openIssue = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (!issueUrl) return;
+    setLinkError(null);
+    openUrl(issueUrl).catch(() => setLinkError("Could not open Linear"));
+  };
   const status = statusLabel[sessionStatus.kind];
   const issueStatus = linearInfo?.status ?? null;
   const prs = task.linearIssueId ? (linearInfo?.prs ?? []) : [];
@@ -80,12 +94,23 @@ export function TaskHeader({
       >
         <ChevronLeftIcon size={14} />
       </button>
-      {task.linearIssueIdentifier && (
-        <span
-          className="text-xs font-mono text-text-muted"
+      {issueUrl && (
+        <a
+          href={issueUrl}
+          title="Open issue in Linear"
+          onClick={openIssue}
+          onAuxClick={(event) => {
+            if (event.button === 1) openIssue(event);
+          }}
+          className="text-xs font-mono text-accent hover:text-accent-hover hover:underline cursor-pointer"
           style={{ viewTransitionName: taskTransitionName("identifier") }}
         >
           {task.linearIssueIdentifier}
+        </a>
+      )}
+      {linkError && (
+        <span role="alert" className="text-xs text-danger select-text">
+          {linkError}
         </span>
       )}
       {issueStatus && (

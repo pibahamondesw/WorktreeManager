@@ -257,6 +257,10 @@ body,
   color: var(--color-accent-hover);
   text-decoration: underline;
 }
+.chat-markdown a,
+.chat-markdown a * {
+  cursor: pointer;
+}
 .chat-markdown h1,
 .chat-markdown h2,
 .chat-markdown h3 {
