@@ -187,6 +187,23 @@ describe("indicators", () => {
     expect(taskIndicator(undefined, undefined)).toBeNull();
   });
 
+  it.each(["waiting", "working", "done"] as const)(
+    "prioritizes session errors over %s activity",
+    (state) => {
+      expect(taskIndicator(activity({ state }), { kind: "running", hasError: true })).toBe("error");
+      expect(taskIndicator(activity({ state }), { kind: "exited", code: 1 })).toBe("error");
+      expect(
+        taskIndicator(activity({ state }), { kind: "exited", code: null, hasError: true })
+      ).toBe("error");
+    }
+  );
+
+  it("keeps intentional stops neutral and errors above all workspace indicators", () => {
+    expect(taskIndicator(undefined, { kind: "exited", code: null })).toBe("ended");
+    expect(strongestIndicator(["working", "input", "idle", "error"])).toBe("error");
+    expect(strongestIndicator(["error", "input", "working", "idle"])).toBe("error");
+  });
+
   it("rolls up to input, then working, then idle", () => {
     expect(strongestIndicator(["working", "idle", null])).toBe("working");
     expect(strongestIndicator(["idle", "input", "working"])).toBe("input");

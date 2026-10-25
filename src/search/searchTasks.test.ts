@@ -93,27 +93,39 @@ describe("searchTasks", () => {
     expect(results[0].activeSession).toBe(true);
   });
 
-  it("orders agents needing input, then idle sessions, then working ones", () => {
+  it("orders errors, agents needing input, idle sessions, then working ones", () => {
     const working = task({ id: "working", createdAt: "2026-04-01T00:00:00.000Z" });
     const idle = task({ id: "idle", createdAt: "2026-05-01T00:00:00.000Z" });
+    const failed = task({ id: "failed" });
     const results = searchTasks({
-      tasks: [quickSearch, apiFix, working, idle],
+      tasks: [quickSearch, apiFix, working, idle, failed],
       workspaces,
       selectedWorkspaceId: "ws-web",
       query: "",
-      agentSessions: { idle: { kind: "running" }, working: { kind: "running" } },
+      agentSessions: {
+        failed: { kind: "running", hasError: true },
+        idle: { kind: "running" },
+        working: { kind: "running" },
+      },
       agentActivities: {
         working: { state: "working", agent: "claude", surface: "chat", unread: false, at: 1 },
         "api-fix": { state: "waiting", agent: "codex", surface: "external", unread: false, at: 1 },
       },
     });
     expect(results.map((result) => result.task.id)).toEqual([
+      "failed",
       "api-fix",
       "idle",
       "working",
       "quick-search",
     ]);
-    expect(results.map((result) => result.indicator)).toEqual(["input", "idle", "working", null]);
+    expect(results.map((result) => result.indicator)).toEqual([
+      "error",
+      "input",
+      "idle",
+      "working",
+      null,
+    ]);
   });
 
   it("filters tasks to active sessions", () => {

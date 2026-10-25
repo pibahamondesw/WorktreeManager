@@ -1,5 +1,5 @@
 import { TaskSurface } from "../types";
-import { TerminalStatus } from "../services/terminal";
+import { sessionHasError, TerminalStatus } from "../services/terminal";
 
 export type SessionKind = Exclude<TaskSurface["kind"], "external">;
 
@@ -37,11 +37,18 @@ interface Entry {
 const sessionKey = ({ taskId, surface }: SessionState) =>
   "agent" in surface ? `${taskId}:${surface.agent}` : taskId;
 
-/** A task is running while any of its sessions runs; otherwise it shows its first ended one. */
+/** Errors outrank running sessions; otherwise any live session keeps the task running. */
 function statusesByTask(states: SessionState[]): Record<string, TerminalStatus> {
   const statuses: Record<string, TerminalStatus> = {};
   for (const { taskId, status } of states) {
-    if (status && (status.kind === "running" || !statuses[taskId])) statuses[taskId] = status;
+    if (!status) continue;
+    const current = statuses[taskId];
+    if (
+      !current ||
+      (sessionHasError(status) && !sessionHasError(current)) ||
+      (sessionHasError(status) === sessionHasError(current) && status.kind === "running")
+    )
+      statuses[taskId] = status;
   }
   return statuses;
 }

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
 
 import { sessionRegistry } from "./sessionTransports";
 
@@ -25,6 +25,25 @@ const lists: Record<string, unknown[]> = {
 beforeEach(() => {
   invoke.mockReset();
   invoke.mockImplementation((command: string) => Promise.resolve(lists[command]));
+});
+
+describe("sessionRegistry.taskStatuses", () => {
+  it.each([
+    {
+      status: { kind: "failed", message: "Unauthorized" },
+      expected: { kind: "exited", code: null, hasError: true },
+    },
+    { status: { kind: "idle" }, hasError: true, expected: { kind: "running", hasError: true } },
+  ])("preserves agent errors while other sessions run: %o", async ({ expected, ...chat }) => {
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_list" ? [{ taskId: "t1", agent: "codex", ...chat }] : lists[command]
+      )
+    );
+    const unsubscribe = sessionRegistry.subscribe(() => undefined);
+    await vi.waitFor(() => expect(sessionRegistry.taskStatuses().t1).toEqual(expected));
+    unsubscribe();
+  });
 });
 
 describe("sessionRegistry.listLive", () => {

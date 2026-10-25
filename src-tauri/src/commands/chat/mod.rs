@@ -70,6 +70,9 @@ pub struct ChatActivity {
     waiting: bool,
     /// Background subagents keep the agent working after its turn ends.
     background_agents: bool,
+    /// The current turn reported an agent error.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    has_error: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -108,6 +111,7 @@ impl Shared {
             status: self.snapshot.status.clone(),
             waiting: self.waiting(),
             background_agents: self.snapshot.background_agents,
+            has_error: self.snapshot.has_error(),
         }
     }
 
@@ -456,6 +460,7 @@ impl ChatSession {
             status: ChatStatus::Exited { code: None },
             waiting: false,
             background_agents: false,
+            has_error: false,
         });
     }
 
@@ -1254,6 +1259,49 @@ mod tests {
             info,
             serde_json::json!({ "taskId": "t1", "agent": "claude", "status": { "kind": "idle" }, "waiting": false, "backgroundAgents": false })
         );
+    }
+
+    #[test]
+    fn broadcasts_turn_errors_and_recovery_even_while_idle() {
+        let notified = Arc::new(Mutex::new(Vec::new()));
+        let notify: Notify = {
+            let notified = notified.clone();
+            Arc::new(move |activity: ChatActivity| {
+                notified.lock().unwrap().push(activity.has_error);
+            })
+        };
+        let mut shared = Shared {
+            provider: Box::new(Echo),
+            snapshot: ChatSnapshot::new(1),
+            stdin: None,
+            sink: None,
+            checkpoints: None,
+            folders: Vec::new(),
+            conversation_id: None,
+            turn_checkpoint: None,
+            last_checkpoint: None,
+            turn_messages: Vec::new(),
+            history_reply: None,
+            history_busy: false,
+            handoff: None,
+        };
+        shared.snapshot.status = ChatStatus::Idle;
+        let mut out = ProviderOutput::default();
+        out.upsert(ChatItem::new(
+            "error",
+            ItemKind::Error,
+            "Insufficient credits",
+        ));
+        shared.commit(out, &drop, &notify);
+        assert_eq!(*notified.lock().unwrap(), [true]);
+        let info = serde_json::to_value(shared.activity()).unwrap();
+        assert_eq!(info["hasError"], true);
+        assert_eq!(info["status"]["kind"], "idle");
+
+        let mut out = ProviderOutput::default();
+        out.upsert(ChatItem::new("user", ItemKind::User, "Try again"));
+        shared.commit(out, &drop, &notify);
+        assert_eq!(*notified.lock().unwrap(), [true, false]);
     }
 
     #[test]

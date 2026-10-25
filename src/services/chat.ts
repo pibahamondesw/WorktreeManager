@@ -193,6 +193,8 @@ export interface ChatInfo {
   waiting: boolean;
   /** Background subagents keep the agent working after its turn ends. */
   backgroundAgents: boolean;
+  /** The current turn reported an agent error; cleared by the next prompt. */
+  hasError?: boolean;
 }
 
 export const isLive = (status: ChatStatus) => status.kind !== "exited" && status.kind !== "failed";
