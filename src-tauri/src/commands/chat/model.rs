@@ -402,6 +402,21 @@ impl ChatSnapshot {
         }
     }
 
+    /// Only agent errors since the latest prompt count; tool failures stay in their own items.
+    pub fn has_error(&self) -> bool {
+        self.items
+            .iter()
+            .rev()
+            .filter(|item| item.origin.is_none())
+            .find(|item| {
+                matches!(
+                    item.kind,
+                    ItemKind::User | ItemKind::Error | ItemKind::Handoff
+                )
+            })
+            .is_some_and(|item| item.kind == ItemKind::Error)
+    }
+
     /// Mirror of `applyChatEvent` in the webview; keep the two in step.
     pub fn apply(&mut self, event: &ChatEvent) {
         match event {
@@ -545,6 +560,33 @@ pub trait ChatProvider: Send {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_errors_remain_until_the_next_prompt() {
+        let mut snapshot = ChatSnapshot::new(1);
+        snapshot
+            .items
+            .push(ChatItem::new("user-1", ItemKind::User, "Hello"));
+        let mut tool = ChatItem::new("tool", ItemKind::Tool, "Command failed");
+        tool.status = Some("failed".into());
+        snapshot.items.push(tool);
+        assert!(!snapshot.has_error());
+        snapshot.items.push(ChatItem::new(
+            "error",
+            ItemKind::Error,
+            "Insufficient credits",
+        ));
+        snapshot.status = ChatStatus::Idle;
+        assert!(snapshot.has_error());
+        snapshot
+            .items
+            .push(ChatItem::new("user-2", ItemKind::User, "Try again"));
+        assert!(!snapshot.has_error());
+        let mut carried = ChatItem::new("carried-error", ItemKind::Error, "Old error");
+        carried.origin = Some("claude".into());
+        snapshot.items.push(carried);
+        assert!(!snapshot.has_error());
+    }
 
     #[test]
     fn deltas_extend_known_items_and_ignore_unknown_ones() {

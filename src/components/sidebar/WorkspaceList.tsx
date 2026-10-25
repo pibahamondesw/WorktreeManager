@@ -18,6 +18,7 @@ import {
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
 
 const WORKSPACE_INDICATOR_LABELS: Record<TaskIndicator, string> = {
+  error: "An agent in this workspace has an error that requires attention",
   input: "An agent in this workspace needs your input",
   idle: "Active agent session in this workspace",
   working: "An agent in this workspace is working",

@@ -2,7 +2,12 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { AgentId } from "../types";
 
-export type TerminalStatus = { kind: "running" } | { kind: "exited"; code: number | null };
+export type TerminalStatus = ({ kind: "running" } | { kind: "exited"; code: number | null }) & {
+  hasError?: boolean;
+};
+
+export const sessionHasError = (status: TerminalStatus | undefined): boolean =>
+  !!status?.hasError || (status?.kind === "exited" && status.code !== null && status.code !== 0);
 
 export type TerminalEvent = { type: "data"; data: string } | { type: "exit"; code: number | null };
 

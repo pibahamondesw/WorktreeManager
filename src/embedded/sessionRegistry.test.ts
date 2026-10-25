@@ -136,6 +136,28 @@ describe("following sessions", () => {
 });
 
 describe("task statuses", () => {
+  it.each([
+    { kind: "running", hasError: true },
+    { kind: "exited", code: 1 },
+  ] as const)(
+    "keeps errors above live sessions and clears them on recovery: %o",
+    async (failed) => {
+      const { fakes, registry } = setup();
+      const unsubscribe = registry.subscribe(() => undefined);
+      await flush();
+      fakes.chat.emit(chat("t1", failed));
+      fakes.terminal.emit(terminal("t1", running));
+      expect(registry.taskStatuses()).toEqual({ t1: failed });
+      fakes.chat.emit(chat("t1", running));
+      expect(registry.taskStatuses()).toEqual({ t1: running });
+      fakes.chat.emit(chat("t1", failed));
+      expect(registry.taskStatuses()).toEqual({ t1: failed });
+      fakes.chat.emit(chat("t1", { kind: "exited", code: null }));
+      expect(registry.taskStatuses()).toEqual({ t1: running });
+      unsubscribe();
+    }
+  );
+
   it.each([true, false])(
     "counts a task as running while any session runs (reverse: %s)",
     async (reverse) => {

@@ -52,6 +52,36 @@ describe("WorkspaceList session indicator", () => {
     );
   });
 
+  it("shows a red error above waiting and working agents", () => {
+    render(
+      <WorkspaceList
+        workspaces={workspaces}
+        tasks={[task, { ...task, id: "waiting" }, { ...task, id: "working" }]}
+        agentSessions={{ "task-active": { kind: "running", hasError: true } }}
+        agentActivities={{
+          waiting: { state: "waiting", agent: "claude", surface: "chat", unread: true, at: 1 },
+          working: { state: "working", agent: "codex", surface: "chat", unread: false, at: 1 },
+        }}
+        selectedWorkspaceId="ws-idle"
+        onSelect={vi.fn()}
+        onAdd={vi.fn()}
+        onUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onReorder={vi.fn()}
+        vault={{ enabled: false, path: null }}
+        onCollapse={vi.fn()}
+        doctorSeverity={null}
+        onOpenSettings={vi.fn()}
+      />
+    );
+    expect(
+      screen.getByTitle("An agent in this workspace has an error that requires attention")
+    ).toHaveClass("bg-danger");
+    expect(
+      screen.queryByTitle("An agent in this workspace needs your input")
+    ).not.toBeInTheDocument();
+  });
+
   it("rolls agent attention up to the workspace", () => {
     render(
       <WorkspaceList

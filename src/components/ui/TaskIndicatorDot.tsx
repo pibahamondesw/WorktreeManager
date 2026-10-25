@@ -1,6 +1,7 @@
 import { INDICATOR_LABELS, TaskIndicator } from "../../services/agentActivity";
 
 const INDICATOR_CLASSES: Record<TaskIndicator, string> = {
+  error: "bg-danger",
   input: "bg-warning",
   working: "bg-success motion-pulse-steps",
   idle: "bg-success",

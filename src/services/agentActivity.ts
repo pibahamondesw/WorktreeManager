@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { AgentId, Task, TaskSurface } from "../types";
-import { TerminalStatus } from "./terminal";
+import { sessionHasError, TerminalStatus } from "./terminal";
 import { ChatInfo, isLive } from "./chat";
 
 export type AgentActivityState = "working" | "waiting" | "done";
@@ -245,13 +245,14 @@ export function pendingInputCount(activities: AgentActivities): number {
   ).length;
 }
 
-/** What a task shows: needs input, agent working, a live but idle session, or an ended one. */
-export type TaskIndicator = "input" | "working" | "idle" | "ended";
+/** Agent errors take priority over input, work, idle and ended sessions. */
+export type TaskIndicator = "error" | "input" | "working" | "idle" | "ended";
 
 export function taskIndicator(
   activity: AgentActivity | undefined,
   session: TerminalStatus | undefined
 ): TaskIndicator | null {
+  if (sessionHasError(session)) return "error";
   if (activity?.state === "waiting") return "input";
   if (activity?.state === "working") return "working";
   if (session?.kind === "running" || activity?.unread) return "idle";
@@ -259,8 +260,9 @@ export function taskIndicator(
   return null;
 }
 
-/** Palette order: needs input, then idle sessions waiting on you, then working. */
+/** Palette order: errors, needs input, idle sessions, then working. */
 export const INDICATOR_RANK: Record<TaskIndicator, number> = {
+  error: 4,
   input: 3,
   idle: 2,
   working: 1,
@@ -269,6 +271,7 @@ export const INDICATOR_RANK: Record<TaskIndicator, number> = {
 
 /** Workspace rollup order: a working agent outranks idle sessions so its pulse stays visible. */
 const ROLLUP_RANK: Record<TaskIndicator, number> = {
+  error: 4,
   input: 3,
   working: 2,
   idle: 1,
@@ -284,6 +287,7 @@ export function strongestIndicator(indicators: (TaskIndicator | null)[]): TaskIn
 }
 
 export const INDICATOR_LABELS: Record<TaskIndicator, string> = {
+  error: "Agent error requires attention",
   input: "Agent needs your input",
   working: "Agent working",
   idle: "Agent session active",

@@ -29,10 +29,12 @@ function serverStatus(session: EditorSession): TerminalStatus | null {
   return null;
 }
 
-const chatStatus = ({ status }: ChatInfo): TerminalStatus =>
-  isLive(status)
-    ? { kind: "running" }
-    : { kind: "exited", code: status.kind === "exited" ? status.code : null };
+const chatStatus = ({ status, hasError }: ChatInfo): TerminalStatus => ({
+  ...(isLive(status)
+    ? { kind: "running" as const }
+    : { kind: "exited" as const, code: status.kind === "exited" ? status.code : null }),
+  ...((hasError || status.kind === "failed") && { hasError: true }),
+});
 
 const TRANSPORTS: SessionTransports<TaskSessions> = {
   editor: {
