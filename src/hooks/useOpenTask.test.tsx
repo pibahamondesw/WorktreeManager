@@ -11,9 +11,8 @@ const surfaces = vi.hoisted(() => ({
 vi.mock("../embedded/sessionTransports", () => ({ sessionRegistry: surfaces }));
 
 import { useOpenTask } from "./useOpenTask";
-import { Task, TaskSurface, Workspace } from "../types";
+import { Task, TaskSurface } from "../types";
 
-const workspace = { id: "ws1", name: "Payments", repos: [] } as unknown as Workspace;
 const task = {
   id: "t1",
   workspaceId: "ws1",
@@ -28,8 +27,7 @@ function setup(
   const recordTaskVisit = vi.fn();
   const showTask = vi.fn();
   const hook = renderHook(
-    ({ tasks }) =>
-      useOpenTask({ editorApp, workspaces: [workspace], tasks, recordTaskVisit, showTask }),
+    ({ tasks }) => useOpenTask({ editorApp, tasks, recordTaskVisit, showTask }),
     { initialProps: { tasks } }
   );
   return { ...hook, recordTaskVisit, showTask };
@@ -77,11 +75,24 @@ describe("useOpenTask", () => {
     expect(openEditorForWorktree).toHaveBeenCalledWith(
       "cursor",
       ["/wt/a", "/wt/b"],
-      "feat/x",
-      "Payments",
+      "t1",
+      undefined,
       expect.any(Object)
     );
     expect(result.current.openedTask).toBeNull();
+  });
+
+  it("passes the persisted legacy workspace path when opening an older task", async () => {
+    const legacy = { ...task, workspaceFilePath: "/workspaces/payments/feat-x.code-workspace" };
+    const { result } = setup("cursor", [legacy]);
+    await act(() => result.current.openTask(legacy));
+    expect(openEditorForWorktree).toHaveBeenCalledWith(
+      "cursor",
+      ["/wt/a", "/wt/b"],
+      legacy.id,
+      legacy.workspaceFilePath,
+      expect.any(Object)
+    );
   });
 
   it.each([
@@ -106,7 +117,6 @@ describe("useOpenTask", () => {
       useOpenTask({
         editorApp: "cursor",
         agentViews: { claude: "terminal", codex: "chat" },
-        workspaces: [workspace],
         tasks: [task],
         recordTaskVisit,
         showTask: vi.fn(),

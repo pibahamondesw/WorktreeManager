@@ -600,19 +600,6 @@ export class Operations {
           if (vault.enabled && vault.path && !(await ensureTaskNote(vault, workspace, task)))
             throw new Error();
         }),
-        this.optional(warnings, "workspace_file", undefined, async () => {
-          if (task.members.length <= 1 || editor !== "cursor") return;
-          const workspaceFilePath = await invoke<string>("prepare_task_workspace", {
-            workspaceName: workspace.name,
-            branchName: task.branchName,
-            folders: task.members.map((member) => member.path),
-          });
-          await this.change((state) => ({
-            tasks: state.tasks.map((item) =>
-              item.id === task.id ? { ...item, workspaceFilePath } : item
-            ),
-          }));
-        }),
       ]);
       if (onReady) {
         progress("Opening workspace…");
@@ -1060,7 +1047,11 @@ export class Operations {
         "Could not close task sessions; records were retained."
       );
     }
-    if (!options.deleteWorktrees || !tasks.length) return;
+    if (!tasks.length) return;
+    if (!options.deleteWorktrees) {
+      await this.removeTaskWorkspaces(tasks, warnings);
+      return;
+    }
     if (!options.skipTeardown) await this.runTeardowns(tasks, options);
     const removed: TaskMember[] = [];
     const failed: TaskMember[] = [];
@@ -1084,17 +1075,22 @@ export class Operations {
         "Some worktrees could not be removed. Records were retained; inspect local changes before retrying with --force.",
         { removed, failed }
       );
-    for (const task of tasks) {
-      if (task.workspaceFilePath)
-        await this.optional(warnings, "workspace_file", undefined, () =>
-          invoke("delete_workspace_file", { path: task.workspaceFilePath })
-        );
-    }
+    await this.removeTaskWorkspaces(tasks, warnings);
     const paths = tasks.flatMap((task) => task.members.map((member) => member.path));
     for (const command of ["cleanup_claude_json", "doppler_cleanup"]) {
       await this.optional(warnings, command, undefined, () => invoke(command, { paths }));
     }
     await Promise.all(tasks.map((task) => terminalClose(task.id)));
+  }
+
+  private async removeTaskWorkspaces(tasks: Task[], warnings: OperationWarning[]) {
+    for (const task of tasks)
+      await this.optional(warnings, "workspace_file", undefined, () =>
+        invoke("remove_task_workspace", {
+          taskId: task.id,
+          legacyPath: task.workspaceFilePath ?? null,
+        })
+      );
   }
 
   private async archiveNotes(tasks: Task[], warnings: OperationWarning[]) {

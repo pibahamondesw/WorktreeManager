@@ -3,7 +3,7 @@ use std::process::Command;
 
 use super::agents::Agents;
 use super::login_shell::{cli_available, LoginShell};
-use super::workspace;
+use super::workspace::TaskWorkspaceFiles;
 
 #[cfg(not(test))]
 const GUI_LAUNCHER: &str = "open";
@@ -34,11 +34,17 @@ impl OpenEditorResult {
 pub async fn open_editor(
     editor: String,
     folders: Vec<String>,
-    branch_name: Option<String>,
-    workspace_name: Option<String>,
+    task_id: String,
+    legacy_workspace_file_path: Option<String>,
 ) -> Result<OpenEditorResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        open_editor_blocking(editor, folders, branch_name, workspace_name)
+        open_editor_blocking(
+            editor,
+            folders,
+            &task_id,
+            legacy_workspace_file_path.as_deref(),
+            &TaskWorkspaceFiles::default(),
+        )
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))?
@@ -47,13 +53,13 @@ pub async fn open_editor(
 fn open_editor_blocking(
     editor: String,
     folders: Vec<String>,
-    branch_name: Option<String>,
-    workspace_name: Option<String>,
+    task_id: &str,
+    legacy_workspace_file_path: Option<&str>,
+    workspace_files: &TaskWorkspaceFiles,
 ) -> Result<OpenEditorResult, String> {
     if folders.is_empty() {
         return Err("No folders to open".to_string());
     }
-    let branch = branch_name.as_deref();
     let primary = folders[0].as_str();
     let multi = folders.len() > 1;
 
@@ -61,11 +67,7 @@ fn open_editor_blocking(
         "cursor" => {
             let app = "Cursor";
             if multi {
-                let ws = workspace::ensure_code_workspace_file(
-                    workspace_name.as_deref(),
-                    branch,
-                    &folders,
-                )?;
+                let ws = workspace_files.ensure(task_id, &folders, legacy_workspace_file_path)?;
                 open_gui_editor(app, &ws)?;
                 Ok(OpenEditorResult {
                     message: format!("{app} opened workspace: {ws}"),
@@ -203,17 +205,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn editor_command_forwards_success_and_failure_from_the_blocking_launcher() {
+        let opened = tauri::async_runtime::block_on(open_editor(
+            "cursor".into(),
+            vec!["/tmp".into()],
+            "task-1".into(),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(opened.message, "Cursor opened for path: /tmp");
+        assert!(opened.workspace_file.is_none());
+
+        let error = tauri::async_runtime::block_on(open_editor(
+            "cursor".into(),
+            vec![],
+            "task-1".into(),
+            None,
+        ))
+        .err()
+        .unwrap();
+        assert_eq!(error, "No folders to open");
+    }
+
+    #[test]
     fn cursor_still_opens_tasks_in_an_external_window() {
-        let opened =
-            open_editor_blocking("cursor".into(), vec!["/tmp".into()], None, None).unwrap();
+        let opened = open_editor_blocking(
+            "cursor".into(),
+            vec!["/tmp".into()],
+            "t1",
+            None,
+            &TaskWorkspaceFiles::default(),
+        )
+        .unwrap();
         assert_eq!(opened.message, "Cursor opened for path: /tmp");
         assert!(opened.workspace_file.is_none());
     }
 
     #[test]
+    fn switching_to_cursor_then_deleting_removes_the_task_workspace() {
+        let root = std::env::temp_dir().join(format!("wm-editor-{}", uuid::Uuid::new_v4()));
+        let files = TaskWorkspaceFiles::new(root.clone());
+        let folders = vec!["/tmp".into(), "/var".into()];
+        open_editor_blocking("zed".into(), folders.clone(), "task-1", None, &files).unwrap();
+        assert!(!root.exists());
+
+        let opened =
+            open_editor_blocking("cursor".into(), folders.clone(), "task-1", None, &files).unwrap();
+        let path = opened.workspace_file.unwrap();
+        assert!(Path::new(&path).exists());
+        let reopened =
+            open_editor_blocking("cursor".into(), folders, "task-1", None, &files).unwrap();
+        assert_eq!(reopened.workspace_file.as_deref(), Some(path.as_str()));
+
+        files.remove("task-1", None).unwrap();
+        assert!(!Path::new(&path).exists());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
     fn retired_external_editors_are_no_longer_supported() {
         for editor in ["vscode", "opencode"] {
-            let opened = open_editor_blocking(editor.into(), vec!["/tmp".into()], None, None);
+            let opened = open_editor_blocking(
+                editor.into(),
+                vec!["/tmp".into()],
+                "t1",
+                None,
+                &TaskWorkspaceFiles::default(),
+            );
             assert_eq!(opened.err(), Some(format!("Unknown editor: {editor}")));
             assert_eq!(
                 check_app_installed(editor.into()),
@@ -224,7 +283,13 @@ mod tests {
 
     #[test]
     fn opencode_embedded_runs_inside_the_app_and_needs_its_cli() {
-        let opened = open_editor_blocking("opencode-web".into(), vec!["/tmp".into()], None, None);
+        let opened = open_editor_blocking(
+            "opencode-web".into(),
+            vec!["/tmp".into()],
+            "t1",
+            None,
+            &TaskWorkspaceFiles::default(),
+        );
         assert_eq!(
             opened.err().as_deref(),
             Some("OpenCode runs embedded; use opencode_open")
@@ -237,9 +302,14 @@ mod tests {
 
     #[test]
     fn zed_opens_every_folder_through_its_cli() {
-        let opened =
-            open_editor_blocking("zed".into(), vec!["/tmp".into(), "/var".into()], None, None)
-                .unwrap();
+        let opened = open_editor_blocking(
+            "zed".into(),
+            vec!["/tmp".into(), "/var".into()],
+            "t1",
+            None,
+            &TaskWorkspaceFiles::default(),
+        )
+        .unwrap();
         assert_eq!(opened.message, "Zed opened 2 folder(s)");
     }
 

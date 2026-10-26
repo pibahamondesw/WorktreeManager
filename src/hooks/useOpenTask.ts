@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  AgentId,
-  AgentViews,
-  DEFAULT_AGENT_VIEWS,
-  EditorApp,
-  Task,
-  TaskSurface,
-  Workspace,
-} from "../types";
+import { AgentId, AgentViews, DEFAULT_AGENT_VIEWS, EditorApp, Task, TaskSurface } from "../types";
 import { openEditorForWorktree } from "../services/openEditor";
 import { agentSurface, taskSurfaceFor, isEmbedded } from "../embedded/taskSurface";
 import { transitionTaskView } from "../services/taskTransition";
@@ -83,7 +75,6 @@ type SurfaceLifecycle = Pick<SessionRegistry, "listLive" | "stop">;
 interface UseOpenTaskArgs {
   editorApp: EditorApp;
   agentViews?: AgentViews;
-  workspaces: Workspace[];
   tasks: Task[];
   recordTaskVisit: (task: Task) => void;
   showTask: (task: Task) => void;
@@ -97,7 +88,6 @@ interface UseOpenTaskArgs {
 export function useOpenTask({
   editorApp,
   agentViews = DEFAULT_AGENT_VIEWS,
-  workspaces,
   tasks,
   recordTaskVisit,
   showTask,
@@ -197,26 +187,16 @@ export function useOpenTask({
       }
       showTask(task);
       recordTaskVisit(task);
-      const workspace = workspaces.find((w) => w.id === task.workspaceId);
       const result = await openEditorForWorktree(
         editorApp,
         task.members.map((m) => m.path),
-        task.branchName,
-        workspace?.name,
+        task.id,
+        task.workspaceFilePath,
         { onMessage: options.onMessage, onError: options.onError }
       );
       return result !== null;
     },
-    [
-      editorApp,
-      agentViews,
-      workspaces,
-      recordTaskVisit,
-      showTask,
-      supersede,
-      settleSurface,
-      showSurface,
-    ]
+    [editorApp, agentViews, recordTaskVisit, showTask, supersede, settleSurface, showSurface]
   );
 
   /** Open the surface an agent notification came from; it asks only if another one replaced it. */
