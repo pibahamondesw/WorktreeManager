@@ -41,6 +41,14 @@ it("styles every line of a fenced code block and leaves prose alone", () => {
   expect(screen.getByText("Thanks")).not.toHaveClass("cm-code-line");
 });
 
+it("separates fenced code blocks from the surrounding prose", () => {
+  renderEditor({ value: "Look:\n```\none\n```\n```\ntwo\n```\nThanks" });
+
+  expect(screen.getByText("Look:")).toHaveClass("cm-before-code");
+  expect(screen.getByText("Thanks")).toHaveClass("cm-after-code");
+  expect(document.querySelectorAll(".cm-after-code")).toHaveLength(1);
+});
+
 it("reports typed changes but not values set by the composer", () => {
   const { props, editor, rerender } = renderEditor({ value: "draft" });
   expect(props.onChange).not.toHaveBeenCalled();
