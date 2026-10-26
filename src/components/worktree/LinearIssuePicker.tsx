@@ -48,7 +48,7 @@ export function LinearIssuePicker({
       return;
     }
     linear
-      .fetchAssignedIssues()
+      .fetchSuggestedIssues()
       .then((issues) => {
         if (active) setCachedIssues(issues);
       })
@@ -71,7 +71,7 @@ export function LinearIssuePicker({
     setSearching(true);
     setError(null);
     linear
-      .fetchAssignedIssues(debouncedQuery)
+      .fetchSuggestedIssues(debouncedQuery)
       .then((issues) => {
         if (active) setRemoteResults(issues);
       })
@@ -165,7 +165,7 @@ export function LinearIssuePicker({
             {!loading && issues.length === 0 && !searching && (
               <div className="flex items-center justify-center py-12">
                 <p className="text-sm text-text-muted">
-                  {query ? "No issues found" : "No assigned issues in progress"}
+                  {query ? "No issues found" : "No issues available"}
                 </p>
               </div>
             )}

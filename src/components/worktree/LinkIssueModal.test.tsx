@@ -7,9 +7,9 @@ import { LinearIssue, Task } from "../../types";
 
 vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
 Element.prototype.scrollIntoView = vi.fn();
-const { fetchAssignedIssues } = vi.hoisted(() => ({ fetchAssignedIssues: vi.fn() }));
+const { fetchSuggestedIssues } = vi.hoisted(() => ({ fetchSuggestedIssues: vi.fn() }));
 vi.mock("../../contexts/useLinear", () => {
-  const service = { fetchAssignedIssues };
+  const service = { fetchSuggestedIssues };
   return { useLinear: () => service };
 });
 const issue: LinearIssue = {
@@ -20,7 +20,7 @@ const issue: LinearIssue = {
   priority: 2,
   updatedAt: "2026-09-21",
 };
-fetchAssignedIssues.mockResolvedValue([issue]);
+fetchSuggestedIssues.mockResolvedValue([issue]);
 const task = { id: "t1", branchName: "feature" } as Task;
 afterEach(cleanup);
 

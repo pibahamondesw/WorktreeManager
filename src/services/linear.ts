@@ -58,9 +58,19 @@ interface SearchIssuesResponse {
   };
 }
 
-interface AssignedIssuesResponse {
+interface IssueSuggestionsResponse {
+  issues: {
+    nodes: GqlIssueNode[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+}
+
+interface ViewerTeamsResponse {
   viewer: {
-    assignedIssues: { nodes: GqlIssueNode[] };
+    teams: {
+      nodes: { id: string }[];
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    };
   };
 }
 
@@ -85,25 +95,31 @@ interface IssuesBatchResponse {
 
 // ---- GraphQL queries ----
 
-const ASSIGNED_ISSUES_QUERY = `
-  query AssignedIssues($filter: IssueFilter, $first: Int) {
+const ISSUE_SUGGESTIONS_QUERY = `
+  query IssueSuggestions($filter: IssueFilter, $first: Int, $after: String) {
+    issues(filter: $filter, first: $first, after: $after, orderBy: updatedAt) {
+      nodes {
+        id
+        identifier
+        title
+        branchName
+        description
+        priority
+        updatedAt
+        state { name type }
+        project { id name }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+const VIEWER_TEAMS_QUERY = `
+  query ViewerTeams($after: String) {
     viewer {
-      assignedIssues(
-        filter: $filter
-        first: $first
-        orderBy: updatedAt
-      ) {
-        nodes {
-          id
-          identifier
-          title
-          branchName
-          description
-          priority
-          updatedAt
-          state { name type }
-          project { id name }
-        }
+      teams(first: 50, after: $after) {
+        nodes { id }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
@@ -223,7 +239,7 @@ export class LinearService {
     return fetchOrgUrlKey(this.client);
   }
 
-  async fetchAssignedIssues(query?: string): Promise<LinearIssue[]> {
+  async fetchSuggestedIssues(query?: string): Promise<LinearIssue[]> {
     if (query && query.trim().length > 0) {
       const [viewerRes, searchRes] = await Promise.all([
         this.gql.rawRequest<ViewerIdResponse, Record<string, unknown>>(VIEWER_ID_QUERY, {}),
@@ -243,17 +259,65 @@ export class LinearService {
       return [...mine, ...others];
     }
 
-    const res = await this.gql.rawRequest<AssignedIssuesResponse, Record<string, unknown>>(
-      ASSIGNED_ISSUES_QUERY,
-      {
-        filter: {
-          state: { type: { nin: ["completed", "canceled"] } },
-        },
-        first: 50,
-      }
+    const me = { isMe: { eq: true } };
+    const groups = await Promise.all(
+      [
+        { assignee: me },
+        { creator: me },
+        { project: { lead: me } },
+        { project: { members: { some: me } } },
+        { project: { creator: me } },
+      ].map((filter) => this.fetchSuggestedIssueGroup(filter))
     );
-    const nodes = res.data!.viewer.assignedIssues.nodes;
-    return nodes.map(mapIssueNode);
+    const seen = new Set<string>();
+    const issues = groups.flat().filter((issue) => {
+      if (seen.has(issue.id)) return false;
+      seen.add(issue.id);
+      return true;
+    });
+    if (issues.length > 0) return issues;
+
+    // Only fall back to teams the viewer belongs to, rather than all visible teams.
+    const teamIds: string[] = [];
+    let after: string | null = null;
+    do {
+      const res = await this.gql.rawRequest<ViewerTeamsResponse, Record<string, unknown>>(
+        VIEWER_TEAMS_QUERY,
+        { after }
+      );
+      const teams: ViewerTeamsResponse["viewer"]["teams"] = res.data!.viewer.teams;
+      teamIds.push(...teams.nodes.map((team) => team.id));
+      after = teams.pageInfo.hasNextPage ? teams.pageInfo.endCursor : null;
+    } while (after);
+    return teamIds.length > 0
+      ? this.fetchSuggestedIssueGroup({ team: { id: { in: teamIds } } })
+      : [];
+  }
+
+  private async fetchSuggestedIssueGroup(filter: Record<string, unknown>): Promise<LinearIssue[]> {
+    const issues: LinearIssue[] = [];
+    let after: string | null = null;
+    do {
+      const res = await this.gql.rawRequest<IssueSuggestionsResponse, Record<string, unknown>>(
+        ISSUE_SUGGESTIONS_QUERY,
+        {
+          filter: {
+            ...filter,
+            state: { type: { nin: ["completed", "canceled"] } },
+          },
+          first: 50,
+          after,
+        }
+      );
+      const page: IssueSuggestionsResponse["issues"] = res.data!.issues;
+      issues.push(...page.nodes.map(mapIssueNode));
+      after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    } while (after);
+
+    // Linear's 0 means no priority, so it belongs after Low (4).
+    return issues.sort(
+      (a, b) => (a.priority || 5) - (b.priority || 5) || b.updatedAt.localeCompare(a.updatedAt)
+    );
   }
 
   async getIssue(id: string): Promise<{
