@@ -1,5 +1,6 @@
 import { OpenTaskOptions } from "../hooks/useOpenTask";
 import { openPrForMember } from "../services/pullRequest";
+import { runTaskAction } from "../services/taskActions";
 import { CommandAction, WorkspaceAction } from "./commands";
 import { PaletteItem } from "./searchPalette";
 import { EditorApp, PullRequestInfo, Task, Workspace } from "../types";
@@ -56,10 +57,15 @@ export async function runPaletteCommand(
       deps.onThemeChange(action.themeId);
       deps.onClose();
       return;
-    case "copy-linear":
-      await navigator.clipboard.writeText(action.text);
-      deps.showToast("Linear ID copied");
+    case "copy-linear": {
+      const task = deps.tasks.find((t) => t.id === action.taskId);
+      if (!task) {
+        deps.showToast("Could not copy the Linear ID");
+        return;
+      }
+      await runTaskAction("copy-linear-id", { task }, deps.showToast);
       return;
+    }
     case "ready-pr": {
       try {
         if (!deps.onPrReady) throw new Error("Could not mark the pull request ready");

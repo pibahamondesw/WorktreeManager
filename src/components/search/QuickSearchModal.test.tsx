@@ -3,6 +3,7 @@ import { taskLinearStore } from "../../services/taskLinear";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { QuickSearchModal } from "./QuickSearchModal";
 import { Task, Workspace } from "../../types";
 import { setShortcutOverrides } from "../../shortcuts/runtime";
@@ -284,6 +285,24 @@ describe("QuickSearchModal commands", () => {
       otherTask,
       expect.objectContaining({ agent: "claude" })
     );
+  });
+
+  it("opens the selected task's Linear issue from the shortcut and closes", async () => {
+    vi.mocked(openUrl).mockReset().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    renderModal({ onClose });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "l", metaKey: true });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openUrl).toHaveBeenCalledWith("https://linear.app/issue/WOR-12");
+  });
+
+  it("stays open with the error when the Linear issue cannot be opened", async () => {
+    vi.mocked(openUrl).mockReset().mockRejectedValue(new Error("no browser"));
+    const onClose = vi.fn();
+    renderModal({ onClose });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "l", metaKey: true });
+    expect(await screen.findByText("Could not open Linear")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("copies the Linear identifier without closing", async () => {

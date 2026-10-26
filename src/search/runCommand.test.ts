@@ -77,8 +77,8 @@ describe("runPaletteCommand", () => {
   it("copies without closing", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
-    const d = deps();
-    await runPaletteCommand({ type: "copy-linear", text: "WOR-67" }, d);
+    const d = deps({ tasks: [{ ...task, linearIssueIdentifier: "WOR-67" }] });
+    await runPaletteCommand({ type: "copy-linear", taskId: "t-1" }, d);
     expect(writeText).toHaveBeenCalledWith("WOR-67");
     expect(d.showToast).toHaveBeenCalledWith("Linear ID copied");
     expect(d.onClose).not.toHaveBeenCalled();

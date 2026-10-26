@@ -9,7 +9,6 @@ import { useSearchPrNumbers } from "../../hooks/useSearchPrNumbers";
 import { ProjectFilter } from "../ui/ProjectFilter";
 import { matchesProject } from "../../search/projects";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { SearchIcon } from "../ui/Icons";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { WorktreeListToast } from "../worktree/WorktreeListToast";
@@ -29,7 +28,7 @@ import { PaletteItem, searchPalette } from "../../search/searchPalette";
 import { activatePaletteItem, PaletteActionDeps } from "../../search/runCommand";
 import { EditorApp, PullRequestInfo, Task, Workspace } from "../../types";
 import { NavigationEntry, lastTaskVisits } from "../../navigation/history";
-import { linearIssueUrl } from "../../utils";
+import { runTaskAction } from "../../services/taskActions";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 import { PaletteResults } from "./PaletteResults";
 import { TerminalStatus } from "../../services/terminal";
@@ -283,15 +282,11 @@ export function QuickSearchModal({
       },
       "palette.linear": {
         handler: () => {
-          if (active?.kind !== "task" || !active.result.task.linearIssueIdentifier) return;
-          void openUrl(
-            linearIssueUrl(
-              active.result.task.linearIssueIdentifier,
-              active.result.workspace?.linearOrgUrlKey
-            )
-          )
-            .then(onClose)
-            .catch(() => showToast("Could not open Linear"));
+          if (active?.kind !== "task") return;
+          const { task, workspace } = active.result;
+          void runTaskAction("open-linear", { task, workspace }, showToast).then(
+            (opened) => opened && onClose()
+          );
         },
         enabled: active?.kind === "task" && !!active.result.task.linearIssueIdentifier,
       },

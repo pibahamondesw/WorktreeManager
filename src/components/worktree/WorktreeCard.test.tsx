@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
   createEvent,
@@ -13,6 +13,7 @@ import "@testing-library/jest-dom/vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { OperationError } from "../../services/operations";
+import { ensureTaskNote, taskNoteUri } from "../../services/notes";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -164,19 +165,19 @@ it("toggles the pin without opening the task and exposes its saved state", () =>
 
 it("reports link failures without leaving a rejected promise", async () => {
   vi.mocked(openUrl).mockRejectedValueOnce(new Error("Browser unavailable"));
-  const onOpenError = vi.fn();
+  const onToast = vi.fn();
   render(
     <WorktreeCard
       task={{ ...task, linearIssueIdentifier: "WOR-129" }}
       workspace={workspace}
       vault={vault}
       onDelete={vi.fn()}
-      onOpenError={onOpenError}
+      onToast={onToast}
       repoSlugs={{}}
     />
   );
   fireEvent.click(screen.getByText("WOR-129"));
-  await waitFor(() => expect(onOpenError).toHaveBeenCalledWith("Could not open Linear"));
+  await waitFor(() => expect(onToast).toHaveBeenCalledWith("Could not open Linear"));
 });
 
 it("reports clipboard failures without showing a success toast", async () => {
@@ -184,7 +185,6 @@ it("reports clipboard failures without showing a success toast", async () => {
   const previous = Object.getOwnPropertyDescriptor(navigator, "clipboard");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
   try {
-    const onOpenError = vi.fn();
     const onToast = vi.fn();
     render(
       <WorktreeCard
@@ -192,14 +192,13 @@ it("reports clipboard failures without showing a success toast", async () => {
         workspace={workspace}
         vault={vault}
         onDelete={vi.fn()}
-        onOpenError={onOpenError}
         onToast={onToast}
         repoSlugs={{}}
       />
     );
     fireEvent.click(screen.getByTitle("Copy folder path(s)"));
-    await waitFor(() => expect(onOpenError).toHaveBeenCalledWith("Could not copy to clipboard"));
-    expect(onToast).not.toHaveBeenCalled();
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith("Could not copy to clipboard"));
+    expect(onToast).not.toHaveBeenCalledWith("Worktree path copied");
   } finally {
     if (previous) Object.defineProperty(navigator, "clipboard", previous);
     else Reflect.deleteProperty(navigator, "clipboard");
@@ -392,3 +391,113 @@ it.each([false, true])(
     expect(onOpen).not.toHaveBeenCalled();
   }
 );
+
+it("copies paths from the keyboard with the card's message and never from text inputs", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  const previous = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  const input = document.body.appendChild(document.createElement("input"));
+  try {
+    const showToast = vi.fn();
+    renderHook(() =>
+      useWorktreeListKeyboardShortcuts({
+        workspace,
+        vault,
+        tasks: [task],
+        selectedTask: task,
+        showNew: false,
+        searchOpen: false,
+        taskOpen: false,
+        setShowNew: vi.fn(),
+        setSelectedIndex: vi.fn(),
+        jumpToIndex: vi.fn(),
+        setDeleteRequested: vi.fn(),
+        handleRefresh: vi.fn(),
+        showToast,
+        onOpenTask: vi.fn(),
+      })
+    );
+    const copyPaths = { key: "C", code: "KeyC", metaKey: true, shiftKey: true, bubbles: true };
+
+    fireEvent.keyDown(input, copyPaths);
+    await Promise.resolve();
+    expect(writeText).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.body, copyPaths);
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("Worktree path copied"));
+    expect(writeText).toHaveBeenCalledWith("/wt");
+  } finally {
+    input.remove();
+    if (previous) Object.defineProperty(navigator, "clipboard", previous);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  }
+});
+
+describe("WorktreeCard quick actions", () => {
+  const linkedTask = { ...task, linearIssueIdentifier: "WOR-190" };
+  const writeText = vi.fn();
+  let previousClipboard: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    writeText.mockReset().mockResolvedValue(undefined);
+    vi.mocked(openUrl).mockReset().mockResolvedValue(undefined);
+    vi.mocked(ensureTaskNote).mockReset().mockResolvedValue("/vault/WOR-190.md");
+    vi.mocked(taskNoteUri).mockImplementation((notePath) => `obsidian://open?path=${notePath}`);
+  });
+
+  afterEach(() => {
+    if (previousClipboard) Object.defineProperty(navigator, "clipboard", previousClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  });
+
+  function renderCard() {
+    const onOpen = vi.fn();
+    const onToast = vi.fn();
+    render(
+      <WorktreeCard
+        task={linkedTask}
+        workspace={{ ...workspace, linearOrgUrlKey: "acme" }}
+        vault={{ ...vault, enabled: true }}
+        onDelete={vi.fn()}
+        repoSlugs={{}}
+        onOpen={onOpen}
+        onToast={onToast}
+      />
+    );
+    return { onOpen, onToast };
+  }
+
+  it.each([
+    { item: "Copy branch name", clipboard: "feat/x", toast: "Branch name copied" },
+    { item: "Copy worktree path", clipboard: "/wt", toast: "Worktree path copied" },
+    { item: "Open notes", url: "obsidian://open?path=/vault/WOR-190.md" },
+  ])("runs $item from the menu and closes it", async ({ item, clipboard, url, toast }) => {
+    const { onOpen, onToast } = renderCard();
+    fireEvent.click(screen.getByTitle("More actions"));
+    fireEvent.click(screen.getByText(item));
+
+    expect(screen.queryByText(item)).not.toBeInTheDocument();
+    if (clipboard) await waitFor(() => expect(writeText).toHaveBeenCalledWith(clipboard));
+    if (url) await waitFor(() => expect(openUrl).toHaveBeenCalledWith(url));
+    if (toast) expect(onToast).toHaveBeenCalledWith(toast);
+    else expect(onToast).not.toHaveBeenCalled();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { control: "Open on Linear", url: "https://linear.app/acme/issue/WOR-190" },
+    { control: "Copy Linear ID", clipboard: "WOR-190", toast: "Linear ID copied" },
+    { control: "Copy folder path(s)", clipboard: "/wt", toast: "Worktree path copied" },
+    { control: "Copy branch name", clipboard: "feat/x", toast: "Branch name copied" },
+  ])("runs $control without opening the task", async ({ control, clipboard, url, toast }) => {
+    const { onOpen, onToast } = renderCard();
+    fireEvent.click(screen.getByTitle(control));
+
+    if (clipboard) await waitFor(() => expect(writeText).toHaveBeenCalledWith(clipboard));
+    if (url) await waitFor(() => expect(openUrl).toHaveBeenCalledWith(url));
+    if (toast) expect(onToast).toHaveBeenCalledWith(toast);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+});

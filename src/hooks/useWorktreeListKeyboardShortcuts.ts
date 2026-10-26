@@ -1,10 +1,8 @@
 import type { Dispatch, SetStateAction } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useShortcutActions } from "../shortcuts/runtime";
 import { Task, VaultConfig, Workspace } from "../types";
 import { OpenTaskOptions } from "./useOpenTask";
-import { ensureTaskNote, taskNoteUri } from "../services/notes";
-import { linearIssueUrl } from "../utils";
+import { runTaskAction, TaskActionId } from "../services/taskActions";
 
 interface Params {
   workspace: Workspace | undefined;
@@ -39,6 +37,11 @@ export function useWorktreeListKeyboardShortcuts({
   onOpenTask,
   taskOpen,
 }: Params): void {
+  const runSelectedTaskAction = (action: TaskActionId) => {
+    if (selectedTask)
+      void runTaskAction(action, { task: selectedTask, workspace, vault }, showToast);
+  };
+
   useShortcutActions(
     {
       "list.new": { handler: () => setShowNew(true), enabled: !!workspace },
@@ -69,26 +72,11 @@ export function useWorktreeListKeyboardShortcuts({
       },
       "list.clear": { handler: () => setSelectedIndex(-1) },
       "list.linear": {
-        handler: () => {
-          if (selectedTask?.linearIssueIdentifier) {
-            openUrl(
-              linearIssueUrl(selectedTask.linearIssueIdentifier, workspace?.linearOrgUrlKey)
-            ).catch(() => showToast("Could not open Linear"));
-          }
-        },
+        handler: () => runSelectedTaskAction("open-linear"),
         enabled: !!selectedTask?.linearIssueIdentifier,
       },
       "list.note": {
-        handler: () => {
-          if (!selectedTask || !workspace) return;
-          void ensureTaskNote(vault, workspace, selectedTask).then((notePath) => {
-            if (notePath) {
-              openUrl(taskNoteUri(notePath)).catch(() =>
-                showToast("Could not open the note in Obsidian")
-              );
-            } else showToast("Could not open the task note");
-          });
-        },
+        handler: () => runSelectedTaskAction("open-note"),
         enabled: !!selectedTask && !!workspace && vault.enabled,
       },
       "list.delete": {
@@ -96,25 +84,11 @@ export function useWorktreeListKeyboardShortcuts({
         enabled: !!selectedTask && !!workspace,
       },
       "list.branch": {
-        handler: () => {
-          if (selectedTask) {
-            navigator.clipboard
-              .writeText(selectedTask.branchName)
-              .then(() => showToast("Branch name copied"))
-              .catch(() => showToast("Could not copy to clipboard"));
-          }
-        },
+        handler: () => runSelectedTaskAction("copy-branch"),
         enabled: !!selectedTask,
       },
       "list.path": {
-        handler: () => {
-          if (selectedTask) {
-            navigator.clipboard
-              .writeText(selectedTask.members.map((m) => m.path).join("\n"))
-              .then(() => showToast("Path copied"))
-              .catch(() => showToast("Could not copy to clipboard"));
-          }
-        },
+        handler: () => runSelectedTaskAction("copy-path"),
         enabled: !!selectedTask,
       },
       ...Object.fromEntries(
