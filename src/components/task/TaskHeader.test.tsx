@@ -110,4 +110,39 @@ it("shows the full title and branch name on hover", () => {
   renderHeader(undefined, null, { ...task, linearIssueTitle: "A long title" });
   expect(screen.getByTitle("A long title")).toHaveClass("truncate");
   expect(screen.getByTitle("feat/x")).toHaveClass("truncate");
+  expect(screen.getByTitle("feat/x").parentElement).toHaveClass(
+    "grid-cols-[auto_minmax(4rem,max-content)]",
+    "shrink-[999]"
+  );
+});
+
+it("shows PR numbers without status badges", () => {
+  renderHeader(linearInfo);
+  expect(screen.getByTitle("#425: Second")).toHaveTextContent(/^#425$/);
+  expect(screen.queryByText("merged")).not.toBeInTheDocument();
+});
+
+it("shows the session status as a dot and the Linear status nowhere", () => {
+  renderHeader({
+    ...linearInfo,
+    status: { name: "In Review", type: "started" },
+  } as IssueLinearInfo);
+  expect(screen.getByRole("img", { name: "running" })).toHaveTextContent("");
+  expect(screen.queryByText("running")).not.toBeInTheDocument();
+  expect(screen.queryByText("In Review")).not.toBeInTheDocument();
+});
+
+it("disables the close button while the editor is closing", () => {
+  render(
+    <TaskHeader
+      task={task}
+      sessionStatus={{ kind: "running" }}
+      sidebarCollapsed={false}
+      onExpandSidebar={vi.fn()}
+      onBack={vi.fn()}
+      onCloseEditor={vi.fn()}
+      closingEditor
+    />
+  );
+  expect(screen.getByRole("button", { name: "Closing editor" })).toBeDisabled();
 });

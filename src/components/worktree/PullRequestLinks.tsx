@@ -14,17 +14,27 @@ interface PullRequestLinksProps {
   prs: PullRequestInfo[];
   onOpenError?: (msg: string) => void;
   onReady?: (pr: PullRequestInfo) => Promise<void>;
+  numbersOnly?: boolean;
 }
 
-export function PullRequestLinks({ prs, onOpenError, onReady }: PullRequestLinksProps) {
+export function PullRequestLinks({
+  prs,
+  onOpenError,
+  onReady,
+  numbersOnly,
+}: PullRequestLinksProps) {
   const statuses = useGithubPrStatuses();
   return prs.map((pr, index) => {
     const entry = statuses[prKey(pr)];
     const status = entry?.status;
     const state = status?.state ?? pr.state;
     const draft = status ? status.isDraft : pr.state === "draft";
+    const showBadges = !numbersOnly;
     return (
-      <span key={pr.url} className="inline-flex items-center gap-1 flex-wrap">
+      <span
+        key={pr.url}
+        className={`inline-flex items-center gap-1 ${numbersOnly ? "flex-shrink-0 whitespace-nowrap" : "flex-wrap"}`}
+      >
         <button
           type="button"
           onClick={(event) => {
@@ -37,10 +47,12 @@ export function PullRequestLinks({ prs, onOpenError, onReady }: PullRequestLinks
           } hover:text-accent-hover`}
         >
           #{pr.number}
-          {state !== "open" && <Badge variant={prBadgeVariants[state] ?? "default"}>{state}</Badge>}
+          {showBadges && state !== "open" && (
+            <Badge variant={prBadgeVariants[state] ?? "default"}>{state}</Badge>
+          )}
         </button>
-        {draft && state !== "draft" && <Badge>draft</Badge>}
-        {status && state === "open" && (
+        {showBadges && draft && state !== "draft" && <Badge>draft</Badge>}
+        {showBadges && status && state === "open" && (
           <>
             {status.ci !== "none" && (
               <Badge
@@ -86,7 +98,7 @@ export function PullRequestLinks({ prs, onOpenError, onReady }: PullRequestLinks
             )}
           </>
         )}
-        {index < prs.length - 1 && <span className="text-text-muted">,</span>}
+        {index < prs.length - 1 && <span className="-ml-1 text-text-muted">,</span>}
       </span>
     );
   });

@@ -90,7 +90,7 @@ describe("TaskView", () => {
       onSwitchSurface: vi.fn(),
     };
     const view = render(<TaskView {...props} surface={{ kind: "terminal", agent: "claude" }} />);
-    expect(await screen.findByText("running")).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "running" })).toBeInTheDocument();
     view.rerender(<TaskView {...props} surface={{ kind: "terminal", agent: "codex" }} />);
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith(
@@ -142,7 +142,7 @@ describe("TaskView", () => {
     expect(detaches()).toEqual([]);
     const opened = { created: false, status: { kind: "running" }, replay: "" };
     opens[1](opened);
-    expect(await screen.findByText("running")).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "running" })).toBeInTheDocument();
     opens[0](opened);
     await waitFor(() =>
       expect(detaches()).toEqual([
@@ -165,7 +165,7 @@ describe("TaskView", () => {
     });
     const onSwitchSurface = vi.fn();
     renderView(vi.fn(), onSwitchSurface);
-    expect(await screen.findByText("running")).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "running" })).toBeInTheDocument();
     const view = screen.getByRole("group", { name: "View" });
     fireEvent.click(within(view).getByRole("button", { name: "Chat" }));
     expect(mocks.invoke).toHaveBeenCalledWith("terminal_stop", { taskId: "t1", agent: "claude" });
@@ -186,7 +186,7 @@ describe("TaskView", () => {
     );
     const onSwitchSurface = vi.fn();
     renderView(vi.fn(), onSwitchSurface);
-    expect(await screen.findByText("running")).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "running" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("could not stop");
     expect(onSwitchSurface).not.toHaveBeenCalled();
@@ -345,7 +345,7 @@ describe("TaskView", () => {
     renderView();
     expect(screen.getByText("WOR-87")).toBeInTheDocument();
     expect(screen.getByText("Embedded agent")).toBeInTheDocument();
-    expect(await screen.findByText("running")).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "running" })).toBeInTheDocument();
     const [command, args] = mocks.invoke.mock.calls[0];
     expect(command).toBe("terminal_open");
     expect(args).toMatchObject({
