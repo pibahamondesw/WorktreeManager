@@ -119,25 +119,39 @@ const theme = EditorView.theme({
     borderBottomLeftRadius: "0.5rem",
     borderBottomRightRadius: "0.5rem",
   },
+  ".cm-before-code": { paddingBottom: "0.375rem" },
+  ".cm-after-code": { paddingTop: "0.375rem" },
 });
 
 function codeBlockLines(state: EditorState) {
   const builder = new RangeSetBuilder<Decoration>();
+  const addLineClass = (number: number, className: string) => {
+    const { from } = state.doc.line(number);
+    builder.add(from, from, Decoration.line({ class: className }));
+  };
+  let previousCodeEnd = 0;
+  const addAfterPreviousCode = (nextCodeStart: number) => {
+    const line = previousCodeEnd + 1;
+    if (previousCodeEnd > 0 && line < nextCodeStart) addLineClass(line, "cm-after-code");
+  };
   syntaxTree(state).iterate({
     enter: (node) => {
       if (node.name !== "FencedCode") return;
       const first = state.doc.lineAt(node.from).number;
       const last = state.doc.lineAt(node.to).number;
+      addAfterPreviousCode(first);
+      if (first - 1 > previousCodeEnd) addLineClass(first - 1, "cm-before-code");
       for (let number = first; number <= last; number++) {
         const classes = ["cm-code-line"];
         if (number === first) classes.push("cm-code-start");
         if (number === last) classes.push("cm-code-end");
-        const line = state.doc.line(number);
-        builder.add(line.from, line.from, Decoration.line({ class: classes.join(" ") }));
+        addLineClass(number, classes.join(" "));
       }
+      previousCodeEnd = last;
       return false;
     },
   });
+  addAfterPreviousCode(state.doc.lines + 1);
   return builder.finish();
 }
 
