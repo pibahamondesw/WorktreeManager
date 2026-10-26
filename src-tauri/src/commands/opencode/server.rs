@@ -27,6 +27,30 @@ impl Connection {
         loopback_client(timeout)
     }
 
+    pub fn activity(
+        &self,
+        directories: &std::collections::HashSet<PathBuf>,
+    ) -> Option<super::activity::Activity> {
+        let client = self.client(Some(Duration::from_secs(2)));
+        let mut activity = super::activity::Activity::default();
+        for directory in directories {
+            let read = |path| {
+                self.get(&client, path)
+                    .header("x-opencode-directory", directory.to_string_lossy().as_ref())
+                    .send()
+                    .and_then(|response| response.error_for_status())
+                    .and_then(|response| response.json::<Value>())
+                    .ok()
+            };
+            activity.include_snapshot(
+                &read("/session/status")?,
+                &read("/permission")?,
+                &read("/question")?,
+            )?;
+        }
+        Some(activity)
+    }
+
     fn healthy(&self) -> bool {
         self.get(&self.client(Some(Duration::from_secs(2))), "/global/health")
             .send()
@@ -196,6 +220,127 @@ fn latest_session(sessions: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_checks_require_known_status_and_no_pending_interaction() {
+        let idle_snapshot = |status: &Value, permissions: &Value, questions: &Value| {
+            let mut activity = super::super::activity::Activity::default();
+            activity
+                .include_snapshot(status, permissions, questions)
+                .is_some()
+                && activity.idle()
+        };
+        let empty = json!([]);
+        assert!(idle_snapshot(&json!({}), &empty, &empty));
+        assert!(idle_snapshot(
+            &json!({"a": {"type": "idle"}}),
+            &empty,
+            &empty
+        ));
+        for kind in ["busy", "retry", "unknown"] {
+            assert!(!idle_snapshot(
+                &json!({"a": {"type": "idle"}, "child": {"type": kind}}),
+                &empty,
+                &empty
+            ));
+        }
+        assert!(!idle_snapshot(&json!({}), &json!([{"id": "p"}]), &empty));
+        assert!(!idle_snapshot(&json!({}), &empty, &json!([{"id": "q"}])));
+        assert!(!idle_snapshot(&Value::Null, &empty, &empty));
+        assert!(!idle_snapshot(&json!({}), &Value::Null, &empty));
+        assert!(!idle_snapshot(&json!({}), &empty, &Value::Null));
+    }
+
+    #[test]
+    fn snapshots_query_every_task_directory_and_fail_closed_on_bad_responses() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        for (peer_status, peer_permissions, peer_questions, idle, valid) in [
+            (json!({}), json!([]), json!([]), true, true),
+            (
+                json!({"b": {"type": "busy"}}),
+                json!([]),
+                json!([]),
+                false,
+                true,
+            ),
+            (json!({}), json!([{"id": "p"}]), json!([]), false, true),
+            (json!({}), json!([]), json!([{"id": "q"}]), false, true),
+            (Value::Null, json!([]), json!([]), false, false),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = std::thread::spawn(move || {
+                let mut seen = std::collections::HashSet::new();
+                for stream in listener.incoming().take(if valid { 6 } else { 3 }) {
+                    let mut stream = stream.unwrap();
+                    let mut reader = BufReader::new(&stream);
+                    let mut request = String::new();
+                    reader.read_line(&mut request).unwrap();
+                    let headers: Vec<_> = reader
+                        .lines()
+                        .map_while(Result::ok)
+                        .take_while(|line| !line.is_empty())
+                        .collect();
+                    let peer = headers
+                        .iter()
+                        .any(|line| line == "x-opencode-directory: /peer");
+                    seen.insert(peer);
+                    let body = if request.starts_with("GET /session/status ") {
+                        if peer || !valid {
+                            peer_status.clone()
+                        } else {
+                            json!({})
+                        }
+                    } else if request.starts_with("GET /permission ") {
+                        if peer {
+                            peer_permissions.clone()
+                        } else {
+                            json!([])
+                        }
+                    } else {
+                        if peer {
+                            peer_questions.clone()
+                        } else {
+                            json!([])
+                        }
+                    }
+                    .to_string();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .unwrap();
+                }
+                seen
+            });
+            let connection = Connection {
+                origin: format!("http://127.0.0.1:{port}"),
+                password: "test".into(),
+                pid: 0,
+            };
+            let snapshot = connection.activity(
+                &[PathBuf::from("/primary"), PathBuf::from("/peer")]
+                    .into_iter()
+                    .collect(),
+            );
+            assert_eq!(snapshot.is_some(), valid);
+            assert_eq!(snapshot.is_some_and(|activity| activity.idle()), idle);
+            let seen = server.join().unwrap();
+            if valid {
+                assert_eq!(seen.len(), 2);
+            }
+        }
+        let connection = Connection {
+            origin: "http://127.0.0.1:0".into(),
+            password: "test".into(),
+            pid: 0,
+        };
+        assert!(connection
+            .activity(&[PathBuf::from("/primary")].into_iter().collect())
+            .is_none());
+    }
 
     #[test]
     fn readiness_accepts_only_a_valid_loopback_port() {

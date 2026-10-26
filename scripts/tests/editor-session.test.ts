@@ -66,6 +66,40 @@ describe("shared editor process ownership", () => {
     expect(result.stdout.trim()).toBe("owned");
   });
 
+  it("tracks terminal groups separately and releases the idle blocker after exit", async () => {
+    const data = await fixture();
+    const script = `
+      const cp = require('node:child_process');
+      const fs = require('node:fs');
+      const assert = require('node:assert/strict');
+      const { once } = require('node:events');
+      const fixture = ${JSON.stringify(data)};
+      (async () => {
+        const env = { ...process.env, WTM_TASK_ID: 'task-a', WTM_EDITOR_SESSION: fixture.generation };
+        const child = globalThis.__wtmSpawnPty(
+          (file, args, options) => cp.spawn(file, args, { ...options, detached: true }),
+          process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { env }
+        );
+        try {
+          assert.equal(fs.readFileSync(fixture.directory + '/terminals', 'utf8'), child.pid + '\\n');
+          assert.equal(fs.readFileSync(fixture.directory + '/groups', 'utf8'), child.pid + '\\n');
+        } finally {
+          const exited = once(child, 'exit');
+          process.kill(-child.pid, 'SIGKILL');
+          await exited;
+        }
+        assert.equal(fs.readFileSync(fixture.directory + '/terminals', 'utf8'), '');
+        assert.equal(fs.readFileSync(fixture.directory + '/groups', 'utf8'), '');
+        console.log('released');
+      })().catch(error => { console.error(error); process.exitCode = 1; });
+    `;
+    const result = await execute(process.execPath, ["--require", preload, "-e", script], {
+      env: { ...process.env, WTM_EDITOR_CONTROL: data.root },
+      timeout: 5000,
+    });
+    expect(result.stdout.trim()).toBe("released");
+  });
+
   it("rejects closed, mismatched and missing sessions before spawning", async () => {
     const data = await fixture();
     const script = `

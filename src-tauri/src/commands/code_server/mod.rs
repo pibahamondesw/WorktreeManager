@@ -131,6 +131,15 @@ impl Adapter for CodeServer {
         )
     }
 
+    fn opened(&self, _app: &AppHandle, slot: &Arc<Slot<Self>>, _connection: TaskConnection) {
+        slot.idle_allowed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn suspend_guard(&self, _app: &AppHandle, slot: &Slot<Self>) -> Option<Box<dyn Send>> {
+        slot.lease.session.idle_guard()
+    }
+
     fn shutdown(&self) {
         self.installer.cancel();
         for (_, server) in self.servers.lock().unwrap().drain() {
@@ -208,7 +217,7 @@ pub async fn vscode_open(
         workspace_id,
         folders: profile::canonical_folders(folders)?,
     };
-    let slot = editor.reserve(&task_id, request)?;
+    let slot = editor.reserve_for_open(&task_id, request).await?;
     drop(installation);
     let info = editor.start(&app, slot).await?;
     surfaces.present_current(&app, true)?;
@@ -398,7 +407,23 @@ pub(crate) mod native {
         present(app, 15, "missing");
         assert!(app.get_webview(&label).is_some());
 
-        unsafe { libc::kill(opened.pid.unwrap() as i32, libc::SIGKILL) };
+        present(app, 30, "missing");
+        block_on(
+            app.state::<EditorRegistry>()
+                .editor
+                .suspend_idle(app, Instant::now() + Duration::from_secs(3600)),
+        );
+        assert_eq!(vscode_list(app.state())[0].status, "suspended");
+        assert!(app.get_webview(&label).is_none());
+        let resumed = open().unwrap();
+        assert_ne!(resumed.generation, opened.generation);
+        let label = app
+            .state::<EditorRegistry>()
+            .editor
+            .running_label("task")
+            .unwrap();
+        present(app, 40, "task");
+        unsafe { libc::kill(resumed.pid.unwrap() as i32, libc::SIGKILL) };
         let list = || vscode_list(app.state());
         wait_until(|| list()[0].status == "exited");
         assert!(open().unwrap_err().contains("is closing"));

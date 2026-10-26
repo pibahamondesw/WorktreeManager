@@ -23,12 +23,13 @@ function forgetExitedGroup(directory, pid) {
   }
   try {
     if (!fs.existsSync(path.join(directory, "active.json"))) return;
-    const groups = path.join(directory, "groups");
-    const remaining = fs
-      .readFileSync(groups, "utf8")
-      .split("\n")
-      .filter((line) => line !== String(pid));
-    fs.writeFileSync(groups, remaining.join("\n"));
+    for (const name of ["groups", "terminals"]) {
+      const file = path.join(directory, name);
+      if (!fs.existsSync(file)) continue;
+      const remaining = fs.readFileSync(file, "utf8").split("\n")
+        .filter((line) => line !== String(pid));
+      fs.writeFileSync(file, remaining.join("\n"));
+    }
   } catch {
     retry();
   } finally {
@@ -38,7 +39,7 @@ function forgetExitedGroup(directory, pid) {
   }
 }
 
-function track(env, spawn) {
+function track(env, spawn, terminal = false) {
   const generation = env?.WTM_EDITOR_SESSION;
   if (!controlRoot) return spawn();
   if (!/^[a-f0-9]{48}$/.test(generation ?? "")) {
@@ -64,6 +65,7 @@ function track(env, spawn) {
       throw new Error("Editor process did not start");
     try {
       fs.appendFileSync(path.join(directory, "groups"), `${child.pid}\n`);
+      if (terminal) fs.appendFileSync(path.join(directory, "terminals"), `${child.pid}\n`);
     } catch (error) {
       try {
         process.kill(-child.pid, "SIGKILL");
@@ -93,4 +95,4 @@ if (controlRoot) {
 }
 
 globalThis.__wtmSpawnPty = (spawn, file, args, options) =>
-  track(options?.env, () => spawn(file, args, options));
+  track(options?.env, () => spawn(file, args, options), true);

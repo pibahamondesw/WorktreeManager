@@ -2,13 +2,18 @@
 //! main window, one per task. Each surface is an [`Adapter`] behind a [`Surfaces`] registry that
 //! owns the session lifecycle; switching tasks only hides views, closing a task ends its session.
 
+mod idle;
 mod process;
 mod registry;
 #[cfg(test)]
 mod registry_tests;
 mod view;
 
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
+use std::time::Instant;
 
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
@@ -82,6 +87,7 @@ impl Presentation {
 
 #[derive(Default)]
 pub struct EditorRegistry {
+    watching_idle: AtomicBool,
     presentation: Mutex<Presentation>,
     pub(crate) editor: Surfaces<CodeServer>,
     pub(crate) opencode: Surfaces<OpenCode>,
@@ -110,12 +116,30 @@ impl EditorRegistry {
 
     /// Re-applies the current presentation, e.g. once a surface finished opening.
     pub fn present_current(&self, app: &AppHandle, focus: bool) -> Result<(), String> {
+        if !self.watching_idle.swap(true, Ordering::SeqCst) {
+            tauri::async_runtime::spawn(watch_idle(app.clone()));
+        }
         self.present(app, &self.presentation.lock().unwrap(), focus)
     }
 
     /// Every surface shares one presentation: only the selected task's selected surface is shown,
     /// over the task pane, and nothing is shown while a modal covers it.
     fn present(&self, app: &AppHandle, state: &Presentation, focus: bool) -> Result<(), String> {
+        let now = Instant::now();
+        self.editor.select(
+            state
+                .task_id
+                .as_deref()
+                .filter(|_| state.surface == Some(SurfaceKind::Editor)),
+            now,
+        );
+        self.opencode.select(
+            state
+                .task_id
+                .as_deref()
+                .filter(|_| state.surface == Some(SurfaceKind::Opencode)),
+            now,
+        );
         let label = state
             .task_id
             .as_deref()
@@ -135,6 +159,22 @@ impl EditorRegistry {
         }
         Ok(())
     }
+}
+
+async fn watch_idle(app: AppHandle) {
+    while sweep_idle(&app).await {
+        tokio::time::sleep(idle::CHECK_INTERVAL).await;
+    }
+}
+
+async fn sweep_idle(app: &AppHandle) -> bool {
+    let registry = app.state::<EditorRegistry>();
+    if registry.editor.shutting_down() || registry.opencode.shutting_down() {
+        return false;
+    }
+    registry.editor.suspend_idle(app, Instant::now()).await;
+    registry.opencode.suspend_idle(app, Instant::now()).await;
+    true
 }
 
 #[tauri::command]
@@ -166,6 +206,8 @@ pub fn native_test_lifecycle(app: &AppHandle) {
     app.manage(EditorRegistry::with_opencode(opencode));
     super::code_server::native::lifecycle(app);
     super::opencode::native::lifecycle(app, &root);
+    assert!(!tauri::async_runtime::block_on(sweep_idle(app)));
+    tauri::async_runtime::block_on(watch_idle(app.clone()));
 }
 
 #[cfg(test)]

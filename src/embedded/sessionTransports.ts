@@ -24,7 +24,12 @@ interface TaskSessions {
 }
 
 function serverStatus(session: EditorSession): TerminalStatus | null {
-  if (session.status === "starting" || session.status === "running") return { kind: "running" };
+  if (
+    session.status === "starting" ||
+    session.status === "running" ||
+    session.status === "suspended"
+  )
+    return { kind: "running" };
   if (session.status === "exited") return { kind: "exited", code: null };
   return null;
 }
