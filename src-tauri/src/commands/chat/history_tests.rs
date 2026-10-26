@@ -569,7 +569,7 @@ fn claude_fork_launch_errors_preserve_the_source_and_release_the_history_lock() 
     let fixture = Fixture::new();
     fixture.open("claude", OpenMode::Restart).unwrap();
     for settings in [
-        json!({"version":"2.1.296"}),
+        json!({"version":"2.1.294"}),
         json!({"version_exit":1}),
         json!({"fail_initialize":true}),
     ] {
@@ -1049,7 +1049,7 @@ fn pending_claude_forks_remain_saved_when_the_resume_launch_fails() {
         .unwrap()
         .entry("task", "claude", &fixture.repositories.folders[0])
         .unwrap();
-    fixture.settings(json!({"version":"2.1.296"}));
+    fixture.settings(json!({"version":"2.1.294"}));
     assert!(fixture
         .open("claude", OpenMode::Restart)
         .unwrap_err()
