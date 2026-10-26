@@ -1,10 +1,15 @@
 import { useShortcutLabels } from "../../shortcuts/runtime";
 import { MouseEvent, ReactNode, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { BranchIcon, ChevronLeftIcon, PullRequestIcon, SidebarIcon } from "../ui/Icons";
+import {
+  BranchIcon,
+  ChevronLeftIcon,
+  CloseIcon,
+  PullRequestIcon,
+  SidebarIcon,
+  SpinnerIcon,
+} from "../ui/Icons";
 import { GitStatus, IssueLinearInfo, Task } from "../../types";
-import { Badge } from "../ui/Badge";
-import { stateVariant } from "../worktree/cardStyles";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { taskTransitionName } from "../../services/taskTransition";
 import { PullRequestLinks } from "../worktree/PullRequestLinks";
@@ -59,7 +64,6 @@ export function TaskHeader({
     openUrl(issueUrl).catch(() => setLinkError("Could not open Linear"));
   };
   const status = statusLabel[sessionStatus.kind];
-  const issueStatus = linearInfo?.status ?? null;
   const prs = task.linearIssueId ? (linearInfo?.prs ?? []) : [];
   const label = useShortcutLabels();
   return (
@@ -94,6 +98,12 @@ export function TaskHeader({
       >
         <ChevronLeftIcon size={14} />
       </button>
+      <span
+        role="img"
+        aria-label={status.text}
+        title={status.text}
+        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${status.dot}`}
+      />
       {issueUrl && (
         <a
           href={issueUrl}
@@ -116,14 +126,6 @@ export function TaskHeader({
           {linkError}
         </span>
       )}
-      {issueStatus && (
-        <span
-          className="inline-flex flex-shrink-0 whitespace-nowrap"
-          style={{ viewTransitionName: taskTransitionName("status") }}
-        >
-          <Badge variant={stateVariant[issueStatus.type] ?? "default"}>{issueStatus.name}</Badge>
-        </span>
-      )}
       <EditableTaskTitle
         title={task.linearIssueTitle ?? task.branchName}
         textClassName="text-sm font-semibold text-text-primary"
@@ -132,11 +134,11 @@ export function TaskHeader({
         onError={onRenameError}
       />
       <span
-        className="flex items-center gap-1 shrink-[999] text-xs font-mono text-text-muted whitespace-nowrap"
+        className="grid grid-flow-col grid-cols-[auto_minmax(4rem,max-content)] auto-cols-max items-center gap-1 shrink-[999] text-xs font-mono text-text-muted whitespace-nowrap"
         style={{ viewTransitionName: taskTransitionName("branch") }}
       >
         <BranchIcon className="flex-shrink-0" />
-        <span className="truncate min-w-16 select-text" title={task.branchName}>
+        <span className="truncate select-text" title={task.branchName}>
           {task.branchName}
         </span>
         {gitStatus && gitStatus.ahead > 0 && (
@@ -157,11 +159,11 @@ export function TaskHeader({
       </span>
       {prs.length > 0 && (
         <span
-          className="flex items-center gap-1.5 text-xs min-w-0 overflow-hidden whitespace-nowrap"
+          className="flex items-center gap-1.5 text-xs min-w-0 shrink-[0.01] overflow-hidden whitespace-nowrap"
           style={{ viewTransitionName: taskTransitionName("prs") }}
         >
           <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
-          <PullRequestLinks prs={prs} />
+          <PullRequestLinks prs={prs} numbersOnly />
         </span>
       )}
       <span className="ml-auto flex items-center gap-1.5 text-xs text-text-muted flex-shrink-0 whitespace-nowrap">
@@ -171,13 +173,13 @@ export function TaskHeader({
             type="button"
             onClick={onCloseEditor}
             disabled={closingEditor}
-            className="mr-3 hover:text-text-primary cursor-pointer disabled:opacity-50"
+            aria-label={closingEditor ? "Closing editor" : "Close editor"}
+            title={closingEditor ? "Closing editor…" : "Close editor"}
+            className="w-6 h-6 flex items-center justify-center rounded-md hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer disabled:opacity-50"
           >
-            {closingEditor ? "Closing…" : "Close editor"}
+            {closingEditor ? <SpinnerIcon size={12} /> : <CloseIcon size={12} />}
           </button>
         )}
-        <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
-        {status.text}
       </span>
     </div>
   );
