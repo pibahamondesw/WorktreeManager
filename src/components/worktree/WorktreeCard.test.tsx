@@ -30,8 +30,40 @@ import {
   updateTaskSetup,
 } from "../../services/taskSetup";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
-import { WorktreeCard } from "./WorktreeCard";
+import { WorktreeCard, TaskCardActions } from "./WorktreeCard";
+import { ComponentProps } from "react";
+import * as taskLinear from "../../services/taskLinear";
 import { Task, VaultConfig, Workspace } from "../../types";
+
+type CardProps = Omit<ComponentProps<typeof WorktreeCard>, "actions"> & {
+  onDelete: TaskCardActions["delete"];
+  onOpen?: () => void;
+  onOpenError?: (message: string) => void;
+  onToast?: (message: string) => void;
+  onLinkIssue?: () => void;
+  onTogglePin?: () => void;
+};
+
+function Card({
+  onDelete,
+  onOpen,
+  onOpenError,
+  onToast,
+  onLinkIssue,
+  onTogglePin,
+  ...props
+}: CardProps) {
+  const actions: TaskCardActions = {
+    delete: onDelete,
+    open: () => onOpen?.(),
+    toast: (message) => onToast?.(message),
+    reportError: (message) => onOpenError?.(message),
+    deleteRequestHandled: () => undefined,
+    linkIssue: onLinkIssue && (() => onLinkIssue()),
+    togglePin: onTogglePin && (() => onTogglePin()),
+  };
+  return <WorktreeCard {...props} actions={actions} />;
+}
 
 const workspace = { id: "ws1", name: "Payments", repos: [] } as unknown as Workspace;
 const vault = { enabled: false } as VaultConfig;
@@ -53,7 +85,7 @@ afterEach(() => {
 describe("WorktreeCard session indicator", () => {
   it("shows a running dot when the task has a live agent session", () => {
     render(
-      <WorktreeCard
+      <Card
         task={task}
         workspace={workspace}
         vault={vault}
@@ -67,20 +99,14 @@ describe("WorktreeCard session indicator", () => {
 
   it("shows nothing without a session", () => {
     render(
-      <WorktreeCard
-        task={task}
-        workspace={workspace}
-        vault={vault}
-        onDelete={vi.fn()}
-        repoSlugs={{}}
-      />
+      <Card task={task} workspace={workspace} vault={vault} onDelete={vi.fn()} repoSlugs={{}} />
     );
     expect(screen.queryByTitle(/Agent session/)).not.toBeInTheDocument();
   });
 
   it("blinks only while working and marks a card waiting for input", () => {
     const view = render(
-      <WorktreeCard
+      <Card
         task={task}
         workspace={workspace}
         vault={vault}
@@ -94,7 +120,7 @@ describe("WorktreeCard session indicator", () => {
     expect(view.container.querySelector("[data-attention]")).toBeNull();
 
     view.rerender(
-      <WorktreeCard
+      <Card
         task={task}
         workspace={workspace}
         vault={vault}
@@ -114,15 +140,12 @@ it("offers linking only for an unlinked task without opening its editor", () => 
   const onLinkIssue = vi.fn();
   const onOpen = vi.fn();
   const props = { task, workspace, vault, onDelete: vi.fn(), repoSlugs: {}, onLinkIssue, onOpen };
-  const { rerender } = render(<WorktreeCard {...props} />);
+  const { rerender } = render(<Card {...props} />);
   fireEvent.click(screen.getByRole("button", { name: "Link Linear issue" }));
   expect(onLinkIssue).toHaveBeenCalledOnce();
   expect(onOpen).not.toHaveBeenCalled();
   rerender(
-    <WorktreeCard
-      {...props}
-      task={{ ...task, linearIssueId: "issue", linearIssueIdentifier: "WOR-123" }}
-    />
+    <Card {...props} task={{ ...task, linearIssueId: "issue", linearIssueIdentifier: "WOR-123" }} />
   );
   expect(screen.queryByRole("button", { name: "Link Linear issue" })).not.toBeInTheDocument();
 });
@@ -133,13 +156,7 @@ it.each([true, false])(
     initializeTaskSetup(task, []);
     updateTaskSetup(task.id, { ...getTaskSetup(task.id)!, active });
     render(
-      <WorktreeCard
-        task={task}
-        workspace={workspace}
-        vault={vault}
-        onDelete={vi.fn()}
-        repoSlugs={{}}
-      />
+      <Card task={task} workspace={workspace} vault={vault} onDelete={vi.fn()} repoSlugs={{}} />
     );
     expect(screen.queryByText(/Setup running|Setup completed/)).not.toBeInTheDocument();
     expect(
@@ -152,11 +169,11 @@ it("toggles the pin without opening the task and exposes its saved state", () =>
   const onTogglePin = vi.fn();
   const onOpen = vi.fn();
   const props = { task, workspace, vault, onDelete: vi.fn(), repoSlugs: {}, onTogglePin, onOpen };
-  const view = render(<WorktreeCard {...props} />);
+  const view = render(<Card {...props} />);
   fireEvent.click(screen.getByTitle("Pin task"));
   expect(onTogglePin).toHaveBeenCalledOnce();
   expect(onOpen).not.toHaveBeenCalled();
-  view.rerender(<WorktreeCard {...props} task={{ ...task, pinOrder: 0 }} />);
+  view.rerender(<Card {...props} task={{ ...task, pinOrder: 0 }} />);
   expect(screen.getByTitle("Unpin task")).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByTitle("Drag to reorder pinned tasks")).toBeInTheDocument();
   fireEvent.click(screen.getByTitle("Unpin task"));
@@ -167,7 +184,7 @@ it("reports link failures without leaving a rejected promise", async () => {
   vi.mocked(openUrl).mockRejectedValueOnce(new Error("Browser unavailable"));
   const onToast = vi.fn();
   render(
-    <WorktreeCard
+    <Card
       task={{ ...task, linearIssueIdentifier: "WOR-129" }}
       workspace={workspace}
       vault={vault}
@@ -187,7 +204,7 @@ it("reports clipboard failures without showing a success toast", async () => {
   try {
     const onToast = vi.fn();
     render(
-      <WorktreeCard
+      <Card
         task={task}
         workspace={workspace}
         vault={vault}
@@ -209,7 +226,7 @@ it("lists every attached PR by number with its full title on hover", () => {
   vi.mocked(openUrl).mockResolvedValueOnce(undefined);
   const onOpen = vi.fn();
   render(
-    <WorktreeCard
+    <Card
       task={{ ...task, linearIssueId: "issue" }}
       workspace={workspace}
       vault={vault}
@@ -257,7 +274,7 @@ it("shows repository teardown scripts for approval and deletes with the chosen o
     .mockRejectedValueOnce(approval)
     .mockResolvedValue({ data: { id: task.id }, warnings: [] });
   render(
-    <WorktreeCard
+    <Card
       task={task}
       workspace={workspace}
       vault={vault}
@@ -286,7 +303,7 @@ it("offers deleting without teardown after a teardown failure", async () => {
     .mockRejectedValueOnce(failure)
     .mockResolvedValue({ data: { id: task.id }, warnings: [] });
   render(
-    <WorktreeCard
+    <Card
       task={task}
       workspace={workspace}
       vault={vault}
@@ -314,7 +331,7 @@ it("offers removing from the app when disk deletion fails", async () => {
     .mockRejectedValueOnce(new OperationError("delete_failed", "Worktrees could not be removed."))
     .mockResolvedValue({ data: { id: task.id }, warnings: [] });
   render(
-    <WorktreeCard
+    <Card
       task={task}
       workspace={workspace}
       vault={vault}
@@ -363,7 +380,7 @@ it.each([false, true])(
         ]
       : task.members;
     render(
-      <WorktreeCard
+      <Card
         task={{ ...task, members }}
         workspace={workspace}
         vault={vault}
@@ -456,7 +473,7 @@ describe("WorktreeCard quick actions", () => {
     const onOpen = vi.fn();
     const onToast = vi.fn();
     render(
-      <WorktreeCard
+      <Card
         task={linkedTask}
         workspace={{ ...workspace, linearOrgUrlKey: "acme" }}
         vault={{ ...vault, enabled: true }}
@@ -499,5 +516,32 @@ describe("WorktreeCard quick actions", () => {
     if (url) await waitFor(() => expect(openUrl).toHaveBeenCalledWith(url));
     if (toast) expect(onToast).toHaveBeenCalledWith(toast);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorktreeCard memoization", () => {
+  const actions: TaskCardActions = {
+    delete: vi.fn(),
+    open: vi.fn(),
+    toast: vi.fn(),
+    reportError: vi.fn(),
+    deleteRequestHandled: vi.fn(),
+  };
+  const status = { ahead: 1, behind: 0, dirty: false, last_commit_epoch: 1 };
+
+  it("skips re-rendering when props are structurally unchanged", () => {
+    const groupTaskPrs = vi.spyOn(taskLinear, "groupTaskPrs");
+    const props = { task, workspace, vault, actions };
+    const { rerender } = render(
+      <WorktreeCard {...props} gitStatus={{ ...status }} repoSlugs={{ r1: "o/api" }} />
+    );
+    const rendersAfterMount = groupTaskPrs.mock.calls.length;
+    rerender(<WorktreeCard {...props} gitStatus={{ ...status }} repoSlugs={{ r1: "o/api" }} />);
+    expect(groupTaskPrs).toHaveBeenCalledTimes(rendersAfterMount);
+    rerender(
+      <WorktreeCard {...props} gitStatus={{ ...status, ahead: 2 }} repoSlugs={{ r1: "o/api" }} />
+    );
+    expect(groupTaskPrs.mock.calls.length).toBeGreaterThan(rendersAfterMount);
+    groupTaskPrs.mockRestore();
   });
 });

@@ -1,13 +1,13 @@
 import { ProjectFilter } from "../ui/ProjectFilter";
 import { matchesProject } from "../../search/projects";
-import { useCallback, useState, useEffect, useMemo, useRef } from "react";
+import { useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { LinearProvider } from "../../contexts/LinearContext";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { useRevealRing } from "../../hooks/useRevealRing";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { useWorktreeData } from "../../hooks/useWorktreeData";
 import { taskLinearStore } from "../../services/taskLinear";
-import { WorktreeCard } from "./WorktreeCard";
+import { WorktreeCard, TaskCardActions } from "./WorktreeCard";
 import { cardScrollDelta } from "./cardScroll";
 import { WorktreeCardSkeleton } from "./WorktreeCardSkeleton";
 import { WorktreeEmptyWorktrees, WorktreeNoRepoPlaceholder } from "./WorktreeListEmptyStates";
@@ -38,34 +38,42 @@ import {
 import { TerminalStatus } from "../../services/terminal";
 import { AgentActivities } from "../../services/agentActivity";
 
+export interface TaskActions {
+  create: (
+    input: CreateTaskInput,
+    progress?: (message: string) => void,
+    onReady?: TaskReady
+  ) => Promise<OperationResult<Task>>;
+  delete: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
+  setPinned: (id: string, pinned: boolean) => Promise<void>;
+  reorderPinned: (id: string, targetId: string) => Promise<void>;
+  linkIssue: (taskId: string, issue: string) => Promise<Task>;
+  rename: (taskId: string, title: string) => Promise<Task>;
+  markPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
+}
+
+export interface ListNavigation {
+  canGoBack: boolean;
+  canGoForward: boolean;
+  goBack: () => void;
+  goForward: () => void;
+  sidebarCollapsed: boolean;
+  expandSidebar: () => void;
+  openSearch: () => void;
+}
+
 interface WorktreeListProps {
   tasks: Task[];
   agentSessions?: Record<string, TerminalStatus>;
   agentActivities?: AgentActivities;
   workspace: Workspace | undefined;
   vault: VaultConfig;
-  onTaskCreated: (
-    input: CreateTaskInput,
-    progress?: (message: string) => void,
-    onReady?: TaskReady
-  ) => Promise<OperationResult<Task>>;
-  onTaskPinned: (id: string, pinned: boolean) => Promise<void>;
-  onPinnedTasksReordered: (id: string, targetId: string) => Promise<void>;
-  onTaskIssueLinked: (taskId: string, issue: string) => Promise<Task>;
-  onTaskRenamed: (taskId: string, title: string) => Promise<Task>;
-  onPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
+  taskActions: TaskActions;
   setupControls?: SetupControls;
-  onTaskDeleted: (
-    taskId: string,
-    options: DeleteOptions
-  ) => Promise<OperationResult<{ id: string }>>;
   editorApp: EditorApp;
   onEditorChange: (editor: EditorApp) => void;
   workspaceSwitching: boolean;
   onWorkspaceReady: (workspaceId?: string) => void;
-  onOpenSearch: () => void;
-  sidebarCollapsed: boolean;
-  onExpandSidebar: () => void;
   searchOpen: boolean;
   /** Task picked in the quick search: select it once this workspace's tasks are in. */
   revealTaskId: string | null;
@@ -75,10 +83,7 @@ interface WorktreeListProps {
   onOpenTask: (task: Task, options?: OpenTaskOptions) => Promise<boolean>;
   onCloseTask: () => void;
   onSwitchSurface: (taskId: string, surface: TaskSurface) => void;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  onGoBack: () => void;
-  onGoForward: () => void;
+  navigation: ListNavigation;
   /** Palette asking this list to open the new-task modal. */
   requestNewTask?: boolean;
   onRequestNewTaskHandled?: () => void;
@@ -138,35 +143,41 @@ export function WorktreeList({
   agentActivities = {},
   workspace,
   vault,
-  onTaskCreated,
-  onTaskDeleted,
-  onTaskIssueLinked,
-  onTaskRenamed,
-  onPrReady,
+  taskActions,
   setupControls,
-  onTaskPinned,
-  onPinnedTasksReordered,
   editorApp,
   onEditorChange,
   workspaceSwitching,
   onWorkspaceReady,
-  onOpenSearch,
-  sidebarCollapsed,
-  onExpandSidebar,
   searchOpen,
+  navigation,
   revealTaskId,
   onRevealHandled,
   openedTask,
   onOpenTask,
   onCloseTask,
   onSwitchSurface,
-  canGoBack,
-  canGoForward,
-  onGoBack,
-  onGoForward,
   requestNewTask,
   onRequestNewTaskHandled,
 }: WorktreeListProps) {
+  const {
+    create: onTaskCreated,
+    delete: onTaskDeleted,
+    setPinned: onTaskPinned,
+    reorderPinned: onPinnedTasksReordered,
+    linkIssue: onTaskIssueLinked,
+    rename: onTaskRenamed,
+    markPrReady: onPrReady,
+  } = taskActions;
+  const {
+    canGoBack,
+    canGoForward,
+    goBack: onGoBack,
+    goForward: onGoForward,
+    sidebarCollapsed,
+    expandSidebar: onExpandSidebar,
+    openSearch: onOpenSearch,
+  } = navigation;
   const [projectFilter, setProjectFilter] = useState({ workspaceId: workspace?.id, value: "" });
   const project = projectFilter.workspaceId === workspace?.id ? projectFilter.value : "";
   const revealing = !!revealTaskId && allTasks.some((task) => task.id === revealTaskId);
@@ -302,34 +313,58 @@ export function WorktreeList({
     taskOpen: openTask !== null,
   });
 
+  const latest = useRef({
+    deleteTask,
+    onTaskPinned,
+    onTaskRenamed,
+    onPrReady,
+    onOpenTask,
+    showToast,
+  });
+  useLayoutEffect(() => {
+    latest.current = { deleteTask, onTaskPinned, onTaskRenamed, onPrReady, onOpenTask, showToast };
+  });
+  const hasPrReady = !!onPrReady;
+  const cardActions = useMemo<TaskCardActions>(
+    () => ({
+      open: (task) =>
+        void latest.current.onOpenTask(task, {
+          onMessage: latest.current.showToast,
+          onError: latest.current.showToast,
+        }),
+      delete: (id, options) => latest.current.deleteTask(id, options),
+      togglePin: (task) => {
+        void latest.current
+          .onTaskPinned(task.id, task.pinOrder === undefined)
+          .then(() => setSelectedIndex(-1))
+          .catch((error) => latest.current.showToast(String(error)));
+      },
+      linkIssue: setLinkTaskId,
+      rename: (id, title) => latest.current.onTaskRenamed(id, title),
+      markPrReady: hasPrReady ? (id, pr) => latest.current.onPrReady!(id, pr) : undefined,
+      toast: (message) => latest.current.showToast(message),
+      reportError: (message) => latest.current.showToast(message),
+      deleteRequestHandled: () => setDeleteRequested(false),
+    }),
+    [hasPrReady]
+  );
+
   if (!workspace) return <WorktreeNoRepoPlaceholder />;
 
   const renderCard = (task: Task, i: number) => (
     <WorktreeCard
-      onTogglePin={() => {
-        void onTaskPinned(task.id, task.pinOrder === undefined)
-          .then(() => setSelectedIndex(-1))
-          .catch((error) => showToast(String(error)));
-      }}
       task={task}
       workspace={workspace}
       vault={vault}
-      onDelete={deleteTask}
-      onLinkIssue={() => setLinkTaskId(task.id)}
-      onRename={task.linearIssueId ? (title) => onTaskRenamed(task.id, title) : undefined}
+      actions={cardActions}
       linearInfo={task.linearIssueId ? linearInfo[task.linearIssueId] : undefined}
       gitStatus={aggregateTaskStatus(task, gitStatuses)}
       selected={i >= 0 && i === selectedIndex}
       index={i}
       sessionStatus={agentSessions[task.id]}
       agentActivity={agentActivities[task.id]}
-      onOpenError={showToast}
-      onPrReady={onPrReady ? (pr) => onPrReady(task.id, pr) : undefined}
-      onToast={showToast}
-      onOpen={() => void onOpenTask(task, { onMessage: showToast, onError: showToast })}
       repoSlugs={taskLinearStore.repoSlugs(task.members)}
       requestDelete={i >= 0 && i === selectedIndex && deleteRequested}
-      onRequestDeleteHandled={() => setDeleteRequested(false)}
     />
   );
 

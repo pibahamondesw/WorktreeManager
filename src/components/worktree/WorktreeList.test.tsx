@@ -2,12 +2,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { WorktreeList } from "./WorktreeList";
-import type { ComponentProps, ReactNode } from "react";
+import { WorktreeList, TaskActions } from "./WorktreeList";
+import type { ReactNode } from "react";
 import { Task } from "../../types";
-import { DeleteOptions } from "../../services/operations";
-
-type WorktreeListProps = ComponentProps<typeof WorktreeList>;
+import type { TaskCardActions } from "./WorktreeCard";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 
 vi.mock("../../hooks/useWorktreeData", () => ({
@@ -27,21 +25,15 @@ vi.mock("./WorktreeListHeader", () => ({
 vi.mock("./NewWorktreeModal", () => ({ NewWorktreeModal: () => null }));
 vi.mock("../task/TaskView", () => ({ TaskView: () => null }));
 vi.mock("./WorktreeCard", () => ({
-  WorktreeCard: ({
-    task,
-    onTogglePin,
-    onDelete,
-  }: {
-    task: Task;
-    onTogglePin: () => void;
-    onDelete: (id: string, options: DeleteOptions) => Promise<unknown>;
-  }) => (
+  WorktreeCard: ({ task, actions }: { task: Task; actions: TaskCardActions }) => (
     <>
-      <button onClick={onTogglePin}>{task.id}</button>
+      <button onClick={() => actions.togglePin?.(task)}>{task.id}</button>
       <button
         data-genie-target
         onClick={() =>
-          void onDelete(task.id, { deleteWorktrees: true, force: true }).catch(() => undefined)
+          void actions
+            .delete(task.id, { deleteWorktrees: true, force: true })
+            .catch(() => undefined)
         }
       >
         delete {task.id}
@@ -66,10 +58,10 @@ const TASKS: Task[] = [
 
 function fixture({
   revealTaskId = null,
-  onTaskDeleted = vi.fn<WorktreeListProps["onTaskDeleted"]>(),
+  onTaskDeleted = vi.fn<TaskActions["delete"]>(),
 }: {
   revealTaskId?: string | null;
-  onTaskDeleted?: WorktreeListProps["onTaskDeleted"];
+  onTaskDeleted?: TaskActions["delete"];
 } = {}) {
   const onTaskPinned = vi.fn().mockResolvedValue(undefined);
   const onPinnedTasksReordered = vi.fn().mockResolvedValue(undefined);
@@ -78,19 +70,27 @@ function fixture({
       tasks={tasks}
       workspace={{ id: "w1", name: "Workspace", repos: [] }}
       vault={{ enabled: false, path: null }}
-      onTaskCreated={vi.fn()}
-      onTaskDeleted={onTaskDeleted}
-      onTaskIssueLinked={vi.fn()}
-      onTaskRenamed={vi.fn()}
-      onTaskPinned={onTaskPinned}
-      onPinnedTasksReordered={onPinnedTasksReordered}
+      taskActions={{
+        create: vi.fn(),
+        delete: onTaskDeleted,
+        linkIssue: vi.fn(),
+        rename: vi.fn(),
+        setPinned: onTaskPinned,
+        reorderPinned: onPinnedTasksReordered,
+      }}
       editorApp="cursor"
       onEditorChange={vi.fn()}
       workspaceSwitching={false}
       onWorkspaceReady={vi.fn()}
-      onOpenSearch={vi.fn()}
-      sidebarCollapsed={false}
-      onExpandSidebar={vi.fn()}
+      navigation={{
+        canGoBack: false,
+        canGoForward: false,
+        goBack: vi.fn(),
+        goForward: vi.fn(),
+        sidebarCollapsed: false,
+        expandSidebar: vi.fn(),
+        openSearch: vi.fn(),
+      }}
       searchOpen={false}
       revealTaskId={revealTaskId}
       onRevealHandled={vi.fn()}
@@ -98,10 +98,6 @@ function fixture({
       onOpenTask={vi.fn()}
       onCloseTask={vi.fn()}
       onSwitchSurface={vi.fn()}
-      canGoBack={false}
-      canGoForward={false}
-      onGoBack={vi.fn()}
-      onGoForward={vi.fn()}
     />
   );
   const view = render(listProps(TASKS));
@@ -174,7 +170,7 @@ function deferredDeletion() {
     resolve: (value: { data: { id: string }; warnings: [] }) => void;
     reject: (error: Error) => void;
   };
-  const onTaskDeleted = vi.fn<WorktreeListProps["onTaskDeleted"]>(
+  const onTaskDeleted = vi.fn<TaskActions["delete"]>(
     () => new Promise((resolve, reject) => Object.assign(deferred, { resolve, reject }))
   );
   return { deferred, onTaskDeleted };
