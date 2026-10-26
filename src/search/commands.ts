@@ -20,7 +20,7 @@ export type CommandAction =
   | { type: "workspace"; action: WorkspaceAction }
   | { type: "set-editor"; editor: EditorApp }
   | { type: "set-theme"; themeId: string }
-  | { type: "copy-linear"; text: string }
+  | { type: "copy-linear"; taskId: string }
   | { type: "ready-pr"; taskId: string; pr: PullRequestInfo }
   | { type: "open-pr"; taskId: string; repoId: string }
   | { type: "open-claude"; taskId: string }
@@ -227,7 +227,7 @@ export function buildCommands({
         group: "action",
         keywords: `copy linear id identifier ${taskKeywords}`,
         emptyVisible: false,
-        action: { type: "copy-linear", text: task.linearIssueIdentifier },
+        action: { type: "copy-linear", taskId: task.id },
       });
     }
 

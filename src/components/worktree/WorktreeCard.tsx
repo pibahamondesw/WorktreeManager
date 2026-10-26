@@ -1,6 +1,5 @@
 import { useShortcutLabels } from "../../shortcuts/runtime";
 import { useState, useEffect, useRef, memo, KeyboardEvent } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "../ui/Badge";
 import {
   SpinnerIcon,
@@ -23,10 +22,10 @@ import {
   PullRequestInfo,
 } from "../../types";
 import { PullRequestLinks } from "./PullRequestLinks";
-import { ensureTaskNote, taskNoteUri } from "../../services/notes";
+import { runTaskAction, TaskActionId } from "../../services/taskActions";
 import { groupTaskPrs } from "../../services/taskLinear";
 import { openCreatePr } from "../../services/pullRequest";
-import { linearIssueUrl, timeAgo } from "../../utils";
+import { timeAgo } from "../../utils";
 import { TerminalStatus } from "../../services/terminal";
 import { AgentActivity, taskIndicator } from "../../services/agentActivity";
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
@@ -149,62 +148,17 @@ export const WorktreeCard = memo(function WorktreeCard({
     if (primaryRepo) void openCreatePr(task.branchName, primaryRepo);
   };
 
-  const handleMenuAction = async (action: string) => {
+  const runAction = (action: TaskActionId) =>
+    void runTaskAction(action, { task, workspace, vault }, (message) => onToast?.(message));
+
+  const handleMenuAction = (action: TaskActionId) => {
     setMenuOpen(false);
-    switch (action) {
-      case "copy-branch":
-        await navigator.clipboard.writeText(task.branchName);
-        onToast?.("Branch name copied");
-        break;
-      case "copy-path":
-        await navigator.clipboard.writeText(folders.join("\n"));
-        onToast?.(folders.length > 1 ? "Folder paths copied" : "Worktree path copied");
-        break;
-      case "open-notes": {
-        // Creates the note first if it's missing — e.g. the notes folder was configured
-        // after this task existed.
-        const notePath = await ensureTaskNote(vault, workspace, task);
-        if (notePath) {
-          openUrl(taskNoteUri(notePath)).catch(() =>
-            onOpenError?.("Could not open the note in Obsidian")
-          );
-        } else onOpenError?.("Could not open the task note");
-        break;
-      }
-    }
+    runAction(action);
   };
 
-  const handleOpenLinear = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (task.linearIssueIdentifier) {
-      openUrl(linearIssueUrl(task.linearIssueIdentifier, workspace.linearOrgUrlKey)).catch(() =>
-        onOpenError?.("Could not open Linear")
-      );
-    }
-  };
-
-  const copyToClipboard = (e: React.MouseEvent, text: string, toastMsg: string) => {
-    e.stopPropagation();
-    navigator.clipboard
-      .writeText(text)
-      .then(() => onToast?.(toastMsg))
-      .catch(() => onOpenError?.("Could not copy to clipboard"));
-  };
-
-  const handleCopyPath = (e: React.MouseEvent) =>
-    copyToClipboard(
-      e,
-      folders.join("\n"),
-      folders.length > 1 ? "Folder paths copied" : "Worktree path copied"
-    );
-
-  const handleCopyBranch = (e: React.MouseEvent) =>
-    copyToClipboard(e, task.branchName, "Branch name copied");
-
-  const handleCopyLinear = (e: React.MouseEvent) => {
-    if (task.linearIssueIdentifier) {
-      copyToClipboard(e, task.linearIssueIdentifier, "Linear ID copied");
-    }
+  const runActionFromClick = (event: React.MouseEvent, action: TaskActionId) => {
+    event.stopPropagation();
+    runAction(action);
   };
 
   const age = gitStatus ? timeAgo(gitStatus.last_commit_epoch) : null;
@@ -241,7 +195,7 @@ export const WorktreeCard = memo(function WorktreeCard({
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
                   data-task-part="identifier"
-                  onClick={handleOpenLinear}
+                  onClick={(event) => runActionFromClick(event, "open-linear")}
                   className="text-xs font-mono text-accent hover:text-accent-hover transition-colors cursor-pointer inline-flex items-center gap-1"
                   title="Open on Linear"
                 >
@@ -249,7 +203,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                   <ExternalLinkIcon size={10} />
                 </button>
                 <button
-                  onClick={handleCopyLinear}
+                  onClick={(event) => runActionFromClick(event, "copy-linear-id")}
                   className="text-text-muted hover:text-text-primary transition-colors cursor-pointer"
                   title="Copy Linear ID"
                 >
@@ -305,14 +259,14 @@ export const WorktreeCard = memo(function WorktreeCard({
             <div data-task-part="branch" className="flex items-center gap-1.5 min-w-0">
               <BranchIcon size={12} className="text-text-muted flex-shrink-0" />
               <button
-                onClick={handleCopyPath}
+                onClick={(event) => runActionFromClick(event, "copy-path")}
                 className="text-xs font-mono text-text-muted hover:text-text-primary truncate transition-colors cursor-pointer text-left"
                 title="Copy folder path(s)"
               >
                 {task.branchName}
               </button>
               <button
-                onClick={handleCopyBranch}
+                onClick={(event) => runActionFromClick(event, "copy-branch")}
                 className="text-text-muted hover:text-text-primary transition-colors cursor-pointer"
                 title="Copy branch name"
               >
@@ -458,32 +412,20 @@ export const WorktreeCard = memo(function WorktreeCard({
               <div className="motion-rise absolute right-0 top-9 z-50 w-48 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
                 <MenuButton
                   label={shortcutLabel("list.branch")}
-                  onClick={() => {
-                    void handleMenuAction("copy-branch").catch(() =>
-                      onOpenError?.("Could not complete the task action")
-                    );
-                  }}
+                  onClick={() => handleMenuAction("copy-branch")}
                 >
                   Copy branch name
                 </MenuButton>
                 <MenuButton
                   label={shortcutLabel("list.path")}
-                  onClick={() => {
-                    void handleMenuAction("copy-path").catch(() =>
-                      onOpenError?.("Could not complete the task action")
-                    );
-                  }}
+                  onClick={() => handleMenuAction("copy-path")}
                 >
                   {folders.length > 1 ? "Copy folder paths" : "Copy worktree path"}
                 </MenuButton>
                 {vault.enabled && (
                   <MenuButton
                     label={shortcutLabel("list.note")}
-                    onClick={() => {
-                      void handleMenuAction("open-notes").catch(() =>
-                        onOpenError?.("Could not complete the task action")
-                      );
-                    }}
+                    onClick={() => handleMenuAction("open-note")}
                   >
                     Open notes
                   </MenuButton>
