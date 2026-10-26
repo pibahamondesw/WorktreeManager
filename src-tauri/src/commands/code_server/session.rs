@@ -50,6 +50,47 @@ impl Session {
         }
     }
 
+    pub fn idle_guard(&self) -> Option<Box<dyn Send>> {
+        let path = self.directory.join("lock");
+        fs::create_dir(&path).ok()?;
+        let guard = Lock(path);
+        let terminals = match fs::read_to_string(self.directory.join("terminals")) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(_) => return None,
+        };
+        if !terminals.trim().is_empty() || self.has_extension_children()? {
+            return None;
+        }
+        Some(Box::new(guard))
+    }
+
+    fn has_extension_children(&self) -> Option<bool> {
+        let groups = match fs::read_to_string(self.directory.join("groups")) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(false),
+            Err(_) => return None,
+        };
+        let groups = groups
+            .lines()
+            .map(|line| line.parse::<u32>().ok().filter(|pid| *pid > 1))
+            .collect::<Option<Vec<_>>>()?;
+        if groups.is_empty() {
+            return Some(false);
+        }
+        let output = std::process::Command::new("/bin/ps")
+            .args(["-axo", "ppid="])
+            .output()
+            .ok()?;
+        let stdout = output.status.success().then_some(output.stdout)?;
+        let parents = std::str::from_utf8(&stdout)
+            .ok()?
+            .lines()
+            .map(|line| line.trim().parse::<u32>().ok())
+            .collect::<Option<Vec<_>>>()?;
+        Some(parents.iter().any(|parent| groups.contains(parent)))
+    }
+
     pub fn close(&self, writers_stopped: bool) -> Result<(), String> {
         let _closing = self.closing.lock().map_err(|error| error.to_string())?;
         if !self
@@ -125,6 +166,51 @@ mod tests {
     use super::*;
     use crate::commands::process::OwnedProcess;
     use std::process::Command;
+
+    #[test]
+    fn idle_guard_excludes_terminals_and_locks_out_new_spawns() {
+        let root = std::env::temp_dir().join(runtime::random_id().unwrap());
+        let session = Session::create(&root, "generation", "a").unwrap();
+        let guard = session.idle_guard().unwrap();
+        assert!(session.directory.join("lock").is_dir());
+        assert!(session.idle_guard().is_none());
+        drop(guard);
+        fs::write(session.directory.join("terminals"), "123\n").unwrap();
+        assert!(session.idle_guard().is_none());
+        fs::write(session.directory.join("terminals"), "malformed").unwrap();
+        assert!(session.idle_guard().is_none());
+        fs::write(session.directory.join("terminals"), "").unwrap();
+        assert!(session.idle_guard().is_some());
+        fs::write(session.directory.join("groups"), "").unwrap();
+        assert!(session.idle_guard().is_some());
+        fs::remove_file(session.directory.join("terminals")).unwrap();
+        fs::create_dir(session.directory.join("terminals")).unwrap();
+        assert!(session.idle_guard().is_none());
+        fs::remove_dir(session.directory.join("terminals")).unwrap();
+        fs::remove_file(session.directory.join("groups")).unwrap();
+        fs::create_dir(session.directory.join("groups")).unwrap();
+        assert!(session.idle_guard().is_none());
+        fs::remove_dir(session.directory.join("groups")).unwrap();
+        session.close(false).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn extension_host_children_block_suspension() {
+        let root = std::env::temp_dir().join(runtime::random_id().unwrap());
+        let session = Session::create(&root, "generation", "a").unwrap();
+        let mut host =
+            OwnedProcess::spawn(Command::new("/bin/sh").args(["-c", "sleep 60 & wait"])).unwrap();
+        fs::write(session.directory.join("groups"), format!("{}\n", host.id())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while session.has_extension_children() == Some(false) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(session.idle_guard().is_none());
+        host.terminate();
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn forced_close_stops_only_owned_process_groups_and_is_retry_safe() {

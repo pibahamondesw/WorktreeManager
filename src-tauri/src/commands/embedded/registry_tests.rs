@@ -46,11 +46,25 @@ impl Lease for StubLease {
     }
 }
 
-struct StubView(Arc<AtomicUsize>);
+struct StubView {
+    closed: Arc<AtomicUsize>,
+    fail_resume: Arc<AtomicBool>,
+    fail_close: Arc<AtomicBool>,
+}
 
 impl View for StubView {
+    fn resume_path(&self) -> Result<Option<String>, String> {
+        if self.fail_resume.load(Ordering::SeqCst) {
+            return Err("cannot read view URL".into());
+        }
+        Ok(Some("/session/original".into()))
+    }
+
     fn close(&self) -> Result<(), String> {
-        self.0.fetch_add(1, Ordering::SeqCst);
+        if self.fail_close.load(Ordering::SeqCst) {
+            return Err("cannot close view".into());
+        }
+        self.closed.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -80,7 +94,10 @@ struct Stub {
     servers: Mutex<HashMap<&'static str, Arc<StubServer>>>,
     startup: Mutex<Startup>,
     closed_views: Arc<AtomicUsize>,
+    fail_resume: Arc<AtomicBool>,
+    fail_close: Arc<AtomicBool>,
     fail_cleanup: Arc<AtomicBool>,
+    suspend_probe: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
 }
 
 impl Default for Stub {
@@ -89,7 +106,10 @@ impl Default for Stub {
             servers: Mutex::default(),
             startup: Mutex::new(Startup::Ready),
             closed_views: Arc::default(),
+            fail_resume: Arc::default(),
+            fail_close: Arc::default(),
             fail_cleanup: Arc::default(),
+            suspend_probe: Mutex::default(),
         }
     }
 }
@@ -135,6 +155,18 @@ impl Adapter for Stub {
         }
     }
 
+    fn opened(&self, _: &AppHandle<MockRuntime>, slot: &Arc<Slot<Self>>, _: u32) {
+        slot.idle_allowed.store(true, Ordering::SeqCst);
+    }
+
+    fn suspend_guard(&self, _: &AppHandle<MockRuntime>, _: &Slot<Self>) -> Option<Box<dyn Send>> {
+        if let Some((started, resume)) = self.suspend_probe.lock().unwrap().take() {
+            started.send(()).unwrap();
+            resume.recv().unwrap();
+        }
+        Some(Box::new(()))
+    }
+
     fn pid(connection: &u32) -> u32 {
         *connection
     }
@@ -145,7 +177,11 @@ impl Adapter for Stub {
         _: &Slot<Self>,
         _: &u32,
     ) -> Result<StubView, String> {
-        Ok(StubView(self.closed_views.clone()))
+        Ok(StubView {
+            closed: self.closed_views.clone(),
+            fail_resume: self.fail_resume.clone(),
+            fail_close: self.fail_close.clone(),
+        })
     }
 }
 
@@ -371,4 +407,190 @@ fn shutdown_ends_every_session_and_refuses_new_ones() {
         .open("c", request("three", "/c"))
         .unwrap_err()
         .contains("shutting down"));
+}
+
+fn expire(harness: &Harness) {
+    tauri::async_runtime::block_on(harness.surfaces.suspend_idle(
+        &harness.handle(),
+        Instant::now() + super::idle::IDLE_TIMEOUT,
+    ));
+}
+
+#[test]
+fn idle_sessions_suspend_without_an_exit_and_reopen_with_a_new_process() {
+    let harness = Harness::new();
+    let first = harness.open("a", request("one", "/a")).unwrap();
+    let server = harness.server("one");
+    tauri::async_runtime::block_on(
+        harness
+            .surfaces
+            .suspend_idle(&harness.handle(), Instant::now()),
+    );
+    assert_eq!(harness.statuses("a"), ["running"]);
+    expire(&harness);
+    assert!(server.stopped.load(Ordering::SeqCst));
+    assert_eq!(harness.statuses("a"), ["running", "suspended"]);
+    assert_eq!(harness.surfaces.list()[0].pid, None);
+    assert!(harness.surfaces.list()[0].error.is_none());
+    let resumed = harness.open("a", request("one", "/a")).unwrap();
+    assert_ne!(first.generation, resumed.generation);
+    assert_eq!(
+        harness
+            .surfaces
+            .reserve("a", request("one", "/a"))
+            .unwrap()
+            .resume_path
+            .lock()
+            .unwrap()
+            .as_deref(),
+        Some("/session/original")
+    );
+    assert!(!Arc::ptr_eq(&server, &harness.server("one")));
+    harness.close("a").unwrap();
+}
+
+#[test]
+fn a_shared_server_waits_for_every_view_and_every_tasks_work() {
+    let harness = Harness::new();
+    harness.open("a", request("shared", "/a")).unwrap();
+    harness.open("b", request("shared", "/b")).unwrap();
+    harness.surfaces.select(Some("a"), Instant::now());
+    expire(&harness);
+    assert_eq!(harness.surfaces.open_slots().len(), 2);
+    harness.surfaces.select(None, Instant::now());
+    let slot = harness
+        .surfaces
+        .reserve("b", request("shared", "/b"))
+        .unwrap();
+    slot.idle_allowed.store(false, Ordering::SeqCst);
+    expire(&harness);
+    assert_eq!(harness.surfaces.open_slots().len(), 2);
+    slot.idle_allowed.store(true, Ordering::SeqCst);
+    expire(&harness);
+    assert!(harness.server("shared").stopped.load(Ordering::SeqCst));
+    assert!(harness
+        .surfaces
+        .list()
+        .iter()
+        .all(|info| info.status == "suspended"));
+    harness.close("a").unwrap();
+    harness.close("b").unwrap();
+    assert!(harness.surfaces.is_empty());
+}
+
+#[test]
+fn returning_during_an_idle_probe_prevents_suspension() {
+    let harness = Harness::new();
+    harness.open("a", request("one", "/a")).unwrap();
+    let (started, waiting) = mpsc::channel();
+    let (resume, proceed) = mpsc::channel();
+    *harness.surfaces.adapter().suspend_probe.lock().unwrap() = Some((started, proceed));
+    let surfaces = harness.surfaces.clone();
+    let app = harness.handle();
+    let sweep = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(
+            surfaces.suspend_idle(&app, Instant::now() + super::idle::IDLE_TIMEOUT),
+        )
+    });
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    harness.surfaces.select(Some("a"), Instant::now());
+    resume.send(()).unwrap();
+    sweep.join().unwrap();
+    assert_eq!(harness.statuses("a"), ["running"]);
+    harness.close("a").unwrap();
+}
+
+#[test]
+fn reopening_during_suspension_waits_and_returns_a_running_replacement() {
+    let harness = Harness::new();
+    let initial = harness.open("a", request("one", "/a")).unwrap();
+    let (started, waiting) = mpsc::channel();
+    let (resume, proceed) = mpsc::channel();
+    *harness.surfaces.adapter().suspend_probe.lock().unwrap() = Some((started, proceed));
+    let surfaces = harness.surfaces.clone();
+    let app = harness.handle();
+    let sweep = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(
+            surfaces.suspend_idle(&app, Instant::now() + super::idle::IDLE_TIMEOUT),
+        )
+    });
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    let surfaces = harness.surfaces.clone();
+    let app = harness.handle();
+    let opening = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(surfaces.open(&app, "a", request("one", "/a")))
+    });
+    resume.send(()).unwrap();
+    sweep.join().unwrap();
+    let resumed = opening.join().unwrap().unwrap();
+    assert_eq!(resumed.status, "running");
+    assert_ne!(resumed.generation, initial.generation);
+    harness.close("a").unwrap();
+}
+
+#[test]
+fn failed_idle_cleanup_stays_available_for_explicit_retry() {
+    let harness = Harness::new();
+    harness.open("a", request("one", "/a")).unwrap();
+    harness
+        .surfaces
+        .adapter()
+        .fail_cleanup
+        .store(true, Ordering::SeqCst);
+    expire(&harness);
+    assert_eq!(harness.surfaces.list()[0].status, "exited");
+    assert_eq!(
+        harness.surfaces.list()[0].error.as_deref(),
+        Some("cleanup failed")
+    );
+    harness
+        .surfaces
+        .adapter()
+        .fail_cleanup
+        .store(false, Ordering::SeqCst);
+    harness.close("a").unwrap();
+    assert!(harness.surfaces.is_empty());
+}
+
+#[test]
+fn an_idle_sweep_does_not_delay_cancelling_a_start_in_progress() {
+    let harness = Harness::new();
+    let opening = open_in_background(&harness, Startup::FailsOnInterrupt);
+    expire(&harness);
+    harness.close("a").unwrap();
+    assert!(opening.join().unwrap().is_err());
+    assert!(harness.surfaces.is_empty());
+}
+
+#[test]
+fn suspension_requires_a_restorable_view_and_preserves_close_errors() {
+    let harness = Harness::new();
+    harness.open("a", request("one", "/a")).unwrap();
+    let adapter = harness.surfaces.adapter();
+    adapter.fail_resume.store(true, Ordering::SeqCst);
+    expire(&harness);
+    assert_eq!(harness.statuses("a"), ["running"]);
+    adapter.fail_resume.store(false, Ordering::SeqCst);
+    adapter.fail_close.store(true, Ordering::SeqCst);
+    expire(&harness);
+    assert_eq!(harness.surfaces.list()[0].status, "exited");
+    assert_eq!(
+        harness.surfaces.list()[0].error.as_deref(),
+        Some("cannot close view")
+    );
+    adapter.fail_close.store(false, Ordering::SeqCst);
+    harness.close("a").unwrap();
+    assert!(harness.surfaces.is_empty());
+}
+
+#[test]
+fn suspension_cleans_up_a_running_session_without_an_attached_view() {
+    let harness = Harness::new();
+    let slot = harness.surfaces.reserve("a", request("one", "/a")).unwrap();
+    slot.mark_running();
+    slot.idle_allowed.store(true, Ordering::SeqCst);
+    expire(&harness);
+    assert_eq!(slot.info().status, "suspended");
+    assert!(!slot.lease.running());
+    harness.close("a").unwrap();
 }

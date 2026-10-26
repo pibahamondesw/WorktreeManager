@@ -5,13 +5,17 @@ mod activity;
 mod server;
 mod view;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Manager, State, Wry};
 
 use super::code_server::{self, task_key};
-use super::embedded::{Adapter, EditorRegistry, HiddenView, ServerProcess, SessionInfo, Slot};
+use super::embedded::{
+    Adapter, EditorRegistry, HiddenView, Lease, ServerProcess, SessionInfo, Slot,
+};
 use super::login_shell::cli_available;
 
 pub struct OpenCode {
@@ -50,10 +54,32 @@ pub struct TaskConnection {
     session_url: tauri::Url,
 }
 
+#[derive(Default)]
+pub struct OpenCodeLease {
+    process: ServerProcess,
+    connection: Mutex<Option<server::Connection>>,
+    directories: Mutex<HashSet<PathBuf>>,
+}
+
+impl Lease for OpenCodeLease {
+    fn running(&self) -> bool {
+        self.process.running()
+    }
+    fn interrupt(&self) {
+        self.process.stop();
+    }
+    fn terminate(&self) -> Result<(), String> {
+        self.process.terminate()
+    }
+    fn retire(&self) {
+        self.process.stop();
+    }
+}
+
 impl Adapter for OpenCode {
     type Runtime = Wry;
     type Request = Vec<PathBuf>;
-    type Lease = ServerProcess;
+    type Lease = OpenCodeLease;
     type Connection = TaskConnection;
     type View = HiddenView;
     const EVENT: &'static str = "opencode-session";
@@ -61,8 +87,11 @@ impl Adapter for OpenCode {
     const NAME: &'static str = "OpenCode";
     const ENDED: &'static str = "OpenCode ended. Restart to resume this task's session.";
 
-    fn lease(&self, _: &str, _: &str, _: &Vec<PathBuf>) -> Result<ServerProcess, String> {
-        Ok(ServerProcess::default())
+    fn lease(&self, _: &str, _: &str, folders: &Vec<PathBuf>) -> Result<OpenCodeLease, String> {
+        Ok(OpenCodeLease {
+            directories: Mutex::new(folders.iter().cloned().collect()),
+            ..Default::default()
+        })
     }
 
     /// Starts the task's server and resolves the session its view opens on.
@@ -72,8 +101,16 @@ impl Adapter for OpenCode {
         }
         let folders = &slot.request;
         let data = self.task_data(app, &slot.info().task_id)?;
-        let server = server::start(&slot.lease, &self.program, &data, folders)?;
-        let session_url = resolve_session_url(&server, &folders[0])?;
+        let server = server::start(&slot.lease.process, &self.program, &data, folders)?;
+        let session_url = match slot.resume_path.lock().unwrap().as_deref() {
+            Some(path) => {
+                let mut url = server.session_url(&folders[0], "")?;
+                url.set_path(path);
+                url
+            }
+            None => resolve_session_url(&server, &folders[0])?,
+        };
+        *slot.lease.connection.lock().unwrap() = Some(server.clone());
         Ok(TaskConnection {
             server,
             session_url,
@@ -91,6 +128,18 @@ impl Adapter for OpenCode {
         connection: &TaskConnection,
     ) -> Result<HiddenView, String> {
         view::create(app, &slot.label, connection.session_url.clone())
+    }
+
+    fn suspend_guard(&self, _app: &AppHandle, slot: &Slot<Self>) -> Option<Box<dyn Send>> {
+        if !slot.idle_allowed.load(Ordering::SeqCst) {
+            return None;
+        }
+        let connection = slot.lease.connection.lock().unwrap().clone()?;
+        let directories = slot.lease.directories.lock().unwrap().clone();
+        connection
+            .activity(&directories)
+            .is_some_and(|activity| activity.idle())
+            .then(|| Box::new(()) as Box<dyn Send>)
     }
 
     fn opened(&self, app: &AppHandle, slot: &Arc<Slot<Self>>, connection: TaskConnection) {
@@ -152,7 +201,7 @@ pub(crate) mod native {
     const EVENTS: [&str; 7] = [
         ": connected",
         "data: not json",
-        r#"data: {"payload":{"type":"session.status","properties":{"sessionID":"s","status":{"type":"busy"}}}}"#,
+        r#"data: {"directory":"/observed","payload":{"type":"session.status","properties":{"sessionID":"s","status":{"type":"busy"}}}}"#,
         r#"data: {"payload":{"type":"permission.asked","properties":{"id":"p","sessionID":"s"}}}"#,
         r#"data: {"payload":{"type":"permission.replied","properties":{"requestID":"p","sessionID":"s"}}}"#,
         r#"data: {"payload":{"type":"session.status","properties":{"sessionID":"s","status":{"type":"idle"}}}}"#,
@@ -164,16 +213,18 @@ pub(crate) mod native {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let created = Arc::new(AtomicBool::new(false));
+        let fail_snapshot = Arc::new(AtomicBool::new(true));
         std::thread::spawn(move || {
             for stream in listener.incoming().map_while(Result::ok) {
                 let created = created.clone();
-                std::thread::spawn(move || respond(stream, &created));
+                let fail_snapshot = fail_snapshot.clone();
+                std::thread::spawn(move || respond(stream, &created, &fail_snapshot));
             }
         });
         port
     }
 
-    fn respond(mut stream: TcpStream, created: &AtomicBool) {
+    fn respond(mut stream: TcpStream, created: &AtomicBool, fail_snapshot: &AtomicBool) {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut request = String::new();
         reader.read_line(&mut request).unwrap();
@@ -199,13 +250,30 @@ pub(crate) mod native {
         } else {
             "[]".into()
         };
+        if request.starts_with("GET /global/event ") {
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{}\n\n", EVENTS.join("\n\n"));
+            loop {
+                std::thread::sleep(Duration::from_millis(100));
+                if writeln!(
+                    stream,
+                    "data: {{\"payload\":{{\"type\":\"server.heartbeat\"}}}}\n"
+                )
+                .is_err()
+                {
+                    return;
+                }
+            }
+        }
         let (kind, body) = match request.split_whitespace().take(2).collect::<Vec<_>>()[..] {
             ["POST", "/session"] => {
                 created.store(true, Ordering::SeqCst);
                 ("application/json", SESSION.to_string())
             }
             ["GET", "/session"] => ("application/json", listed),
-            ["GET", "/global/event"] => ("text/event-stream", EVENTS.join("\n\n")),
+            ["GET", "/permission" | "/question"] => ("application/json", "[]".to_string()),
+            ["GET", "/session/status"] if fail_snapshot.swap(false, Ordering::SeqCst) => {
+                ("application/json", "null".to_string())
+            }
             _ => ("application/json", "{}".to_string()),
         };
         let _ = write!(
@@ -238,6 +306,17 @@ pub(crate) mod native {
             })
             .collect();
         let program = root.join("opencode");
+        let registry = app.state::<EditorRegistry>();
+        let unopened = registry
+            .opencode
+            .reserve("unopened", folders.iter().map(PathBuf::from).collect())
+            .unwrap();
+        assert!(registry
+            .opencode
+            .adapter()
+            .suspend_guard(app, &unopened)
+            .is_none());
+        tauri::async_runtime::block_on(registry.opencode.close(app, "unopened")).unwrap();
         let states = Arc::new(Mutex::new(Vec::<String>::new()));
         let recorded = states.clone();
         app.listen_any(activity::EVENT, move |event| {
@@ -276,7 +355,7 @@ pub(crate) mod native {
         tauri::async_runtime::block_on(embedded::vscode_present(
             app.clone(),
             app.state(),
-            u64::MAX,
+            100,
             Some("task".into()),
             Some(embedded::SurfaceKind::Opencode),
             embedded::Bounds {
@@ -306,7 +385,52 @@ pub(crate) mod native {
             ["working", "waiting", "working", "done"]
         );
 
-        unsafe { libc::kill(opened.pid.unwrap() as i32, libc::SIGKILL) };
+        let registry = app.state::<EditorRegistry>();
+        let data = registry.opencode.adapter().task_data(app, "task").unwrap();
+        let database = data.join("opencode.db");
+        std::fs::write(&database, "persisted conversation").unwrap();
+        let original_path = app
+            .get_webview(&label)
+            .unwrap()
+            .url()
+            .unwrap()
+            .path()
+            .to_owned();
+        assert!(original_path.ends_with("/session/ses_native"));
+        tauri::async_runtime::block_on(embedded::vscode_present(
+            app.clone(),
+            app.state(),
+            101,
+            None,
+            None,
+            embedded::Bounds::default(),
+            false,
+            false,
+        ))
+        .unwrap();
+        tauri::async_runtime::block_on(
+            registry
+                .opencode
+                .suspend_idle(app, std::time::Instant::now() + Duration::from_secs(3600)),
+        );
+        assert_eq!(list()[0].status, "suspended");
+        assert!(app.get_webview(&label).is_none());
+        let resumed = open().unwrap();
+        assert_ne!(resumed.generation, opened.generation);
+        let resumed_label = registry.opencode.running_label("task").unwrap();
+        assert_eq!(
+            app.get_webview(&resumed_label)
+                .unwrap()
+                .url()
+                .unwrap()
+                .path(),
+            original_path
+        );
+        assert_eq!(
+            std::fs::read_to_string(database).unwrap(),
+            "persisted conversation"
+        );
+        unsafe { libc::kill(resumed.pid.unwrap() as i32, libc::SIGKILL) };
         wait_until(|| list()[0].status == "exited");
         let close = |task: &str| {
             tauri::async_runtime::block_on(opencode_close(app.clone(), app.state(), task.into()))

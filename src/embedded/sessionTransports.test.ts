@@ -47,6 +47,15 @@ describe("sessionRegistry.taskStatuses", () => {
 });
 
 describe("sessionRegistry.listLive", () => {
+  it("keeps suspended surfaces available for task cleanup and surface switching", async () => {
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "opencode_list" ? [{ taskId: "sleeping", status: "suspended" }] : []
+      )
+    );
+    await expect(sessionRegistry.listLive("sleeping")).resolves.toEqual([{ kind: "opencode" }]);
+  });
+
   it("lists only the task's surfaces whose process is still alive", async () => {
     await expect(sessionRegistry.listLive("t1")).resolves.toEqual([
       { kind: "editor" },

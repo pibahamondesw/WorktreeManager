@@ -12,7 +12,7 @@ export interface EditorRuntime {
 export interface EditorSession {
   taskId: string;
   generation: string;
-  status: "starting" | "running" | "exited" | "closed";
+  status: "starting" | "running" | "suspended" | "exited" | "closed";
   pid: number | null;
   error: string | null;
 }

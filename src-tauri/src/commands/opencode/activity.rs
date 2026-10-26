@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,6 +32,39 @@ pub struct Activity {
 }
 
 impl Activity {
+    pub fn idle(&self) -> bool {
+        self.busy.is_empty() && self.pending.is_empty()
+    }
+
+    pub fn include_snapshot(
+        &mut self,
+        status: &Value,
+        permissions: &Value,
+        questions: &Value,
+    ) -> Option<()> {
+        for (session, status) in status.as_object()? {
+            match status["type"].as_str()? {
+                "idle" => {}
+                "busy" | "retry" => {
+                    self.busy.insert(session.clone());
+                }
+                _ => return None,
+            }
+        }
+        for pending in [permissions, questions] {
+            for request in pending.as_array()? {
+                self.pending.insert(request["id"].as_str()?.to_owned());
+            }
+        }
+        Some(())
+    }
+
+    fn reconcile(&mut self, snapshot: Self) -> Option<&'static str> {
+        self.busy = snapshot.busy;
+        self.pending = snapshot.pending;
+        self.report()
+    }
+
     pub fn apply(&mut self, event: &Value) -> Option<&'static str> {
         let properties = &event["properties"];
         let text = |key: &str| properties[key].as_str().map(str::to_string);
@@ -55,6 +89,10 @@ impl Activity {
             }
             _ => return None,
         }
+        self.report()
+    }
+
+    fn report(&mut self) -> Option<&'static str> {
         let state = if !self.pending.is_empty() {
             Some("waiting")
         } else if !self.busy.is_empty() {
@@ -79,22 +117,53 @@ pub fn watch(app: AppHandle, slot: Arc<Slot<OpenCode>>, connection: Connection) 
         let client = connection.client(None);
         let task_id = slot.info().task_id;
         let mut activity = Activity::default();
-        while slot.is_open() && slot.lease.running() {
-            let lines = connection
+        let emit = |state| {
+            if let Some(state) = state {
+                let _ = app.emit_to(
+                    "main",
+                    EVENT,
+                    ActivityEvent {
+                        task_id: task_id.clone(),
+                        state,
+                        at: now_millis(),
+                    },
+                );
+            }
+        };
+        while slot.is_open() && crate::commands::embedded::Lease::running(&slot.lease) {
+            slot.idle_allowed.store(false, Ordering::SeqCst);
+            if let Ok(response) = connection
                 .get(&client, "/global/event")
                 .send()
-                .into_iter()
-                .flat_map(|response| BufReader::new(response).lines())
-                .map_while(Result::ok)
-                .take_while(|_| slot.is_open());
-            let events = lines.filter_map(|line| {
-                serde_json::from_str::<Value>(line.strip_prefix("data: ")?).ok()
-            });
-            for state in events.filter_map(|event| activity.apply(&event["payload"])) {
-                let at = now_millis();
-                let task_id = task_id.clone();
-                let _ = app.emit_to("main", EVENT, ActivityEvent { task_id, state, at });
+                .and_then(|response| response.error_for_status())
+            {
+                let directories = slot.lease.directories.lock().unwrap().clone();
+                if let Some(snapshot) = connection.activity(&directories) {
+                    emit(activity.reconcile(snapshot));
+                    let lines = BufReader::new(response)
+                        .lines()
+                        .map_while(Result::ok)
+                        .take_while(|_| slot.is_open());
+                    let events = lines.filter_map(|line| {
+                        serde_json::from_str::<Value>(line.strip_prefix("data: ")?).ok()
+                    });
+                    for event in events {
+                        if let Some(directory) = event["directory"]
+                            .as_str()
+                            .filter(|directory| std::path::Path::new(directory).is_absolute())
+                        {
+                            slot.lease
+                                .directories
+                                .lock()
+                                .unwrap()
+                                .insert(directory.into());
+                        }
+                        emit(activity.apply(&event["payload"]));
+                        slot.idle_allowed.store(activity.idle(), Ordering::SeqCst);
+                    }
+                }
             }
+            slot.idle_allowed.store(false, Ordering::SeqCst);
             std::thread::sleep(Duration::from_secs(1));
         }
     });
@@ -149,6 +218,54 @@ mod tests {
         activity.apply(&status("child", "busy"));
         assert_eq!(activity.apply(&status("child", "idle")), None);
         assert_eq!(activity.apply(&status("parent", "idle")), Some("done"));
+    }
+
+    #[test]
+    fn questions_and_retrying_subagents_block_idle_shutdown() {
+        let mut activity = Activity::default();
+        activity.apply(&status("child", "retry"));
+        assert!(!activity.idle());
+        activity.apply(&json!({"type": "question.asked", "properties": {"id": "q"}}));
+        activity.apply(&status("child", "idle"));
+        assert!(!activity.idle());
+        activity.apply(&json!({"type": "question.rejected", "properties": {"requestID": "q"}}));
+        assert!(activity.idle());
+    }
+
+    #[test]
+    fn reconnect_replaces_stale_work_and_pending_requests_before_applying_buffered_events() {
+        let mut activity = Activity::default();
+        activity.apply(&status("a", "busy"));
+        activity.apply(&json!({"type": "permission.asked", "properties": {"id": "p"}}));
+        let mut snapshot = Activity::default();
+        snapshot
+            .include_snapshot(&json!({}), &json!([]), &json!([]))
+            .unwrap();
+        assert_eq!(activity.reconcile(snapshot), Some("done"));
+        assert!(activity.idle());
+        assert_eq!(activity.apply(&status("b", "busy")), Some("working"));
+        assert!(!activity.idle());
+    }
+
+    #[test]
+    fn snapshots_include_work_and_interactions_missed_while_disconnected() {
+        let mut snapshot = Activity::default();
+        snapshot
+            .include_snapshot(&json!({"a": {"type": "idle"}}), &json!([]), &json!([]))
+            .unwrap();
+        snapshot
+            .include_snapshot(
+                &json!({"b": {"type": "retry"}}),
+                &json!([]),
+                &json!([{"id": "q"}]),
+            )
+            .unwrap();
+        let mut activity = Activity::default();
+        assert_eq!(activity.reconcile(snapshot), Some("waiting"));
+        assert!(!activity.idle());
+        assert!(activity
+            .include_snapshot(&json!({}), &json!([{}]), &json!([]))
+            .is_none());
     }
 
     #[test]

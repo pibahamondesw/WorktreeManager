@@ -4,7 +4,9 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use super::idle::Visibility;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -75,6 +77,12 @@ pub trait Adapter: Send + Sync + Sized + 'static {
     ) {
     }
 
+    fn suspend_guard(
+        &self,
+        app: &AppHandle<Self::Runtime>,
+        slot: &Slot<Self>,
+    ) -> Option<Box<dyn Send>>;
+
     /// Cancels the surface's own background work when the app quits.
     fn shutdown(&self) {}
 }
@@ -98,6 +106,10 @@ pub trait Lease: Send + Sync + 'static {
 }
 
 pub trait View: Send + Sync + 'static {
+    fn resume_path(&self) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
     fn close(&self) -> Result<(), String>;
 
     /// Lets the page wind down before its processes are terminated.
@@ -111,6 +123,8 @@ pub struct Slot<A: Adapter> {
     pub request: A::Request,
     pub lease: A::Lease,
     closed: AtomicBool,
+    pub idle_allowed: AtomicBool,
+    pub resume_path: Mutex<Option<String>>,
     info: Mutex<SessionInfo>,
     view: tokio::sync::Mutex<Option<A::View>>,
 }
@@ -165,6 +179,8 @@ pub struct Surfaces<A: Adapter> {
     adapter: Arc<A>,
     sessions: Mutex<HashMap<String, Arc<Slot<A>>>>,
     shutting_down: AtomicBool,
+    visibility: Mutex<Visibility>,
+    suspension: tokio::sync::RwLock<()>,
 }
 
 impl<A: Adapter + Default> Default for Surfaces<A> {
@@ -179,6 +195,8 @@ impl<A: Adapter> Surfaces<A> {
             adapter: Arc::new(adapter),
             sessions: Mutex::default(),
             shutting_down: AtomicBool::new(false),
+            visibility: Mutex::default(),
+            suspension: tokio::sync::RwLock::new(()),
         }
     }
 
@@ -225,11 +243,18 @@ impl<A: Adapter> Surfaces<A> {
 
     /// The task's session, created when it has none. Reopening returns the same session.
     pub fn reserve(&self, task_id: &str, request: A::Request) -> Result<Arc<Slot<A>>, String> {
+        let mut visibility = self.visibility.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
         if self.shutting_down() {
             return Err("The app is shutting down".into());
         }
-        if let Some(slot) = sessions.get(task_id) {
+        let resume_path = sessions
+            .get(task_id)
+            .and_then(|slot| slot.resume_path.lock().unwrap().clone());
+        if let Some(slot) = sessions
+            .get(task_id)
+            .filter(|slot| slot.info().status != "suspended")
+        {
             if !slot.is_open() {
                 return Err(format!(
                     "{} is closing. Try again when it finishes.",
@@ -251,6 +276,8 @@ impl<A: Adapter> Surfaces<A> {
             request,
             lease,
             closed: AtomicBool::new(false),
+            idle_allowed: AtomicBool::new(false),
+            resume_path: Mutex::new(resume_path),
             view: tokio::sync::Mutex::new(None),
             info: Mutex::new(SessionInfo {
                 task_id: task_id.into(),
@@ -260,6 +287,8 @@ impl<A: Adapter> Surfaces<A> {
                 error: None,
             }),
         });
+        visibility.forget(task_id);
+        visibility.register(task_id, Instant::now());
         sessions.insert(task_id.into(), slot.clone());
         Ok(slot)
     }
@@ -270,8 +299,17 @@ impl<A: Adapter> Surfaces<A> {
         task_id: &str,
         request: A::Request,
     ) -> Result<SessionInfo, String> {
-        let slot = self.reserve(task_id, request)?;
+        let slot = self.reserve_for_open(task_id, request).await?;
         self.start(app, slot).await
+    }
+
+    pub async fn reserve_for_open(
+        &self,
+        task_id: &str,
+        request: A::Request,
+    ) -> Result<Arc<Slot<A>>, String> {
+        let _suspension = self.suspension.read().await;
+        self.reserve(task_id, request)
     }
 
     /// Brings a reserved session up, or returns it when it already is.
@@ -334,6 +372,7 @@ impl<A: Adapter> Surfaces<A> {
     }
 
     pub async fn close(&self, app: &AppHandle<A::Runtime>, task_id: &str) -> Result<(), String> {
+        let _suspension = self.suspension.read().await;
         let slot = self.sessions.lock().unwrap().get(task_id).cloned();
         let Some(slot) = slot else {
             return Ok(());
@@ -355,8 +394,105 @@ impl<A: Adapter> Surfaces<A> {
         }
         *view = None;
         self.release(&slot);
+        self.visibility.lock().unwrap().forget(task_id);
         slot.update(app, "closed", None);
         Ok(())
+    }
+
+    pub fn select(&self, task_id: Option<&str>, now: Instant) {
+        self.visibility.lock().unwrap().select(task_id, now);
+    }
+
+    pub async fn suspend_idle(&self, app: &AppHandle<A::Runtime>, now: Instant) {
+        for candidate in self.open_slots() {
+            let _suspension = self.suspension.write().await;
+            let group: Vec<_> = self
+                .open_slots()
+                .into_iter()
+                .filter(|slot| {
+                    Arc::ptr_eq(slot, &candidate) || slot.lease.shares_server(&candidate.lease)
+                })
+                .collect();
+            if group.is_empty() || !self.group_idle(&group, now) {
+                continue;
+            }
+            let (adapter, handle, checking) = (self.adapter.clone(), app.clone(), group.clone());
+            let guards = tauri::async_runtime::spawn_blocking(move || {
+                checking
+                    .iter()
+                    .map(|slot| adapter.suspend_guard(&handle, slot))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .await;
+            let Ok(Some(guards)) = guards else { continue };
+            let mut paths = Vec::new();
+            for slot in &group {
+                let view = slot.view.lock().await;
+                let path = view.as_ref().map_or(Ok(None), View::resume_path);
+                match path {
+                    Ok(path) => paths.push(path),
+                    Err(_) => break,
+                }
+            }
+            if paths.len() != group.len() {
+                continue;
+            }
+            {
+                let visibility = self.visibility.lock().unwrap();
+                if self.shutting_down()
+                    || !group.iter().all(|slot| {
+                        slot.running()
+                            && slot.idle_allowed.load(Ordering::SeqCst)
+                            && visibility.expired(&slot.info().task_id, now)
+                    })
+                {
+                    continue;
+                }
+                for slot in &group {
+                    slot.closed.store(true, Ordering::SeqCst);
+                }
+            }
+            let mut errors = HashMap::new();
+            for (slot, path) in group.iter().zip(paths) {
+                *slot.resume_path.lock().unwrap() = path;
+                let mut view = slot.view.lock().await;
+                if let Some(opened) = view.as_ref() {
+                    opened.shutdown().await;
+                    if let Err(error) = opened.close() {
+                        errors.insert(slot.label.clone(), error);
+                        continue;
+                    }
+                }
+                *view = None;
+            }
+            let retiring = candidate.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || retiring.lease.retire()).await;
+            drop(guards);
+            for slot in group {
+                let worker = slot.clone();
+                let result = tauri::async_runtime::spawn_blocking(move || worker.lease.terminate())
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| result);
+                slot.info.lock().unwrap().pid = None;
+                let result = result.and_then(|()| errors.remove(&slot.label).map_or(Ok(()), Err));
+                match result {
+                    Ok(()) => {
+                        slot.update(app, "suspended", None);
+                    }
+                    Err(error) => {
+                        slot.update(app, "exited", Some(error));
+                    }
+                }
+            }
+        }
+    }
+
+    fn group_idle(&self, group: &[Arc<Slot<A>>], now: Instant) -> bool {
+        let visibility = self.visibility.lock().unwrap();
+        group
+            .iter()
+            .all(|slot| slot.running() && visibility.expired(&slot.info().task_id, now))
     }
 
     pub fn shutdown_all(&self) {

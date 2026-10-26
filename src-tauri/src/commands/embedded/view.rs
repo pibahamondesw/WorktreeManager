@@ -16,6 +16,13 @@ pub struct HiddenView {
 }
 
 impl super::View for HiddenView {
+    fn resume_path(&self) -> Result<Option<String>, String> {
+        self.webview
+            .url()
+            .map(|url| Some(url.path().to_owned()))
+            .map_err(|error| error.to_string())
+    }
+
     fn close(&self) -> Result<(), String> {
         self.webview.close().map_err(|error| error.to_string())
     }
