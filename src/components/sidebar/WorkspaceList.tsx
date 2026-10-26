@@ -355,15 +355,7 @@ export function WorkspaceList({
           workspace={removeWorkspace}
           vault={vault}
           tasks={tasks.filter((t) => t.workspaceId === removeWorkspace.id)}
-          onConfirm={async (deleteWorktrees, teardown) => {
-            const result = await onRemove(removeWorkspace.id, {
-              deleteWorktrees,
-              force: deleteWorktrees,
-              ...teardown,
-            });
-            setRemoveWorkspace(null);
-            return result;
-          }}
+          onConfirm={(options) => onRemove(removeWorkspace.id, options)}
         />
       )}
     </aside>
