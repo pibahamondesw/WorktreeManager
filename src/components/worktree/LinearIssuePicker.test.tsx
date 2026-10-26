@@ -7,12 +7,12 @@ import { NewWorktreeModal } from "./NewWorktreeModal";
 import { LinearIssue, Workspace, Task } from "../../types";
 import { CreateTaskInput, TaskReady } from "../../services/operations";
 
-const { fetchAssignedIssues, startIssue } = vi.hoisted(() => ({
-  fetchAssignedIssues: vi.fn(),
+const { fetchSuggestedIssues, startIssue } = vi.hoisted(() => ({
+  fetchSuggestedIssues: vi.fn(),
   startIssue: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../../contexts/useLinear", () => {
-  const service = { fetchAssignedIssues, startIssue };
+  const service = { fetchSuggestedIssues, startIssue };
   return { useLinear: () => service };
 });
 vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
@@ -38,7 +38,7 @@ const remote: LinearIssue = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
-  fetchAssignedIssues.mockResolvedValue([assigned]);
+  fetchSuggestedIssues.mockResolvedValue([assigned]);
 });
 afterEach(cleanup);
 
@@ -65,18 +65,18 @@ describe("shared Linear issue picker", () => {
     const onSelect = vi.fn();
     render(<LinearIssuePicker onSelect={onSelect} />);
     expect(await screen.findByRole("button", { name: /WOR-123/ })).toHaveTextContent("High");
-    fetchAssignedIssues.mockResolvedValue([assigned, remote]);
+    fetchSuggestedIssues.mockResolvedValue([assigned, remote]);
     search("Workspace");
     expect(screen.getByRole("button", { name: /WOR-123/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /WOR-124/ })).toBeInTheDocument();
-    expect(fetchAssignedIssues).toHaveBeenLastCalledWith("Workspace");
+    expect(fetchSuggestedIssues).toHaveBeenLastCalledWith("Workspace");
     expect(screen.getAllByRole("button", { name: /WOR-123/ })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: /WOR-124/ }));
     expect(onSelect).toHaveBeenCalledWith(remote);
   });
 
   it("navigates results with arrows, ctrl+n/p and digits, and selects with Enter", async () => {
-    fetchAssignedIssues.mockResolvedValue([assigned, remote, third]);
+    fetchSuggestedIssues.mockResolvedValue([assigned, remote, third]);
     const onSelect = vi.fn();
     render(<LinearIssuePicker onSelect={onSelect} />);
     await screen.findByRole("button", { name: /WOR-125/ });
@@ -101,7 +101,7 @@ describe("shared Linear issue picker", () => {
   });
 
   it("keeps digits for typing once a query is entered", async () => {
-    fetchAssignedIssues.mockResolvedValue([assigned, remote, third]);
+    fetchSuggestedIssues.mockResolvedValue([assigned, remote, third]);
     render(<LinearIssuePicker onSelect={vi.fn()} />);
     await screen.findByRole("button", { name: /WOR-125/ });
     search("WOR");
@@ -127,14 +127,14 @@ describe("shared Linear issue picker", () => {
     render(<LinearIssuePicker onSelect={vi.fn()} />);
     await screen.findByRole("button", { name: /WOR-123/ });
     let resolve!: (issues: LinearIssue[]) => void;
-    fetchAssignedIssues.mockImplementationOnce(
+    fetchSuggestedIssues.mockImplementationOnce(
       () =>
         new Promise<LinearIssue[]>((done) => {
           resolve = done;
         })
     );
     search("old query");
-    await waitFor(() => expect(fetchAssignedIssues).toHaveBeenCalledWith("old query"));
+    await waitFor(() => expect(fetchSuggestedIssues).toHaveBeenCalledWith("old query"));
     search("");
     await act(async () => resolve([remote]));
     expect(screen.queryByRole("button", { name: /WOR-124/ })).not.toBeInTheDocument();
@@ -142,15 +142,15 @@ describe("shared Linear issue picker", () => {
   });
 
   it("shows load and search failures and recovers with another query", async () => {
-    fetchAssignedIssues.mockRejectedValueOnce(new Error("offline"));
+    fetchSuggestedIssues.mockRejectedValueOnce(new Error("offline"));
     render(<LinearIssuePicker onSelect={vi.fn()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load issues");
-    fetchAssignedIssues.mockRejectedValueOnce(new Error("offline"));
+    fetchSuggestedIssues.mockRejectedValueOnce(new Error("offline"));
     search("missing");
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("Failed to search issues")
     );
-    fetchAssignedIssues.mockResolvedValue([remote]);
+    fetchSuggestedIssues.mockResolvedValue([remote]);
     search("remote");
     expect(await screen.findByRole("button", { name: /WOR-124/ })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();

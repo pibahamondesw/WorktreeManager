@@ -118,7 +118,7 @@ it("creates the Linear issue first and uses its branch name for the task", async
     updatedAt: "2026-10-04",
   };
   linearMock.current = {
-    fetchAssignedIssues: vi.fn().mockResolvedValue([]),
+    fetchSuggestedIssues: vi.fn().mockResolvedValue([]),
     listTeams: vi.fn().mockResolvedValue([{ id: "team-1", key: "WOR", name: "Worktree" }]),
     createIssue: vi.fn(async () => {
       order.push("issue");
@@ -166,7 +166,7 @@ async function renderNewIssueForm(
   repos = workspace.repos
 ) {
   const service = {
-    fetchAssignedIssues: vi.fn().mockResolvedValue([]),
+    fetchSuggestedIssues: vi.fn().mockResolvedValue([]),
     listTeams: vi.fn().mockResolvedValue([{ id: "team-1", key: "WOR", name: "Worktree" }]),
     createIssue: vi.fn().mockResolvedValue({
       id: "issue-1",
@@ -308,7 +308,7 @@ it("prevents duplicate submissions and mode changes while issue creation is pend
 it("shows team loading errors and keeps issue creation disabled", async () => {
   const onCreated = vi.fn();
   linearMock.current = {
-    fetchAssignedIssues: vi.fn().mockResolvedValue([]),
+    fetchSuggestedIssues: vi.fn().mockResolvedValue([]),
     listTeams: vi.fn().mockRejectedValue(new Error("offline")),
     createIssue: vi.fn(),
   };

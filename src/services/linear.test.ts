@@ -225,3 +225,176 @@ it.each([
     "Linear rejected the issue creation"
   );
 });
+
+describe("Linear issue suggestions", () => {
+  const me = { isMe: { eq: true } };
+  const filters = [
+    { assignee: me },
+    { creator: me },
+    { project: { lead: me } },
+    { project: { members: { some: me } } },
+    { project: { creator: me } },
+  ];
+  const node = (id: string, priority = 0, updatedAt = "2026-10-01T00:00:00Z") => ({
+    id,
+    identifier: id,
+    title: id,
+    branchName: id,
+    description: null,
+    priority,
+    updatedAt,
+    project: { id: "project", name: "App" },
+    state: { name: "Todo", type: "unstarted" },
+  });
+  const page = (nodes: ReturnType<typeof node>[], next: string | null = null) => ({
+    nodes,
+    pageInfo: { hasNextPage: next !== null, endCursor: next },
+  });
+  const setup = () => {
+    const service = new LinearService("test-key");
+    const request = vi.fn();
+    Object.defineProperty(service, "gql", { value: { rawRequest: request } });
+    return { service, request };
+  };
+
+  it("orders all five groups by relevance, then urgency, and keeps overlaps in the first group", async () => {
+    const { service, request } = setup();
+    for (const [index] of filters.entries()) {
+      request.mockResolvedValueOnce({
+        data: {
+          issues: page([
+            node(`${index}-none`),
+            node(`${index}-low`, 4),
+            node(`${index}-medium`, 3),
+            node(`${index}-high`, 2),
+            node(`${index}-urgent`, 1),
+            node("overlap", 2),
+          ]),
+        },
+      });
+    }
+    const issues = await service.fetchSuggestedIssues();
+    expect(issues.map((issue) => issue.id)).toEqual(
+      filters.flatMap((_, index) => [
+        `${index}-urgent`,
+        `${index}-high`,
+        ...(index === 0 ? ["overlap"] : []),
+        `${index}-medium`,
+        `${index}-low`,
+        `${index}-none`,
+      ])
+    );
+    expect(issues[0]).toMatchObject({
+      projectId: "project",
+      projectName: "App",
+      stateName: "Todo",
+    });
+    expect(request).toHaveBeenCalledTimes(5);
+    filters.forEach((filter, index) => {
+      expect(request).toHaveBeenNthCalledWith(
+        index + 1,
+        expect.stringContaining("query IssueSuggestions"),
+        {
+          filter: { ...filter, state: { type: { nin: ["completed", "canceled"] } } },
+          first: 50,
+          after: null,
+        }
+      );
+    });
+  });
+
+  it("loads later pages before sorting and uses recency to break priority ties", async () => {
+    const { service, request } = setup();
+    request.mockImplementation(
+      async (
+        _query: string,
+        { filter, after }: { filter: Record<string, unknown>; after: string | null }
+      ) => ({
+        data: {
+          issues: filter.assignee
+            ? after
+              ? page([node("urgent", 1), node("recent", 2, "2026-10-20T00:00:00Z")])
+              : page([node("old", 2)], "next")
+            : page([]),
+        },
+      })
+    );
+    expect((await service.fetchSuggestedIssues()).map((issue) => issue.id)).toEqual([
+      "urgent",
+      "recent",
+      "old",
+    ]);
+    expect(request).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ after: "next" })
+    );
+    expect(request).toHaveBeenCalledTimes(6);
+  });
+
+  it("falls back to issues in all viewer teams only when every personal group is empty", async () => {
+    const { service, request } = setup();
+    for (let index = 0; index < filters.length; index++)
+      request.mockResolvedValueOnce({ data: { issues: page([]) } });
+    request
+      .mockResolvedValueOnce({
+        data: { viewer: { teams: { ...page([], "next-team"), nodes: [{ id: "team-a" }] } } },
+      })
+      .mockResolvedValueOnce({
+        data: { viewer: { teams: { ...page([]), nodes: [{ id: "team-b" }] } } },
+      })
+      .mockResolvedValueOnce({ data: { issues: page([node("low", 4), node("urgent", 1)]) } });
+    expect((await service.fetchSuggestedIssues()).map((issue) => issue.id)).toEqual([
+      "urgent",
+      "low",
+    ]);
+    expect(request).toHaveBeenNthCalledWith(7, expect.stringContaining("query ViewerTeams"), {
+      after: "next-team",
+    });
+    expect(request).toHaveBeenLastCalledWith(expect.any(String), {
+      filter: {
+        team: { id: { in: ["team-a", "team-b"] } },
+        state: { type: { nin: ["completed", "canceled"] } },
+      },
+      first: 50,
+      after: null,
+    });
+  });
+
+  it("returns no suggestions when the viewer has no teams", async () => {
+    const { service, request } = setup();
+    for (let index = 0; index < filters.length; index++)
+      request.mockResolvedValueOnce({ data: { issues: page([]) } });
+    request.mockResolvedValueOnce({ data: { viewer: { teams: page([]) } } });
+    await expect(service.fetchSuggestedIssues()).resolves.toEqual([]);
+    expect(request).toHaveBeenCalledTimes(6);
+  });
+
+  it("propagates load failures rather than treating them as empty results", async () => {
+    const { service, request } = setup();
+    request.mockRejectedValue(new Error("offline"));
+    await expect(service.fetchSuggestedIssues()).rejects.toThrow("offline");
+    expect(request).toHaveBeenCalledTimes(5);
+  });
+
+  it("preserves remote search with assigned issues first", async () => {
+    const { service, request } = setup();
+    request.mockResolvedValueOnce({ data: { viewer: { id: "viewer" } } }).mockResolvedValueOnce({
+      data: {
+        searchIssues: {
+          nodes: [
+            { ...node("other"), assignee: null },
+            { ...node("mine"), assignee: { id: "viewer" } },
+          ],
+        },
+      },
+    });
+    expect((await service.fetchSuggestedIssues("  issue  ")).map((issue) => issue.id)).toEqual([
+      "mine",
+      "other",
+    ]);
+    expect(request).toHaveBeenLastCalledWith(expect.stringContaining("query SearchIssues"), {
+      query: "issue",
+      first: 50,
+    });
+  });
+});
