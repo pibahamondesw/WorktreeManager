@@ -360,7 +360,7 @@ export function Composer({
     status.kind === "starting"
       ? `Starting ${agentLabel}…`
       : busy
-        ? `${agentLabel} is working — messages you send now are added to this turn (Esc to stop)`
+        ? `${agentLabel} is working — messages you send now ${AGENTS[agent].steersMidTurn ? "are added to this turn" : "run after this turn"} (Esc to stop)`
         : `Message ${agentLabel} — / for commands, @ for files${canAttach ? ", paste images" : ""}`;
 
   return (
