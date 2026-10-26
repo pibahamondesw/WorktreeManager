@@ -40,23 +40,43 @@ interface WorktreeCardProps {
   task: Task;
   workspace: Workspace;
   vault: VaultConfig;
-  onDelete: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
+  actions: TaskCardActions;
   linearInfo?: IssueLinearInfo;
   gitStatus?: GitStatus;
   selected?: boolean;
   index?: number;
-  onOpenError?: (msg: string) => void;
-  onToast?: (msg: string) => void;
-  onPrReady?: (pr: PullRequestInfo) => Promise<void>;
-  onOpen?: () => void;
-  onTogglePin?: () => void;
-  onLinkIssue?: () => void;
-  onRename?: (title: string) => Promise<unknown>;
   sessionStatus?: TerminalStatus;
   agentActivity?: AgentActivity;
   repoSlugs: Record<string, string> | null;
   requestDelete?: boolean;
-  onRequestDeleteHandled?: () => void;
+}
+
+export interface TaskCardActions {
+  open: (task: Task) => void;
+  delete: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
+  togglePin?: (task: Task) => void;
+  linkIssue?: (taskId: string) => void;
+  rename?: (taskId: string, title: string) => Promise<unknown>;
+  markPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
+  toast: (message: string) => void;
+  reportError: (message: string) => void;
+  deleteRequestHandled: () => void;
+}
+
+function sameJson(a: unknown, b: unknown) {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
+function sameCardProps(prev: WorktreeCardProps, next: WorktreeCardProps) {
+  const keys = Object.keys(next) as (keyof WorktreeCardProps)[];
+  return (
+    keys.length === Object.keys(prev).length &&
+    keys.every((key) =>
+      key === "gitStatus" || key === "repoSlugs"
+        ? sameJson(prev[key], next[key])
+        : Object.is(prev[key], next[key])
+    )
+  );
 }
 
 function preservePrButtonActivation(event: KeyboardEvent<HTMLButtonElement>) {
@@ -67,31 +87,34 @@ export const WorktreeCard = memo(function WorktreeCard({
   task,
   workspace,
   vault,
-  onDelete,
+  actions,
   linearInfo,
   gitStatus,
   selected,
   index,
-  onOpenError,
-  onToast,
-  onPrReady,
-  onOpen,
-  onLinkIssue,
-  onRename,
-  onTogglePin,
   sessionStatus,
   agentActivity,
   repoSlugs,
   requestDelete,
-  onRequestDeleteHandled,
 }: WorktreeCardProps) {
+  const onToast = actions.toast;
+  const onOpenError = actions.reportError;
+  const onRename =
+    task.linearIssueId && actions.rename
+      ? (title: string) => actions.rename!(task.id, title)
+      : undefined;
+  const onPrReady = actions.markPrReady
+    ? (pr: PullRequestInfo) => actions.markPrReady!(task.id, pr)
+    : undefined;
+  const onLinkIssue = actions.linkIssue ? () => actions.linkIssue!(task.id) : undefined;
+  const onTogglePin = actions.togglePin ? () => actions.togglePin!(task) : undefined;
   const shortcutLabel = useShortcutLabels();
   const status = linearInfo?.status ?? null;
   // No Linear issue → no PR attachments will ever load; treat as "loaded, zero PRs"
   // so the Create PR links still render. undefined = still loading, hide PR slots.
   const prs = task.linearIssueId ? linearInfo?.prs : [];
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const deletion = useDeletion((options) => onDelete(task.id, options));
+  const deletion = useDeletion((options) => actions.delete(task.id, options));
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -103,9 +126,9 @@ export const WorktreeCard = memo(function WorktreeCard({
   useEffect(() => {
     if (requestDelete) {
       setConfirmDelete(true);
-      onRequestDeleteHandled?.();
+      actions.deleteRequestHandled();
     }
-  }, [requestDelete, onRequestDeleteHandled]);
+  }, [requestDelete, actions]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -118,7 +141,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
 
-  const handleOpen = () => onOpen?.();
+  const handleOpen = () => actions.open(task);
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -129,7 +152,7 @@ export const WorktreeCard = memo(function WorktreeCard({
     setConfirmDelete(false);
     const outcome = await deletion.run(request);
     if (outcome.kind === "deleted")
-      for (const warning of outcome.warnings) onToast?.(warning.message);
+      for (const warning of outcome.warnings) onToast(warning.message);
   };
 
   const handleDeleteConfirm = async (event: React.MouseEvent) => {
@@ -149,7 +172,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   };
 
   const runAction = (action: TaskActionId) =>
-    void runTaskAction(action, { task, workspace, vault }, (message) => onToast?.(message));
+    void runTaskAction(action, { task, workspace, vault }, (message) => onToast(message));
 
   const handleMenuAction = (action: TaskActionId) => {
     setMenuOpen(false);
@@ -505,7 +528,7 @@ export const WorktreeCard = memo(function WorktreeCard({
       )}
     </div>
   );
-});
+}, sameCardProps);
 
 function MenuButton({
   onClick,

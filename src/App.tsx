@@ -2,7 +2,7 @@ import { useTaskProjects } from "./hooks/useTaskProjects";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { WorkspaceList } from "./components/sidebar/WorkspaceList";
-import { WorktreeList } from "./components/worktree/WorktreeList";
+import { WorktreeList, TaskActions, ListNavigation } from "./components/worktree/WorktreeList";
 import { QuickSearchModal } from "./components/search/QuickSearchModal";
 import { SettingsModal, SettingsSection } from "./components/settings/SettingsModal";
 import { SpinnerIcon } from "./components/ui/Icons";
@@ -21,7 +21,7 @@ import { NavigationEntry } from "./navigation/history";
 import { withScope } from "./search/query";
 import { WorkspaceAction } from "./search/commands";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
-import { Task, VaultConfig } from "./types";
+import { EditorApp, Task, TaskSurface, VaultConfig } from "./types";
 import type { SetupRetry } from "./services/operations";
 import { listen } from "@tauri-apps/api/event";
 import { useAutomation } from "./hooks/useAutomation";
@@ -174,6 +174,57 @@ function App() {
     showTask,
   });
   const agentSessions = useAgentSessions(openedTask !== null);
+
+  const taskActions = useMemo<TaskActions>(
+    () => ({
+      create: createTask,
+      delete: removeTask,
+      setPinned: (id, pinned) => operations.setTaskPinned(id, pinned),
+      reorderPinned: (id, targetId) => operations.reorderPinnedTasks(id, targetId),
+      linkIssue: (id, issue) => operations.linkTaskIssue(id, issue),
+      rename: (id, title) => operations.renameTask(id, title),
+      markPrReady: (taskId, pr) => operations.markPrReady(taskId, pr),
+    }),
+    [operations, createTask, removeTask]
+  );
+
+  const listNavigation = useMemo<ListNavigation>(
+    () => ({
+      canGoBack: history.canGoBack,
+      canGoForward: history.canGoForward,
+      goBack,
+      goForward,
+      sidebarCollapsed,
+      expandSidebar: toggleSidebarCollapsed,
+      openSearch: () => openSearch(false),
+    }),
+    [
+      history.canGoBack,
+      history.canGoForward,
+      goBack,
+      goForward,
+      sidebarCollapsed,
+      toggleSidebarCollapsed,
+      openSearch,
+    ]
+  );
+
+  const changeEditorApp = useCallback(
+    (editor: EditorApp) => void updateEditorApp(editor),
+    [updateEditorApp]
+  );
+  const clearRevealTask = useCallback(() => setRevealTaskId(null), []);
+  const clearNewTaskRequest = useCallback(() => setNewTaskRequested(false), []);
+  const switchTaskSurface = useCallback(
+    (taskId: string, surface: TaskSurface) => {
+      switchSurface(taskId, surface);
+      if (surface.kind === "chat" || surface.kind === "terminal") {
+        void updateAgentView(surface.agent, surface.kind);
+        void operations.setTaskAgent(taskId, surface.agent).catch(() => undefined);
+      }
+    },
+    [switchSurface, updateAgentView, operations]
+  );
   const openNotificationTarget = useCallback(
     (task: Task, target: NotificationTarget) => {
       const surface = embeddedSurface(target);
@@ -449,40 +500,22 @@ function App() {
             agentActivities={agentActivity.activities}
             workspace={selectedWorkspace}
             vault={state.vault}
-            onTaskCreated={createTask}
-            onTaskDeleted={removeTask}
-            onTaskPinned={(id, pinned) => operations.setTaskPinned(id, pinned)}
-            onPinnedTasksReordered={(id, targetId) => operations.reorderPinnedTasks(id, targetId)}
-            onTaskIssueLinked={(id, issue) => operations.linkTaskIssue(id, issue)}
-            onPrReady={(taskId, pr) => operations.markPrReady(taskId, pr)}
-            onTaskRenamed={(id, title) => operations.renameTask(id, title)}
+            taskActions={taskActions}
+            navigation={listNavigation}
             setupControls={setupControls}
             editorApp={editorApp}
-            onEditorChange={(editor) => void updateEditorApp(editor)}
+            onEditorChange={changeEditorApp}
             workspaceSwitching={workspaceSwitching}
             onWorkspaceReady={clearWorkspaceSwitching}
-            onOpenSearch={() => openSearch(false)}
             searchOpen={search.open}
             revealTaskId={revealTaskId}
-            onRevealHandled={() => setRevealTaskId(null)}
+            onRevealHandled={clearRevealTask}
             openedTask={openedTask}
             onOpenTask={openTask}
             onCloseTask={closeTask}
-            onSwitchSurface={(taskId, surface) => {
-              switchSurface(taskId, surface);
-              if (surface.kind === "chat" || surface.kind === "terminal") {
-                void updateAgentView(surface.agent, surface.kind);
-                void operations.setTaskAgent(taskId, surface.agent).catch(() => undefined);
-              }
-            }}
-            canGoBack={history.canGoBack}
-            canGoForward={history.canGoForward}
-            onGoBack={goBack}
-            onGoForward={goForward}
-            sidebarCollapsed={sidebarCollapsed}
-            onExpandSidebar={toggleSidebarCollapsed}
+            onSwitchSurface={switchTaskSurface}
             requestNewTask={newTaskRequested}
-            onRequestNewTaskHandled={() => setNewTaskRequested(false)}
+            onRequestNewTaskHandled={clearNewTaskRequest}
           />
         </ErrorBoundary>
       </div>
