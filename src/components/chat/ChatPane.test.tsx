@@ -21,6 +21,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
 
 import { ChatPane } from "./ChatPane";
+import { AGENTS } from "../../services/agents";
 
 const editorOf = (box: HTMLElement) => EditorView.findFromDOM(box)!;
 const composerText = (box: HTMLElement) => editorOf(box).state.doc.toString();
@@ -514,6 +515,20 @@ describe("ChatPane", () => {
     await act(async () => resolveOpen(snapshot()));
     expect(box).not.toHaveAttribute("aria-disabled");
     expect(box).toHaveFocus();
+  });
+
+  it.each([
+    ["claude", "Claude is working — messages you send now run after this turn (Esc to stop)"],
+    ["codex", "Codex is working — messages you send now are added to this turn (Esc to stop)"],
+  ] as const)("tells how %s handles messages sent mid-turn", async (agent, placeholder) => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open"
+        ? Promise.resolve(snapshot({ status: { kind: "busy" } }))
+        : Promise.resolve(undefined)
+    );
+    render(<ChatPane taskId="t1" agent={agent} folders={["/wt/a"]} />);
+    const box = screen.getByRole("textbox", { name: `Message ${AGENTS[agent].label}` });
+    await waitFor(() => expect(box).toHaveAttribute("aria-placeholder", placeholder));
   });
 
   it("shows why a session failed and restarts it", async () => {

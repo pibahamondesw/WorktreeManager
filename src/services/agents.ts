@@ -10,6 +10,7 @@ export interface AgentCapabilities {
   primaryUsageWindows?: string[];
   alertHooksConfig: string;
   alertHooksTrust?: string;
+  steersMidTurn?: boolean;
   /** Static Tailwind classes in the agent's color, so the active agent is obvious at a glance. */
   tone: { chip: string; dot: string; focus: string };
 }
@@ -33,6 +34,7 @@ export const AGENTS: Record<AgentId, AgentCapabilities> = {
     alertHooksConfig: "~/.codex/hooks.json",
     alertHooksTrust:
       "Run /hooks in the Codex chat or CLI to review and trust new or changed hooks.",
+    steersMidTurn: true,
     tone: {
       chip: "bg-agent-codex/15 text-agent-codex hover:bg-agent-codex/25",
       dot: "bg-agent-codex",

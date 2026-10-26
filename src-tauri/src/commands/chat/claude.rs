@@ -624,7 +624,7 @@ impl ChatProvider for ClaudeProvider {
         }
     }
 
-    /// Messages sent mid-turn are queued by the CLI and run after the current turn.
+    /// Messages sent mid-turn are queued by WorktreeManager and run after the current turn.
     fn send(
         &mut self,
         text: &str,
