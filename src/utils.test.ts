@@ -224,6 +224,12 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     expect(t.workspaceFilePath).toBeNull();
   });
 
+  it("preserves legacy workspace paths on reload", () => {
+    const path = "/workspaces/payments/feature.code-workspace";
+    const [task] = normalizeTasks([{ id: "t1", workspaceId: "w1", workspaceFilePath: path }]);
+    expect(task.workspaceFilePath).toBe(path);
+  });
+
   it("preserves task note folders on reload and keeps old tasks flat", () => {
     const [current, legacy] = normalizeTasks([
       { id: "new", workspaceId: "w1", noteFolder: "new" },

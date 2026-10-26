@@ -49,7 +49,7 @@ export interface Task {
   linearProjectId?: string;
   linearProjectName?: string;
   members: TaskMember[];
-  /** Generated .code-workspace file (Cursor/VS Code), when applicable. */
+  /** Legacy generated workspace path, retained for cleanup and settings migration. */
   workspaceFilePath?: string | null;
   noteFolder?: string;
   noteFileName?: string;

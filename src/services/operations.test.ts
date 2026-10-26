@@ -2,8 +2,9 @@ import { taskLinearStore } from "./taskLinear";
 import { githubPrStatus, refreshGithubPrs, resetGithubCache } from "./github";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { DEFAULT_STATE, AppState, Task, Workspace } from "../types";
+import { DEFAULT_STATE, AppState, EditorApp, Task, Workspace } from "../types";
 import { Operations, CreateTaskInput } from "./operations";
+import { openEditorForWorktree } from "./openEditor";
 import { archiveTaskNote, ensureTaskNote } from "./notes";
 import { LinearService } from "./linear";
 import { normalizeTasks } from "../utils";
@@ -67,7 +68,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(tasks: Task[] = []) {
+function fixture(tasks: Task[] = [], editor: EditorApp = "cursor") {
   let state: AppState = {
     ...DEFAULT_STATE,
     workspaces: [workspace],
@@ -81,7 +82,7 @@ function fixture(tasks: Task[] = []) {
   const operations = new Operations(
     () => state,
     publish,
-    () => "cursor",
+    () => editor,
     save
   );
   return { operations, save, publish };
@@ -119,7 +120,6 @@ async function native(command: string, args?: Record<string, unknown>) {
       steps: detectedOutcomes.map((step) => ({ ...step, status: "pending" })),
     };
   if (command === "run_detected_setup") return reportDetected(args);
-  if (command === "prepare_task_workspace") return "/generated/workspace.code-workspace";
   if (command === "resolve_repo_scripts") return noScripts;
   if (command === "worktree_include_paths") return null;
   return undefined;
@@ -283,7 +283,7 @@ describe("shared operations", () => {
     const result = await creating;
     expect(result.data.members).toHaveLength(2);
     expect(result.data.linearIssueId).toBe("issue-id");
-    expect(result.data.workspaceFilePath).toBe("/generated/workspace.code-workspace");
+    expect(result.data.workspaceFilePath).toBeNull();
     expect(result.setup).toHaveLength(2);
     for (const member of result.data.members) {
       expect(invoke).toHaveBeenCalledWith("run_detected_setup", {
@@ -301,6 +301,38 @@ describe("shared operations", () => {
       commands.indexOf("git_worktree_add")
     );
     expect(commands).not.toContain("open_editor");
+    expect(commands).not.toContain("prepare_task_workspace");
+  });
+
+  it("creates with another editor, renames the workspace, opens Cursor and cleans by task ID", async () => {
+    const { operations } = fixture([], "codex");
+    const { data: created } = await operations.createTask(input);
+    await operations.updateWorkspace(workspace.id, { name: "Renamed payments" });
+    const opened = {
+      message: "Cursor opened",
+      workspaceFile: `/workspaces/${created.id}.code-workspace`,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(opened);
+    await expect(
+      openEditorForWorktree(
+        "cursor",
+        created.members.map((member) => member.path),
+        created.id,
+        created.workspaceFilePath
+      )
+    ).resolves.toEqual(opened);
+    expect(invoke).toHaveBeenCalledWith("open_editor", {
+      editor: "cursor",
+      folders: created.members.map((member) => member.path),
+      taskId: created.id,
+      legacyWorkspaceFilePath: null,
+    });
+    await operations.deleteTask(created.id, { deleteWorktrees: true });
+    expect(invoke).toHaveBeenCalledWith("remove_task_workspace", {
+      taskId: created.id,
+      legacyPath: null,
+    });
+    expect(operations.getState().tasks).toEqual([]);
   });
 
   it("starts every worktree before waiting and reports failures only after all settle", async () => {
@@ -344,7 +376,7 @@ describe("shared operations", () => {
     const opening = deferred();
     const ready = vi.fn(async (created: Task) => {
       expect(operations.task(created.id)).toEqual(created);
-      expect(created.workspaceFilePath).toBe("/generated/workspace.code-workspace");
+      expect(created.workspaceFilePath).toBeNull();
       expect(
         vi.mocked(invoke).mock.calls.filter(([command]) => command === "copy_local_configs")
       ).toHaveLength(2);
@@ -689,6 +721,7 @@ describe("shared operations", () => {
     );
     expect(operations.getState().tasks).toEqual([task]);
     expect(archiveTaskNote).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith("remove_task_workspace", expect.anything());
     vi.mocked(invoke).mockImplementation(native as typeof invoke);
     await operations.deleteWorkspace("w1", { deleteWorktrees: true, force: true });
     expect(invoke).toHaveBeenCalledWith(
@@ -704,8 +737,32 @@ describe("shared operations", () => {
     const { operations } = fixture([task]);
     await operations.deleteTask("t1", { deleteWorktrees: false });
     expect(closeTaskSessions).toHaveBeenCalledWith("t1");
-    expect(invoke).not.toHaveBeenCalled();
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["remove_task_workspace", { taskId: "t1", legacyPath: null }],
+    ]);
     expect(archiveTaskNote).toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "cleans stable and legacy workspace paths (delete worktrees: %s)",
+    async (deleteWorktrees) => {
+      const legacy = { ...task, workspaceFilePath: "/workspaces/payments/feature.code-workspace" };
+      const { operations } = fixture([legacy]);
+      await operations.deleteTask(legacy.id, { deleteWorktrees });
+      expect(invoke).toHaveBeenCalledWith("remove_task_workspace", {
+        taskId: legacy.id,
+        legacyPath: legacy.workspaceFilePath,
+      });
+      expect(operations.getState().tasks).toEqual([]);
+    }
+  );
+
+  it("reports workspace cleanup failures without retaining a deleted task", async () => {
+    const { operations } = fixture([task]);
+    vi.mocked(invoke).mockRejectedValueOnce("Permission denied");
+    const result = await operations.deleteTask(task.id, { deleteWorktrees: false });
+    expect(result.warnings).toEqual([expect.objectContaining({ stage: "workspace_file" })]);
+    expect(operations.getState().tasks).toEqual([]);
   });
 
   it("does not delete resources if sessions cannot be closed", async () => {

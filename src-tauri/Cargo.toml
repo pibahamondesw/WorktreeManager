@@ -44,6 +44,7 @@ sha2 = "0.10"
 base64 = "0.22"
 toml = "0.9"
 similar = "2.7"
+jsonc-parser = { version = "0.34", features = ["serde"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

@@ -169,7 +169,6 @@ function App() {
   } = useOpenTask({
     editorApp,
     agentViews,
-    workspaces: state.workspaces,
     tasks: state.tasks,
     recordTaskVisit,
     showTask,

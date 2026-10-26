@@ -19,23 +19,23 @@ export interface OpenEditorResult {
  *
  * `folders` is the ordered set of included member paths; `folders[0]` is only the working
  * directory for CLI launches and carries no priority (there is no "main" repo). For Cursor
- * with more than one folder the backend generates a `.code-workspace` and returns its
- * path so the caller can persist it. Any hint the backend returns (Zed manual task, repos an
+ * with more than one folder the backend manages a `.code-workspace` keyed by the
+ * stable task ID. Any hint the backend returns (Zed manual task, repos an
  * editor couldn't open natively) is surfaced through `onMessage`.
  */
 export async function openEditorForWorktree(
   editor: EditorApp,
   folders: string[],
-  branchName: string | undefined,
-  workspaceName: string | undefined,
+  taskId: string,
+  legacyWorkspaceFilePath: string | null | undefined,
   { onMessage, onError }: OpenEditorHandlers = {}
 ): Promise<OpenEditorResult | null> {
   try {
     const result = await invoke<OpenEditorResult>("open_editor", {
       editor,
       folders,
-      branchName,
-      workspaceName,
+      taskId,
+      legacyWorkspaceFilePath,
     });
     if (result?.message) onMessage?.(result.message);
     return result;
