@@ -32,8 +32,8 @@ use crate::commands::login_shell::{cli_available, LoginShell};
 /// Env var holding the per-worktree session name. Long, prefixed name avoids clashing with
 /// anything a user might already export in their shell.
 const SESSION_ENV: &str = "WORKTREE_MANAGER_CLAUDE_SESSION_NAME";
-/// Forks cut the transcript at a message through flags verified only on this release.
-const FORK_VERSION: &str = "2.1.295 ";
+/// Forks cut the transcript at a message through flags first verified on this release.
+const MIN_FORK_VERSION: (u32, u32, u32) = (2, 1, 295);
 
 const ALERT_HOOKS: &[HookSpec] = &[
     HookSpec {
@@ -97,10 +97,11 @@ impl Claude {
             .cli(request.cwd, ["--version"])
             .output()
             .map_err(|e| e.to_string())?;
-        if !version.status.success()
-            || !String::from_utf8_lossy(&version.stdout).starts_with(FORK_VERSION)
-        {
-            return Err("Forking requires the verified Claude Code version 2.1.295".into());
+        if !version.status.success() || !supports_fork(&String::from_utf8_lossy(&version.stdout)) {
+            let (major, minor, patch) = MIN_FORK_VERSION;
+            return Err(format!(
+                "Forking requires the verified Claude Code {major}.{minor}.{patch} or newer"
+            ));
         }
         let (anchor, history) = fork_point(self.home(), request.cwd, source, request.item_id)?;
         let args = if let Some(anchor) = anchor {
@@ -505,6 +506,19 @@ pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -
     out
 }
 
+fn supports_fork(version_output: &str) -> bool {
+    cli_version(version_output).is_some_and(|version| version >= MIN_FORK_VERSION)
+}
+
+fn cli_version(version_output: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = version_output
+        .split_whitespace()
+        .next()?
+        .splitn(3, '.')
+        .map(|part| part.parse().ok());
+    Some((parts.next()??, parts.next()??, parts.next()??))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,6 +556,24 @@ mod tests {
             output.status.code(),
             String::from_utf8_lossy(&output.stdout).into_owned(),
         )
+    }
+
+    #[test]
+    fn fork_is_supported_from_the_minimum_version_on() {
+        assert!(supports_fork("2.1.295 (Claude Code)\n"));
+        assert!(supports_fork("2.1.296 (Claude Code)"));
+        assert!(supports_fork("2.2.0 (Claude Code)"));
+        assert!(supports_fork("3.0.0 (Claude Code)"));
+        assert!(!supports_fork("2.1.294 (Claude Code)"));
+        assert!(!supports_fork("2.0.999 (Claude Code)"));
+        assert!(!supports_fork("1.9.400 (Claude Code)"));
+    }
+
+    #[test]
+    fn fork_is_unsupported_when_the_version_is_unparseable() {
+        for output in ["", "Claude Code", "2.1", "2.1.x (Claude Code)", "v2.1.295"] {
+            assert!(!supports_fork(output), "{output}");
+        }
     }
 
     #[test]
