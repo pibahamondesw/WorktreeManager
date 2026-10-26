@@ -267,7 +267,6 @@ export function WorktreeList({
       return result;
     } catch (error) {
       setExits((current) => withExit(current, id, undefined));
-      showToast(error instanceof Error ? error.message : String(error));
       throw error;
     }
   };

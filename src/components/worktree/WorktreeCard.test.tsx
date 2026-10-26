@@ -12,6 +12,7 @@ import {
 import "@testing-library/jest-dom/vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { OperationError } from "../../services/operations";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -249,9 +250,8 @@ it("lists every attached PR by number with its full title on hover", () => {
 });
 
 it("shows repository teardown scripts for approval and deletes with the chosen option", async () => {
-  const approval = Object.assign(new Error("Review the teardown"), {
-    code: "teardown_needs_approval",
-    details: { scripts: [{ repoName: "api", source: "worktreemanager", script: "make stop" }] },
+  const approval = new OperationError("teardown_needs_approval", "Review the teardown", {
+    scripts: [{ repoName: "api", source: "worktreemanager", script: "make stop" }],
   });
   const onDelete = vi
     .fn()
@@ -281,9 +281,7 @@ it("shows repository teardown scripts for approval and deletes with the chosen o
 });
 
 it("offers deleting without teardown after a teardown failure", async () => {
-  const failure = Object.assign(new Error("Teardown failed for api."), {
-    code: "teardown_failed",
-  });
+  const failure = new OperationError("teardown_failed", "Teardown failed for api.");
   const onDelete = vi
     .fn()
     .mockRejectedValueOnce(failure)
@@ -308,6 +306,29 @@ it("offers deleting without teardown after a teardown failure", async () => {
       force: true,
       skipTeardown: true,
     })
+  );
+});
+
+it("offers removing from the app when disk deletion fails", async () => {
+  const onDelete = vi
+    .fn()
+    .mockRejectedValueOnce(new OperationError("delete_failed", "Worktrees could not be removed."))
+    .mockResolvedValue({ data: { id: task.id }, warnings: [] });
+  render(
+    <WorktreeCard
+      task={task}
+      workspace={workspace}
+      vault={vault}
+      onDelete={onDelete}
+      repoSlugs={{}}
+      requestDelete
+    />
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  expect(await screen.findByText("Worktrees could not be removed.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  await waitFor(() =>
+    expect(onDelete).toHaveBeenLastCalledWith(task.id, { deleteWorktrees: false, force: false })
   );
 });
 

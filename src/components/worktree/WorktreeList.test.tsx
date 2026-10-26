@@ -180,7 +180,7 @@ function deferredDeletion() {
   return { deferred, onTaskDeleted };
 }
 
-it("dims a deleting card and restores it with a toast when deletion fails", async () => {
+it("dims a deleting card and restores it without a toast when deletion fails", async () => {
   const { deferred, onTaskDeleted } = deferredDeletion();
   fixture({ onTaskDeleted });
   const card = screen.getByText("second").parentElement!;
@@ -192,7 +192,7 @@ it("dims a deleting card and restores it with a toast when deletion fails", asyn
   await act(async () => deferred.reject(new Error("git worktree remove failed")));
   expect(card).not.toHaveClass("opacity-50");
   expect(card).not.toHaveAttribute("inert");
-  expect(screen.getByText("git worktree remove failed")).toBeInTheDocument();
+  expect(screen.queryByText("git worktree remove failed")).not.toBeInTheDocument();
 });
 
 it("removes a deleted card once its exit animation finishes", async () => {

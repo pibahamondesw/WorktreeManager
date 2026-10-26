@@ -45,6 +45,7 @@ import {
 import {
   PhaseScript,
   ResolvedScripts,
+  ScriptSource,
   approveScripts,
   isScriptTrusted,
   phaseScript,
@@ -64,6 +65,22 @@ export class OperationError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+export interface OperationErrorDetails {
+  teardown_needs_approval: {
+    scripts: { repoName: string; source: ScriptSource; script: string }[];
+  };
+  create_failed: { completedMembers: TaskMember[]; failedMembers: TaskMember[] };
+}
+
+export function operationErrorDetails<Code extends keyof OperationErrorDetails>(
+  error: unknown,
+  code: Code
+): OperationErrorDetails[Code] | null {
+  return error instanceof OperationError && error.code === code
+    ? (error.details as OperationErrorDetails[Code])
+    : null;
 }
 
 export interface CreateTaskInput {

@@ -7,11 +7,11 @@ import { NewLinearIssueForm, NewLinearIssueDraft } from "./NewLinearIssueForm";
 import { RepositoryChecklist } from "./RepositoryChecklist";
 import { NewTaskFooter } from "./NewTaskFooter";
 import { useLinear } from "../../contexts/useLinear";
-import { EditorApp, LinearIssue, Task, TaskMember, Workspace } from "../../types";
+import { EditorApp, LinearIssue, Task, Workspace } from "../../types";
 import {
   CreateTaskInput,
   OperationResult,
-  OperationError,
+  operationErrorDetails,
   TaskReady,
 } from "../../services/operations";
 import { OpenTaskOptions } from "../../hooks/useOpenTask";
@@ -156,11 +156,8 @@ export function NewWorktreeModal({
     } catch (e) {
       if (!ready) {
         let message = e instanceof Error ? e.message : String(e);
-        if (e instanceof OperationError && e.code === "create_failed") {
-          const details = e.details as {
-            completedMembers: TaskMember[];
-            failedMembers: TaskMember[];
-          };
+        const details = operationErrorDetails(e, "create_failed");
+        if (details) {
           message +=
             "\n" +
             [

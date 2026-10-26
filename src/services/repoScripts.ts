@@ -107,24 +107,3 @@ export function scriptEnv(task: Task, member: TaskMember, workspace: Workspace |
     SUPERSET_WORKSPACE_NAME: member.branchName,
   });
 }
-
-/** A deletion stopped by repository teardown scripts, as the UI offers to resolve it. */
-export interface TeardownBlock {
-  kind: "approval" | "failed";
-  message: string;
-  scripts: { repoName: string; source: ScriptSource; script: string }[];
-}
-
-export function teardownBlockFrom(error: unknown): TeardownBlock | null {
-  if (!(error instanceof Error) || !("code" in error)) return null;
-  if (error.code === "teardown_needs_approval")
-    return {
-      kind: "approval",
-      message: "Before deleting, these repositories want to run a teardown script:",
-      scripts: (error as unknown as { details: { scripts: TeardownBlock["scripts"] } }).details
-        .scripts,
-    };
-  if (error.code === "teardown_failed")
-    return { kind: "failed", message: error.message, scripts: [] };
-  return null;
-}

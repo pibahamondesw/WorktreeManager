@@ -170,11 +170,11 @@ export function useStore() {
 
   const removeWorkspace = useCallback(
     (id: string, options?: DeleteOptions) =>
-      report(operations.deleteWorkspace(id, options)).then((result) => {
+      operations.deleteWorkspace(id, options).then((result) => {
         loadedWorkspaceIdsRef.current.delete(id);
         return result;
       }),
-    [operations, report]
+    [operations]
   );
 
   const reorderWorkspaces = useCallback(
@@ -224,8 +224,8 @@ export function useStore() {
   );
 
   const removeTask = useCallback(
-    (id: string, options: DeleteOptions) => report(operations.deleteTask(id, options)),
-    [operations, report]
+    (id: string, options: DeleteOptions) => operations.deleteTask(id, options),
+    [operations]
   );
 
   const updateEditorApp = useCallback(

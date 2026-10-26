@@ -31,7 +31,9 @@ import { TerminalStatus } from "../../services/terminal";
 import { AgentActivity, taskIndicator } from "../../services/agentActivity";
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
 import { DeleteOptions, OperationResult } from "../../services/operations";
-import { SCRIPT_SOURCE_LABELS, TeardownBlock, teardownBlockFrom } from "../../services/repoScripts";
+import { DeleteRequest } from "../../services/deletion";
+import { useDeletion } from "../../hooks/useDeletion";
+import { DeleteOutcomeView } from "../ui/DeleteOutcomeView";
 import { stateVariant } from "./cardStyles";
 import { EditableTaskTitle } from "../task/EditableTaskTitle";
 
@@ -89,10 +91,8 @@ export const WorktreeCard = memo(function WorktreeCard({
   // No Linear issue → no PR attachments will ever load; treat as "loaded, zero PRs"
   // so the Create PR links still render. undefined = still loading, hide PR slots.
   const prs = task.linearIssueId ? linearInfo?.prs : [];
-  const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [teardownBlock, setTeardownBlock] = useState<TeardownBlock | null>(null);
+  const deletion = useDeletion((options) => onDelete(task.id, options));
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -126,53 +126,21 @@ export const WorktreeCard = memo(function WorktreeCard({
     setConfirmDelete(true);
   };
 
-  const deleteTask = async (
-    deleteWorktrees: boolean,
-    teardown: Pick<DeleteOptions, "approveTeardown" | "skipTeardown"> = {}
-  ) => {
+  const deleteTask = async (request: DeleteRequest) => {
     setConfirmDelete(false);
-    setDeleteError(null);
-    setTeardownBlock(null);
-    setDeleting(true);
-    try {
-      const result = await onDelete(task.id, {
-        deleteWorktrees,
-        force: deleteWorktrees,
-        ...teardown,
-      });
-      for (const warning of result.warnings) onToast?.(warning.message);
-    } catch (error) {
-      const block = teardownBlockFrom(error);
-      if (block) setTeardownBlock(block);
-      else setDeleteError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleTeardownChoice = async (
-    event: React.MouseEvent,
-    teardown: Pick<DeleteOptions, "approveTeardown" | "skipTeardown">
-  ) => {
-    event.stopPropagation();
-    await deleteTask(true, teardown);
+    const outcome = await deletion.run(request);
+    if (outcome.kind === "deleted")
+      for (const warning of outcome.warnings) onToast?.(warning.message);
   };
 
   const handleDeleteConfirm = async (event: React.MouseEvent) => {
     event.stopPropagation();
-    await deleteTask(true);
-  };
-
-  const handleForceRemove = async (event: React.MouseEvent) => {
-    event.stopPropagation();
-    await deleteTask(false);
+    await deleteTask({ deleteWorktrees: true });
   };
 
   const handleDeleteCancel = (e: React.MouseEvent) => {
     e.stopPropagation();
     setConfirmDelete(false);
-    setDeleteError(null);
-    setTeardownBlock(null);
   };
 
   const { byMember, unmatched: unmatchedPrsByRepo } = groupTaskPrs(task, prs ?? [], repoSlugs);
@@ -527,14 +495,14 @@ export const WorktreeCard = memo(function WorktreeCard({
           {/* Delete button */}
           <button
             onClick={handleDeleteClick}
-            disabled={deleting}
+            disabled={deletion.deleting}
             data-genie-target
             className={`w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-danger hover:bg-danger/10 transition-colors cursor-pointer ${
-              deleting ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              deletion.deleting ? "opacity-100" : "opacity-0 group-hover:opacity-100"
             }`}
             title={`Delete task (${shortcutLabel("list.delete")})`}
           >
-            {deleting ? <SpinnerIcon size={16} /> : <TrashIcon />}
+            {deletion.deleting ? <SpinnerIcon size={16} /> : <TrashIcon />}
           </button>
         </div>
       </div>
@@ -580,78 +548,16 @@ export const WorktreeCard = memo(function WorktreeCard({
         </div>
       )}
 
-      {teardownBlock && (
+      {deletion.outcome && deletion.outcome.kind !== "deleted" && (
         <div className="motion-expand">
-          <div
-            className="mt-3 pt-3 border-t border-border space-y-2 select-text"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p
-              className={`text-xs leading-relaxed ${teardownBlock.kind === "failed" ? "text-danger" : "text-text-secondary"}`}
-            >
-              {teardownBlock.message}
-            </p>
-            {teardownBlock.scripts.map((script) => (
-              <div key={script.repoName} className="space-y-1">
-                <p className="text-[0.625rem] text-text-muted">
-                  {script.repoName} · {SCRIPT_SOURCE_LABELS[script.source]}
-                </p>
-                <pre className="max-h-32 overflow-auto rounded-md border border-border bg-bg-tertiary p-2 text-[0.625rem] font-mono whitespace-pre-wrap">
-                  {script.script}
-                </pre>
-              </div>
-            ))}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={handleDeleteCancel}
-                className="px-3 py-1 text-xs rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover border border-border transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={(event) => void handleTeardownChoice(event, { skipTeardown: true })}
-                className="px-3 py-1 text-xs rounded-md text-danger hover:bg-danger/10 border border-border transition-colors cursor-pointer"
-              >
-                Delete without teardown
-              </button>
-              {teardownBlock.kind === "approval" && (
-                <button
-                  onClick={(event) => void handleTeardownChoice(event, { approveTeardown: true })}
-                  className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
-                >
-                  Run and delete
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Git removal failed — offer force-remove from app */}
-      {deleteError && (
-        <div className="motion-expand">
-          <div
-            className="mt-3 pt-3 border-t border-border space-y-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-xs text-danger leading-relaxed">{deleteError}</p>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-text-secondary">Remove from app anyway?</span>
-              <div className="flex gap-2 flex-shrink-0">
-                <button
-                  onClick={handleDeleteCancel}
-                  className="px-3 py-1 text-xs rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover border border-border transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={(event) => void handleForceRemove(event)}
-                  className="px-3 py-1 text-xs rounded-md text-white bg-danger hover:bg-danger-hover transition-colors cursor-pointer"
-                >
-                  Remove
-                </button>
-              </div>
-            </div>
+          <div className="mt-3 pt-3 border-t border-border" onClick={(e) => e.stopPropagation()}>
+            <DeleteOutcomeView
+              outcome={deletion.outcome}
+              deleting={deletion.deleting}
+              onRetry={(request) => void deleteTask(request)}
+              onDismiss={deletion.dismiss}
+              compact
+            />
           </div>
         </div>
       )}
