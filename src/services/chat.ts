@@ -53,7 +53,12 @@ export type PendingRequest = {
   detail?: string;
   format: "text" | "diff" | "markdown";
 } & (
-  | { kind: "approval"; decisions: { id: string; label: string }[] }
+  | {
+      kind: "approval";
+      decisions: { id: string; label: string }[];
+      feedback?: boolean;
+      editablePlan?: boolean;
+    }
   | { kind: "question"; questions: ChatQuestion[] }
   | { kind: "unsupported" }
 );
@@ -185,6 +190,8 @@ export interface ChatSnapshot {
 
 export interface ChatResponse {
   decision?: string;
+  message?: string;
+  plan?: string;
   answers?: Record<string, string[]>;
 }
 

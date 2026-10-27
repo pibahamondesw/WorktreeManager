@@ -1160,7 +1160,7 @@ describe("Markdown previews", () => {
     const panel = screen.getByRole("region", { name: "Preview of Ship previews" });
     fireEvent.click(within(panel).getByRole("button", { name: "Approve plan" }));
 
-    expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull());
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
         taskId: "t1",
@@ -1169,6 +1169,215 @@ describe("Markdown previews", () => {
         response: { decision: "allow" },
       })
     );
+  });
+
+  const pendingPlan = () =>
+    snapshot({
+      status: { kind: "busy" },
+      items: [{ id: "p", kind: "notice", title: "Plan", text: plan }],
+      pending: [
+        {
+          id: "r1",
+          title: "Claude's plan is ready",
+          detail: plan,
+          format: "markdown",
+          kind: "approval",
+          feedback: true,
+          editablePlan: true,
+          decisions: [
+            { id: "allow", label: "Approve plan" },
+            { id: "deny", label: "Keep planning" },
+          ],
+        },
+      ],
+    });
+
+  const openPendingPlan = async () => {
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a", "/wt/b"]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Preview Ship previews" }));
+    return screen.getByRole("region", { name: "Preview of Ship previews" });
+  };
+
+  it("keeps edited markdown after closing the preview and approves it from the card", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? pendingPlan() : undefined)
+    );
+    const panel = await openPendingPlan();
+    fireEvent.click(within(panel).getByRole("button", { name: "Edit plan" }));
+    const edited = "# Revised plan\n\n1. Test first";
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Plan markdown" }), {
+      target: { value: edited },
+    });
+    fireEvent.click(within(panel).getByRole("button", { name: "Preview plan" }));
+    expect(within(panel).getByRole("heading", { name: "Revised plan", level: 1 })).toBeVisible();
+    fireEvent.click(within(panel).getByRole("button", { name: "Close preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview Revised plan" }));
+    expect(screen.getByRole("region", { name: "Preview of Revised plan" })).toHaveTextContent(
+      "Test first"
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("region", { name: "Claude's plan is ready" }), {
+      key: "Enter",
+    });
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        taskId: "t1",
+        agent: "claude",
+        requestId: "r1",
+        response: { decision: "allow", plan: edited },
+      })
+    );
+  });
+
+  it("rejects a plan with feedback without approving the edited input", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? pendingPlan() : undefined)
+    );
+    const panel = await openPendingPlan();
+    fireEvent.change(
+      within(panel).getByRole("textbox", { name: "Rejection feedback (optional)" }),
+      { target: { value: "Include rollback steps" } }
+    );
+    fireEvent.click(within(panel).getByRole("button", { name: "Keep planning" }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        taskId: "t1",
+        agent: "claude",
+        requestId: "r1",
+        response: { decision: "deny", message: "Include rollback steps" },
+      })
+    );
+  });
+
+  it("blocks approving an empty plan while allowing feedback", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? pendingPlan() : undefined)
+    );
+    const panel = await openPendingPlan();
+    fireEvent.click(within(panel).getByRole("button", { name: "Edit plan" }));
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Plan markdown" }), {
+      target: { value: " " },
+    });
+    expect(within(panel).getByRole("button", { name: "Approve plan" })).toBeDisabled();
+    expect(
+      within(panel).getByRole("button", { name: "Approve in new conversation" })
+    ).toBeDisabled();
+    expect(within(panel).getByRole("button", { name: "Keep planning" })).toBeEnabled();
+  });
+
+  it("opens a fresh conversation with the edited plan as its first message", async () => {
+    mocks.invoke.mockImplementation((command: string, args: { mode?: string }) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          args.mode === "fresh" ? snapshot({ generation: 4, items: [] }) : pendingPlan()
+        );
+      return Promise.resolve(undefined);
+    });
+    const panel = await openPendingPlan();
+    fireEvent.click(within(panel).getByRole("button", { name: "Edit plan" }));
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Plan markdown" }), {
+      target: { value: "# Approved\n\nTest first" },
+    });
+    fireEvent.click(within(panel).getByRole("button", { name: "Approve in new conversation" }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_send", {
+        taskId: "t1",
+        agent: "claude",
+        text: "Implement the following approved plan:\n\n# Approved\n\nTest first",
+        images: [],
+      })
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "chat_open",
+      expect.objectContaining({
+        mode: "fresh",
+        folders: ["/wt/a", "/wt/b"],
+        conversation: undefined,
+        handoffFrom: undefined,
+      })
+    );
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_respond", expect.anything());
+    expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull();
+  });
+
+  it("keeps the preview and feedback available when responding fails", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(pendingPlan());
+      if (command === "chat_respond") return Promise.reject("Could not send response");
+      return Promise.resolve(undefined);
+    });
+    const panel = await openPendingPlan();
+    fireEvent.change(
+      within(panel).getByRole("textbox", { name: "Rejection feedback (optional)" }),
+      { target: { value: "Include rollback steps" } }
+    );
+    fireEvent.click(within(panel).getByRole("button", { name: "Keep planning" }));
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("Could not send response");
+    expect(
+      within(panel).getByRole("textbox", { name: "Rejection feedback (optional)" })
+    ).toHaveValue("Include rollback steps");
+    expect(within(panel).getByRole("button", { name: "Keep planning" })).toBeEnabled();
+  });
+
+  it("retains the approved markdown and shows an error if the first message fails", async () => {
+    mocks.invoke.mockImplementation((command: string, args: { mode?: string }) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          args.mode === "fresh" ? snapshot({ generation: 4, items: [] }) : pendingPlan()
+        );
+      if (command === "chat_send") return Promise.reject("Could not send approved plan");
+      return Promise.resolve(undefined);
+    });
+    const panel = await openPendingPlan();
+    fireEvent.click(within(panel).getByRole("button", { name: "Edit plan" }));
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Plan markdown" }), {
+      target: { value: "# Revised\n\nPreserve the data" },
+    });
+    fireEvent.click(within(panel).getByRole("button", { name: "Approve in new conversation" }));
+    const retained = await screen.findByRole("region", { name: "Preview of Revised" });
+    expect(await within(retained).findByRole("alert")).toHaveTextContent(
+      "Could not send approved plan"
+    );
+    expect(within(retained).getByText("Preserve the data")).toBeVisible();
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_respond", expect.anything());
+  });
+
+  it("does not send the plan after leaving the pane during a fresh launch", async () => {
+    let finishOpen: (value: ReturnType<typeof snapshot>) => void = () => undefined;
+    mocks.invoke.mockImplementation((command: string, args: { mode?: string }) => {
+      if (command === "chat_open")
+        return args.mode === "fresh"
+          ? new Promise((resolve) => {
+              finishOpen = resolve;
+            })
+          : Promise.resolve(pendingPlan());
+      return Promise.resolve(undefined);
+    });
+    const view = render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approve in new conversation" }));
+    view.unmount();
+    await act(async () => finishOpen(snapshot({ generation: 4, items: [] })));
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_send", expect.anything());
+  });
+
+  it("does not send the plan if opening the new conversation fails", async () => {
+    mocks.invoke.mockImplementation((command: string, args: { mode?: string }) => {
+      if (command === "chat_open")
+        return args.mode === "fresh"
+          ? Promise.reject("Could not launch Claude")
+          : Promise.resolve(pendingPlan());
+      return Promise.resolve(undefined);
+    });
+    const panel = await openPendingPlan();
+    fireEvent.click(within(panel).getByRole("button", { name: "Approve in new conversation" }));
+    expect(await screen.findByRole("region", { name: "Preview of Ship previews" })).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("region", { name: "Preview of Ship previews" })).getByRole("alert")
+      ).toHaveTextContent("Could not launch Claude")
+    );
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_send", expect.anything());
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_respond", expect.anything());
   });
 });
 

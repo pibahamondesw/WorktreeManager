@@ -1,6 +1,8 @@
 import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { DiffText, MarkdownText } from "./ChatItemView";
+import { ApprovalActions } from "./ApprovalActions";
+import { ApprovalDraft, approvalResponse } from "./approval";
 import { PlanCard } from "./MarkdownPreviewCard";
 import { useMarkdownPreview } from "./markdownPreviewContext";
 import { ChatQuestion, ChatResponse, PendingRequest } from "../../services/chat";
@@ -8,6 +10,10 @@ import { ChatQuestion, ChatResponse, PendingRequest } from "../../services/chat"
 interface PendingRequestCardProps {
   request: PendingRequest;
   focused?: boolean;
+  draft?: ApprovalDraft;
+  onDraftChange?: (draft: ApprovalDraft) => void;
+  disabled?: boolean;
+  onNewConversation?: () => Promise<void>;
   onRespond: (response: ChatResponse) => Promise<void>;
 }
 
@@ -15,7 +21,18 @@ interface PendingRequestCardProps {
  * The oldest pending request takes focus so it can be answered from the keyboard: number keys
  * pick a decision, Enter approves and Escape rejects.
  */
-export function PendingRequestCard({ request, focused, onRespond }: PendingRequestCardProps) {
+export function PendingRequestCard({
+  request,
+  focused,
+  onRespond,
+  draft: sharedDraft,
+  onDraftChange,
+  disabled,
+  onNewConversation,
+}: PendingRequestCardProps) {
+  const [localDraft, setLocalDraft] = useState<ApprovalDraft>({});
+  const draft = sharedDraft ?? localDraft;
+  const changeDraft = onDraftChange ?? setLocalDraft;
   const [sending, setSending] = useState(false);
   const cardRef = useRef<HTMLElement>(null);
   const preview = useMarkdownPreview();
@@ -25,7 +42,7 @@ export function PendingRequestCard({ request, focused, onRespond }: PendingReque
   }, [focused, request.kind]);
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (request.kind !== "approval" || sending || e.target !== e.currentTarget) return;
+    if (request.kind !== "approval" || sending || disabled || e.target !== e.currentTarget) return;
     const decisions = request.decisions;
     const reject = decisions.find((d) => d.id === "decline" || d.id === "deny");
     const choice = /^[1-9]$/.test(e.key)
@@ -38,7 +55,13 @@ export function PendingRequestCard({ request, focused, onRespond }: PendingReque
     if (!choice) return;
     e.preventDefault();
     e.stopPropagation();
-    void respond({ decision: choice.id });
+    if (
+      choice.id === "allow" &&
+      request.editablePlan &&
+      !(draft.plan ?? request.detail ?? "").trim()
+    )
+      return;
+    void respond(approvalResponse(request, draft, choice.id));
   };
   const respond = async (response: ChatResponse) => {
     setSending(true);
@@ -64,7 +87,7 @@ export function PendingRequestCard({ request, focused, onRespond }: PendingReque
         (request.format === "diff" ? (
           <DiffText text={request.detail} />
         ) : request.format === "markdown" && preview ? (
-          <PlanCard text={request.detail} requestId={request.id} />
+          <PlanCard text={draft.plan ?? request.detail} requestId={request.id} />
         ) : request.format === "markdown" ? (
           <div className="max-h-96 overflow-y-auto">
             <MarkdownText text={request.detail} />
@@ -75,22 +98,14 @@ export function PendingRequestCard({ request, focused, onRespond }: PendingReque
           </pre>
         ))}
       {request.kind === "approval" && (
-        <div className="flex flex-wrap gap-2">
-          {request.decisions.map((decision, i) => (
-            <Button
-              key={decision.id}
-              variant={i === 0 ? "primary" : "secondary"}
-              className="min-h-7 max-w-full px-3 py-1 text-xs text-left"
-              disabled={sending}
-              onClick={() => void respond({ decision: decision.id })}
-            >
-              {i < 9 && <kbd className="mr-1 shrink-0 font-mono opacity-50">{i + 1}</kbd>}
-              <span className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                {decision.label}
-              </span>
-            </Button>
-          ))}
-        </div>
+        <ApprovalActions
+          request={request}
+          draft={draft}
+          onDraftChange={changeDraft}
+          sending={sending || !!disabled}
+          onRespond={respond}
+          onNewConversation={onNewConversation}
+        />
       )}
       {request.kind === "question" && (
         <QuestionForm questions={request.questions} sending={sending} onSubmit={respond} />
