@@ -94,8 +94,7 @@ fn entries_under_bases(root: &Value, base_paths: &[String]) -> Vec<String> {
 /// Best-effort by design: a missing or malformed config, an absent `projects` map, or a key
 /// that is not present are all treated as success. This must never block worktree deletion.
 /// Returns the paths that were actually removed.
-#[tauri::command]
-pub fn cleanup_claude_json(paths: Vec<String>) -> Result<Vec<String>, String> {
+pub(crate) fn cleanup_claude_json(paths: Vec<String>) -> Result<Vec<String>, String> {
     cleanup_claude_json_at_path(&claude_json_path(), &paths)
 }
 

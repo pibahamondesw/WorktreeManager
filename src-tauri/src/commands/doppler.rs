@@ -187,14 +187,7 @@ fn is_executable(path: &Path) -> bool {
 /// Best-effort and idempotent: paths without a scope entry, a missing CLI, or a missing config
 /// file are all no-ops. We go through the CLI rather than editing the YAML ourselves because
 /// Doppler writes long scope keys in explicit-key (`? key`) form. Returns the paths cleaned up.
-#[tauri::command]
-pub async fn doppler_cleanup(paths: Vec<String>) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || doppler_cleanup_blocking(paths))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
-}
-
-fn doppler_cleanup_blocking(paths: Vec<String>) -> Result<Vec<String>, String> {
+pub(crate) fn doppler_cleanup(paths: Vec<String>) -> Result<Vec<String>, String> {
     unset_scopes(
         paths,
         &doppler_yaml_path(),
@@ -472,6 +465,6 @@ mod tests {
         assert!(unset_scopes(vec!["/wt/a".into()], &yaml, |_| false, never)
             .unwrap()
             .is_empty());
-        assert!(doppler_cleanup_blocking(Vec::new()).unwrap().is_empty());
+        assert!(doppler_cleanup(Vec::new()).unwrap().is_empty());
     }
 }

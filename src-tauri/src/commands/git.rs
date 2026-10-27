@@ -388,15 +388,22 @@ fn copy_missing_configs(src: &Path, dst: &Path) -> std::io::Result<bool> {
     }
 }
 
-/// Copy gitignored local config (repo-relative `paths`) from the base repo into a
-/// new worktree, preserving existing files and filling missing directory entries. Returns the paths actually copied.
+/// Copy gitignored local config from the base repo into a new worktree: the repo-relative `paths`
+/// plus the files `.worktreeinclude` selects, or `fallback_paths` when the repository has none.
+/// Preserves existing files and fills missing directory entries. Returns the paths actually copied.
 #[tauri::command]
 pub async fn copy_local_configs(
     source_repo: String,
     worktree_path: String,
     paths: Vec<String>,
+    fallback_paths: Vec<String>,
 ) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let included = super::scripts::include_paths(Path::new(&source_repo))?;
+        let paths = paths
+            .into_iter()
+            .chain(included.unwrap_or(fallback_paths))
+            .collect();
         copy_local_configs_blocking(source_repo, worktree_path, paths)
     })
     .await
@@ -913,6 +920,40 @@ mod tests {
         let _guard = root_lock.lock().unwrap();
         assert!(linked_lock.try_lock().is_err());
         assert!(other_lock.try_lock().is_ok());
+    }
+
+    #[test]
+    fn config_copy_command_selects_includes_or_fallbacks_and_always_copies_editor_config() {
+        let repo = TestRepo::new();
+        std::fs::write(repo.0.join(".gitignore"), ".env*\n").unwrap();
+        for file in [".editor", ".env", ".env.selected", ".env.unselected"] {
+            std::fs::write(repo.0.join(file), file).unwrap();
+        }
+        for (name, selection, expected) in [
+            ("fallback", None, vec![".editor", ".env"]),
+            (
+                "selected",
+                Some(".env.selected\n"),
+                vec![".editor", ".env.selected"],
+            ),
+            ("empty", Some(""), vec![".editor"]),
+        ] {
+            if let Some(selection) = selection {
+                std::fs::write(repo.0.join(".worktreeinclude"), selection).unwrap();
+            }
+            let target = repo.0.join(name);
+            let copied = tauri::async_runtime::block_on(copy_local_configs(
+                repo.0.to_string_lossy().into_owned(),
+                target.to_string_lossy().into_owned(),
+                vec![".editor".into()],
+                vec![".env".into()],
+            ))
+            .unwrap();
+            assert_eq!(copied, expected);
+            for file in [".editor", ".env", ".env.selected", ".env.unselected"] {
+                assert_eq!(target.join(file).exists(), expected.contains(&file));
+            }
+        }
     }
 
     #[test]

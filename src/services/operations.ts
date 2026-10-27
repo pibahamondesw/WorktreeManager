@@ -7,7 +7,7 @@ import {
   refreshGithubRepo,
   setPrReadyPending,
 } from "./github";
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { v4 as uuid } from "uuid";
 import {
   AgentId,
@@ -49,11 +49,11 @@ import {
   approveScripts,
   isScriptTrusted,
   phaseScript,
-  resolveRepoScripts,
   scriptEnv,
   scriptSession,
 } from "./repoScripts";
-import { runTaskScript, scriptCancel, terminalClose } from "./terminal";
+import { scriptCancel } from "./terminal";
+import { tauriWorktreeLifecycle, WorktreeLifecycle } from "./worktreeLifecycle";
 
 export type TaskReady = (task: Task) => Promise<boolean>;
 
@@ -114,8 +114,11 @@ type SetupSteps = { stage: string; status: string }[];
 
 type RepoScriptsResolution = { resolved: ResolvedScripts } | { error: string };
 
-function repoScriptsResolution(path: string): Promise<RepoScriptsResolution> {
-  return resolveRepoScripts(path).then(
+function repoScriptsResolution(
+  lifecycle: WorktreeLifecycle,
+  path: string
+): Promise<RepoScriptsResolution> {
+  return lifecycle.readScripts(path).then(
     (resolved) => ({ resolved }),
     (error) => ({ error: typeof error === "string" ? error : "Could not read setup scripts." })
   );
@@ -162,17 +165,20 @@ export class Operations {
   private publish: (state: AppState) => void;
   private getEditor: () => EditorApp;
   private save: typeof persist;
+  private lifecycle: WorktreeLifecycle;
 
   constructor(
     getState: () => AppState,
     publish: (state: AppState) => void,
     getEditor: () => EditorApp,
-    save = persist
+    save = persist,
+    lifecycle = tauriWorktreeLifecycle
   ) {
     this.getState = getState;
     this.publish = publish;
     this.getEditor = getEditor;
     this.save = save;
+    this.lifecycle = lifecycle;
   }
 
   private enqueue<T>(run: () => Promise<T>): Promise<T> {
@@ -404,7 +410,7 @@ export class Operations {
     if (new Set(workspace.repos.map((repo) => repo.id)).size !== workspace.repos.length) {
       throw new OperationError("invalid_params", "Repository IDs must be unique.");
     }
-    await invoke("validate_workspace_repos", { repos: workspace.repos }).catch(() => {
+    await this.lifecycle.validateRepos(workspace.repos).catch(() => {
       throw new OperationError(
         "invalid_repositories",
         "Repositories must be distinct Git repositories with absolute, non-overlapping worktree directories."
@@ -472,12 +478,7 @@ export class Operations {
                 branchName: input.branchName.trim(),
                 path: `${repo.worktreeBasePath}/${input.branchName.trim()}`,
               }
-            : await invoke<{ branchName: string; path: string }>("resolve_manual_worktree", {
-                repoPath: repo.localPath,
-                worktreeBasePath: repo.worktreeBasePath,
-                rawName: input.branchName,
-                ownedPaths,
-              });
+            : await this.lifecycle.resolveManualWorktree(repo, input.branchName, ownedPaths);
           return {
             repoId: repo.id,
             repoName: repo.name,
@@ -487,35 +488,24 @@ export class Operations {
           };
         })
       );
-      if (
-        this.getState().tasks.some((task) =>
-          task.members.some((member) => members.some((next) => next.path === member.path))
-        )
-      ) {
-        throw new OperationError("conflict", "A task already owns one of these worktrees.");
-      }
-      await invoke("validate_task_worktrees", {
+      const validation = await this.lifecycle.validateWorktrees(
         members,
-        basePaths: repos.map((repo) => repo.worktreeBasePath),
-        ownedPaths: this.getState().tasks.flatMap((task) =>
-          task.members.map((member) => member.path)
-        ),
-      }).catch(() => {
+        repos.map((repo) => repo.worktreeBasePath),
+        ownedPaths
+      );
+      if (validation === "owned")
+        throw new OperationError("conflict", "A task already owns one of these worktrees.");
+      if (validation === "invalid")
         throw new OperationError(
           "invalid_worktrees",
           "Check branch names, destination paths, and existing worktree ownership."
         );
-      });
       const warnings: OperationWarning[] = [];
       let completed = 0;
       progress(`Creating worktrees… 0/${members.length} completed`);
       const results = await Promise.allSettled(
         members.map(async (member) => {
-          const added = await invoke<{ warning: string | null }>("git_worktree_add", {
-            repoPath: member.localPath,
-            worktreePath: member.path,
-            branchName: member.branchName,
-          });
+          const added = await this.lifecycle.addWorktree(member);
           completed += 1;
           progress(`Creating worktrees… ${completed}/${members.length} completed`);
           return added;
@@ -582,19 +572,16 @@ export class Operations {
       progress("Copying local configuration…");
       await Promise.all([
         ...task.members.map(async (member, index) => {
-          const resolution = await repoScriptsResolution(member.path);
+          const resolution = await repoScriptsResolution(this.lifecycle, member.path);
           resolutions.set(member.repoId, resolution);
           updateSetupStep(task.id, member.repoId, "config", "running", warnings);
-          const copied = await this.optional(warnings, "config", member.repoId, async () => {
-            const included = await invoke<string[] | null>("worktree_include_paths", {
-              repoPath: member.localPath,
-            });
-            await invoke("copy_local_configs", {
-              sourceRepo: member.localPath,
-              worktreePath: member.path,
-              paths: [...EDITOR_CONFIG_PATHS[editor], ...(included ?? ALWAYS_COPIED_CONFIG_PATHS)],
-            });
-          });
+          const copied = await this.optional(warnings, "config", member.repoId, () =>
+            this.lifecycle.copyLocalConfigs(
+              member,
+              EDITOR_CONFIG_PATHS[editor],
+              ALWAYS_COPIED_CONFIG_PATHS
+            )
+          );
           setup[index].steps.push({ stage: "config", status: copied ? "completed" : "error" });
           updateSetupStep(
             task.id,
@@ -607,9 +594,7 @@ export class Operations {
             updateSetupStep(task.id, member.repoId, "detected", "running", warnings);
             detectedPlans.set(
               member.repoId,
-              await invoke<DetectedSetupPlan>("prepare_detected_setup", {
-                worktreePath: member.path,
-              }).catch(() => null)
+              await this.lifecycle.prepareDetectedSetup(member.path).catch(() => null)
             );
           }
         }),
@@ -695,13 +680,15 @@ export class Operations {
     progress(`${member.repoName} · ${SETUP_STAGES.script}…`);
     const session = scriptSession("setup", member.repoId);
     updateSetupStep(task.id, member.repoId, "script", "running", warnings);
-    const code = await runTaskScript({
-      taskId: task.id,
-      session,
-      script: script.script,
-      cwd: member.path,
-      env: scriptEnv(task, member, workspace),
-    }).catch(() => undefined);
+    const code = await this.lifecycle
+      .runScript({
+        taskId: task.id,
+        session,
+        script: script.script,
+        cwd: member.path,
+        env: scriptEnv(task, member, workspace),
+      })
+      .catch(() => undefined);
     const status = code === undefined ? "error" : scriptStatus(code);
     const message =
       status === "completed"
@@ -733,9 +720,7 @@ export class Operations {
     updateSetupStep(task.id, member.repoId, "detected", "running", warnings);
     const plan =
       preparedPlan === undefined
-        ? await invoke<DetectedSetupPlan>("prepare_detected_setup", {
-            worktreePath: member.path,
-          }).catch(() => null)
+        ? await this.lifecycle.prepareDetectedSetup(member.path).catch(() => null)
         : preparedPlan;
     if (!plan) {
       warnings.push({
@@ -774,10 +759,8 @@ export class Operations {
         outcome.message
       );
     };
-    const channel = new Channel<DetectedStep>();
-    channel.onmessage = report;
     try {
-      const results = await invoke<DetectedStep[]>("run_detected_setup", { plan, onStep: channel });
+      const results = await this.lifecycle.runDetectedSetup(plan, report);
       results.forEach(report);
     } catch {
       for (const step of plan.steps)
@@ -808,7 +791,7 @@ export class Operations {
     const warnings: OperationWarning[] = [];
     const steps: SetupSteps = [];
     try {
-      const resolution = await repoScriptsResolution(member.path);
+      const resolution = await repoScriptsResolution(this.lifecycle, member.path);
       if ("resolved" in resolution && !resolution.resolved.present)
         throw new OperationError("not_found", "The worktree no longer exists.");
       await this.runRepoSetup(task, member, resolution, warnings, steps, undefined, choice);
@@ -835,7 +818,7 @@ export class Operations {
       const workspace = this.getState().workspaces.find((item) => item.id === task.workspaceId);
       for (const member of task.members) {
         const repo = workspace?.repos.find((item) => item.id === member.repoId);
-        const resolution = await repoScriptsResolution(member.path);
+        const resolution = await repoScriptsResolution(this.lifecycle, member.path);
         if ("resolved" in resolution && !resolution.resolved.present) continue;
         const script = phaseScript(
           repo,
@@ -880,14 +863,16 @@ export class Operations {
             const workspace = this.getState().workspaces.find(
               (item) => item.id === task.workspaceId
             );
-            const code = await runTaskScript({
-              taskId: task.id,
-              session: scriptSession("teardown", member.repoId),
-              script: script.script,
-              cwd: member.path,
-              env: scriptEnv(task, member, workspace),
-              timeoutSecs: TEARDOWN_TIMEOUT_SECS,
-            }).catch(() => undefined);
+            const code = await this.lifecycle
+              .runScript({
+                taskId: task.id,
+                session: scriptSession("teardown", member.repoId),
+                script: script.script,
+                cwd: member.path,
+                env: scriptEnv(task, member, workspace),
+                timeoutSecs: TEARDOWN_TIMEOUT_SECS,
+              })
+              .catch(() => undefined);
             const status = code === undefined ? "error" : scriptStatus(code);
             if (status !== "completed") failed.push(member.repoName);
             updateSetupStep(
@@ -1075,11 +1060,7 @@ export class Operations {
     for (const task of tasks) {
       for (const member of task.members) {
         try {
-          await invoke("git_worktree_remove", {
-            repoPath: member.localPath,
-            worktreePath: member.path,
-            force: options.force ?? false,
-          });
+          await this.lifecycle.removeWorktree(member, options.force ?? false);
           removed.push(member);
         } catch {
           failed.push(member);
@@ -1093,20 +1074,17 @@ export class Operations {
         { removed, failed }
       );
     await this.removeTaskWorkspaces(tasks, warnings);
-    const paths = tasks.flatMap((task) => task.members.map((member) => member.path));
-    for (const command of ["cleanup_claude_json", "doppler_cleanup"]) {
-      await this.optional(warnings, command, undefined, () => invoke(command, { paths }));
-    }
-    await Promise.all(tasks.map((task) => terminalClose(task.id)));
+    for (const stage of await this.lifecycle.cleanupRemovedTasks(tasks))
+      warnings.push({
+        stage,
+        message: `${stage} did not complete; retry this setup or cleanup step manually.`,
+      });
   }
 
   private async removeTaskWorkspaces(tasks: Task[], warnings: OperationWarning[]) {
     for (const task of tasks)
       await this.optional(warnings, "workspace_file", undefined, () =>
-        invoke("remove_task_workspace", {
-          taskId: task.id,
-          legacyPath: task.workspaceFilePath ?? null,
-        })
+        this.lifecycle.removeTaskWorkspace(task)
       );
   }
 
