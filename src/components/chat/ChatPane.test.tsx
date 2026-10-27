@@ -260,6 +260,35 @@ describe("ChatPane", () => {
     expect(screen.getByText("Message 72")).toBeInTheDocument();
   });
 
+  it("keeps subagent steps inside their card instead of the main conversation", async () => {
+    const items = [
+      { id: "u1", kind: "user", text: "Investigate" },
+      { id: "a1", kind: "agent", text: "", title: "Find the bug", status: "inProgress" },
+      { id: "a2", kind: "agent", text: "", title: "Read the docs", status: "inProgress" },
+      { id: "s1", kind: "assistant", text: "Sub reply one", parent: "a1" },
+      { id: "s2", kind: "assistant", text: "Sub reply two", parent: "a2" },
+      { id: "t1", kind: "command", text: "ls", parent: "a1" },
+      { id: "m1", kind: "assistant", text: "Main reply" },
+    ];
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open" ? snapshot({ status: { kind: "busy" }, items }) : undefined
+      )
+    );
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByText("Main reply");
+    expect(screen.queryByText("Sub reply one")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Working/ })).not.toBeInTheDocument();
+
+    const first = screen.getByRole("region", { name: "Subagent: Find the bug" });
+    fireEvent.click(within(first).getAllByRole("button")[0]);
+    expect(within(first).getByText("Sub reply one")).toBeInTheDocument();
+    expect(within(first).queryByText("Sub reply two")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Subagent: Read the docs" })).getByText("1 step")
+    ).toBeInTheDocument();
+  });
+
   it("collapses each run of work items into one expandable message", async () => {
     const work = (n: number) => {
       if (n === 17) return [{ id: `r${n}`, kind: "reasoning", text: "" }];

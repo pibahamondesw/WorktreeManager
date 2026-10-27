@@ -20,7 +20,8 @@ type ChatItemKind =
   | "error"
   | "notice"
   | "review"
-  | "handoff";
+  | "handoff"
+  | "agent";
 
 export interface ChatItem {
   id: string;
@@ -32,6 +33,8 @@ export interface ChatItem {
   checkpoint?: string;
   /** Carried from this agent's conversation; read-only here. */
   origin?: AgentId;
+  /** The subagent run (an `agent` item's id) this item is a step of. */
+  parent?: string;
 }
 
 export interface ChatQuestion {

@@ -170,6 +170,9 @@ fn carried_items(segments: &[(HandoffLink, Vec<ChatItem>)], agent: &str) -> Vec<
         for item in items.iter().filter(|item| item.kind != ItemKind::Handoff) {
             let mut item = item.clone();
             item.id = format!("carried:{}:{}", link.conversation_id, item.id);
+            item.parent = item
+                .parent
+                .map(|parent| format!("carried:{}:{}", link.conversation_id, parent));
             item.checkpoint = None;
             item.origin = Some(link.agent.clone());
             carried.push(item);
@@ -214,7 +217,7 @@ fn render_turn(items: &[ChatItem]) -> String {
             text.push_str(&format!("- {line}\n"));
         }
     };
-    for item in items {
+    for item in items.iter().filter(|item| item.parent.is_none()) {
         let speaker = product(item.origin.as_deref().unwrap_or_default());
         match item.kind {
             ItemKind::User => {
@@ -261,6 +264,13 @@ fn render_turn(items: &[ChatItem]) -> String {
                 format!(
                     "used {}",
                     first_line(item.title.as_deref().unwrap_or(&item.text))
+                ),
+            ),
+            ItemKind::Agent => tool_line(
+                &mut text,
+                format!(
+                    "delegated to a subagent: {}",
+                    first_line(item.title.as_deref().unwrap_or("subagent"))
                 ),
             ),
             ItemKind::Error => tool_line(&mut text, format!("error: {}", first_line(&item.text))),
@@ -400,6 +410,21 @@ mod tests {
         store.link("t1", "codex", "thread", &link("claude", "session"));
         store.forget_task("t1");
         assert_eq!(store.source("t1", "codex", "thread"), None);
+    }
+
+    #[test]
+    fn subagent_runs_stay_nested_when_carried_and_show_once_in_the_digest() {
+        let agent = ChatItem::new("a1", ItemKind::Agent, "Report").titled("Find the bug");
+        let step = ChatItem::new("t1", ItemKind::Command, "")
+            .titled("cargo test")
+            .with_parent(Some("a1"));
+        let items = vec![user("u", "Investigate"), agent, step];
+        let carried = carried_items(&[(link("claude", "s"), items.clone())], "codex");
+        assert_eq!(carried[2].parent.as_deref(), Some("carried:s:a1"));
+        assert_eq!(carried[1].id, "carried:s:a1");
+        let (digest, _) = digest(&items);
+        assert!(digest.contains("delegated to a subagent: Find the bug"));
+        assert!(!digest.contains("cargo test"));
     }
 
     #[test]
