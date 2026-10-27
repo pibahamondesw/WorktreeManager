@@ -1,6 +1,7 @@
 use crate::automation::{failure, read_message, socket_path, Request, MAX_MESSAGE, VERSION};
 use crate::commands::agent_alerts;
 use crate::commands::agents::Agents;
+use crate::commands::doppler;
 use serde_json::{json, Map, Value};
 use std::{
     fs,
@@ -296,6 +297,9 @@ fn run_cli(
     mut args: Vec<String>,
     open: impl FnOnce() -> Result<(), String>,
 ) -> Option<i32> {
+    if let shim @ Some(_) = doppler::run_shim_if_invoked(executable, &args) {
+        return shim;
+    }
     let cli = Path::new(executable)
         .file_name()
         .is_some_and(|name| name == "wtm");
@@ -472,6 +476,12 @@ mod tests {
 
     fn args(input: &str) -> Vec<String> {
         input.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn doppler_named_launches_run_as_the_doppler_shim() {
+        let code = run_cli("/shims/doppler", args("--version"), || Err("opened".into()));
+        assert!(matches!(code, Some(0 | 127)));
     }
 
     #[test]

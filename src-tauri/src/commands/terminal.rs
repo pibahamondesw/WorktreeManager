@@ -16,7 +16,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::agent_alerts;
 use super::agents::{self, LaunchContext, LaunchSpec};
-use super::login_shell::LoginShell;
+use super::doppler;
+use super::login_shell::{LoginShell, SHIM_DIR_ENV};
 
 const SCROLLBACK_CAP: usize = 2 * 1024 * 1024;
 const READ_BUF: usize = 32 * 1024;
@@ -578,7 +579,8 @@ fn is_script_session(name: &str) -> bool {
 /// sessions; output is only shown there, never returned, since it may carry secrets.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn run_task_script(
+pub async fn run_task_script<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, TerminalRegistry>,
     task_id: String,
     session: String,
@@ -597,6 +599,7 @@ pub async fn run_task_script(
     let spec = LoginShell::repo_script(&script)
         .current_dir(&cwd)
         .envs(env)
+        .envs(script_shims(&app))
         .terminal();
     let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
     let previous = {
@@ -620,6 +623,16 @@ pub async fn run_task_script(
         tauri::async_runtime::spawn_blocking(move || previous.terminate());
     }
     Ok(exit_rx.await.unwrap_or(None))
+}
+
+/// Repository scripts of a task run in parallel, so they get the app's `doppler` shim.
+/// Without it they still run, only unserialized.
+fn script_shims<R: Runtime>(app: &AppHandle<R>) -> Option<(String, String)> {
+    let dir = app.path().app_data_dir().ok()?.join("shims");
+    doppler::install_shim(&dir)
+        .inspect_err(|error| log::warn!("Could not install the doppler shim: {error}"))
+        .ok()?;
+    Some((SHIM_DIR_ENV.to_string(), dir.to_string_lossy().into_owned()))
 }
 
 /// Stop a running script's processes while keeping its output attachable.
@@ -934,13 +947,20 @@ mod tests {
     #[test]
     fn task_scripts_run_in_their_directory_with_the_task_environment() {
         use tauri::test::{mock_builder, mock_context, noop_assets};
+        let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let mut context = mock_context(noop_assets());
+        context.config_mut().identifier = dir
+            .join(format!("wtm-task-script-{}", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         let app = mock_builder()
             .manage(TerminalRegistry::default())
-            .build(mock_context(noop_assets()))
+            .build(context)
             .unwrap();
-        let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        assert!(app.path().app_data_dir().unwrap().starts_with(&dir));
         let dir = dir.to_string_lossy().to_string();
         let code = tauri::async_runtime::block_on(run_task_script(
+            app.handle().clone(),
             app.state(),
             "task".into(),
             "setup:api".into(),
@@ -954,6 +974,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(code, Some(4));
+        let _ = std::fs::remove_dir_all(app.path().app_data_dir().unwrap());
         for session in app
             .state::<TerminalRegistry>()
             .0
