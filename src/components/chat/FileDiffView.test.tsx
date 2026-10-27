@@ -6,7 +6,9 @@ import "@testing-library/jest-dom/vitest";
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 
+import { useEffect, useState } from "react";
 import { FileDiffView } from "./FileDiffView";
+import { DiffThread } from "./diffComments";
 import { FileChange, FileDiff } from "../../services/chat";
 
 const changes = { before: "b", after: "a", files: [] };
@@ -23,17 +25,31 @@ const show = (diff: FileDiff | (() => Promise<never>), props = {}) => {
   mocks.invoke.mockImplementation(() =>
     typeof diff === "function" ? diff() : Promise.resolve(diff)
   );
-  return render(
-    <FileDiffView
-      taskId="t"
-      agent="claude"
-      changes={changes}
-      file={file}
-      layout="unified"
-      hideFormatting={false}
-      {...props}
-    />
-  );
+  const recordThreads = vi.fn<(threads: DiffThread[]) => void>();
+  function Harness() {
+    const [value, setValue] = useState<DiffThread[]>([]);
+    useEffect(() => recordThreads(value), [value]);
+    return (
+      <FileDiffView
+        taskId="t"
+        agent="claude"
+        changes={changes}
+        file={file}
+        layout="unified"
+        hideFormatting={false}
+        threads={value}
+        onThreadsChange={setValue}
+        {...props}
+      />
+    );
+  }
+  const latestThreads = () => recordThreads.mock.lastCall![0];
+  return { ...render(<Harness />), latestThreads };
+};
+
+const comment = (text: string, button = "Comment") => {
+  fireEvent.change(screen.getByRole("textbox", { name: "Comment" }), { target: { value: text } });
+  fireEvent.click(screen.getByRole("button", { name: button }));
 };
 
 const text = (value: string) => ({ kind: "text" as const, text: value });
@@ -68,7 +84,7 @@ describe("FileDiffView", () => {
     );
 
     await screen.findAllByText("keep");
-    const rows = container.querySelectorAll(".diff-code > div > .flex");
+    const rows = container.querySelectorAll(".diff-code > div > div > .flex");
     expect(rows[0].children[0]).toHaveClass("diff-formatting");
     expect(rows[0].children[1]).toHaveClass("diff-formatting");
     expect(rows[1].children[0]).toHaveClass("diff-empty");
@@ -85,9 +101,11 @@ describe("FileDiffView", () => {
     );
 
     await screen.findByText("Moved");
-    const rows = [...container.querySelectorAll(".diff-code > div > .flex")];
+    const rows = [...container.querySelectorAll(".diff-code > div > div > .flex")];
     const classes = rows.map((row) =>
-      [...row.children].map((cell) => [...cell.classList].find((name) => name.startsWith("diff-")))
+      [...row.children].map((cell) =>
+        [...cell.classList].find((name) => name.startsWith("diff-") && name !== "diff-row")
+      )
     );
     expect(classes).toEqual([
       ["diff-moved", "diff-empty"],
@@ -114,6 +132,50 @@ describe("FileDiffView", () => {
       "data:image/png;base64,AAAA"
     );
     expect(screen.getByText("Binary file · 2.0 KB")).toBeInTheDocument();
+  });
+
+  it("collects range comments into threads that can be edited and discarded", async () => {
+    const { latestThreads } = show({
+      before: text("a();\nb();\nc();\n"),
+      after: text("a();\nB();\nc();\n"),
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Comment on line 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Comment on line 2" }), {
+      shiftKey: true,
+    });
+    comment("Explain this");
+    fireEvent.click(screen.getByRole("button", { name: "Add to thread" }));
+    comment("And rename it", "Add");
+
+    expect(latestThreads()).toHaveLength(1);
+    expect(latestThreads()[0]).toMatchObject({
+      location: "/wt/a/src/app.ts:1-2",
+      quote: " a();\n-b();\n+B();",
+    });
+    const thread = screen.getByRole("group", { name: "Comments on /wt/a/src/app.ts:1-2" });
+    expect(thread).toHaveTextContent("Explain this");
+    expect(thread).toHaveTextContent("And rename it");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    comment("Explain this, please", "Save");
+    fireEvent.click(screen.getAllByRole("button", { name: "Discard" })[1]);
+    expect(latestThreads()[0].comments.map((entry) => entry.text)).toEqual([
+      "Explain this, please",
+    ]);
+  });
+
+  it("anchors comments on formatting lines shown as context", async () => {
+    const { latestThreads } = show(
+      { before: text("a();\n"), after: text("a();\n\nb();\n") },
+      { hideFormatting: true }
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Comment on line 2" }));
+    expect(screen.getAllByRole("textbox", { name: "Comment" })).toHaveLength(1);
+    comment("Remove the blank line");
+
+    expect(latestThreads()[0]).toMatchObject({ location: "/wt/a/src/app.ts:2", quote: "+" });
   });
 
   it("shows load errors", async () => {
