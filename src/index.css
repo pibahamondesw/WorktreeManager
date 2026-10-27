@@ -95,6 +95,9 @@ body,
   -webkit-user-select: text !important;
   cursor: text;
 }
+.select-text button:not(:disabled) {
+  cursor: pointer;
+}
 
 /* Titlebar drag regions are handled in JS (useWindowDrag); -webkit-app-region is a no-op in WKWebView */
 [data-drag-region] {
