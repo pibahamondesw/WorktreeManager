@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { ChatItemView, WorkGroup } from "./ChatItemView";
-import { chatEntries } from "./chatEntries";
+import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
 import { Composer } from "./Composer";
 import { PendingRequestCard } from "./PendingRequestCard";
 import { SessionList } from "./SessionList";
@@ -109,8 +109,10 @@ export function ChatPane({
   const { status, items, pending, controls } = snapshot;
   const busy = status.kind === "busy";
   const live = isLive(status);
-  const ends = turnEnds(items, changes);
-  const entries = useMemo(() => chatEntries(items), [items]);
+  const mainItems = useMemo(() => items.filter(isMainItem), [items]);
+  const steps = useMemo(() => subagentSteps(items), [items]);
+  const ends = turnEnds(mainItems, changes);
+  const entries = useMemo(() => chatEntries(mainItems), [mainItems]);
   const pinnedStart = windowStartId ? entries.findIndex((entry) => entry.id === windowStartId) : -1;
   const firstVisible =
     pinnedStart >= 0 ? pinnedStart : Math.max(0, entries.length - CHAT_PAGE_SIZE);
@@ -302,6 +304,7 @@ export function ChatPane({
                 ) : (
                   <ChatItemView
                     item={item}
+                    steps={steps}
                     historyDisabled={
                       status.kind !== "idle" ||
                       pending.length > 0 ||

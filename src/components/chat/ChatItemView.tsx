@@ -10,12 +10,14 @@ import { HistoryMenu } from "./HistoryMenu";
 import { PlanCard, ReferencedDocuments } from "./MarkdownPreviewCard";
 import { useMarkdownPreview } from "./markdownPreviewContext";
 import { isPlanItem } from "./markdownDocument";
+import { SubagentSteps } from "./chatEntries";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted animate-pulse",
   completed: "text-success",
   failed: "text-danger",
   declined: "text-warning",
+  stopped: "text-warning",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -23,6 +25,7 @@ const STATUS_LABEL: Record<string, string> = {
   completed: "done",
   failed: "failed",
   declined: "rejected",
+  stopped: "stopped",
 };
 
 const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm];
@@ -72,11 +75,68 @@ export function DiffText({ text }: { text: string }) {
   );
 }
 
+function StatusLabel({ status }: { status?: string }) {
+  if (!status) return null;
+  return (
+    <span className={STATUS_STYLE[status] ?? "text-text-muted"}>
+      {STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
+
+const NO_STEPS: ChatItem[] = [];
+
+function SubagentCard({ item, steps }: { item: ChatItem; steps?: SubagentSteps }) {
+  const [open, setOpen] = useState(false);
+  const runSteps = (steps?.get(item.id) ?? NO_STEPS).filter(isVisibleStep);
+  return (
+    <section
+      aria-label={`Subagent: ${item.title ?? "Subagent"}`}
+      className="rounded-lg border border-border bg-bg-secondary/40 text-xs"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-left cursor-pointer"
+      >
+        <span className="text-text-muted">↳</span>
+        <span className="flex-1 min-w-0 truncate text-text-secondary select-text">
+          <span className="font-medium">Subagent</span> · {item.title ?? "Subagent"}
+        </span>
+        {runSteps.length > 0 && (
+          <span className="text-text-muted">{plural(runSteps.length, "step")}</span>
+        )}
+        <StatusLabel status={item.status} />
+        <ChevronDownIcon
+          className={`opacity-50 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <div className="px-3 pb-2 flex flex-col gap-2">
+          {item.detail && (
+            <pre className="font-mono text-text-secondary whitespace-pre-wrap select-text max-h-40 overflow-y-auto p-2 rounded-md bg-bg-secondary">
+              {item.detail}
+            </pre>
+          )}
+          {runSteps.length > 0 && (
+            <div className="flex flex-col gap-2 border-l border-border pl-3 max-h-96 overflow-y-auto">
+              {runSteps.map((step) => (
+                <ChatItemView key={step.id} item={step} steps={steps} />
+              ))}
+            </div>
+          )}
+          {item.text && <MarkdownText text={item.text} />}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Activity({ item }: { item: ChatItem }) {
   const [open, setOpen] = useState(false);
   const label = item.title ?? item.text;
   const hasDetail = !!item.detail || (!!item.title && !!item.text);
-  const status = item.status ?? "";
   return (
     <div className="rounded-lg border border-border bg-bg-secondary/40 text-xs">
       <button
@@ -92,11 +152,7 @@ function Activity({ item }: { item: ChatItem }) {
         <span className="flex-1 min-w-0 truncate font-mono text-text-secondary select-text">
           {label}
         </span>
-        {status && (
-          <span className={STATUS_STYLE[status] ?? "text-text-muted"}>
-            {STATUS_LABEL[status] ?? status}
-          </span>
-        )}
+        <StatusLabel status={item.status} />
         {hasDetail && (
           <ChevronDownIcon
             className={`opacity-50 transition-transform ${open ? "rotate-180" : ""}`}
@@ -167,10 +223,12 @@ export function WorkGroup({ items, running }: { items: ChatItem[]; running: bool
 
 export function ChatItemView({
   item,
+  steps,
   onHistory,
   historyDisabled,
 }: {
   item: ChatItem;
+  steps?: SubagentSteps;
   onHistory?: (action: HistoryAction) => void;
   historyDisabled?: boolean;
 }) {
@@ -243,6 +301,8 @@ export function ChatItemView({
           <MarkdownText text={item.text} />
         </section>
       );
+    case "agent":
+      return <SubagentCard item={item} steps={steps} />;
     default:
       return <Activity item={item} />;
   }

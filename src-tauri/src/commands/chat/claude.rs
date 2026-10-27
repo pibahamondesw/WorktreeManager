@@ -16,6 +16,9 @@ use super::model::*;
 const ASK_USER_TOOL: &str = "AskUserQuestion";
 const TODO_TOOL: &str = "TodoWrite";
 const EXIT_PLAN_TOOL: &str = "ExitPlanMode";
+const AGENT_TOOLS: [&str; 2] = ["Agent", "Task"];
+/// Makes the CLI forward subagents' text and thinking, not only their tool calls.
+pub(crate) const FORWARD_SUBAGENT_TEXT_ENV: &str = "CLAUDE_CODE_FORWARD_SUBAGENT_TEXT";
 
 enum Control {
     Initialize,
@@ -48,6 +51,8 @@ pub struct ClaudeProvider {
     last_event_usage_request: Option<Instant>,
     /// Background subagents still run, per the last `background_tasks_changed`.
     background_agents: bool,
+    /// The Agent tool call that launched each subagent task, by task id.
+    agent_calls: HashMap<String, String>,
     /// Digest of the conversation this one continues, sent ahead of the first message.
     handoff: Option<String>,
 }
@@ -113,6 +118,7 @@ impl ClaudeProvider {
             usage_in_flight: false,
             last_event_usage_request: None,
             background_agents: false,
+            agent_calls: HashMap::new(),
             handoff: None,
         }
     }
@@ -543,9 +549,13 @@ impl ChatProvider for ClaudeProvider {
         match message["type"].as_str() {
             Some("stream_event") => self.handle_stream_event(&message["event"], snapshot, out),
             Some("assistant") => {
-                self.track_todos(&message["message"], out);
+                let parent = message["parent_tool_use_id"].as_str();
+                if parent.is_none() {
+                    self.track_todos(&message["message"], out);
+                }
+                let run = parent.filter(|id| is_agent_run(&snapshot.items, id));
                 for item in self.block_counts.items(&message["message"]) {
-                    out.upsert(item);
+                    out.upsert(item.with_parent(run));
                 }
             }
             Some("system") if message["subtype"] == "init" => {
@@ -560,15 +570,33 @@ impl ChatProvider for ClaudeProvider {
             Some("system") if message["subtype"] == "background_tasks_changed" => {
                 self.track_background_tasks(&message["tasks"], out)
             }
+            Some("system") if message["subtype"] == "task_notification" => {
+                let call = message["tool_use_id"].as_str().or_else(|| {
+                    let task = message["task_id"].as_str()?;
+                    self.agent_calls.get(task).map(String::as_str)
+                });
+                let report = message["summary"].as_str().unwrap_or_default();
+                let status = message["status"].as_str().unwrap_or_default();
+                if let Some(item) = call.and_then(|id| finished_agent(snapshot, id, status, report))
+                {
+                    out.upsert(item);
+                }
+            }
             Some("control_response") => self.handle_control_response(&message["response"], out),
             Some("user") => {
+                let launch = &message["tool_use_result"];
                 for block in message["message"]["content"]
                     .as_array()
                     .into_iter()
                     .flatten()
                 {
                     if block["type"] == "tool_result" {
-                        if let Some(item) = tool_result(block, snapshot) {
+                        if let (Some(task), Some(call)) =
+                            (launch["agentId"].as_str(), block["tool_use_id"].as_str())
+                        {
+                            self.agent_calls.insert(task.into(), call.into());
+                        }
+                        if let Some(item) = tool_result(block, launch, snapshot) {
                             out.upsert(item);
                         }
                     }
@@ -1016,6 +1044,17 @@ fn assistant_block(message_id: &str, index: usize, block: &Value) -> Option<Chat
             block["input"]["plan"].as_str().unwrap_or_default(),
         )
         .titled("Plan"),
+        "tool_use" if AGENT_TOOLS.iter().any(|tool| block["name"] == *tool) => {
+            let input = &block["input"];
+            let title = input["description"]
+                .as_str()
+                .or(input["subagent_type"].as_str())
+                .unwrap_or("Subagent");
+            ChatItem::new(block["id"].as_str()?, ItemKind::Agent, "")
+                .titled(title)
+                .with_detail(input["prompt"].as_str().map(String::from))
+                .with_status("inProgress")
+        }
         "tool_use" => {
             let tool = block["name"].as_str().unwrap_or("tool");
             let input = &block["input"];
@@ -1040,7 +1079,9 @@ fn assistant_block(message_id: &str, index: usize, block: &Value) -> Option<Chat
     })
 }
 
-fn tool_result(block: &Value, snapshot: &ChatSnapshot) -> Option<ChatItem> {
+/// `launch` is the message's `tool_use_result`; a subagent launched in the background keeps
+/// running after its tool call returns and reports through a task notification.
+fn tool_result(block: &Value, launch: &Value, snapshot: &ChatSnapshot) -> Option<ChatItem> {
     let id = block["tool_use_id"].as_str()?;
     let mut item = snapshot.item(id)?.clone();
     let output = match &block["content"] {
@@ -1053,6 +1094,18 @@ fn tool_result(block: &Value, snapshot: &ChatSnapshot) -> Option<ChatItem> {
         _ => String::new(),
     };
     let failed = block["is_error"] == true;
+    if item.kind == ItemKind::Agent {
+        let in_background = launch["isAsync"] == true || launch["status"] == "async_launched";
+        if in_background && !failed {
+            return None;
+        }
+        return finished_agent(
+            snapshot,
+            id,
+            if failed { "failed" } else { "completed" },
+            output.trim(),
+        );
+    }
     item.status = Some(if failed { "failed" } else { "completed" }.into());
     if item.kind == ItemKind::Command || failed {
         item.detail = Some(match item.detail.take() {
@@ -1062,6 +1115,53 @@ fn tool_result(block: &Value, snapshot: &ChatSnapshot) -> Option<ChatItem> {
         });
     }
     Some(item)
+}
+
+fn finished_agent(
+    snapshot: &ChatSnapshot,
+    id: &str,
+    status: &str,
+    report: &str,
+) -> Option<ChatItem> {
+    let mut item = snapshot
+        .item(id)
+        .filter(|item| item.kind == ItemKind::Agent)?
+        .clone();
+    item.status = Some(
+        match status {
+            "completed" | "failed" => status,
+            _ => "stopped",
+        }
+        .into(),
+    );
+    if !report.is_empty() {
+        item.text = report.to_string();
+    }
+    Some(item)
+}
+
+/// A background subagent's end as the transcript records it: `<task-notification>` tags naming
+/// the task (and, on newer versions, its tool call).
+struct TaskNotification<'a> {
+    task: Option<&'a str>,
+    call: Option<&'a str>,
+    status: &'a str,
+    report: &'a str,
+}
+
+fn task_notification(text: &str) -> Option<TaskNotification<'_>> {
+    let body = text.trim_start().strip_prefix("<task-notification>")?;
+    let tag = |name: &str| {
+        let start = body.find(&format!("<{name}>"))? + name.len() + 2;
+        let end = body[start..].find(&format!("</{name}>"))? + start;
+        Some(body[start..end].trim())
+    };
+    Some(TaskNotification {
+        task: tag("task-id"),
+        call: tag("tool-use-id"),
+        status: tag("status").unwrap_or_default(),
+        report: tag("result").or_else(|| tag("summary")).unwrap_or_default(),
+    })
 }
 
 /// Where Claude Code keeps a session's transcript: `~/.claude/projects/<cwd with non-alphanumerics
@@ -1132,9 +1232,70 @@ pub fn session_exists(home: Option<&Path>, cwd: &str, session_id: &str) -> bool 
 }
 
 pub fn history(home: Option<&Path>, cwd: &str, session_id: &str) -> Vec<ChatItem> {
-    home.and_then(|home| session_file(home, cwd, session_id))
-        .map(|path| parse_history(&fs::read_to_string(path).unwrap_or_default()))
-        .unwrap_or_default()
+    let Some(path) = home.and_then(|home| session_file(home, cwd, session_id)) else {
+        return Vec::new();
+    };
+    let subagents = subagent_transcripts(&path);
+    parse_session(&fs::read_to_string(&path).unwrap_or_default(), &subagents)
+}
+
+/// Subagent transcripts live beside the session's, in `<session>/subagents/agent-<id>.jsonl`,
+/// each with a `.meta.json` naming the Agent tool call that launched it. Returns
+/// `(tool call id, transcript)` pairs.
+fn subagent_transcripts(session: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = fs::read_dir(session.with_extension("").join("subagents")) else {
+        return Vec::new();
+    };
+    let mut transcripts: Vec<(String, String)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let meta = entry.path();
+            let stem = meta.file_name()?.to_str()?.strip_suffix(".meta.json")?;
+            let meta: Value = serde_json::from_str(&fs::read_to_string(&meta).ok()?).ok()?;
+            let call = meta["toolUseId"].as_str()?.to_string();
+            let transcript =
+                fs::read_to_string(entry.path().with_file_name(format!("{stem}.jsonl"))).ok()?;
+            Some((call, transcript))
+        })
+        .collect();
+    transcripts.sort();
+    transcripts
+}
+
+/// The main conversation followed by each subagent's steps, tagged with their run's tool call.
+/// Runs that never reported back ended with the process that started them.
+fn parse_session(main: &str, subagents: &[(String, String)]) -> Vec<ChatItem> {
+    let mut items = parse_history(main);
+    for (call, transcript) in subagents {
+        items.extend(visible(parse_transcript(transcript, Some(call))));
+    }
+    let orphaned: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            item.parent
+                .as_deref()
+                .is_some_and(|parent| !is_agent_run(&items, parent))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    for index in orphaned {
+        items[index].parent = None;
+    }
+    for item in &mut items {
+        if item.kind == ItemKind::Agent && item.status.as_deref() == Some("inProgress") {
+            item.status = Some("stopped".into());
+        }
+    }
+    items
+}
+
+/// Steps only nest under Agent calls; forked skills also report a `parent_tool_use_id` (their
+/// Skill call or a `forked-command-` id) and stay in the main conversation as before.
+fn is_agent_run(items: &[ChatItem], id: &str) -> bool {
+    items
+        .iter()
+        .any(|item| item.id == id && item.kind == ItemKind::Agent)
 }
 
 pub fn fork_point(
@@ -1171,36 +1332,65 @@ fn fork_point_in(text: &str, item_id: &str) -> Result<(Option<String>, Vec<ChatI
 }
 
 fn parse_history(text: &str) -> Vec<ChatItem> {
+    visible(parse_transcript(text, None))
+}
+
+fn visible(items: Vec<ChatItem>) -> Vec<ChatItem> {
+    items
+        .into_iter()
+        .filter(|item| !(item.kind == ItemKind::Assistant && item.text.is_empty()))
+        .collect()
+}
+
+/// A subagent's transcript (`parent` is the tool call that launched it) is all sidechain, and
+/// its user messages are the prompts and reports the parent already shows.
+fn parse_transcript(text: &str, parent: Option<&str>) -> Vec<ChatItem> {
     let mut snapshot = ChatSnapshot::new(0);
     let mut counts = BlockCounts::default();
+    let mut agent_calls = HashMap::new();
+    let mut reports = HashMap::new();
     for line in text.lines() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        if entry["isSidechain"] == true || entry["isMeta"] == true {
+        record_handback(&mut snapshot, &agent_calls, &mut reports, &entry["origin"]);
+        if (parent.is_none() && entry["isSidechain"] == true) || entry["isMeta"] == true {
             continue;
         }
         let message = &entry["message"];
+        let launch = &entry["toolUseResult"];
         match entry["type"].as_str() {
             Some("user") => match &message["content"] {
-                Value::String(text) if !text.starts_with('<') => {
-                    snapshot.apply(&ChatEvent::Upsert {
-                        item: ChatItem::new(
-                            entry["uuid"].as_str().unwrap_or_default(),
-                            ItemKind::User,
-                            text.clone(),
-                        ),
-                    })
+                Value::String(text) if parent.is_none() && text.starts_with('<') => {
+                    finish_notified_agent(&mut snapshot, &agent_calls, &reports, text)
                 }
+                Value::String(text) if parent.is_none() => snapshot.apply(&ChatEvent::Upsert {
+                    item: ChatItem::new(
+                        entry["uuid"].as_str().unwrap_or_default(),
+                        ItemKind::User,
+                        text.clone(),
+                    ),
+                }),
                 Value::Array(blocks) => {
                     for block in blocks {
                         match block["type"].as_str() {
                             Some("tool_result") => {
-                                if let Some(item) = tool_result(block, &snapshot) {
+                                if let (Some(task), Some(call)) =
+                                    (launch["agentId"].as_str(), block["tool_use_id"].as_str())
+                                {
+                                    agent_calls.insert(task.to_string(), call.to_string());
+                                }
+                                if let Some(mut item) = tool_result(block, launch, &snapshot) {
+                                    let report = launch["agentId"]
+                                        .as_str()
+                                        .and_then(|task| reports.get(task));
+                                    if let (ItemKind::Agent, Some(report)) = (item.kind, report) {
+                                        item.text = report.clone();
+                                    }
                                     snapshot.apply(&ChatEvent::Upsert { item });
                                 }
                             }
-                            Some("text") => {
+                            Some("text") if parent.is_none() => {
                                 let text = block["text"].as_str().unwrap_or_default();
                                 if !text.starts_with('<') {
                                     snapshot.apply(&ChatEvent::Upsert {
@@ -1220,17 +1410,72 @@ fn parse_history(text: &str) -> Vec<ChatItem> {
             },
             Some("assistant") => {
                 for item in counts.items(message) {
-                    snapshot.apply(&ChatEvent::Upsert { item });
+                    snapshot.apply(&ChatEvent::Upsert {
+                        item: item.with_parent(parent),
+                    });
+                }
+            }
+            Some("attachment") if entry["attachment"]["type"] == "queued_command" => {
+                if let Some(prompt) = entry["attachment"]["prompt"].as_str() {
+                    finish_notified_agent(&mut snapshot, &agent_calls, &reports, prompt);
                 }
             }
             _ => {}
         }
     }
-    snapshot
-        .items
-        .into_iter()
-        .filter(|item| !(item.kind == ItemKind::Assistant && item.text.is_empty()))
-        .collect()
+    snapshot.items
+}
+
+/// A subagent's final report, sent back as a hidden message whose `origin` names the task. It
+/// can arrive before or after the tool result or notification that ends the run.
+fn record_handback(
+    snapshot: &mut ChatSnapshot,
+    agent_calls: &HashMap<String, String>,
+    reports: &mut HashMap<String, String>,
+    origin: &Value,
+) {
+    let (true, Some(task), Some(report)) = (
+        origin["handback"] == true,
+        origin["senderTaskId"].as_str(),
+        origin["handbackReportText"].as_str(),
+    ) else {
+        return;
+    };
+    reports.insert(task.to_string(), report.to_string());
+    let finished = agent_calls
+        .get(task)
+        .and_then(|call| snapshot.item(call))
+        .filter(|item| item.kind == ItemKind::Agent && item.status.as_deref() != Some("inProgress"))
+        .cloned();
+    if let Some(mut item) = finished {
+        item.text = report.to_string();
+        snapshot.apply(&ChatEvent::Upsert { item });
+    }
+}
+
+/// Notifications that arrive mid-turn are recorded as queued commands, otherwise as user
+/// messages; both carry the same tags. A subagent that hands its report back separately leaves
+/// only a pointer to it in the notification, so `reports` (by task id) takes precedence.
+fn finish_notified_agent(
+    snapshot: &mut ChatSnapshot,
+    agent_calls: &HashMap<String, String>,
+    reports: &HashMap<String, String>,
+    text: &str,
+) {
+    let Some(notification) = task_notification(text) else {
+        return;
+    };
+    let call = notification
+        .call
+        .or_else(|| agent_calls.get(notification.task?).map(String::as_str));
+    let report = notification
+        .task
+        .and_then(|task| reports.get(task))
+        .map_or(notification.report, String::as_str);
+    let finished = call.and_then(|id| finished_agent(snapshot, id, notification.status, report));
+    if let Some(item) = finished {
+        snapshot.apply(&ChatEvent::Upsert { item });
+    }
 }
 
 /// Context goes in its own leading block; transcripts hide blocks that start with `<`.
@@ -1729,6 +1974,254 @@ mod tests {
             ]
         );
         assert_eq!(items[2].status.as_deref(), Some("completed"));
+    }
+
+    fn agent_call(id: &str, description: &str) -> Value {
+        json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "id": format!("m-{id}"), "content": [
+            { "type": "tool_use", "id": id, "name": "Agent", "input": { "description": description, "prompt": "Look around", "subagent_type": "Explore" } },
+        ] } })
+    }
+
+    fn step(parent: &str, message: &str, block: Value) -> Value {
+        json!({ "type": "assistant", "parent_tool_use_id": parent, "message": { "id": message, "content": [block] } })
+    }
+
+    fn result_of(call: &str, content: &str, launch: Value) -> Value {
+        json!({ "type": "user", "tool_use_result": launch, "message": { "content": [
+            { "type": "tool_result", "tool_use_id": call, "content": content },
+        ] } })
+    }
+
+    #[test]
+    fn subagent_steps_nest_under_their_agent_call() {
+        let (mut provider, mut snapshot) = started();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            agent_call("a1", "Find the bug"),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            agent_call("a2", "Read the docs"),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            step(
+                "a1",
+                "s1",
+                json!({ "type": "tool_use", "id": "t1", "name": "Bash", "input": { "command": "ls" } }),
+            ),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            step("a2", "s2", json!({ "type": "text", "text": "Reading" })),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            step(
+                "a2",
+                "s3",
+                json!({ "type": "tool_use", "id": "t2", "name": TODO_TOOL, "input": { "todos": [{ "content": "sub", "status": "pending" }] } }),
+            ),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "user", "parent_tool_use_id": "a1", "message": { "content": [
+            { "type": "tool_result", "tool_use_id": "t1", "content": "src" },
+        ] } }),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            result_of(
+                "a1",
+                "Found it",
+                json!({ "status": "completed", "agentId": "x1" }),
+            ),
+        );
+
+        let agent = snapshot.item("a1").unwrap();
+        assert_eq!(agent.kind, ItemKind::Agent);
+        assert_eq!(agent.title.as_deref(), Some("Find the bug"));
+        assert_eq!(agent.detail.as_deref(), Some("Look around"));
+        assert_eq!(agent.text, "Found it");
+        assert_eq!(agent.status.as_deref(), Some("completed"));
+        assert!(agent.parent.is_none());
+        let command = snapshot.item("t1").unwrap();
+        assert_eq!(command.parent.as_deref(), Some("a1"));
+        assert_eq!(command.status.as_deref(), Some("completed"));
+        assert_eq!(snapshot.item("s2:0").unwrap().parent.as_deref(), Some("a2"));
+        assert_eq!(
+            snapshot.item("a2").unwrap().status.as_deref(),
+            Some("inProgress")
+        );
+        assert!(snapshot.controls.todos.is_empty());
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            step(
+                "forked-command-review",
+                "s4",
+                json!({ "type": "text", "text": "Skill step" }),
+            ),
+        );
+        assert!(snapshot.item("s4:0").unwrap().parent.is_none());
+    }
+
+    #[test]
+    fn background_subagents_finish_on_their_task_notification() {
+        let (mut provider, mut snapshot) = started();
+        feed(&mut provider, &mut snapshot, agent_call("a1", "Review"));
+        feed(
+            &mut provider,
+            &mut snapshot,
+            result_of(
+                "a1",
+                "Async agent launched",
+                json!({ "isAsync": true, "status": "async_launched", "agentId": "x1" }),
+            ),
+        );
+        assert_eq!(
+            snapshot.item("a1").unwrap().status.as_deref(),
+            Some("inProgress")
+        );
+        assert!(snapshot.item("a1").unwrap().text.is_empty());
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "system", "subtype": "task_notification", "task_id": "x1", "status": "completed", "summary": "All good" }),
+        );
+        let agent = snapshot.item("a1").unwrap();
+        assert_eq!(agent.status.as_deref(), Some("completed"));
+        assert_eq!(agent.text, "All good");
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "system", "subtype": "task_notification", "tool_use_id": "a1", "status": "stopped", "summary": "" }),
+        );
+        let agent = snapshot.item("a1").unwrap();
+        assert_eq!(agent.status.as_deref(), Some("stopped"));
+        assert_eq!(agent.text, "All good");
+    }
+
+    #[test]
+    fn history_rebuilds_subagent_runs_from_their_transcripts() {
+        let main = [
+            json!({ "type": "user", "uuid": "u1", "message": { "content": "Investigate" } }),
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [
+                { "type": "tool_use", "id": "a1", "name": "Agent", "input": { "description": "Look", "prompt": "Look around" } },
+                { "type": "tool_use", "id": "a2", "name": "Task", "input": { "description": "Wait", "prompt": "Wait" } },
+                { "type": "tool_use", "id": "a3", "name": "Agent", "input": { "description": "Queue", "prompt": "Queue" } },
+            ] } }),
+            json!({ "type": "user", "toolUseResult": { "isAsync": true, "status": "async_launched", "agentId": "x3" }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "a3", "content": "Async agent launched" },
+            ] } }),
+            json!({ "type": "attachment", "attachment": { "type": "queued_command", "prompt": "<task-notification>\n<task-id>x3</task-id>\n<status>failed</status>\n<summary>Queue broke</summary>\n</task-notification>" } }),
+            json!({ "type": "user", "isMeta": true, "origin": { "handback": true, "senderTaskId": "x1", "handbackReportText": "Full report" }, "message": { "content": "Another Claude session sent a message" } }),
+            json!({ "type": "user", "toolUseResult": { "status": "completed", "agentId": "x1" }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "a1", "content": [{ "type": "text", "text": "Looked" }] },
+            ] } }),
+            json!({ "type": "user", "toolUseResult": { "isAsync": true, "status": "async_launched", "agentId": "x2" }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "a2", "content": "Async agent launched" },
+            ] } }),
+            json!({ "type": "user", "message": { "content": "<task-notification>\n<task-id>x2</task-id>\n<status>completed</status>\n<summary>Agent done</summary>\n<result>Waited well</result>\n</task-notification>" } }),
+            json!({ "type": "user", "isMeta": true, "origin": { "handback": true, "senderTaskId": "x2", "handbackReportText": "Waited report" }, "message": { "content": "Another Claude session sent a message" } }),
+        ];
+        let sidechain = [
+            json!({ "type": "user", "isSidechain": true, "message": { "content": "Look around" } }),
+            json!({ "type": "assistant", "isSidechain": true, "message": { "id": "s1", "content": [{ "type": "text", "text": "Checking" }] } }),
+            json!({ "type": "assistant", "isSidechain": true, "message": { "id": "s1", "content": [
+                { "type": "tool_use", "id": "t1", "name": "Read", "input": { "file_path": "/a" } },
+            ] } }),
+            json!({ "type": "user", "isSidechain": true, "message": { "content": [{ "type": "tool_result", "tool_use_id": "t1", "content": "x" }] } }),
+        ];
+        let lines = |lines: &[Value]| {
+            lines
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let items = parse_session(&lines(&main), &[("a1".into(), lines(&sidechain))]);
+
+        let summary: Vec<_> = items
+            .iter()
+            .map(|item| (item.id.as_str(), item.kind, item.parent.as_deref()))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("u1", ItemKind::User, None),
+                ("a1", ItemKind::Agent, None),
+                ("a2", ItemKind::Agent, None),
+                ("a3", ItemKind::Agent, None),
+                ("s1:0", ItemKind::Assistant, Some("a1")),
+                ("t1", ItemKind::Tool, Some("a1")),
+            ]
+        );
+        assert_eq!(items[1].text, "Full report");
+        assert_eq!(items[2].text, "Waited report");
+        assert_eq!(items[2].status.as_deref(), Some("completed"));
+        assert_eq!(items[3].text, "Queue broke");
+        assert_eq!(items[3].status.as_deref(), Some("failed"));
+        assert_eq!(items[5].status.as_deref(), Some("completed"));
+        assert_eq!(parse_history(&lines(&main)).len(), 4);
+    }
+
+    #[test]
+    fn reloaded_runs_without_a_report_stop_and_forked_skill_steps_stay_in_the_main_chat() {
+        let main = [
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [
+                { "type": "tool_use", "id": "a1", "name": "Agent", "input": { "description": "Never reported" } },
+                { "type": "tool_use", "id": "sk1", "name": "Skill", "input": { "skill": "review" } },
+            ] } }),
+            json!({ "type": "user", "toolUseResult": { "isAsync": true, "status": "async_launched", "agentId": "x1" }, "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "a1", "content": "Async agent launched" },
+            ] } }),
+        ]
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+        let skill = json!({ "type": "assistant", "isSidechain": true, "message": { "id": "k1", "content": [{ "type": "text", "text": "Reviewing" }] } }).to_string();
+        let items = parse_session(&main, &[("sk1".into(), skill)]);
+        assert_eq!(items[0].status.as_deref(), Some("stopped"));
+        let step = items.iter().find(|item| item.id == "k1:0").unwrap();
+        assert!(step.parent.is_none());
+    }
+
+    #[test]
+    fn subagent_transcripts_are_found_by_their_meta_tool_call() {
+        let dir = std::env::temp_dir().join(format!("wm-claude-subagents-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let subagents = dir.join("s1/subagents");
+        fs::create_dir_all(&subagents).unwrap();
+        fs::write(
+            subagents.join("agent-x1.meta.json"),
+            json!({ "toolUseId": "a1" }).to_string(),
+        )
+        .unwrap();
+        fs::write(subagents.join("agent-x1.jsonl"), "side").unwrap();
+        fs::write(
+            subagents.join("agent-x2.meta.json"),
+            json!({ "parentAgentId": "x1" }).to_string(),
+        )
+        .unwrap();
+        fs::write(subagents.join("agent-x2.jsonl"), "nested").unwrap();
+        assert_eq!(
+            subagent_transcripts(&dir.join("s1.jsonl")),
+            [("a1".to_string(), "side".to_string())]
+        );
+        assert!(subagent_transcripts(&dir.join("missing.jsonl")).is_empty());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

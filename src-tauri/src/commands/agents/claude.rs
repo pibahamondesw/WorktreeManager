@@ -21,7 +21,8 @@ use super::{
 use crate::commands::agent_alerts::{AlertHooks, HookSpec};
 use crate::commands::agent_usage::UsageSource;
 use crate::commands::chat::claude::{
-    fork_point, history, launch_args, projects_dir, session_exists, ClaudeProvider, HEADLESS_ARGS,
+    fork_point, history, launch_args, projects_dir, session_exists, ClaudeProvider,
+    FORWARD_SUBAGENT_TEXT_ENV, HEADLESS_ARGS,
 };
 use crate::commands::chat::{
     exchange, truncate, ChatItem, ItemKind, Launch, SessionList, SessionSummary, LIST_LIMIT,
@@ -122,7 +123,7 @@ impl Claude {
             provider = provider.continuing(request.handoff.map(String::from));
         }
         Ok(Launch {
-            command: self.cli(request.cwd, &args).command(),
+            command: self.chat_cli(request.cwd, &args).command(),
             provider: Box::new(provider),
             history,
         })
@@ -134,6 +135,14 @@ impl Claude {
         S: AsRef<str>,
     {
         LoginShell::program(&self.program, args).current_dir(cwd)
+    }
+
+    fn chat_cli<I, S>(&self, cwd: &str, args: I) -> LoginShell
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.cli(cwd, args).env(FORWARD_SUBAGENT_TEXT_ENV, "1")
     }
 
     fn headless(&self, cwd: &str, args: &[&str]) -> std::process::Command {
@@ -211,7 +220,7 @@ impl AgentAdapter for Claude {
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         Ok(Launch {
             command: self
-                .cli(
+                .chat_cli(
                     cwd,
                     launch_args(&session_id, resume.is_some(), &request.extra_dirs),
                 )

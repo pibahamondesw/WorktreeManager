@@ -36,6 +36,8 @@ pub enum ItemKind {
     Review,
     /// Where a conversation continues in another agent, after the items carried from it.
     Handoff,
+    /// A subagent run; its steps are the items whose `parent` is this item's id.
+    Agent,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -55,6 +57,9 @@ pub struct ChatItem {
     /// The agent whose conversation this item was carried from; read-only in this one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    /// The subagent run this item is a step of.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 impl ChatItem {
@@ -68,6 +73,7 @@ impl ChatItem {
             status: None,
             checkpoint: None,
             origin: None,
+            parent: None,
         }
     }
 
@@ -83,6 +89,11 @@ impl ChatItem {
 
     pub fn with_status(mut self, status: impl Into<String>) -> Self {
         self.status = Some(status.into());
+        self
+    }
+
+    pub fn with_parent(mut self, parent: Option<&str>) -> Self {
+        self.parent = parent.map(String::from);
         self
     }
 }

@@ -205,3 +205,43 @@ it("stays idle when the save dialog is cancelled", async () => {
   expect(await screen.findByRole("button", { name: "Download as PNG" })).toBeEnabled();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
+
+it("shows a subagent run as a collapsed card with its prompt, steps and report", () => {
+  const steps = new Map([
+    [
+      "a1",
+      [
+        { id: "s1", kind: "assistant" as const, text: "Checking the parser", parent: "a1" },
+        { id: "t1", kind: "command" as const, text: "", title: "cargo test", parent: "a1" },
+        { id: "a2", kind: "agent" as const, text: "", title: "Nested look", parent: "a1" },
+      ],
+    ],
+  ]);
+  render(
+    <ChatItemView
+      item={{
+        id: "a1",
+        kind: "agent",
+        title: "Find the bug",
+        detail: "Look around the parser",
+        text: "Found it in **lexer.rs**",
+        status: "completed",
+      }}
+      steps={steps}
+    />
+  );
+
+  const card = screen.getByRole("region", { name: "Subagent: Find the bug" });
+  const toggle = within(card).getAllByRole("button")[0];
+  expect(toggle).toHaveTextContent("3 steps");
+  expect(toggle).toHaveTextContent("done");
+  expect(screen.queryByText("Checking the parser")).not.toBeInTheDocument();
+
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(within(card).getByText("Look around the parser")).toBeInTheDocument();
+  expect(within(card).getByText("Checking the parser")).toBeInTheDocument();
+  expect(within(card).getByText("cargo test")).toBeInTheDocument();
+  expect(within(card).getByRole("region", { name: "Subagent: Nested look" })).toBeInTheDocument();
+  expect(within(card).getByText("lexer.rs")).toBeInTheDocument();
+});
