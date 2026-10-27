@@ -3,7 +3,8 @@ import { Button } from "../ui/Button";
 import { CloseIcon } from "../ui/Icons";
 import { byRepository, ChangeSet, ChatChanges, FileChange, totals } from "../../services/chat";
 import { AgentId } from "../../types";
-import { DiffLayout, FileDiffView } from "./FileDiffView";
+import { DiffLayout, DiffThreadsUpdate, FileDiffView } from "./FileDiffView";
+import { diffCommentCount, diffKeyOf, DiffThread, removeDiffThread } from "./diffComments";
 
 export type ChangesScope = "conversation" | number;
 
@@ -90,6 +91,52 @@ function FileRow({
   );
 }
 
+function diffKeysOf(changes: ChatChanges) {
+  const changeSets = [changes.conversation, ...changes.turns.map((turn) => turn.changes)];
+  return new Set(
+    changeSets.flatMap((changeSet) =>
+      changeSet ? changeSet.files.map((file) => diffKeyOf(changeSet, file)) : []
+    )
+  );
+}
+
+function DetachedThreads({
+  threads,
+  onThreadsChange,
+}: {
+  threads: DiffThread[];
+  onThreadsChange: DiffThreadsUpdate;
+}) {
+  return (
+    <section
+      aria-label="Comments on outdated changes"
+      className="shrink-0 max-h-40 overflow-y-auto border-b border-border px-3 py-1.5 text-xs"
+    >
+      <p className="text-text-muted">These comments no longer match the current changes:</p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {threads.map((thread) => (
+          <li key={thread.id} className="flex items-start gap-2">
+            <span className="flex-1 min-w-0 select-text">
+              <span className="font-mono text-text-secondary">{thread.location}</span>
+              <span className="text-text-primary">
+                {" · "}
+                {thread.comments.map((comment) => comment.text).join(" · ")}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => onThreadsChange((current) => removeDiffThread(current, thread.id))}
+              className="text-text-muted hover:text-danger cursor-pointer"
+            >
+              Discard
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function scopeLabel(index: number, prompt: string | undefined) {
   const text = prompt?.replace(/\s+/g, " ").trim() ?? "";
   return `Turn ${index + 1}${text ? ` · ${text.length > 48 ? `${text.slice(0, 48)}…` : text}` : ""}`;
@@ -101,6 +148,9 @@ export function ChangesPanel({
   changes,
   prompts,
   scope: initialScope,
+  threads,
+  onThreadsChange,
+  onSendComments,
   onClose,
 }: {
   taskId: string;
@@ -108,6 +158,9 @@ export function ChangesPanel({
   changes: ChatChanges;
   prompts: Record<string, string>;
   scope: ChangesScope;
+  threads: DiffThread[];
+  onThreadsChange: DiffThreadsUpdate;
+  onSendComments: () => Promise<void>;
   onClose: () => void;
 }) {
   const [scope, setScope] = useState<ChangesScope>(initialScope);
@@ -119,6 +172,23 @@ export function ChangesPanel({
   const selected = files.find((file) => fileKey(file) === selectedKey) ?? files[0];
   const repositories = byRepository(files);
   const panelRef = useRef<HTMLElement>(null);
+  const commentCount = diffCommentCount(threads);
+  const diffKeys = diffKeysOf(changes);
+  const detachedThreads = threads.filter((thread) => !diffKeys.has(thread.diffKey));
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  const sendComments = async () => {
+    setSending(true);
+    setSendError(null);
+    try {
+      await onSendComments();
+    } catch (e) {
+      setSendError(String(e));
+    } finally {
+      setSending(false);
+    }
+  };
 
   useEffect(() => panelRef.current?.focus(), []);
 
@@ -184,10 +254,30 @@ export function ChangesPanel({
             </button>
           ))}
         </div>
+        {commentCount > 0 && (
+          <Button
+            onClick={() => void sendComments()}
+            loading={sending}
+            className="h-7 px-2 text-xs"
+          >
+            Send {commentCount === 1 ? "1 comment" : `${commentCount} comments`}
+          </Button>
+        )}
         <Button variant="ghost" onClick={onClose} aria-label="Close changes" className="h-7 px-1.5">
           <CloseIcon size={14} />
         </Button>
       </header>
+      {detachedThreads.length > 0 && (
+        <DetachedThreads threads={detachedThreads} onThreadsChange={onThreadsChange} />
+      )}
+      {sendError && (
+        <p
+          role="alert"
+          className="px-3 py-1.5 border-b border-border text-xs text-danger select-text"
+        >
+          {sendError}
+        </p>
+      )}
       {files.length === 0 ? (
         <p className="p-6 text-sm text-text-muted text-center">No file changes.</p>
       ) : (
@@ -231,6 +321,8 @@ export function ChangesPanel({
                   file={selected}
                   layout={layout}
                   hideFormatting={hideFormatting}
+                  threads={threads}
+                  onThreadsChange={onThreadsChange}
                 />
               </div>
             </div>

@@ -978,6 +978,105 @@ describe("ChatPane", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("region", { name: "Changes" })).toBeNull();
   });
+
+  it("keeps diff comments across panel reopenings and sends them as one message", async () => {
+    const turn = {
+      before: "b1",
+      after: "a1",
+      files: [
+        {
+          folder: "/wt/a",
+          path: "x.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          binary: false,
+        },
+      ],
+    };
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_changes")
+        return Promise.resolve({ turns: [{ items: ["u"], changes: turn }], conversation: turn });
+      if (command === "chat_file_diff")
+        return Promise.resolve({
+          before: { kind: "text", text: "const a = 1;\n" },
+          after: { kind: "text", text: "const a = 2;\n" },
+        });
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+
+    const openPanel = async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Changes +1 −1" }));
+      return screen.getByRole("region", { name: "Changes" });
+    };
+    let panel = await openPanel();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Comment on line 1" }));
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Comment" }), {
+      target: { value: "Use a constant" },
+    });
+    fireEvent.click(within(panel).getByRole("button", { name: "Comment" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    panel = await openPanel();
+    expect(await within(panel).findByText("Use a constant")).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "Send 1 comment" }));
+
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_send", {
+        taskId: "t1",
+        agent: "codex",
+        text: "Review comments on your changes:\n\n/wt/a/x.ts:1\n\n```diff\n+const a = 2;\n```\n\nUse a constant",
+        images: [],
+      })
+    );
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Changes" })).toBeNull());
+  });
+  it("keeps diff comments after remounting and lists those whose diff is gone", async () => {
+    const file = {
+      folder: "/wt/a",
+      path: "x.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 1,
+      binary: false,
+    };
+    let after = "a1";
+    mocks.invoke.mockImplementation((command: string) => {
+      const turn = { before: "b1", after, files: [file] };
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_changes")
+        return Promise.resolve({ turns: [{ items: ["u"], changes: turn }], conversation: turn });
+      if (command === "chat_file_diff")
+        return Promise.resolve({
+          before: { kind: "text", text: "const a = 1;\n" },
+          after: { kind: "text", text: "const a = 2;\n" },
+        });
+      return Promise.resolve(undefined);
+    });
+    const openPanel = async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Changes +1 −1" }));
+      return screen.getByRole("region", { name: "Changes" });
+    };
+    const first = render(<ChatPane taskId="t-remount" agent="codex" folders={["/wt/a"]} />);
+    let panel = await openPanel();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Comment on line 1" }));
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Comment" }), {
+      target: { value: "Use a constant" },
+    });
+    fireEvent.click(within(panel).getByRole("button", { name: "Comment" }));
+    first.unmount();
+
+    after = "a2";
+    render(<ChatPane taskId="t-remount" agent="codex" folders={["/wt/a"]} />);
+    panel = await openPanel();
+    const outdated = within(panel).getByRole("region", { name: "Comments on outdated changes" });
+    expect(outdated).toHaveTextContent("/wt/a/x.ts:1 · Use a constant");
+    fireEvent.click(within(outdated).getByRole("button", { name: "Discard" }));
+
+    expect(within(panel).queryByRole("button", { name: /Send/ })).toBeNull();
+  });
 });
 
 describe("Markdown previews", () => {

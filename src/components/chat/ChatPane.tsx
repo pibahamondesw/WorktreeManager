@@ -11,11 +11,13 @@ import { HooksDialog } from "./HooksDialog";
 import { HistoryDialog } from "./HistoryDialog";
 import { HandoffChoice, HandoffDialog } from "./HandoffDialog";
 import { ChangeSummaryCard, ChangesPanel, ChangesScope, LineCounts } from "./ChangesPanel";
+import { diffReviewMessage } from "./diffComments";
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 import { MarkdownPreviewContext, MarkdownPreviewRequest } from "./markdownPreviewContext";
 import { isPlanItem } from "./markdownDocument";
 import { AgentUsageIndicator } from "../usage/AgentUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
+import { useDiffThreads } from "../../hooks/useDiffThreads";
 import { useChatChanges } from "../../hooks/useChatChanges";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import {
@@ -94,6 +96,7 @@ export function ChatPane({
   } | null>(null);
   const changes = useChatChanges(taskId, agent, snapshot);
   const [changesScope, setChangesScope] = useState<ChangesScope | null>(null);
+  const [diffThreads, setDiffThreads] = useDiffThreads(`${taskId}:${agent}`);
   const [preview, setPreview] = useState<MarkdownPreviewRequest | null>(null);
   const previewContext = useMemo(() => ({ folders, open: setPreview }), [folders]);
   const [outgoing, setOutgoing] = useState<{
@@ -217,6 +220,13 @@ export function ChatPane({
       setOutgoing((current) => (current === message ? null : current));
       throw e;
     }
+  };
+
+  const sendDiffComments = async () => {
+    const sent = diffThreads;
+    await send(diffReviewMessage(sent), []);
+    setDiffThreads((current) => current.filter((thread) => !sent.includes(thread)));
+    setChangesScope(null);
   };
 
   const pickHistory = (item: ChatItem, action: HistoryAction) => {
@@ -413,6 +423,9 @@ export function ChatPane({
               items.filter((item) => item.kind === "user").map((item) => [item.id, item.text])
             )}
             scope={changesScope}
+            threads={diffThreads}
+            onThreadsChange={setDiffThreads}
+            onSendComments={sendDiffComments}
             onClose={() => setChangesScope(null)}
           />
         )}

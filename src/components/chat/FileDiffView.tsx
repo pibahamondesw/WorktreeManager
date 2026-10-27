@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { SpinnerIcon } from "../ui/Icons";
+import { KeyboardEvent, MouseEvent, useEffect, useMemo, useState } from "react";
+import { Button } from "../ui/Button";
+import { PlusIcon, SpinnerIcon } from "../ui/Icons";
 import { ChangeSet, chatFileDiff, FileChange, FileContent, FileDiff } from "../../services/chat";
 import {
   DiffBlock,
@@ -11,8 +12,20 @@ import {
 } from "../../services/semanticDiff";
 import { analyzeSource } from "../../services/syntaxAnalysis";
 import { AgentId } from "../../types";
+import {
+  addDiffComment,
+  diffAnchor,
+  diffKeyOf,
+  DiffRange,
+  DiffThread,
+  editDiffComment,
+  removeDiffComment,
+  replyToDiffThread,
+} from "./diffComments";
 
 export type DiffLayout = "unified" | "split";
+
+export type DiffThreadsUpdate = (update: (threads: DiffThread[]) => DiffThread[]) => void;
 
 interface TextDiff {
   lines: DiffLine[] | null;
@@ -22,6 +35,8 @@ interface TextDiff {
 type Loaded =
   | { kind: "text"; diff: TextDiff }
   | { kind: "media"; before: FileContent | null; after: FileContent | null };
+
+const lineId = (line: DiffLine) => `${line.side}:${line.start}`;
 
 const textOf = (content: FileContent | null) => (content?.kind === "text" ? content.text : "");
 
@@ -123,9 +138,43 @@ function LineNumber({ value }: { value?: number }) {
   );
 }
 
-function UnifiedRow({ line, analysis }: { line: DiffLine; analysis: TextDiff["analysis"] }) {
+interface CommentTarget {
+  index: number;
+  selected: boolean;
+  onComment: (index: number, extend: boolean) => void;
+}
+
+function CommentButton({ index, onComment, line }: CommentTarget & { line: DiffLine }) {
+  const label = line.kind === "removed" ? `old line ${line.oldNumber}` : `line ${line.newNumber}`;
   return (
-    <div className={`flex ${lineClass(line)}`} title={lineTitle(line)}>
+    <button
+      type="button"
+      aria-label={`Comment on ${label}`}
+      title="Comment · Shift-click to select a range"
+      onMouseDown={(e: MouseEvent) => e.shiftKey && e.preventDefault()}
+      onClick={(e) => onComment(index, e.shiftKey)}
+      className="diff-comment-button w-4 shrink-0 flex items-center justify-center text-accent cursor-pointer"
+    >
+      <PlusIcon size={10} />
+    </button>
+  );
+}
+
+function UnifiedRow({
+  line,
+  analysis,
+  target,
+}: {
+  line: DiffLine;
+  analysis: TextDiff["analysis"];
+  target: CommentTarget;
+}) {
+  return (
+    <div
+      className={`diff-row flex ${lineClass(line)} ${target.selected ? "diff-selected" : ""}`}
+      title={lineTitle(line)}
+    >
+      <CommentButton {...target} line={line} />
       <LineNumber value={line.oldNumber} />
       <LineNumber value={line.newNumber} />
       <span className="w-4 shrink-0 text-center text-text-muted select-none">
@@ -175,17 +224,25 @@ function SplitCell({
   line,
   side,
   analysis,
+  target,
 }: {
   line: DiffLine | undefined;
   side: "old" | "new";
   analysis: TextDiff["analysis"];
+  target?: CommentTarget;
 }) {
+  const number = side === "old" ? line?.oldNumber : line?.newNumber;
   return (
     <div
-      className={`flex flex-1 min-w-0 ${lineClass(line)}`}
+      className={`diff-row flex flex-1 min-w-0 ${lineClass(line)} ${target?.selected ? "diff-selected" : ""}`}
       title={line ? lineTitle(line) : undefined}
     >
-      <LineNumber value={side === "old" ? line?.oldNumber : line?.newNumber} />
+      {line && target ? (
+        <CommentButton {...target} line={line} />
+      ) : (
+        <span className="w-4 shrink-0" />
+      )}
+      <LineNumber value={number} />
       <span className="diff-wrap flex-1 min-w-0 pr-2">
         {line && <Code line={line} analysis={analysis} />}
       </span>
@@ -205,19 +262,155 @@ function Gap({ count, onExpand }: { count: number; onExpand: () => void }) {
   );
 }
 
+function CommentForm({
+  initial = "",
+  submitLabel,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: string;
+  submitLabel: string;
+  onSubmit: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [text, setText] = useState(initial);
+  const submit = () => text.trim() && onSubmit(text);
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      submit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <textarea
+        autoFocus
+        aria-label="Comment"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder="Leave a comment for the agent"
+        rows={3}
+        className="w-full resize-y rounded-md border border-border bg-bg-primary px-2 py-1.5 text-xs text-text-primary outline-none focus:border-accent"
+      />
+      <div className="flex justify-end gap-1.5">
+        <Button variant="ghost" onClick={onCancel} className="h-7 px-2 text-xs">
+          Cancel
+        </Button>
+        <Button onClick={submit} disabled={!text.trim()} className="h-7 px-2 text-xs">
+          {submitLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+const annotationClass =
+  "sticky left-0 my-1 ml-6 max-w-xl whitespace-normal rounded-md border border-border bg-bg-secondary p-2 font-sans text-xs";
+
+function ThreadCard({
+  thread,
+  onThreadsChange,
+}: {
+  thread: DiffThread;
+  onThreadsChange: DiffThreadsUpdate;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [replying, setReplying] = useState(false);
+  return (
+    <div role="group" aria-label={`Comments on ${thread.location}`} className={annotationClass}>
+      <ul className="flex flex-col gap-2">
+        {thread.comments.map((comment) => (
+          <li key={comment.id}>
+            {editing === comment.id ? (
+              <CommentForm
+                initial={comment.text}
+                submitLabel="Save"
+                onSubmit={(text) => {
+                  onThreadsChange((threads) => editDiffComment(threads, comment.id, text));
+                  setEditing(null);
+                }}
+                onCancel={() => setEditing(null)}
+              />
+            ) : (
+              <div className="flex items-start gap-2">
+                <p className="flex-1 min-w-0 whitespace-pre-wrap select-text text-text-primary">
+                  {comment.text}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setEditing(comment.id)}
+                  className="text-text-muted hover:text-text-primary cursor-pointer"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onThreadsChange((threads) => removeDiffComment(threads, comment.id))
+                  }
+                  className="text-text-muted hover:text-danger cursor-pointer"
+                >
+                  Discard
+                </button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2">
+        {replying ? (
+          <CommentForm
+            submitLabel="Add"
+            onSubmit={(text) => {
+              onThreadsChange((threads) => replyToDiffThread(threads, thread.id, text));
+              setReplying(false);
+            }}
+            onCancel={() => setReplying(false)}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setReplying(true)}
+            className="text-text-muted hover:text-text-primary cursor-pointer"
+          >
+            Add to thread
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TextDiffBody({
   diff,
   layout,
   hideFormatting,
+  diffKey,
+  path,
+  threads,
+  onThreadsChange,
 }: {
   diff: TextDiff;
   layout: DiffLayout;
   hideFormatting: boolean;
+  diffKey: string;
+  path: string;
+  threads: DiffThread[];
+  onThreadsChange: DiffThreadsUpdate;
 }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [draft, setDraft] = useState<(DiffRange & { anchor: number }) | null>(null);
   const blocks = useMemo(
     () => (diff.lines ? diffBlocks(diff.lines, hideFormatting) : []),
     [diff.lines, hideFormatting]
+  );
+  const indexOf = useMemo(
+    () => new Map((diff.lines ?? []).map((line, index) => [lineId(line), index])),
+    [diff.lines]
   );
   if (!diff.lines) {
     return <p className="p-4 text-xs text-text-muted">This diff is too large to display.</p>;
@@ -229,21 +422,81 @@ function TextDiffBody({
       </p>
     );
   }
-  const renderLines = (lines: DiffLine[]) =>
-    layout === "unified"
-      ? lines.map((line, index) => <UnifiedRow key={index} line={line} analysis={diff.analysis} />)
-      : splitRows(lines).map(([left, right], index) => (
-          <div key={index} className="flex">
-            <SplitCell line={left} side="old" analysis={diff.analysis} />
-            <SplitCell line={right} side="new" analysis={diff.analysis} />
+  const lines = diff.lines;
+  const onComment = (index: number, extend: boolean) =>
+    setDraft((current) =>
+      extend && current
+        ? {
+            anchor: current.anchor,
+            start: Math.min(current.anchor, index),
+            end: Math.max(current.anchor, index),
+          }
+        : { anchor: index, start: index, end: index }
+    );
+  const target = (line: DiffLine | undefined): CommentTarget | undefined => {
+    if (!line) return undefined;
+    const index = indexOf.get(lineId(line))!;
+    const selected = draft !== null && index >= draft.start && index <= draft.end;
+    return { index, selected, onComment };
+  };
+  const annotations = (indexes: number[]) =>
+    [...new Set(indexes)].map((index) => (
+      <div key={`annotations-${index}`}>
+        {threads
+          .filter((thread) => thread.end === index)
+          .map((thread) => (
+            <ThreadCard key={thread.id} thread={thread} onThreadsChange={onThreadsChange} />
+          ))}
+        {draft?.end === index && (
+          <div className={annotationClass}>
+            <CommentForm
+              submitLabel="Comment"
+              onSubmit={(text) => {
+                const anchor = diffAnchor(diffKey, path, lines, draft);
+                onThreadsChange((current) => addDiffComment(current, anchor, text));
+                setDraft(null);
+              }}
+              onCancel={() => setDraft(null)}
+            />
           </div>
-        ));
+        )}
+      </div>
+    ));
+  const renderLines = (blockLines: DiffLine[]) =>
+    layout === "unified"
+      ? blockLines.map((line) => {
+          const lineTarget = target(line)!;
+          return (
+            <div key={lineTarget.index}>
+              <UnifiedRow line={line} analysis={diff.analysis} target={lineTarget} />
+              {annotations([lineTarget.index])}
+            </div>
+          );
+        })
+      : splitRows(blockLines).map(([left, right], index) => {
+          const leftTarget = target(left);
+          const rightTarget = target(right);
+          return (
+            <div key={index}>
+              <div className="flex">
+                <SplitCell line={left} side="old" analysis={diff.analysis} target={leftTarget} />
+                <SplitCell line={right} side="new" analysis={diff.analysis} target={rightTarget} />
+              </div>
+              {annotations(
+                [leftTarget?.index, rightTarget?.index].filter((value) => value !== undefined)
+              )}
+            </div>
+          );
+        });
+  const threadEnds = new Set(threads.map((thread) => thread.end));
+  const hasThread = (block: DiffBlock) =>
+    block.lines.some((line) => threadEnds.has(indexOf.get(lineId(line))!));
   const blockKey = (block: DiffBlock) => {
     const first = block.lines[0];
     return first.newNumber ?? -(first.oldNumber ?? 0);
   };
-  const moved = diff.lines.some((line) => line.moved);
-  const formatting = !hideFormatting && diff.lines.some((line) => line.formatting);
+  const moved = lines.some((line) => line.moved);
+  const formatting = !hideFormatting && lines.some((line) => line.formatting);
   return (
     <div
       className={`diff-code font-mono text-xs leading-5 select-text ${
@@ -258,7 +511,7 @@ function TextDiffBody({
       )}
       {blocks.map((block) => {
         const key = blockKey(block);
-        if (block.kind === "lines" || expanded.has(key)) {
+        if (block.kind === "lines" || expanded.has(key) || hasThread(block)) {
           return <div key={key}>{renderLines(block.lines)}</div>;
         }
         return (
@@ -280,6 +533,8 @@ export function FileDiffView({
   file,
   layout,
   hideFormatting,
+  threads,
+  onThreadsChange,
 }: {
   taskId: string;
   agent: AgentId;
@@ -287,9 +542,11 @@ export function FileDiffView({
   file: FileChange;
   layout: DiffLayout;
   hideFormatting: boolean;
+  threads: DiffThread[];
+  onThreadsChange: DiffThreadsUpdate;
 }) {
   const [state, setState] = useState<{ key: string; loaded?: Loaded; error?: string } | null>(null);
-  const key = `${changes.before}:${changes.after}:${file.folder}:${file.path}`;
+  const key = diffKeyOf(changes, file);
 
   useEffect(() => {
     let cancelled = false;
@@ -331,6 +588,10 @@ export function FileDiffView({
       diff={loaded.diff}
       layout={layout}
       hideFormatting={hideFormatting}
+      diffKey={key}
+      path={`${file.folder}/${file.path}`}
+      threads={threads.filter((thread) => thread.diffKey === key)}
+      onThreadsChange={onThreadsChange}
     />
   );
 }

@@ -95,6 +95,9 @@ body,
   -webkit-user-select: text !important;
   cursor: text;
 }
+.select-text button:not(:disabled) {
+  cursor: pointer;
+}
 
 /* Titlebar drag regions are handled in JS (useWindowDrag); -webkit-app-region is a no-op in WKWebView */
 [data-drag-region] {
@@ -550,6 +553,18 @@ body,
 }
 .diff-empty {
   background: color-mix(in srgb, var(--color-bg-secondary) 70%, transparent);
+}
+.diff-selected {
+  box-shadow: inset 2px 0 var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.diff-comment-button {
+  opacity: 0;
+}
+.diff-row:hover .diff-comment-button,
+.diff-selected .diff-comment-button,
+.diff-comment-button:focus-visible {
+  opacity: 1;
 }
 .diff-gap {
   background: var(--color-bg-secondary);
