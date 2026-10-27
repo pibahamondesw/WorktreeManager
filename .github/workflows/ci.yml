@@ -157,7 +157,7 @@ jobs:
             zsh
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: clippy, rustfmt
 
@@ -177,6 +177,69 @@ jobs:
       - name: Test
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  rust-macos:
+    name: Rust (macOS, clippy, native tests)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/pr-macos
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache macOS PR build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target/pr-macos
+          key: macos-pr
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Compile and lint macOS targets
+        run: |
+          /usr/bin/time -p -o "$RUNNER_TEMP/macos-clippy.txt" \
+            cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml
+
+      - name: Format check
+        run: cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Focused macOS unit tests
+        run: |
+          /usr/bin/time -p -o "$RUNNER_TEMP/macos-unit.txt" \
+            cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- \
+              commands::login_shell::tests:: \
+              commands::agent_notifications::tests:: \
+              commands::embedded:: \
+              menu::tests::
+
+      - name: Native WebKit and menu regression
+        run: |
+          /usr/bin/time -p -o "$RUNNER_TEMP/macos-menu.txt" \
+            cargo test --locked --manifest-path src-tauri/Cargo.toml --test menu
+
+      - name: Report macOS timings
+        if: ${{ !cancelled() }}
+        run: |
+          for phase in clippy unit menu; do
+            report="$RUNNER_TEMP/macos-$phase.txt"
+            if [ -f "$report" ]; then
+              {
+                printf '### macOS %s\n```text\n' "$phase"
+                cat "$report"
+                printf '```\n'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
   rust-coverage:
     name: Rust coverage (macOS, new lines)
     needs: changes
@@ -195,7 +258,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install pinned Rust and LLVM tools
-        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.93.1
           components: llvm-tools-preview
@@ -250,7 +313,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
 
