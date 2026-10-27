@@ -159,6 +159,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: 1.93.1
           components: clippy, rustfmt
 
       - name: Cache Rust build
@@ -169,7 +170,20 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Clippy
-        run: cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml
+        run: |
+          /usr/bin/time -p -o "$RUNNER_TEMP/linux-clippy.txt" \
+            cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Report Clippy timing
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/linux-clippy.txt" ]; then
+            {
+              printf '### Linux clippy\n```text\n'
+              cat "$RUNNER_TEMP/linux-clippy.txt"
+              printf '```\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Format check
         run: cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
@@ -195,6 +209,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: 1.93.1
           components: clippy, rustfmt
 
       - name: Cache macOS PR build
@@ -207,7 +222,7 @@ jobs:
       - name: Compile and lint macOS targets
         run: |
           /usr/bin/time -p -o "$RUNNER_TEMP/macos-clippy.txt" \
-            cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml
+            cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 
       - name: Format check
         run: cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check

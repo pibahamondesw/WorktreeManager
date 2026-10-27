@@ -298,12 +298,10 @@ mod tests {
                         } else {
                             json!([])
                         }
+                    } else if peer {
+                        peer_questions.clone()
                     } else {
-                        if peer {
-                            peer_questions.clone()
-                        } else {
-                            json!([])
-                        }
+                        json!([])
                     }
                     .to_string();
                     write!(

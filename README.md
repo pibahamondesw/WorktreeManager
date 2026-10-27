@@ -100,6 +100,20 @@ CARGO_TARGET_DIR="$HOME/.cache/worktreemanager-target" cargo test --manifest-pat
 
 Builds default to `~/.cache/worktreemanager-target`; the app bundle is under `release/bundle/macos/`. Override `CARGO_TARGET_DIR` when needed. Run the specific test files relevant to your changes.
 
+### Rust lint policy
+
+The Linux and macOS CI jobs run Clippy with `--locked --all-targets -- -D warnings` and retain rustfmt checks. They pin Rust, Clippy and rustfmt to 1.93.1, matching the coverage toolchain, so new stable lints cannot unexpectedly block unrelated PRs. No blanket pedantic or restriction groups are enabled. Reproduce the gate with:
+
+```bash
+rustup toolchain install 1.93.1 --profile minimal --component clippy,rustfmt
+cargo +1.93.1 clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo +1.93.1 fmt --all --manifest-path src-tauri/Cargo.toml -- --check
+```
+
+Review toolchain updates on each stable Rust release in a dedicated PR: update both lint jobs and the coverage pin together, review new warnings, apply focused fixes and run affected tests plus rustfmt on Linux and macOS. Release builds keep their existing stable policy.
+
+Both jobs report Clippy wall/user/system seconds in the run summary, including failures. Before requiring the gates, verify a deliberate warning fails and its correction passes on both hosted runners, and compare cold and warm timings. Roll back enforcement by removing `-- -D warnings` from both Clippy commands; application data is unaffected.
+
 ### macOS Rust PR check
 
 **Rust (macOS, clippy, native tests)** in the [CI workflow](.github/workflows/ci.yml) runs on standard `macos-14` runners for PRs and pushes to main when Rust sources/configuration, vault-kit files or the CI workflow change. Frontend-only and documentation-only changes skip it. It uses read-only permissions, no release credentials, no signing or publishing, and a separate `macos-pr` dependency cache saved on main.

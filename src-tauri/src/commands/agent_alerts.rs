@@ -8,7 +8,9 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
+use tauri::{AppHandle, Manager, Runtime};
 
 use super::agent_notifications;
 use super::agents::Agents;
@@ -16,6 +18,7 @@ use super::user_file::UserFile;
 
 const LOCAL_PROFILE: &str = "com.worktreemanager.dev.local";
 const OWNED_COMMAND_MARKER: &str = " agent event ";
+#[cfg(target_os = "macos")]
 pub const NOTIFICATION_OPEN_EVENT: &str = "agent-notification-open";
 /// Set on every embedded agent process so its hooks report the task and surface directly.
 pub const TASK_ENV: &str = "WTM_TASK_ID";
@@ -347,6 +350,7 @@ fn app_in_foreground<R: Runtime>(app: &AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(target_os = "macos")]
 pub(crate) fn reveal_target<R: Runtime>(app: &AppHandle<R>, target: &NotificationTarget) {
     if let Some(window) = app.get_window("main") {
         let _ = window.unminimize();

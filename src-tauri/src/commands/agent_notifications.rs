@@ -7,13 +7,17 @@ use tauri::{AppHandle, Runtime};
 
 use super::agent_alerts::NotificationTarget;
 
+#[cfg(target_os = "macos")]
 const IDENTIFIER_PREFIX: &str = "wtm-agent-task:";
+#[cfg(target_os = "macos")]
 const TARGET_KEY: &str = "target";
 
+#[cfg(target_os = "macos")]
 fn task_identifier(task_id: &str) -> String {
     format!("{IDENTIFIER_PREFIX}{task_id}")
 }
 
+#[cfg(target_os = "macos")]
 fn notifies_task(identifier: &str, task_ids: &[String]) -> bool {
     identifier
         .strip_prefix(IDENTIFIER_PREFIX)
