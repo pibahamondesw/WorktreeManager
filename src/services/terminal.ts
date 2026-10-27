@@ -71,15 +71,18 @@ export function terminalAttach(
   return invokeAttached("terminal_attach", { taskId, session }, onEvent);
 }
 
-/** Exit code of a repository script run in a PTY session; null when it was stopped. */
-export const runTaskScript = (args: {
+export type TaskScriptRun = {
   taskId: string;
   session: string;
   script: string;
   cwd: string;
   env: [string, string][];
   timeoutSecs?: number;
-}) => invoke<number | null>("run_task_script", args);
+};
+
+/** Exit code of a repository script run in a PTY session; null when it was stopped. */
+export const runTaskScript = (args: TaskScriptRun) =>
+  invoke<number | null>("run_task_script", args);
 
 export const scriptCancel = (taskId: string, session: string) =>
   invoke<void>("script_cancel", { taskId, session });

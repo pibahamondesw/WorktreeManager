@@ -233,7 +233,10 @@ fn is_ignored(path: &str, ignored: &[String]) -> bool {
         .any(|entry| entry == path || (entry.ends_with('/') && path.starts_with(entry.as_str())))
 }
 
-fn include_paths(repo: &Path) -> Result<Option<Vec<String>>, String> {
+/// Repo-relative files `.worktreeinclude` selects in the main checkout, or `None` when the
+/// repository has no such file. Only files git ignores qualify; tracked files already reach the
+/// worktree through checkout.
+pub(crate) fn include_paths(repo: &Path) -> Result<Option<Vec<String>>, String> {
     let include = repo.join(INCLUDE_FILE);
     if !include.is_file() {
         return Ok(None);
@@ -250,16 +253,6 @@ fn include_paths(repo: &Path) -> Result<Option<Vec<String>>, String> {
             .filter(|path| is_ignored(path, &ignored))
             .collect(),
     ))
-}
-
-/// Repo-relative files `.worktreeinclude` selects in the main checkout, or `None` when the
-/// repository has no such file. Only files git ignores qualify; tracked files already reach the
-/// worktree through checkout.
-#[tauri::command]
-pub async fn worktree_include_paths(repo_path: String) -> Result<Option<Vec<String>>, String> {
-    tauri::async_runtime::spawn_blocking(move || include_paths(Path::new(&repo_path)))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
 }
 
 #[derive(Debug, PartialEq, Serialize)]

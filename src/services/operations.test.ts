@@ -13,6 +13,7 @@ import { closeTaskSessions } from "./taskSessions";
 import { DetectedStep, dismissTaskSetup, getTaskSetup } from "./taskSetup";
 import { ResolvedScripts, resetScriptApprovalsCache } from "./repoScripts";
 import { loadScriptApprovals, persist } from "./store";
+import { MemoryWorktreeLifecycle } from "./memoryWorktreeLifecycle";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -59,14 +60,14 @@ const task: Task = {
     branchName: "feature",
   })),
 };
+const apiPath = "/wt/api/pedro/wor-80";
+const webPath = "/wt/web/pedro/wor-80";
 
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+const detectedOutcomes: DetectedStep[] = [
+  { stage: "doppler", status: "skipped" },
+  { stage: "node", status: "completed" },
+  { stage: "python", status: "skipped" },
+];
 
 function fixture(tasks: Task[] = [], editor: EditorApp = "cursor") {
   let state: AppState = {
@@ -79,50 +80,16 @@ function fixture(tasks: Task[] = [], editor: EditorApp = "cursor") {
   const publish = vi.fn((next: AppState) => {
     state = next;
   });
+  const lifecycle = new MemoryWorktreeLifecycle().seed(tasks);
+  lifecycle.detectedSteps = () => detectedOutcomes;
   const operations = new Operations(
     () => state,
     publish,
     () => editor,
-    save
+    save,
+    lifecycle
   );
-  return { operations, save, publish };
-}
-
-const detectedOutcomes: DetectedStep[] = [
-  { stage: "doppler", status: "skipped" },
-  { stage: "node", status: "completed" },
-  { stage: "python", status: "skipped" },
-];
-
-function reportDetected(args?: Record<string, unknown>, outcomes = detectedOutcomes) {
-  const channel = args?.onStep as { onmessage: (step: DetectedStep) => void };
-  for (const outcome of outcomes) {
-    channel.onmessage({ stage: outcome.stage, status: "running" });
-    channel.onmessage(outcome);
-  }
-  return outcomes;
-}
-
-function detectedPath(args?: Record<string, unknown>) {
-  return (args?.plan as { worktreePath: string }).worktreePath;
-}
-
-async function native(command: string, args?: Record<string, unknown>) {
-  if (command === "resolve_manual_worktree")
-    return {
-      branchName: `user/${args?.rawName}`,
-      path: `${args?.worktreeBasePath}/user/${args?.rawName}`,
-    };
-  if (command === "git_worktree_add") return { warning: null };
-  if (command === "prepare_detected_setup")
-    return {
-      worktreePath: args?.worktreePath,
-      steps: detectedOutcomes.map((step) => ({ ...step, status: "pending" })),
-    };
-  if (command === "run_detected_setup") return reportDetected(args);
-  if (command === "resolve_repo_scripts") return noScripts;
-  if (command === "worktree_include_paths") return null;
-  return undefined;
+  return { operations, save, publish, lifecycle };
 }
 
 const noScripts: ResolvedScripts = {
@@ -139,7 +106,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetScriptApprovalsCache();
   vi.mocked(loadScriptApprovals).mockResolvedValue({});
-  vi.mocked(invoke).mockImplementation(native as typeof invoke);
+  vi.mocked(invoke).mockResolvedValue(undefined);
   vi.mocked(closeTaskSessions).mockResolvedValue(undefined);
 });
 
@@ -257,56 +224,47 @@ describe("shared operations", () => {
   });
 
   it("validates every destination before creating and waits for setup", async () => {
-    const { operations } = fixture();
-    const setup = deferred();
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "run_detected_setup") await setup.promise;
-      return native(command, args);
-    }) as typeof invoke);
+    const { operations, lifecycle } = fixture();
+    const releaseSetup = lifecycle.hold("runDetectedSetup");
     let complete = false;
     const creating = operations.createTask(input).then((result) => {
       complete = true;
       return result;
     });
     await vi.waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("run_detected_setup", {
-        plan: expect.objectContaining({ worktreePath: "/wt/api/pedro/wor-80" }) as unknown,
-        onStep: expect.any(Object) as unknown,
-      })
+      expect(lifecycle.targets("runDetectedSetup")).toEqual([apiPath, webPath])
     );
     expect(complete).toBe(false);
     expect(operations.getState().tasks).toHaveLength(1);
-    setup.resolve();
+    releaseSetup();
     const result = await creating;
     expect(result.data.members).toHaveLength(2);
     expect(result.data.linearIssueId).toBe("issue-id");
     expect(result.data.workspaceFilePath).toBeNull();
+    expect([...lifecycle.worktrees.keys()]).toEqual([apiPath, webPath]);
     expect(result.setup).toHaveLength(2);
-    for (const member of result.data.members) {
-      expect(invoke).toHaveBeenCalledWith("run_detected_setup", {
-        plan: expect.objectContaining({ worktreePath: member.path }) as unknown,
-        onStep: expect.any(Object) as unknown,
-      });
+    for (const member of result.data.members)
       expect(result.setup?.find((entry) => entry.repoId === member.repoId)?.steps).toContainEqual({
         stage: "python",
         status: "skipped",
       });
-    }
     expect(result.warnings).toEqual([]);
-    const commands = vi.mocked(invoke).mock.calls.map(([command]) => command);
-    expect(commands.indexOf("validate_task_worktrees")).toBeLessThan(
-      commands.indexOf("git_worktree_add")
-    );
-    expect(commands).not.toContain("open_editor");
-    expect(commands).not.toContain("prepare_task_workspace");
+    const steps = lifecycle.calls.map((call) => call.step);
+    expect(steps.indexOf("validateWorktrees")).toBeLessThan(steps.indexOf("addWorktree"));
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("creates with another editor, renames the workspace, opens Cursor and cleans by task ID", async () => {
-    const { operations } = fixture([], "codex");
+    const { operations, lifecycle } = fixture([], "codex");
     const { data: created } = await operations.createTask(input);
+    expect(lifecycle.copiedConfigs.get(apiPath)).toEqual([
+      ".codex",
+      ".agents",
+      ".env",
+      ".env.local",
+      ".env.development",
+      ".env.development.local",
+    ]);
     await operations.updateWorkspace(workspace.id, { name: "Renamed payments" });
     const opened = {
       message: "Cursor opened",
@@ -328,39 +286,25 @@ describe("shared operations", () => {
       legacyWorkspaceFilePath: null,
     });
     await operations.deleteTask(created.id, { deleteWorktrees: true });
-    expect(invoke).toHaveBeenCalledWith("remove_task_workspace", {
-      taskId: created.id,
-      legacyPath: null,
-    });
+    expect(lifecycle.removedTaskWorkspaces).toEqual([created]);
+    expect(lifecycle.worktrees.size).toBe(0);
+    expect(lifecycle.cleanedTasks).toEqual([created]);
     expect(operations.getState().tasks).toEqual([]);
   });
 
   it("starts every worktree before waiting and reports failures only after all settle", async () => {
-    const { operations } = fixture();
-    const second = deferred();
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "git_worktree_add") {
-        if (args?.repoPath === "/repos/api") throw new Error("private details");
-        await second.promise;
-      }
-      return native(command, args);
-    }) as typeof invoke);
+    const { operations, lifecycle } = fixture();
+    lifecycle.fail("addWorktree", (path) => path === apiPath);
+    const releaseWeb = lifecycle.hold("addWorktree", (path) => path === webPath);
     let finished = false;
     const creating = operations.createTask(input).catch((error: unknown) => {
       finished = true;
       return error;
     });
-    await vi.waitFor(() =>
-      expect(
-        vi.mocked(invoke).mock.calls.filter(([command]) => command === "git_worktree_add")
-      ).toHaveLength(2)
-    );
+    await vi.waitFor(() => expect(lifecycle.targets("addWorktree")).toHaveLength(2));
     expect(finished).toBe(false);
     expect(operations.getState().tasks).toEqual([]);
-    second.resolve();
+    releaseWeb();
     expect(await creating).toMatchObject({
       code: "create_failed",
       details: {
@@ -368,39 +312,28 @@ describe("shared operations", () => {
         failedMembers: [expect.objectContaining({ repoId: "api" })],
       },
     });
+    expect([...lifecycle.worktrees.keys()]).toEqual([webPath]);
   });
 
   it("opens after basic preparation, runs repo setups concurrently and releases the mutation queue", async () => {
-    const { operations } = fixture();
-    const installing = deferred();
-    const opening = deferred();
+    const { operations, lifecycle } = fixture();
+    const releaseSetup = lifecycle.hold("runDetectedSetup");
+    let releaseOpening!: () => void;
+    const opening = new Promise<void>((resolve) => {
+      releaseOpening = resolve;
+    });
     const ready = vi.fn(async (created: Task) => {
       expect(operations.task(created.id)).toEqual(created);
       expect(created.workspaceFilePath).toBeNull();
-      expect(
-        vi.mocked(invoke).mock.calls.filter(([command]) => command === "copy_local_configs")
-      ).toHaveLength(2);
-      await opening.promise;
+      expect(lifecycle.copiedConfigs.size).toBe(2);
+      await opening;
       return true;
     });
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "run_detected_setup") await installing.promise;
-      return native(command, args);
-    }) as typeof invoke);
     const creating = operations.createTask(input, undefined, ready);
     await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
-    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "run_detected_setup")).toBe(
-      false
-    );
-    opening.resolve();
-    await vi.waitFor(() =>
-      expect(
-        vi.mocked(invoke).mock.calls.filter(([command]) => command === "run_detected_setup")
-      ).toHaveLength(2)
-    );
+    expect(lifecycle.targets("runDetectedSetup")).toEqual([]);
+    releaseOpening();
+    await vi.waitFor(() => expect(lifecycle.targets("runDetectedSetup")).toHaveLength(2));
     const created = operations.getState().tasks[0];
     expect(getTaskSetup(created.id)).toMatchObject({ active: true, opened: true });
     dismissTaskSetup(created.id);
@@ -412,34 +345,31 @@ describe("shared operations", () => {
       operations.deleteWorkspace("w1", { deleteWorktrees: false })
     ).rejects.toMatchObject({ code: "setup_active" });
     expect(closeTaskSessions).not.toHaveBeenCalled();
-    installing.resolve();
+    releaseSetup();
     await creating;
     expect(getTaskSetup(created.id)?.active).toBe(false);
     await operations.deleteTask(created.id, { deleteWorktrees: false });
     expect(getTaskSetup(created.id)).toBeUndefined();
+    expect(lifecycle.worktrees.size).toBe(2);
   });
 
   it("waits for configuration and note creation before announcing readiness", async () => {
-    const { operations } = fixture();
+    const { operations, lifecycle } = fixture();
     await operations.change(() => ({ vault: { enabled: true, path: "/vault" } }));
-    const copying = deferred();
-    const note = deferred();
+    const releaseCopy = lifecycle.hold("copyLocalConfigs");
+    let releaseNote!: () => void;
+    const note = new Promise<void>((resolve) => {
+      releaseNote = resolve;
+    });
     vi.mocked(ensureTaskNote).mockImplementationOnce(async () => {
-      await note.promise;
+      await note;
       return "/note";
     });
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "copy_local_configs") await copying.promise;
-      return native(command, args);
-    }) as typeof invoke);
     const ready = vi.fn().mockResolvedValue(true);
     const creating = operations.createTask(input, undefined, ready);
     await vi.waitFor(() => expect(ensureTaskNote).toHaveBeenCalled());
     expect(ready).not.toHaveBeenCalled();
-    copying.resolve();
+    releaseCopy();
     await vi.waitFor(() =>
       expect(
         getTaskSetup(operations.getState().tasks[0].id)?.repos.every(
@@ -448,7 +378,7 @@ describe("shared operations", () => {
       ).toBe(true)
     );
     expect(ready).not.toHaveBeenCalled();
-    note.resolve();
+    releaseNote();
     await creating;
     expect(ready).toHaveBeenCalledOnce();
   });
@@ -456,35 +386,20 @@ describe("shared operations", () => {
   it.each([false, true])(
     "waits for detected preparation before opening (failure: %s)",
     async (fails) => {
-      const { operations } = fixture();
-      const preparing = deferred();
-      vi.mocked(invoke).mockImplementation((async (
-        command: string,
-        args?: Record<string, unknown>
-      ) => {
-        if (command === "prepare_detected_setup") {
-          await preparing.promise;
-          if (fails) throw new Error("private");
-        }
-        return native(command, args);
-      }) as typeof invoke);
+      const { operations, lifecycle } = fixture();
+      const releasePreparation = lifecycle.hold("prepareDetectedSetup");
+      if (fails) lifecycle.fail("prepareDetectedSetup");
       const ready = vi.fn().mockResolvedValue(true);
       const creating = operations.createTask(input, undefined, ready);
-      await vi.waitFor(() =>
-        expect(
-          vi.mocked(invoke).mock.calls.filter(([command]) => command === "prepare_detected_setup")
-        ).toHaveLength(2)
-      );
+      await vi.waitFor(() => expect(lifecycle.targets("prepareDetectedSetup")).toHaveLength(2));
       expect(ready).not.toHaveBeenCalled();
-      preparing.resolve();
+      releasePreparation();
       const result = await creating;
       expect(ready).toHaveBeenCalledOnce();
       expect(result.warnings).toHaveLength(fails ? 2 : 0);
-      expect(
-        vi.mocked(invoke).mock.calls.filter(([command]) => command === "run_detected_setup")
-      ).toHaveLength(fails ? 0 : 2);
+      expect(lifecycle.targets("runDetectedSetup")).toHaveLength(fails ? 0 : 2);
       expect(operations.getState().tasks).toHaveLength(1);
-      expect(JSON.stringify(result)).not.toContain("private");
+      expect(JSON.stringify(result)).not.toContain("fake");
       expect(getTaskSetup(result.data.id)?.active).toBe(false);
     }
   );
@@ -505,61 +420,32 @@ describe("shared operations", () => {
   });
 
   it("rejects duplicate retries while detected setup is being prepared", async () => {
-    const { operations } = fixture([task]);
-    const preparing = deferred();
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "prepare_detected_setup") await preparing.promise;
-      return native(command, args);
-    }) as typeof invoke);
+    const { operations, lifecycle } = fixture([task]);
+    const releasePreparation = lifecycle.hold("prepareDetectedSetup");
     const retrying = operations.rerunRepoSetup(task.id, "api");
     await vi.waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("prepare_detected_setup", {
-        worktreePath: task.members[0].path,
-      })
+      expect(lifecycle.targets("prepareDetectedSetup")).toEqual([task.members[0].path])
     );
     await expect(operations.rerunRepoSetup(task.id, "api")).rejects.toMatchObject({
       code: "setup_active",
     });
-    preparing.resolve();
+    releasePreparation();
     await retrying;
     expect(getTaskSetup(task.id)?.active).toBe(false);
-    expect(
-      vi.mocked(invoke).mock.calls.filter(([command]) => command === "prepare_detected_setup")
-    ).toHaveLength(1);
+    expect(lifecycle.targets("prepareDetectedSetup")).toHaveLength(1);
   });
 
   it.each([false, true])(
     "reports typed setup errors and continues other repositories (transport failure: %s)",
     async (rejected) => {
-      const { operations } = fixture();
-      const remainingSetup = deferred();
+      const { operations, lifecycle } = fixture();
       const message = "pnpm CLI not found on PATH";
-      vi.mocked(invoke).mockImplementation((async (
-        command: string,
-        args?: Record<string, unknown>
-      ) => {
-        if (command === "run_detected_setup") {
-          if (detectedPath(args) === "/wt/api/pedro/wor-80") {
-            if (rejected) throw new Error("private");
-            reportDetected(
-              args,
-              detectedOutcomes.map((step) =>
-                step.stage === "node" ? { ...step, status: "error", message } : step
-              )
-            );
-          } else reportDetected(args);
-          await remainingSetup.promise;
-          return detectedPath(args) === "/wt/api/pedro/wor-80"
-            ? detectedOutcomes.map((step) =>
-                step.stage === "node" ? { ...step, status: "error", message } : step
-              )
-            : detectedOutcomes;
-        }
-        return native(command, args);
-      }) as typeof invoke);
+      const failing = detectedOutcomes.map((step) =>
+        step.stage === "node" ? { ...step, status: "error" as const, message } : step
+      );
+      lifecycle.detectedSteps = (path) => (path === apiPath ? failing : detectedOutcomes);
+      if (rejected) lifecycle.fail("runDetectedSetup", (path) => path === apiPath);
+      const releaseWeb = lifecycle.hold("runDetectedSetup", (path) => path === webPath);
       const creating = operations.createTask(input);
       await vi.waitFor(() => {
         const created = operations.getState().tasks[0];
@@ -574,13 +460,13 @@ describe("shared operations", () => {
             },
             {
               steps: expect.arrayContaining([
-                expect.objectContaining({ stage: "node", status: "completed" }),
+                expect.objectContaining({ stage: "node", status: "pending" }),
               ]) as unknown,
             },
           ],
         });
       });
-      remainingSetup.resolve();
+      releaseWeb();
       const result = await creating;
       const setup = getTaskSetup(result.data.id)!;
       expect(setup.active).toBe(false);
@@ -591,15 +477,15 @@ describe("shared operations", () => {
         expect.objectContaining({ repoId: "api", stage: "node" })
       );
       expect(result.warnings.filter((warning) => warning.stage === "node")).toHaveLength(1);
-      expect(result.setup?.[1].steps).toContainEqual({ stage: "python", status: "skipped" });
+      expect(result.setup?.[1].steps).toContainEqual({ stage: "node", status: "completed" });
       expect(JSON.stringify(result)).not.toContain(message);
-      expect(JSON.stringify(setup)).not.toContain("private");
+      expect(JSON.stringify(setup)).not.toContain("fake");
       expect(result.data).toEqual(operations.getState().tasks[0]);
     }
   );
 
   it("selects repositories and preserves manual branch resolution", async () => {
-    const { operations } = fixture();
+    const { operations, lifecycle } = fixture();
     const result = await operations.createTask({
       workspaceId: "w1",
       branchName: "feature",
@@ -614,33 +500,34 @@ describe("shared operations", () => {
         branchName: "user/feature",
       },
     ]);
+    expect([...lifecycle.worktrees.keys()]).toEqual(["/wt/web/user/feature"]);
   });
 
   it("rejects invalid destinations before any worktree is created", async () => {
-    const { operations } = fixture();
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "validate_task_worktrees") throw new Error("invalid");
-      return native(command, args);
-    }) as typeof invoke);
+    const { operations, lifecycle } = fixture();
+    lifecycle.fail("validateWorktrees");
     await expect(operations.createTask(input)).rejects.toMatchObject({ code: "invalid_worktrees" });
-    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "git_worktree_add")).toBe(
-      false
-    );
+    expect(lifecycle.worktrees.size).toBe(0);
+    expect(operations.getState().tasks).toEqual([]);
+  });
+
+  it("rejects worktrees another task owns as a conflict", async () => {
+    const owner = {
+      ...task,
+      members: task.members.map((member) => ({
+        ...member,
+        path: `/wt/${member.repoId}/pedro/wor-80`,
+      })),
+    };
+    const { operations, lifecycle } = fixture([owner]);
+    await expect(operations.createTask(input)).rejects.toMatchObject({ code: "conflict" });
+    expect(lifecycle.targets("addWorktree")).toEqual([]);
+    expect(operations.getState().tasks).toEqual([owner]);
   });
 
   it("reports partial creation without deleting anything or claiming success", async () => {
-    const { operations } = fixture();
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "git_worktree_add" && args?.repoPath === "/repos/web")
-        throw new Error("secret-token");
-      return native(command, args);
-    }) as typeof invoke);
+    const { operations, lifecycle } = fixture();
+    lifecycle.fail("addWorktree", (path) => path === webPath);
     await expect(operations.createTask(input)).rejects.toMatchObject({
       code: "create_failed",
       details: {
@@ -649,27 +536,17 @@ describe("shared operations", () => {
       },
     });
     expect(operations.getState().tasks).toEqual([]);
-    expect(
-      vi.mocked(invoke).mock.calls.some(([command]) => command === "git_worktree_remove")
-    ).toBe(false);
+    expect([...lifecycle.worktrees.keys()]).toEqual([apiPath]);
   });
 
   it.each(["doppler", "node", "python"] as const)(
     "retains a task when %s fails and reports the affected repos",
     async (stage) => {
-      const { operations } = fixture();
-      vi.mocked(invoke).mockImplementation((async (
-        command: string,
-        args?: Record<string, unknown>
-      ) =>
-        command === "run_detected_setup"
-          ? reportDetected(
-              args,
-              detectedOutcomes.map((step) =>
-                step.stage === stage ? { ...step, status: "error", message: "secret-token" } : step
-              )
-            )
-          : native(command, args)) as typeof invoke);
+      const { operations, lifecycle } = fixture();
+      lifecycle.detectedSteps = () =>
+        detectedOutcomes.map((step) =>
+          step.stage === stage ? { ...step, status: "error", message: "secret-token" } : step
+        );
       const result = await operations.createTask(input);
       expect(result.warnings.map((warning) => warning.repoId)).toEqual(["api", "web"]);
       expect(JSON.stringify(result)).not.toContain("secret-token");
@@ -677,25 +554,42 @@ describe("shared operations", () => {
     }
   );
 
+  it("keeps the task when local configuration cannot be copied", async () => {
+    const { operations, lifecycle } = fixture();
+    lifecycle.fail("copyLocalConfigs", (path) => path === apiPath);
+    const result = await operations.createTask(input);
+    expect(result.warnings).toEqual([expect.objectContaining({ stage: "config", repoId: "api" })]);
+    expect(result.setup?.[0].steps[0]).toEqual({ stage: "config", status: "error" });
+    expect(result.setup?.[0].steps).toContainEqual({ stage: "node", status: "completed" });
+    expect(operations.getState().tasks).toHaveLength(1);
+  });
+
   it("reports created resources when persistence fails without publishing the task", async () => {
-    const { operations, save, publish } = fixture();
+    const { operations, save, publish, lifecycle } = fixture();
     save.mockRejectedValueOnce(new Error("disk full"));
     await expect(operations.createTask(input)).rejects.toMatchObject({
       code: "persist_failed",
       details: { task: { members: expect.any(Array) as unknown } },
     });
     expect(publish).not.toHaveBeenCalled();
+    expect(lifecycle.worktrees.size).toBe(2);
+    expect(lifecycle.targets("copyLocalConfigs")).toEqual([]);
   });
 
   it("serializes UI and CLI mutations, publishes after save, and recovers after failure", async () => {
     const { operations, save, publish } = fixture();
-    const saved = deferred();
-    save.mockImplementationOnce(() => saved.promise);
+    let releaseSave!: () => void;
+    save.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSave = resolve;
+        })
+    );
     const first = operations.updateWorkspace("w1", { name: "Renamed" });
     const second = operations.change((state) => ({ selectedWorkspaceId: state.workspaces[0].id }));
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
     expect(publish).not.toHaveBeenCalled();
-    saved.resolve();
+    releaseSave();
     await Promise.all([first, second]);
     expect(operations.workspace("w1").name).toBe("Renamed");
     save.mockRejectedValueOnce(new Error("disk full"));
@@ -707,39 +601,31 @@ describe("shared operations", () => {
   });
 
   it("retains all records after partial workspace deletion and supports explicit retry", async () => {
-    const { operations } = fixture([task]);
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "git_worktree_remove" && args?.repoPath === "/repos/web")
-        throw new Error("dirty");
-      return native(command, args);
-    }) as typeof invoke);
+    const { operations, lifecycle } = fixture([task]);
+    lifecycle.fail("removeWorktree", (path) => path.startsWith("/wt/web"));
     await expect(operations.deleteWorkspace("w1", { deleteWorktrees: true })).rejects.toMatchObject(
       { code: "delete_failed", details: { removed: [task.members[0]], failed: [task.members[1]] } }
     );
     expect(operations.getState().tasks).toEqual([task]);
+    expect(operations.getState().workspaces).toEqual([workspace]);
     expect(archiveTaskNote).not.toHaveBeenCalled();
-    expect(invoke).not.toHaveBeenCalledWith("remove_task_workspace", expect.anything());
-    vi.mocked(invoke).mockImplementation(native as typeof invoke);
+    expect(lifecycle.removedTaskWorkspaces).toEqual([]);
+    expect(lifecycle.cleanedTasks).toEqual([]);
+    lifecycle.succeed("removeWorktree");
     await operations.deleteWorkspace("w1", { deleteWorktrees: true, force: true });
-    expect(invoke).toHaveBeenCalledWith(
-      "git_worktree_remove",
-      expect.objectContaining({ force: true })
-    );
+    expect(lifecycle.worktrees.size).toBe(0);
     expect(operations.getState().workspaces).toEqual([]);
     expect(operations.getState().tasks).toEqual([]);
     expect(archiveTaskNote).toHaveBeenCalledWith(DEFAULT_STATE.vault, task, true);
   });
 
   it("keeps worktrees and local configs when forgetting a task", async () => {
-    const { operations } = fixture([task]);
+    const { operations, lifecycle } = fixture([task]);
     await operations.deleteTask("t1", { deleteWorktrees: false });
     expect(closeTaskSessions).toHaveBeenCalledWith("t1");
-    expect(vi.mocked(invoke).mock.calls).toEqual([
-      ["remove_task_workspace", { taskId: "t1", legacyPath: null }],
-    ]);
+    expect(lifecycle.worktrees.size).toBe(2);
+    expect(lifecycle.removedTaskWorkspaces).toEqual([task]);
+    expect(lifecycle.cleanedTasks).toEqual([]);
     expect(archiveTaskNote).toHaveBeenCalled();
   });
 
@@ -747,31 +633,38 @@ describe("shared operations", () => {
     "cleans stable and legacy workspace paths (delete worktrees: %s)",
     async (deleteWorktrees) => {
       const legacy = { ...task, workspaceFilePath: "/workspaces/payments/feature.code-workspace" };
-      const { operations } = fixture([legacy]);
+      const { operations, lifecycle } = fixture([legacy]);
       await operations.deleteTask(legacy.id, { deleteWorktrees });
-      expect(invoke).toHaveBeenCalledWith("remove_task_workspace", {
-        taskId: legacy.id,
-        legacyPath: legacy.workspaceFilePath,
-      });
+      expect(lifecycle.removedTaskWorkspaces).toEqual([legacy]);
       expect(operations.getState().tasks).toEqual([]);
     }
   );
 
   it("reports workspace cleanup failures without retaining a deleted task", async () => {
-    const { operations } = fixture([task]);
-    vi.mocked(invoke).mockRejectedValueOnce("Permission denied");
+    const { operations, lifecycle } = fixture([task]);
+    lifecycle.fail("removeTaskWorkspace");
     const result = await operations.deleteTask(task.id, { deleteWorktrees: false });
     expect(result.warnings).toEqual([expect.objectContaining({ stage: "workspace_file" })]);
     expect(operations.getState().tasks).toEqual([]);
   });
 
+  it("reports failed post-removal cleanups as warnings after deleting the task", async () => {
+    const { operations, lifecycle } = fixture([task]);
+    lifecycle.failingCleanups.push("doppler_cleanup");
+    const result = await operations.deleteTask(task.id, { deleteWorktrees: true });
+    expect(result.warnings).toEqual([expect.objectContaining({ stage: "doppler_cleanup" })]);
+    expect(lifecycle.worktrees.size).toBe(0);
+    expect(operations.getState().tasks).toEqual([]);
+    expect(archiveTaskNote).toHaveBeenCalled();
+  });
+
   it("does not delete resources if sessions cannot be closed", async () => {
-    const { operations } = fixture([task]);
+    const { operations, lifecycle } = fixture([task]);
     vi.mocked(closeTaskSessions).mockRejectedValueOnce(new Error("busy"));
     await expect(operations.deleteTask("t1", { deleteWorktrees: true })).rejects.toMatchObject({
       code: "sessions_active",
     });
-    expect(invoke).not.toHaveBeenCalled();
+    expect(lifecycle.calls).toEqual([]);
     expect(operations.task("t1")).toBe(task);
   });
 
@@ -792,46 +685,33 @@ describe("repository scripts", () => {
     ...overrides,
   });
 
-  function withScripts(resolved: ResolvedScripts, exitCode: number | null = 0) {
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "resolve_repo_scripts")
-        return String(args?.worktreePath).startsWith("/wt/api") ? resolved : noScripts;
-      if (command === "run_task_script") return exitCode;
-      return native(command, args);
-    }) as typeof invoke);
+  function scripted(resolved: ResolvedScripts, tasks: Task[] = [], exitCode: number | null = 0) {
+    const result = fixture(tasks);
+    result.lifecycle.scripts.set("/repos/api", resolved);
+    result.lifecycle.exitCode = () => exitCode;
+    return result;
   }
 
-  const calls = (command: string) =>
-    vi
-      .mocked(invoke)
-      .mock.calls.filter(([name]) => name === command)
-      .map(([name, args]) => [name, args as Record<string, unknown> | undefined] as const);
-
   it("runs repository setup automatically instead of detected steps and passes context as env", async () => {
-    withScripts(declared({ setup: "pnpm install", setupHash: "setup-hash" }));
-    const { operations } = fixture();
+    const { operations, lifecycle } = scripted(
+      declared({ setup: "pnpm install", setupHash: "setup-hash" })
+    );
     const result = await operations.createTask(input);
     const created = result.data;
-    const [, run] = calls("run_task_script")[0];
+    const [run] = lifecycle.scriptRuns;
     expect(run).toMatchObject({
       taskId: created.id,
       session: "setup:api",
       script: "pnpm install",
       cwd: created.members[0].path,
     });
-    expect(Object.fromEntries((run as { env: [string, string][] }).env)).toMatchObject({
+    expect(Object.fromEntries(run.env)).toMatchObject({
       WTM_ROOT_PATH: "/repos/api",
       WTM_WORKTREE_PATH: created.members[0].path,
       WTM_ISSUE_ID: "WOR-80",
       CONDUCTOR_ROOT_PATH: "/repos/api",
     });
-    const detectedFor = (path: string) =>
-      calls("prepare_detected_setup").some(([, args]) => args?.worktreePath === path);
-    expect(detectedFor(created.members[0].path)).toBe(false);
-    expect(detectedFor(created.members[1].path)).toBe(true);
+    expect(lifecycle.targets("prepareDetectedSetup")).toEqual([created.members[1].path]);
     expect(result.setup?.[0].steps).toEqual([
       { stage: "config", status: "completed" },
       { stage: "script", status: "completed" },
@@ -841,38 +721,35 @@ describe("repository scripts", () => {
   });
 
   it("copies .worktreeinclude matches instead of the default env files", async () => {
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "worktree_include_paths")
-        return args?.repoPath === "/repos/api" ? ["config/master.key"] : null;
-      return native(command, args);
-    }) as typeof invoke);
-    const { operations } = fixture();
+    const { operations, lifecycle } = fixture();
+    lifecycle.includes.set("/repos/api", ["config/master.key"]);
     await operations.createTask(input);
-    const paths = (repo: string) =>
-      calls("copy_local_configs").find(([, args]) => args?.sourceRepo === repo)?.[1]?.paths;
-    expect(paths("/repos/api")).toContain("config/master.key");
-    expect(paths("/repos/api")).not.toContain(".env");
-    expect(paths("/repos/web")).toContain(".env");
+    expect(lifecycle.copiedConfigs.get(apiPath)).toContain("config/master.key");
+    expect(lifecycle.copiedConfigs.get(apiPath)).not.toContain(".env");
+    expect(lifecycle.copiedConfigs.get(webPath)).toContain(".env");
   });
 
   it.each(["worktreemanager", "conductor", "superset", "cursor"] as const)(
     "runs new and changed %s setup scripts without approval",
     async (source) => {
-      withScripts(declared({ source, setup: "make setup", setupHash: "setup-hash" }));
-      const { operations } = fixture();
+      const { operations, lifecycle } = scripted(
+        declared({ source, setup: "make setup", setupHash: "setup-hash" })
+      );
       const result = await operations.createTask(input);
-      expect(calls("run_task_script")).toHaveLength(1);
+      expect(lifecycle.scriptRuns).toHaveLength(1);
       expect(result.setup?.[0].steps).toContainEqual({ stage: "script", status: "completed" });
       expect(result.warnings).toEqual([]);
       expect(getTaskSetup(result.data.id)?.repos[0].source).toBe(source);
 
-      withScripts(declared({ source, setup: "make new-setup", setupHash: "changed-hash" }));
+      lifecycle.scripts.set(
+        "/repos/api",
+        declared({ source, setup: "make new-setup", setupHash: "changed-hash" })
+      );
       const rerun = await operations.rerunRepoSetup(result.data.id, "api");
-      expect(calls("run_task_script")).toHaveLength(2);
-      expect(calls("run_task_script")[1][1]?.script).toBe("make new-setup");
+      expect(lifecycle.scriptRuns.map((run) => run.script)).toEqual([
+        "make setup",
+        "make new-setup",
+      ]);
       expect(loadScriptApprovals).not.toHaveBeenCalled();
       expect(persist).not.toHaveBeenCalled();
       expect(rerun.data.steps).toEqual([{ stage: "script", status: "completed" }]);
@@ -881,43 +758,40 @@ describe("repository scripts", () => {
   );
 
   it("prefers the app override over repository setup", async () => {
-    withScripts(declared({ setup: "make setup", setupHash: "setup-hash" }));
-    const { operations } = fixture();
+    const { operations, lifecycle } = scripted(
+      declared({ setup: "make setup", setupHash: "setup-hash" })
+    );
     await operations.updateWorkspace("w1", {
       repos: workspace.repos.map((repo) =>
         repo.id === "api" ? { ...repo, scripts: { setup: "make local-setup" } } : repo
       ),
     });
     const result = await operations.createTask(input);
-    expect(calls("run_task_script")).toHaveLength(1);
-    expect(calls("run_task_script")[0][1]?.script).toBe("make local-setup");
+    expect(lifecycle.scriptRuns.map((run) => run.script)).toEqual(["make local-setup"]);
     expect(getTaskSetup(result.data.id)?.repos[0].source).toBe("local");
     expect(result.warnings).toEqual([]);
   });
 
   it("can fall back to detected setup instead of a repository script", async () => {
-    withScripts(declared({ setup: "make setup", setupHash: "setup-hash" }));
-    const { operations } = fixture();
+    const { operations, lifecycle } = scripted(
+      declared({ setup: "make setup", setupHash: "setup-hash" })
+    );
     const created = (await operations.createTask(input)).data;
-    vi.mocked(invoke).mockClear();
     const rerun = await operations.rerunRepoSetup(created.id, "api", "detected");
-    expect(calls("run_task_script")).toEqual([]);
+    expect(lifecycle.scriptRuns).toHaveLength(1);
     expect(rerun.data.steps.map((step) => step.stage)).toEqual(["doppler", "node", "python"]);
   });
 
   it("trusts app overrides and reports failing or stopped scripts as warnings", async () => {
-    const { operations } = fixture();
+    const { operations, lifecycle } = fixture();
     await operations.updateWorkspace("w1", {
       repos: workspace.repos.map((repo) =>
         repo.id === "web" ? { ...repo, scripts: { setup: "exit 3" } } : repo
       ),
     });
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => (command === "run_task_script" ? 3 : native(command, args))) as typeof invoke);
+    lifecycle.exitCode = () => 3;
     const result = await operations.createTask(input);
-    expect(calls("run_task_script")).toHaveLength(1);
+    expect(lifecycle.scriptRuns).toHaveLength(1);
     expect(result.setup?.[1].steps).toContainEqual({ stage: "script", status: "error" });
     expect(getTaskSetup(result.data.id)?.repos[1]).toMatchObject({
       source: "local",
@@ -930,29 +804,17 @@ describe("repository scripts", () => {
     });
     expect(result.warnings).toEqual([expect.objectContaining({ stage: "script", repoId: "web" })]);
 
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => (command === "run_task_script" ? null : native(command, args))) as typeof invoke);
+    lifecycle.exitCode = () => null;
     const stopped = await operations.rerunRepoSetup(result.data.id, "web");
     expect(stopped.data.steps).toEqual([{ stage: "script", status: "cancelled" }]);
   });
 
   it("reports an invalid repository config without running detected setup", async () => {
-    vi.mocked(invoke).mockImplementation((async (
-      command: string,
-      args?: Record<string, unknown>
-    ) => {
-      if (command === "resolve_repo_scripts" && String(args?.worktreePath).startsWith("/wt/api"))
-        throw "Invalid .worktreemanager.toml: expected a table";
-      return native(command, args);
-    }) as typeof invoke);
-    const { operations } = fixture();
+    const { operations, lifecycle } = fixture();
+    lifecycle.scripts.set("/repos/api", "Invalid .worktreemanager.toml: expected a table");
     const result = await operations.createTask(input);
     expect(result.setup?.[0].steps).toContainEqual({ stage: "script", status: "error" });
-    expect(
-      calls("run_detected_setup").some(([, args]) => detectedPath(args).startsWith("/wt/api"))
-    ).toBe(false);
+    expect(lifecycle.targets("runDetectedSetup")).toEqual([webPath]);
     expect(result.warnings).toContainEqual({
       stage: "script",
       repoId: "api",
@@ -961,54 +823,62 @@ describe("repository scripts", () => {
   });
 
   it("requires approval for repository teardown and retains the task until it is given", async () => {
-    withScripts(declared({ teardown: "make stop", teardownHash: "teardown-hash" }));
-    const { operations } = fixture([task]);
+    const { operations, lifecycle } = scripted(
+      declared({ teardown: "make stop", teardownHash: "teardown-hash" }),
+      [task]
+    );
     await expect(operations.deleteTask("t1", { deleteWorktrees: true })).rejects.toMatchObject({
       code: "teardown_needs_approval",
       details: { scripts: [{ repoName: "api", source: "worktreemanager", script: "make stop" }] },
     });
-    expect(calls("git_worktree_remove")).toEqual([]);
+    expect(lifecycle.worktrees.size).toBe(2);
     expect(operations.task("t1")).toBe(task);
 
     await operations.deleteTask("t1", { deleteWorktrees: true, approveTeardown: true });
     expect(persist).toHaveBeenCalledWith([
       ["scriptApprovals", { "/repos/api": ["teardown-hash"] }],
     ]);
-    const order = vi.mocked(invoke).mock.calls.map(([name]) => name);
-    expect(order.indexOf("run_task_script")).toBeLessThan(order.indexOf("git_worktree_remove"));
-    expect(calls("run_task_script")[0][1]).toMatchObject({
+    const steps = lifecycle.calls.map((call) => call.step);
+    expect(steps.indexOf("runScript")).toBeLessThan(steps.indexOf("removeWorktree"));
+    expect(lifecycle.scriptRuns[0]).toMatchObject({
       session: "teardown:api",
       script: "make stop",
       cwd: "/wt/api/feature",
       timeoutSecs: 300,
     });
+    expect(lifecycle.worktrees.size).toBe(0);
     expect(operations.getState().tasks).toEqual([]);
   });
 
   it("retains the task when teardown fails and can delete without it", async () => {
     vi.mocked(loadScriptApprovals).mockResolvedValue({ "/repos/api": ["teardown-hash"] });
-    withScripts(declared({ teardown: "make stop", teardownHash: "teardown-hash" }), 2);
-    const { operations } = fixture([task]);
+    const { operations, lifecycle } = scripted(
+      declared({ teardown: "make stop", teardownHash: "teardown-hash" }),
+      [task],
+      2
+    );
     await expect(operations.deleteTask("t1", { deleteWorktrees: true })).rejects.toMatchObject({
       code: "teardown_failed",
       details: { repoNames: ["api"] },
     });
-    expect(calls("git_worktree_remove")).toEqual([]);
+    expect(lifecycle.worktrees.size).toBe(2);
     expect(operations.task("t1")).toBe(task);
     expect(getTaskSetup("t1")?.active).toBe(false);
 
-    vi.mocked(invoke).mockClear();
     await operations.deleteTask("t1", { deleteWorktrees: true, skipTeardown: true });
-    expect(calls("run_task_script")).toEqual([]);
-    expect(calls("git_worktree_remove")).toHaveLength(2);
+    expect(lifecycle.scriptRuns).toHaveLength(1);
+    expect(lifecycle.worktrees.size).toBe(0);
     expect(operations.getState().tasks).toEqual([]);
   });
 
   it("skips teardown for worktrees that no longer exist", async () => {
-    withScripts({ ...declared({ teardown: "make stop", teardownHash: "h" }), present: false });
-    const { operations } = fixture([task]);
+    const { operations, lifecycle } = scripted(
+      declared({ teardown: "make stop", teardownHash: "h" }),
+      [task]
+    );
+    lifecycle.worktrees.clear();
     await operations.deleteTask("t1", { deleteWorktrees: true });
-    expect(calls("run_task_script")).toEqual([]);
+    expect(lifecycle.scriptRuns).toEqual([]);
     expect(operations.getState().tasks).toEqual([]);
   });
 });

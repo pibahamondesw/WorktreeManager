@@ -162,6 +162,9 @@ describe("Rust coverage pipeline", () => {
       expect(commands.find((call) => call.tool === "unit tests")?.args).toEqual([
         "cli::tests::",
         "commands::claude_config::tests::",
+        "commands::git::tests::",
+        "commands::validation::tests::",
+        "commands::worktree_cleanup::tests::",
         "commands::export::tests::",
         "commands::github::tests::",
         "commands::code_server::view::tests::",

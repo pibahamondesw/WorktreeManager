@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::git::{git_command, git_worktree_list};
 
@@ -87,28 +87,40 @@ fn validate_repos(repos: &[Repository]) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeValidationError {
+    Owned,
+    Invalid,
+}
+
 #[tauri::command]
 pub async fn validate_task_worktrees(
     members: Vec<Member>,
     base_paths: Vec<String>,
     owned_paths: Vec<String>,
-) -> Result<(), String> {
+) -> Result<(), WorktreeValidationError> {
     tauri::async_runtime::spawn_blocking(move || {
         validate_ownership(&members, &owned_paths)?;
-        validate_members(&members, &base_paths)
+        validate_members(&members, &base_paths).map_err(|_| WorktreeValidationError::Invalid)
     })
     .await
-    .map_err(|_| "Validation failed")?
+    .map_err(|_| WorktreeValidationError::Invalid)?
 }
 
-fn validate_ownership(members: &[Member], owned_paths: &[String]) -> Result<(), String> {
+fn validate_ownership(
+    members: &[Member],
+    owned_paths: &[String],
+) -> Result<(), WorktreeValidationError> {
     let owned: Vec<_> = owned_paths
         .iter()
         .filter_map(|path| resolved_path(Path::new(path)).ok())
         .collect();
     for member in members {
-        if owned.contains(&resolved_path(Path::new(&member.path))?) {
-            return Err("A task already owns this worktree".into());
+        let path =
+            resolved_path(Path::new(&member.path)).map_err(|_| WorktreeValidationError::Invalid)?;
+        if owned.contains(&path) {
+            return Err(WorktreeValidationError::Owned);
         }
     }
     Ok(())
@@ -284,6 +296,40 @@ mod tests {
     }
 
     #[test]
+    fn command_validates_destinations_and_reports_invalid_paths_and_branches() {
+        let repo = Repo::new();
+        let base = repo.repository().worktree_base_path;
+        for (path, branch, expected) in [
+            (format!("{base}/feature"), "feature", Ok(())),
+            (
+                format!("{base}/feature"),
+                "--invalid",
+                Err(WorktreeValidationError::Invalid),
+            ),
+            (
+                "relative/path".into(),
+                "feature",
+                Err(WorktreeValidationError::Invalid),
+            ),
+        ] {
+            let result = tauri::async_runtime::block_on(validate_task_worktrees(
+                vec![Member {
+                    local_path: repo.repository().local_path,
+                    path,
+                    branch_name: branch.into(),
+                }],
+                vec![base.clone()],
+                vec![],
+            ));
+            assert_eq!(result, expected);
+        }
+        assert_eq!(
+            serde_json::to_value(WorktreeValidationError::Invalid).unwrap(),
+            "invalid"
+        );
+    }
+
+    #[test]
     fn detects_owned_paths_through_symlink_aliases() {
         let repo = Repo::new();
         let alias = repo.0.join("alias");
@@ -294,6 +340,13 @@ mod tests {
             branch_name: "feature".into(),
         };
         let owned = repo.0.join("feature").to_string_lossy().into_owned();
-        assert!(validate_ownership(&[member], &[owned]).is_err());
+        let error = tauri::async_runtime::block_on(validate_task_worktrees(
+            vec![member],
+            vec![repo.repository().worktree_base_path],
+            vec![owned],
+        ))
+        .unwrap_err();
+        assert_eq!(error, WorktreeValidationError::Owned);
+        assert_eq!(serde_json::to_value(error).unwrap(), "owned");
     }
 }

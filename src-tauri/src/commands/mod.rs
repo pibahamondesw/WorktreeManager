@@ -27,5 +27,6 @@ pub mod user_file;
 pub mod vault;
 pub mod vault_agents;
 pub mod workspace;
+pub mod worktree_cleanup;
 
 pub mod validation;
