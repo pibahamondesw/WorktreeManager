@@ -53,26 +53,32 @@ export function MarkdownPreviewPanel({
   request,
   folders,
   footer,
+  editable,
+  error,
   onClose,
 }: {
   request: MarkdownPreviewRequest;
   folders: string[];
   footer?: ReactNode;
+  error?: string | null;
+  editable?: { text: string; onChange: (text: string) => void; disabled: boolean };
   onClose: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const [history, setHistory] = useState<MarkdownSource[]>([request.source]);
   const [revision, setRevision] = useState(0);
   const [active, setActive] = useState(0);
   const source = history[history.length - 1];
   const loaded = useMarkdownDocument(source, folders, revision);
-  const text = loaded.kind === "ready" ? loaded.text : "";
+  const canEdit = editable && history.length === 1;
+  const text = canEdit ? editable.text : loaded.kind === "ready" ? loaded.text : "";
   const path = loaded.kind === "ready" ? loaded.document?.path : undefined;
   const { entries, body } = useMemo(() => splitFrontmatter(text), [text]);
   const summary = useMemo(() => documentSummary(text), [text]);
   const panelRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLElement>(null);
-  const outline = useOutline(articleRef, body);
+  const outline = useOutline(articleRef, editing ? "" : body);
   const showOutline = outline.length >= OUTLINE_MIN_HEADINGS;
 
   const title =
@@ -143,6 +149,16 @@ export function MarkdownPreviewPanel({
             </p>
           )}
         </div>
+        {canEdit && (
+          <Button
+            variant="secondary"
+            className="h-7 px-2 text-xs"
+            disabled={editable.disabled}
+            onClick={() => setEditing((current) => !current)}
+          >
+            {editing ? "Preview plan" : "Edit plan"}
+          </Button>
+        )}
         {source.kind === "file" && (
           <Button
             variant="ghost"
@@ -165,7 +181,7 @@ export function MarkdownPreviewPanel({
         </Button>
       </header>
       <div className="flex-1 min-h-0 flex">
-        {showOutline && loaded.kind === "ready" && (
+        {!editing && showOutline && loaded.kind === "ready" && (
           <nav
             aria-label="Outline"
             className="hidden @3xl:block w-60 shrink-0 overflow-y-auto border-r border-border py-4"
@@ -203,25 +219,40 @@ export function MarkdownPreviewPanel({
               {loaded.message}
             </p>
           )}
-          {loaded.kind === "ready" && (
-            <article ref={articleRef} className="mx-auto max-w-3xl px-6 py-8 @2xl:px-10">
-              {entries.length > 0 && (
-                <dl className="markdown-frontmatter mb-6 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded-lg border border-border bg-bg-secondary/60 px-4 py-3 text-xs select-text">
-                  {entries.map(([key, value]) => (
-                    <div key={key} className="contents">
-                      <dt className="text-text-muted">{key}</dt>
-                      <dd className="min-w-0 break-words text-text-secondary">{value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-              <MarkdownPreviewContext.Provider value={nested}>
-                <MarkdownText text={body} className="markdown-document" />
-              </MarkdownPreviewContext.Provider>
-            </article>
+          {canEdit && editing ? (
+            <textarea
+              aria-label="Plan markdown"
+              value={editable.text}
+              onChange={(e) => editable.onChange(e.target.value)}
+              disabled={editable.disabled}
+              className="h-full min-h-64 w-full resize-none bg-bg-primary p-6 font-mono text-sm text-text-primary outline-none"
+            />
+          ) : (
+            loaded.kind === "ready" && (
+              <article ref={articleRef} className="mx-auto max-w-3xl px-6 py-8 @2xl:px-10">
+                {entries.length > 0 && (
+                  <dl className="markdown-frontmatter mb-6 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded-lg border border-border bg-bg-secondary/60 px-4 py-3 text-xs select-text">
+                    {entries.map(([key, value]) => (
+                      <div key={key} className="contents">
+                        <dt className="text-text-muted">{key}</dt>
+                        <dd className="min-w-0 break-words text-text-secondary">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                <MarkdownPreviewContext.Provider value={nested}>
+                  <MarkdownText text={body} className="markdown-document" />
+                </MarkdownPreviewContext.Provider>
+              </article>
+            )
           )}
         </div>
       </div>
+      {error && (
+        <p role="alert" className="px-4 py-2 text-xs text-danger select-text">
+          {error}
+        </p>
+      )}
       {footer && history.length === 1 && (
         <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-4 py-2.5">
           {footer}

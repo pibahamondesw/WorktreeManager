@@ -46,3 +46,43 @@ it("preserves keyboard approval for long command labels", async () => {
   fireEvent.keyDown(card, { key: "2" });
   await waitFor(() => expect(onRespond).toHaveBeenCalledWith({ decision: "acceptForSession" }));
 });
+
+it("sends optional feedback when rejecting and leaves typing shortcuts alone", async () => {
+  const onRespond = vi.fn().mockResolvedValue(undefined);
+  render(
+    <PendingRequestCard
+      request={{
+        ...request,
+        feedback: true,
+        decisions: [
+          { id: "allow", label: "Approve" },
+          { id: "deny", label: "Reject" },
+        ],
+      }}
+      focused
+      onRespond={onRespond}
+    />
+  );
+  const feedback = screen.getByRole("textbox", { name: "Rejection feedback (optional)" });
+  fireEvent.change(feedback, { target: { value: "  Archive it instead.  " } });
+  fireEvent.keyDown(feedback, { key: "Enter" });
+  expect(onRespond).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("region", { name: "Run command" }), { key: "Escape" });
+  await waitFor(() =>
+    expect(onRespond).toHaveBeenCalledWith({ decision: "deny", message: "Archive it instead." })
+  );
+});
+
+it("hides unsupported feedback and plan actions", () => {
+  render(<PendingRequestCard request={request} onRespond={vi.fn()} onNewConversation={vi.fn()} />);
+  expect(screen.queryByRole("textbox", { name: "Rejection feedback (optional)" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Approve in new conversation" })).toBeNull();
+});
+
+it("does not include rejection feedback when approving", async () => {
+  const onRespond = vi.fn().mockResolvedValue(undefined);
+  render(<PendingRequestCard request={{ ...request, feedback: true }} onRespond={onRespond} />);
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Try another approach" } });
+  fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(onRespond).toHaveBeenCalledWith({ decision: "accept" }));
+});

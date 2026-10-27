@@ -54,9 +54,11 @@ export function useChatSession(
   useEffect(() => {
     let disposed = false;
     let generation = 0;
+    let opening = 0;
 
     const open = async (mode: ChatOpenMode, conversation?: string, handoffFrom?: AgentId) => {
-      if (disposed) return;
+      if (disposed) throw new Error("The chat pane is no longer active");
+      const version = ++opening;
       const early: { generation: number; apply: (s: ChatSnapshot) => ChatSnapshot }[] = [];
       let ready = false;
       setError(null);
@@ -70,13 +72,15 @@ export function useChatSession(
           conversation,
           handoffFrom,
           onEvent: (eventGeneration, event) => {
-            if (disposed) return;
+            if (disposed || version !== opening) return;
             const apply = (s: ChatSnapshot) => applyChatEvent(s, event);
             if (!ready) early.push({ generation: eventGeneration, apply });
             else if (eventGeneration === generation) setSnapshot(apply);
           },
         });
-        if (disposed) return;
+        if (disposed || version !== opening) {
+          throw new Error("The conversation changed before it was ready");
+        }
         generation = initial.generation;
         ready = true;
         setSnapshot(
@@ -85,15 +89,18 @@ export function useChatSession(
             .reduce((s, entry) => entry.apply(s), initial)
         );
       } catch (e) {
-        if (disposed) return;
+        if (disposed || version !== opening) throw e;
         setError(typeof e === "string" ? e : "Could not start the chat");
         setSnapshot({ ...CONNECTING, status: { kind: "failed", message: String(e) } });
+        throw e;
       }
     };
     openRef.current = open;
     const taken = takeIntent?.();
     const intent = taken?.agent === agent ? taken : undefined;
-    void open(intent?.mode ?? "attach", intent?.conversation, intent?.handoffFrom);
+    void open(intent?.mode ?? "attach", intent?.conversation, intent?.handoffFrom).catch(
+      () => undefined
+    );
 
     return () => {
       disposed = true;
@@ -101,10 +108,17 @@ export function useChatSession(
     };
   }, [taskId, agent, foldersKey, takeIntent]);
 
-  const restart = useCallback(() => openRef.current("restart"), []);
-  const startFresh = useCallback(() => openRef.current("fresh"), []);
+  const restart = useCallback(() => openRef.current("restart").catch(() => undefined), []);
+  const startFresh = useCallback(() => openRef.current("fresh").catch(() => undefined), []);
+  const implementPlan = useCallback(
+    async (plan: string) => {
+      await openRef.current("fresh");
+      await chatSend(taskId, agent, `Implement the following approved plan:\n\n${plan}`, []);
+    },
+    [taskId, agent]
+  );
   const resume = useCallback(
-    (conversation: string) => openRef.current("restart", conversation),
+    (conversation: string) => openRef.current("restart", conversation).catch(() => undefined),
     []
   );
   const configure = useCallback(
@@ -139,6 +153,7 @@ export function useChatSession(
     error,
     restart,
     startFresh,
+    implementPlan,
     resume,
     send,
     interrupt,

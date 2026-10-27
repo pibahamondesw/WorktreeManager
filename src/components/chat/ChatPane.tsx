@@ -3,6 +3,8 @@ import { Button } from "../ui/Button";
 import { ChatItemView, WorkGroup } from "./ChatItemView";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
 import { Composer } from "./Composer";
+import { ApprovalActions } from "./ApprovalActions";
+import { ApprovalDraft } from "./approval";
 import { PendingRequestCard } from "./PendingRequestCard";
 import { SessionList } from "./SessionList";
 import { TodoPanel } from "./TodoPanel";
@@ -25,7 +27,9 @@ import {
   ChatImage,
   ChatItem,
   ChatOpenIntent,
+  ChatResponse,
   ChatStatus,
+  PendingRequest,
   HistoryAction,
   isLive,
   totals,
@@ -81,6 +85,9 @@ export function ChatPane({
 }: ChatPaneProps) {
   const session = useChatSession(taskId, agent, folders, takeOpenIntent);
   const { snapshot, error, restart, respond } = session;
+  const [approvalDrafts, setApprovalDrafts] = useState<Record<string, ApprovalDraft>>({});
+  const [responding, setResponding] = useState<string | null>(null);
+  const respondingRef = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
@@ -97,8 +104,17 @@ export function ChatPane({
   const changes = useChatChanges(taskId, agent, snapshot);
   const [changesScope, setChangesScope] = useState<ChangesScope | null>(null);
   const [diffThreads, setDiffThreads] = useDiffThreads(`${taskId}:${agent}`);
-  const [preview, setPreview] = useState<MarkdownPreviewRequest | null>(null);
-  const previewContext = useMemo(() => ({ folders, open: setPreview }), [folders]);
+  const [preview, setPreview] = useState<(MarkdownPreviewRequest & { generation: number }) | null>(
+    null
+  );
+  const previewContext = useMemo(
+    () => ({
+      folders,
+      open: (request: MarkdownPreviewRequest) =>
+        setPreview({ ...request, generation: snapshot.generation }),
+    }),
+    [folders, snapshot.generation]
+  );
   const [outgoing, setOutgoing] = useState<{
     text: string;
     generation: number;
@@ -131,9 +147,14 @@ export function ChatPane({
       request.format === "markdown" && request.detail ? [request.detail] : []
     )
   );
-  const previewRequest = preview?.requestId
-    ? pending.find((request) => request.id === preview.requestId)
-    : undefined;
+  const approvalKey = (id: string) => `${snapshot.generation}:${id}`;
+  const approvalDraft = (id: string) => approvalDrafts[approvalKey(id)] ?? {};
+  const changeApprovalDraft = (id: string, draft: ApprovalDraft) =>
+    setApprovalDrafts((current) => ({ ...current, [approvalKey(id)]: draft }));
+  const previewRequest =
+    preview?.generation === snapshot.generation && preview.requestId
+      ? pending.find((request) => request.id === preview.requestId)
+      : undefined;
 
   const switchBlocker =
     busy || status.kind === "starting" || pending.length > 0 || historyPending !== null
@@ -219,6 +240,30 @@ export function ChatPane({
     } catch (e) {
       setOutgoing((current) => (current === message ? null : current));
       throw e;
+    }
+  };
+
+  const answerApproval = async (request: PendingRequest, response?: ChatResponse) => {
+    if (respondingRef.current) return;
+    respondingRef.current = true;
+    setResponding(request.id);
+    setActionError(null);
+    try {
+      if (response) await respond(request.id, response);
+      else {
+        const plan = approvalDraft(request.id).plan ?? request.detail ?? "";
+        setPreview({
+          source: { kind: "inline", title: "Approved plan", text: plan },
+          generation: snapshot.generation,
+        });
+        await session.implementPlan(plan);
+      }
+      setPreview(null);
+    } catch (e) {
+      setActionError(String(e));
+    } finally {
+      respondingRef.current = false;
+      setResponding(null);
     }
   };
 
@@ -351,7 +396,11 @@ export function ChatPane({
                 key={request.id}
                 request={request}
                 focused={index === 0}
-                onRespond={(response) => run(() => respond(request.id, response))}
+                draft={approvalDraft(request.id)}
+                onDraftChange={(draft) => changeApprovalDraft(request.id, draft)}
+                disabled={responding !== null}
+                onRespond={(response) => answerApproval(request, response)}
+                onNewConversation={() => answerApproval(request)}
               />
             ))}
             {showOutgoing && (
@@ -434,22 +483,33 @@ export function ChatPane({
             key={JSON.stringify(preview.source)}
             request={preview}
             folders={folders}
+            error={actionError}
             onClose={() => setPreview(null)}
+            editable={
+              previewRequest?.kind === "approval" && previewRequest.editablePlan
+                ? {
+                    text: approvalDraft(previewRequest.id).plan ?? previewRequest.detail ?? "",
+                    onChange: (plan) =>
+                      changeApprovalDraft(previewRequest.id, {
+                        ...approvalDraft(previewRequest.id),
+                        plan,
+                      }),
+                    disabled: responding !== null,
+                  }
+                : undefined
+            }
             footer={
-              previewRequest?.kind === "approval" &&
-              previewRequest.decisions.map((decision, index) => (
-                <Button
-                  key={decision.id}
-                  variant={index === 0 ? "primary" : "secondary"}
-                  className="h-7 px-3 text-xs"
-                  onClick={() => {
-                    setPreview(null);
-                    void run(() => respond(previewRequest.id, { decision: decision.id }));
-                  }}
-                >
-                  {decision.label}
-                </Button>
-              ))
+              previewRequest?.kind === "approval" && (
+                <ApprovalActions
+                  shortcuts={false}
+                  request={previewRequest}
+                  draft={approvalDraft(previewRequest.id)}
+                  onDraftChange={(draft) => changeApprovalDraft(previewRequest.id, draft)}
+                  sending={responding !== null}
+                  onRespond={(response) => answerApproval(previewRequest, response)}
+                  onNewConversation={() => answerApproval(previewRequest)}
+                />
+              )
             }
           />
         )}

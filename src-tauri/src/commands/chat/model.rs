@@ -137,8 +137,15 @@ pub struct Question {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PendingKind {
-    Approval { decisions: Vec<Decision> },
-    Question { questions: Vec<Question> },
+    Approval {
+        decisions: Vec<Decision>,
+        feedback: bool,
+        #[serde(rename = "editablePlan")]
+        editable_plan: bool,
+    },
+    Question {
+        questions: Vec<Question>,
+    },
     Unsupported,
 }
 
@@ -472,6 +479,8 @@ impl ChatSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct ChatResponse {
     pub decision: Option<String>,
+    pub message: Option<String>,
+    pub plan: Option<String>,
     #[serde(default)]
     pub answers: HashMap<String, Vec<String>>,
 }

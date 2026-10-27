@@ -475,6 +475,8 @@ impl ClaudeProvider {
                         Decision::new("allow", "Approve plan"),
                         Decision::new("deny", "Keep planning"),
                     ],
+                    feedback: true,
+                    editable_plan: input["plan"].as_str().is_some(),
                 },
             }
         } else if tool == ASK_USER_TOOL {
@@ -515,7 +517,11 @@ impl ClaudeProvider {
                 } else {
                     DetailFormat::Text
                 },
-                kind: PendingKind::Approval { decisions },
+                kind: PendingKind::Approval {
+                    decisions,
+                    feedback: true,
+                    editable_plan: false,
+                },
             }
         };
         self.requests.insert(id.to_string(), request.clone());
@@ -751,14 +757,34 @@ impl ChatProvider for ClaudeProvider {
         &mut self,
         request_id: &str,
         response: &ChatResponse,
-        _snapshot: &ChatSnapshot,
+        snapshot: &ChatSnapshot,
         out: &mut ProviderOutput,
     ) -> Result<(), String> {
         let request = self
             .requests
-            .remove(request_id)
+            .get(request_id)
             .ok_or("That request is no longer pending")?;
-        let input = &request["input"];
+        if request["tool_name"] == EXIT_PLAN_TOOL
+            && response.decision.as_deref() == Some("allow")
+            && response
+                .plan
+                .as_ref()
+                .is_some_and(|plan| plan.trim().is_empty())
+        {
+            return Err("The plan cannot be empty".into());
+        }
+        let request = self.requests.remove(request_id).unwrap();
+        let mut input = request["input"].clone();
+        if request["tool_name"] == EXIT_PLAN_TOOL {
+            if let Some(plan) = &response.plan {
+                input["plan"] = json!(plan);
+            }
+        }
+        let message = response
+            .message
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         let decision = if request["tool_name"] == ASK_USER_TOOL {
             let answers: serde_json::Map<String, Value> = input["questions"]
                 .as_array()
@@ -779,6 +805,17 @@ impl ChatProvider for ClaudeProvider {
             {
                 self.controls.mode = Some("default".into());
                 out.controls(&self.controls);
+                if let Some(plan) = &response.plan {
+                    if let Some(item) = snapshot.items.iter().rfind(|item| {
+                        item.kind == ItemKind::Notice
+                            && item.title.as_deref() == Some("Plan")
+                            && item.text == request["input"]["plan"].as_str().unwrap_or_default()
+                    }) {
+                        let mut item = item.clone();
+                        item.text = plan.clone();
+                        out.upsert(item);
+                    }
+                }
             }
             match response.decision.as_deref() {
                 Some("allow") => json!({ "behavior": "allow", "updatedInput": input }),
@@ -789,10 +826,12 @@ impl ChatProvider for ClaudeProvider {
                 }),
                 Some("denyAndStop") => json!({
                     "behavior": "deny",
-                    "message": "The user rejected this and stopped the turn.",
+                    "message": message.unwrap_or("The user rejected this and stopped the turn."),
                     "interrupt": true,
                 }),
-                _ => json!({ "behavior": "deny", "message": "The user rejected this action." }),
+                _ => {
+                    json!({ "behavior": "deny", "message": message.unwrap_or("The user rejected this action.") })
+                }
             }
         };
         out.write(json!({
@@ -1840,7 +1879,7 @@ mod tests {
                 "permission_suggestions": [{ "type": "addRules" }],
             } }),
         );
-        let PendingKind::Approval { decisions } = &snapshot.pending[0].kind else {
+        let PendingKind::Approval { decisions, .. } = &snapshot.pending[0].kind else {
             panic!("expected approval");
         };
         assert!(decisions.iter().any(|d| d.id == "allowAlways"));
@@ -1888,6 +1927,7 @@ mod tests {
         let response = ChatResponse {
             decision: None,
             answers: HashMap::from([("Which DB?".to_string(), vec!["Postgres".to_string()])]),
+            ..Default::default()
         };
         provider
             .respond("q1", &response, &snapshot, &mut out)
@@ -2544,6 +2584,142 @@ mod tests {
         assert_eq!(
             written(&out)[0]["response"]["response"]["behavior"],
             "allow"
+        );
+    }
+
+    #[test]
+    fn rejecting_with_feedback_keeps_the_turn_running_unless_stopped() {
+        for (decision, interrupt) in [("deny", false), ("denyAndStop", true)] {
+            let (mut provider, mut snapshot) = started();
+            feed(
+                &mut provider,
+                &mut snapshot,
+                json!({
+                    "type": "control_request", "request_id": "r", "request": {
+                        "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": "rm x" }
+                    }
+                }),
+            );
+            let mut out = ProviderOutput::default();
+            provider
+                .respond(
+                    "r",
+                    &ChatResponse {
+                        decision: Some(decision.into()),
+                        message: Some("  Archive it instead.  ".into()),
+                        ..Default::default()
+                    },
+                    &snapshot,
+                    &mut out,
+                )
+                .unwrap();
+            let reply = &written(&out)[0]["response"]["response"];
+            assert_eq!(reply["behavior"], "deny");
+            assert_eq!(reply["message"], "Archive it instead.");
+            assert_eq!(reply["interrupt"].as_bool().unwrap_or(false), interrupt);
+            assert!(!out.completes_turn);
+        }
+    }
+
+    #[test]
+    fn approving_an_edited_plan_preserves_other_inputs_and_updates_the_transcript() {
+        let (mut provider, mut snapshot) = initialized();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "type": "assistant", "message": { "id": "m", "content": [{
+                    "type": "tool_use", "id": "t", "name": "ExitPlanMode", "input": { "plan": "Original" }
+                }] }
+            }),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "type": "control_request", "request_id": "p", "request": {
+                    "subtype": "can_use_tool", "tool_name": "ExitPlanMode",
+                    "input": { "plan": "Original", "allowedPrompts": [{ "tool": "Bash", "prompt": "run tests" }] }
+                }
+            }),
+        );
+        assert!(matches!(
+            snapshot.pending[0].kind,
+            PendingKind::Approval {
+                feedback: true,
+                editable_plan: true,
+                ..
+            }
+        ));
+        let mut out = ProviderOutput::default();
+        provider
+            .respond(
+                "p",
+                &ChatResponse {
+                    decision: Some("allow".into()),
+                    plan: Some("# Revised\n\n1. Test first".into()),
+                    ..Default::default()
+                },
+                &snapshot,
+                &mut out,
+            )
+            .unwrap();
+        let reply = &written(&out)[0]["response"]["response"];
+        assert_eq!(reply["updatedInput"]["plan"], "# Revised\n\n1. Test first");
+        assert_eq!(
+            reply["updatedInput"]["allowedPrompts"][0]["prompt"],
+            "run tests"
+        );
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        assert_eq!(
+            snapshot.item("t").unwrap().text,
+            "# Revised\n\n1. Test first"
+        );
+        assert!(snapshot.pending.is_empty());
+    }
+
+    #[test]
+    fn an_empty_edited_plan_can_be_retried() {
+        let (mut provider, mut snapshot) = initialized();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "type": "control_request", "request_id": "p", "request": {
+                    "subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": { "plan": "Original" }
+                }
+            }),
+        );
+        let mut out = ProviderOutput::default();
+        assert!(provider
+            .respond(
+                "p",
+                &ChatResponse {
+                    decision: Some("allow".into()),
+                    plan: Some(" \n ".into()),
+                    ..Default::default()
+                },
+                &snapshot,
+                &mut out
+            )
+            .is_err());
+        assert!(out.writes.is_empty());
+        provider
+            .respond(
+                "p",
+                &ChatResponse {
+                    decision: Some("allow".into()),
+                    ..Default::default()
+                },
+                &snapshot,
+                &mut out,
+            )
+            .unwrap();
+        assert_eq!(
+            written(&out)[0]["response"]["response"]["updatedInput"]["plan"],
+            "Original"
         );
     }
 

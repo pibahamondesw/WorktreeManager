@@ -763,7 +763,7 @@ impl CodexProvider {
                 let amendment = Some(params["proposedExecpolicyAmendment"].clone())
                     .filter(|amendment| !amendment.is_null());
                 let mut decisions = approval_decisions();
-                if let (Some(amendment), PendingKind::Approval { decisions }) =
+                if let (Some(amendment), PendingKind::Approval { decisions, .. }) =
                     (&amendment, &mut decisions)
                 {
                     let prefix = amendment
@@ -1201,6 +1201,8 @@ fn delta(
 
 fn approval_decisions() -> PendingKind {
     PendingKind::Approval {
+        feedback: false,
+        editable_plan: false,
         decisions: vec![
             Decision::new("accept", "Approve"),
             Decision::new("acceptForSession", "Approve for session"),
@@ -1944,6 +1946,14 @@ mod tests {
         );
         let pending = &snapshot.pending[0];
         assert_eq!(pending.id, "0");
+        assert!(matches!(
+            pending.kind,
+            PendingKind::Approval {
+                feedback: false,
+                editable_plan: false,
+                ..
+            }
+        ));
         assert!(pending.detail.as_deref().unwrap().contains("+hi"));
 
         let mut out = ProviderOutput::default();
@@ -1994,6 +2004,7 @@ mod tests {
         let answers = ChatResponse {
             decision: None,
             answers: HashMap::from([(question_id.clone(), vec!["Té".to_string()])]),
+            ..Default::default()
         };
         provider
             .respond("async:call_1", &answers, &snapshot, &mut out)
@@ -2063,6 +2074,7 @@ mod tests {
         let answers = ChatResponse {
             decision: None,
             answers: HashMap::from([("color".to_string(), vec!["Red".to_string()])]),
+            ..Default::default()
         };
         provider
             .respond("q", &answers, &snapshot, &mut out)
@@ -2357,7 +2369,7 @@ mod tests {
                 "threadId": "th1", "command": "cargo test --lib", "proposedExecpolicyAmendment": ["cargo", "test"],
             } }),
         );
-        let PendingKind::Approval { decisions } = &snapshot.pending[0].kind else {
+        let PendingKind::Approval { decisions, .. } = &snapshot.pending[0].kind else {
             panic!("expected approval");
         };
         assert!(decisions
