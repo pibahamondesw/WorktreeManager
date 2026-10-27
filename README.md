@@ -100,6 +100,21 @@ CARGO_TARGET_DIR="$HOME/.cache/worktreemanager-target" cargo test --manifest-pat
 
 Builds default to `~/.cache/worktreemanager-target`; the app bundle is under `release/bundle/macos/`. Override `CARGO_TARGET_DIR` when needed. Run the specific test files relevant to your changes.
 
+### macOS Rust PR check
+
+**Rust (macOS, clippy, native tests)** in the [CI workflow](.github/workflows/ci.yml) runs on standard `macos-14` runners for PRs and pushes to main when Rust sources/configuration, vault-kit files or the CI workflow change. Frontend-only and documentation-only changes skip it. It uses read-only permissions, no release credentials, no signing or publishing, and a separate `macos-pr` dependency cache saved on main.
+
+Clippy compiles all macOS targets, including conditional native code; formatting is checked too. The focused unit selection covers login-shell launches, notification delegates, embedded session state and menu bindings. The separate native menu executable exercises WebKit key routing, editor focus and embedded lifecycle cleanup. Reproduce the tests on macOS with:
+
+```bash
+CARGO_TARGET_DIR="$HOME/.cache/worktreemanager-target" cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- commands::login_shell::tests:: commands::agent_notifications::tests:: commands::embedded:: menu::tests::
+CARGO_TARGET_DIR="$HOME/.cache/worktreemanager-target" cargo test --locked --manifest-path src-tauri/Cargo.toml --test menu
+```
+
+The run summary records wall/user/system seconds for Clippy, unit tests and the native regression, including failed phases. GitHub's job duration also includes runner setup and cache restore. Compare cold and warm runs before changing the 30-minute timeout. Before making this check required, confirm hosted path activation/skips and a deliberate macOS-only compilation failure followed by a corrected run.
+
+Manual macOS smoke checks remain necessary for title-bar dragging and subsequent clicks, actual keyboard/focus behavior across task switches, interactive embedded editor/terminal sessions, external GUI editor launches and real notification permission/click flows. The automated WebKit regression does not cover the complete app UI. Roll back by removing only the `rust-macos` job; no application data changes are involved.
+
 ### Frontend coverage pilot
 
 ```bash
