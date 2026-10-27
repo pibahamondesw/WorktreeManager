@@ -26,6 +26,9 @@ const SAVE_LAUNCH_STATE: &str = r#"wtm_launch_arguments=("$@") wtm_launch_dir=$P
 const RESTORE_LAUNCH_STATE: &str = r#"[ "$PWD" = "$wtm_launch_dir" ] || cd -- "$wtm_launch_dir"
 set -- "${wtm_launch_arguments[@]}"; unset wtm_launch_arguments wtm_launch_dir"#;
 
+pub(crate) const SHIM_DIR_ENV: &str = "WTM_SHIM_DIR";
+const PREFER_SHIMS: &str = r#"[ -z "$WTM_SHIM_DIR" ] || ! command -v doppler >/dev/null 2>&1 || PATH="$WTM_SHIM_DIR:$PATH""#;
+
 /// A launch for the embedded PTY.
 pub struct LaunchSpec {
     pub program: String,
@@ -72,9 +75,10 @@ impl LoginShell {
 
     /// Runs a repository setup or teardown script verbatim, stopping at its first failing line.
     /// The script is authored by the user or a repository they approved; task context reaches it
-    /// only through environment variables.
+    /// only through environment variables. When `doppler` resolves after the profiles,
+    /// `WTM_SHIM_DIR` goes first on the `PATH` they set.
     pub fn repo_script(script: &str) -> Self {
-        Self::script(&format!("set -e\n{script}"))
+        Self::script(&format!("{PREFER_SHIMS}\nset -e\n{script}"))
     }
 
     pub fn args<I, S>(mut self, args: I) -> Self
@@ -303,6 +307,28 @@ mod tests {
         let output = home.run(&LoginShell::repo_script("echo one\nfalse\necho never"));
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(stdout(&output), "one\n");
+    }
+
+    #[test]
+    fn repo_scripts_prefer_the_shim_dir_over_profile_paths() {
+        let home = Home::new("repo-script-shims");
+        let shims = home.0.join("shims");
+        fs::create_dir_all(&shims).unwrap();
+        executable(&shims.join("doppler"), "#!/bin/sh\necho shim\n");
+        fs::write(
+            home.0.join(".zshrc"),
+            "export PATH=\"$HOME/bin:/usr/bin:/bin\"\n",
+        )
+        .unwrap();
+        let script = LoginShell::repo_script("doppler 2>/dev/null || echo absent")
+            .env(SHIM_DIR_ENV, shims.to_string_lossy());
+        assert_eq!(stdout(&home.run(&script)), "absent\n");
+
+        executable(&home.0.join("bin/doppler"), "#!/bin/sh\necho real\n");
+        let script = LoginShell::repo_script("doppler");
+        assert_eq!(stdout(&home.run(&script)), "real\n");
+        let output = home.run(&script.env(SHIM_DIR_ENV, shims.to_string_lossy()));
+        assert_eq!(stdout(&output), "shim\n");
     }
 
     #[test]
