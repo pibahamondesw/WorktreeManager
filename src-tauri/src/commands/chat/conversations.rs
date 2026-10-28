@@ -1,5 +1,6 @@
 //! Which provider conversation each task agent resumes. Stored in app data, never in a worktree,
 //! keyed by task and agent; the worktree path guards against a reused task id pointing elsewhere.
+//! Sessions other than a task agent's primary use an `agent#session` slot as their agent.
 
 use std::collections::HashMap;
 use std::fs;
@@ -199,6 +200,33 @@ mod tests {
             store.entry("t1", "claude", "/wt"),
             Some(conversation("legacy", "/wt"))
         );
+    }
+
+    #[test]
+    fn session_slots_coexist_with_the_legacy_primary_key() {
+        let store = store("session-slots");
+        fs::create_dir_all(store.path.parent().unwrap()).unwrap();
+        fs::write(
+            &store.path,
+            r#"{"t1:codex":{"conversationId":"pane","cwd":"/wt"}}"#,
+        )
+        .unwrap();
+        store
+            .remember("t1", "codex#run", conversation("automation", "/wt"))
+            .unwrap();
+        assert_eq!(store.get("t1", "codex", "/wt").as_deref(), Some("pane"));
+        assert_eq!(
+            store.get("t1", "codex#run", "/wt").as_deref(),
+            Some("automation")
+        );
+        let saved: HashMap<String, Conversation> =
+            serde_json::from_str(&fs::read_to_string(&store.path).unwrap()).unwrap();
+        assert_eq!(saved.len(), 2);
+        assert!(!store.path.with_extension("json.tmp").exists());
+
+        store.forget_task("t1").unwrap();
+        assert_eq!(store.get("t1", "codex", "/wt"), None);
+        assert_eq!(store.get("t1", "codex#run", "/wt"), None);
     }
 
     #[test]

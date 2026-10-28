@@ -41,6 +41,8 @@ const chatStatus = ({ status, hasError }: ChatInfo): TerminalStatus => ({
   ...((hasError || status.kind === "failed") && { hasError: true }),
 });
 
+const isPrimaryChat = (chat: ChatInfo) => chat.origin !== "automation";
+
 const TRANSPORTS: SessionTransports<TaskSessions> = {
   editor: {
     list: editorList,
@@ -65,8 +67,11 @@ const TRANSPORTS: SessionTransports<TaskSessions> = {
     close: openCodeClose,
   },
   chat: {
-    list: chatList,
-    onSession: onChatStatus,
+    list: () => chatList().then((chats) => chats.filter(isPrimaryChat)),
+    onSession: (listener) =>
+      onChatStatus((chat) => {
+        if (isPrimaryChat(chat)) listener(chat);
+      }),
     describe: (chat) => ({
       taskId: chat.taskId,
       surface: { kind: "chat", agent: chat.agent },

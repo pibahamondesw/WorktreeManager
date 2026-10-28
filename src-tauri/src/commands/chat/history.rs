@@ -8,7 +8,8 @@ use tauri::{AppHandle, Manager, Runtime, State};
 use super::super::agents::{Agents, ForkLaunch, ForkMethod, ForkRequest};
 use super::{
     blocking, checkpoints, conversation_store, handoff_store, model, start_session, turns,
-    ChatRegistry, ChatStatus, Conversation, ConversationFork, ProviderOutput, SessionSetup, Shared,
+    ChatOrigin, ChatOwner, ChatRegistry, ChatStatus, Conversation, ConversationFork,
+    ProviderOutput, SessionSetup, Shared,
 };
 
 fn history_item(
@@ -80,7 +81,9 @@ pub async fn chat_history<R: Runtime>(
     let _opening = open_lock.lock().await;
     let (shared, remember, notify, rewind, peers) = {
         let sessions = registry.sessions.lock().unwrap();
-        let session = sessions.get(&key).ok_or("No chat session for this task")?;
+        let (_, session) = sessions
+            .primary(&task_id, &agent)
+            .ok_or("No chat session for this task")?;
         (|| -> Result<_, String> {
             let mut state = session.shared.lock().unwrap();
             let item = history_item(&state.snapshot, state.history_busy, generation, &item_id)?;
@@ -96,8 +99,9 @@ pub async fn chat_history<R: Runtime>(
             };
             let mut peers = Vec::new();
             if action != HistoryAction::Conversation {
-                for (other_key, other) in
-                    sessions.iter().filter(|(other_key, _)| *other_key != &key)
+                for (owner, other) in sessions
+                    .sessions()
+                    .filter(|(_, other)| !Arc::ptr_eq(&other.shared, &session.shared))
                 {
                     let peer = other.shared.lock().unwrap();
                     if peer.turns.shares_folders(&state.turns) {
@@ -110,7 +114,7 @@ pub async fn chat_history<R: Runtime>(
                         {
                             return Err(format!(
                                 "Stop {} on task {} before restoring shared files",
-                                other_key.1, other_key.0
+                                owner.agent, owner.task_id
                             ));
                         }
                         peers.push(other.shared.clone());
@@ -244,15 +248,18 @@ pub async fn chat_history<R: Runtime>(
     }
     let (backup, previous) = {
         let mut sessions = registry.sessions.lock().unwrap();
-        let active = sessions.get(&key).is_some_and(|session| {
-            Arc::ptr_eq(&session.shared, &shared) && session.status().is_live()
-        });
-        if !active {
+        let active = sessions
+            .primary(&task_id, &agent)
+            .filter(|(_, session)| {
+                Arc::ptr_eq(&session.shared, &shared) && session.status().is_live()
+            })
+            .map(|(id, _)| id.clone());
+        let Some(session_id) = active else {
             if let Some((_, session, _)) = replacement {
                 session.terminate();
             }
             return Err("The chat was closed during this action".into());
-        }
+        };
         let restored = if let Some(rewind) = &rewind {
             rewind.restore(confirmation.as_deref().unwrap())
         } else {
@@ -300,7 +307,12 @@ pub async fn chat_history<R: Runtime>(
                 ));
             }
             session.shared.lock().unwrap().history_busy = false;
-            sessions.insert(key, session)
+            let owner = ChatOwner {
+                task_id: task_id.clone(),
+                agent: agent.clone(),
+                origin: ChatOrigin::User,
+            };
+            sessions.insert(session_id, owner, session)
         } else {
             if action != HistoryAction::Code {
                 let state = shared.lock().unwrap();

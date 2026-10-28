@@ -195,9 +195,14 @@ export interface ChatResponse {
   answers?: Record<string, string[]>;
 }
 
+/** A user session is its task agent's primary chat; automations run beside it. */
+export type ChatOrigin = "user" | "automation";
+
 export interface ChatInfo {
+  sessionId: string;
   taskId: string;
   agent: AgentId;
+  origin: ChatOrigin;
   status: ChatStatus;
   /** An approval or question is waiting for an answer. */
   waiting: boolean;
@@ -271,10 +276,12 @@ interface ChatOpenArgs {
   onEvent: (generation: number, event: ChatEvent) => void;
 }
 
-export function chatOpen({ onEvent, ...args }: ChatOpenArgs): Promise<ChatSnapshot> {
+export type OpenedChat = ChatSnapshot & { sessionId: string };
+
+export function chatOpen({ onEvent, ...args }: ChatOpenArgs): Promise<OpenedChat> {
   const channel = new Channel<{ generation: number; event: ChatEvent }>();
   channel.onmessage = (message) => onEvent(message.generation, message.event);
-  return invoke<ChatSnapshot>("chat_open", { ...args, onEvent: channel });
+  return invoke<OpenedChat>("chat_open", { ...args, onEvent: channel });
 }
 
 export interface ChatSessionSummary {
@@ -441,8 +448,8 @@ export const chatRespond = (
   response: ChatResponse
 ) => invoke<void>("chat_respond", { taskId, agent, requestId, response });
 
-export const chatDetach = (taskId: string, agent: AgentId, generation: number) =>
-  invoke<void>("chat_detach", { taskId, agent, generation }).catch(() => undefined);
+export const chatDetach = (taskId: string, agent: AgentId, generation: number, sessionId: string) =>
+  invoke<void>("chat_detach", { taskId, agent, generation, sessionId }).catch(() => undefined);
 
 export const chatStop = (taskId: string, agent: AgentId) =>
   invoke<void>("chat_stop", { taskId, agent });

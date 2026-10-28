@@ -562,6 +562,7 @@ fn closing_the_source_during_a_fork_does_not_reinsert_the_session() {
         .sessions
         .lock()
         .unwrap()
+        .0
         .is_empty());
 }
 
@@ -642,6 +643,7 @@ fn closing_the_source_while_claude_initializes_cleans_up_the_replacement() {
         .sessions
         .lock()
         .unwrap()
+        .0
         .is_empty());
 }
 
@@ -718,11 +720,15 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
         .unwrap_err()
         .contains("unavailable"));
     let session = registry.remove("task", "codex").unwrap();
-    registry
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(("task".into(), "other".into()), session);
+    registry.sessions.lock().unwrap().insert(
+        "other".into(),
+        ChatOwner {
+            task_id: "task".into(),
+            agent: "other".into(),
+            origin: ChatOrigin::User,
+        },
+        session,
+    );
     assert!(fixture
         .apply("other", "u2", HistoryAction::Conversation, None)
         .unwrap_err()
@@ -918,7 +924,8 @@ fn history_commands_run_through_tauri_ipc_and_task_close_removes_the_saved_mappi
     fixture.open("codex", OpenMode::Restart).unwrap();
     let sessions = chat_list(fixture.app.state());
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].agent, "codex");
+    assert_eq!(sessions[0].owner.agent, "codex");
+    assert_eq!(sessions[0].owner.origin, ChatOrigin::User);
     let view = tauri::WebviewWindowBuilder::new(&fixture.app, "main", Default::default())
         .build()
         .unwrap();

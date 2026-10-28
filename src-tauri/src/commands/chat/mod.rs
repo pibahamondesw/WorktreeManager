@@ -1,4 +1,5 @@
-//! Embedded chat sessions, one per task and agent, driving the installed agent CLI over stdio.
+//! Embedded chat sessions keyed by session id, driving the installed agent CLI over stdio. Each
+//! task agent has at most one primary (user) session; automation sessions run beside it.
 //! Like terminals, a session outlives its pane: switching tasks detaches the webview sink, and
 //! attaching again returns a snapshot plus live events from the same generation. Separate from
 //! `terminal` on purpose — this layer speaks structured events, not a byte stream.
@@ -57,10 +58,44 @@ const STDERR_TAIL: usize = 4096;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatInfo {
-    task_id: String,
-    agent: String,
+    session_id: String,
+    #[serde(flatten)]
+    owner: ChatOwner,
     #[serde(flatten)]
     activity: ChatActivity,
+}
+
+/// Who started a session. The user's session of a task agent is its primary one, the one the
+/// pane attaches to; automation sessions run beside it without taking its place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatOrigin {
+    User,
+    #[allow(dead_code)]
+    Automation,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatOwner {
+    task_id: String,
+    agent: String,
+    origin: ChatOrigin,
+}
+
+impl ChatOwner {
+    fn is_primary_of(&self, task_id: &str, agent: &str) -> bool {
+        self.origin == ChatOrigin::User && self.task_id == task_id && self.agent == agent
+    }
+
+    /// Where the session's conversation is remembered: the primary keeps the legacy `task:agent`
+    /// key, other sessions get their own so they never replace what the pane resumes.
+    fn conversation_slot(&self, session_id: &str) -> String {
+        match self.origin {
+            ChatOrigin::User => self.agent.clone(),
+            ChatOrigin::Automation => format!("{}#{session_id}", self.agent),
+        }
+    }
 }
 
 /// What the app's agent alerts follow; a change is broadcast as `chat-status`.
@@ -433,9 +468,78 @@ fn wait_for_exit(process: &Mutex<Option<OwnedProcess>>) -> Option<i32> {
 type SessionKey = (String, String);
 type OpenLock = Arc<tokio::sync::Mutex<()>>;
 
+struct RegisteredChat {
+    owner: ChatOwner,
+    session: ChatSession,
+}
+
+/// Live sessions by session id; a task agent's primary is its user session.
+#[derive(Default)]
+struct Sessions(HashMap<String, RegisteredChat>);
+
+impl Sessions {
+    fn primary(&self, task_id: &str, agent: &str) -> Option<(&String, &ChatSession)> {
+        self.0
+            .iter()
+            .find(|(_, chat)| chat.owner.is_primary_of(task_id, agent))
+            .map(|(id, chat)| (id, &chat.session))
+    }
+
+    fn get(&self, session_id: &str) -> Option<&ChatSession> {
+        self.0.get(session_id).map(|chat| &chat.session)
+    }
+
+    fn sessions(&self) -> impl Iterator<Item = (&ChatOwner, &ChatSession)> {
+        self.0.values().map(|chat| (&chat.owner, &chat.session))
+    }
+
+    /// Registers a session; a user session replaces the primary of its task agent.
+    fn insert(
+        &mut self,
+        session_id: String,
+        owner: ChatOwner,
+        session: ChatSession,
+    ) -> Option<ChatSession> {
+        let replaced = match owner.origin {
+            ChatOrigin::User => self.remove_primary(&owner.task_id, &owner.agent),
+            ChatOrigin::Automation => None,
+        };
+        let same_id = self.0.insert(session_id, RegisteredChat { owner, session });
+        replaced.or(same_id.map(|chat| chat.session))
+    }
+
+    fn remove_primary(&mut self, task_id: &str, agent: &str) -> Option<ChatSession> {
+        let id = self.primary(task_id, agent)?.0.clone();
+        self.0.remove(&id).map(|chat| chat.session)
+    }
+
+    fn remove_task(&mut self, task_id: &str) -> Vec<ChatSession> {
+        let ids: Vec<_> = self
+            .0
+            .iter()
+            .filter(|(_, chat)| chat.owner.task_id == task_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| self.0.remove(&id).map(|chat| chat.session))
+            .collect()
+    }
+
+    fn list(&self) -> Vec<ChatInfo> {
+        self.0
+            .iter()
+            .map(|(id, chat)| ChatInfo {
+                session_id: id.clone(),
+                owner: chat.owner.clone(),
+                activity: chat.session.activity(),
+            })
+            .collect()
+    }
+}
+
 pub struct ChatRegistry {
     history_timeout: Duration,
-    sessions: Mutex<HashMap<(String, String), ChatSession>>,
+    sessions: Mutex<Sessions>,
     generation: AtomicU64,
     opening: Mutex<HashMap<SessionKey, OpenLock>>,
 }
@@ -453,15 +557,9 @@ impl Default for ChatRegistry {
 
 impl ChatRegistry {
     pub fn shutdown_all(&self) {
-        let sessions: Vec<_> = self
-            .sessions
-            .lock()
-            .unwrap()
-            .drain()
-            .map(|(_, s)| s)
-            .collect();
-        for session in sessions {
-            session.terminate();
+        let sessions = std::mem::take(&mut *self.sessions.lock().unwrap());
+        for chat in sessions.0.into_values() {
+            chat.session.terminate();
         }
     }
 
@@ -478,24 +576,14 @@ impl ChatRegistry {
     }
 
     fn remove(&self, task_id: &str, agent: &str) -> Option<ChatSession> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .remove(&(task_id.to_string(), agent.to_string()))
+        self.sessions.lock().unwrap().remove_primary(task_id, agent)
     }
 
     fn remove_task(&self, task_id: &str) -> Vec<ChatSession> {
-        let mut sessions = self.sessions.lock().unwrap();
-        let keys: Vec<_> = sessions
-            .keys()
-            .filter(|(id, _)| id == task_id)
-            .cloned()
-            .collect();
-        keys.into_iter()
-            .filter_map(|key| sessions.remove(&key))
-            .collect()
+        self.sessions.lock().unwrap().remove_task(task_id)
     }
 
+    /// Acts on the task agent's primary session.
     fn with_session<T>(
         &self,
         task_id: &str,
@@ -503,8 +591,8 @@ impl ChatRegistry {
         action: impl FnOnce(&ChatSession) -> Result<T, String>,
     ) -> Result<T, String> {
         let sessions = self.sessions.lock().unwrap();
-        let session = sessions
-            .get(&(task_id.to_string(), agent.to_string()))
+        let (_, session) = sessions
+            .primary(task_id, agent)
             .ok_or("No chat session for this task")?;
         action(session)
     }
@@ -547,6 +635,15 @@ pub enum OpenMode {
     Fresh,
 }
 
+/// The snapshot a pane attaches with, and the session it belongs to.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenedChat {
+    session_id: String,
+    #[serde(flatten)]
+    snapshot: ChatSnapshot,
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn chat_open<R: Runtime>(
@@ -559,7 +656,7 @@ pub async fn chat_open<R: Runtime>(
     conversation: Option<String>,
     handoff_from: Option<String>,
     on_event: Channel<LiveEvent>,
-) -> Result<ChatSnapshot, String> {
+) -> Result<OpenedChat, String> {
     let agents = Agents::of(&app);
     let adapter = agents.get(&agent)?;
     if handoff_from.as_deref() == Some(agent.as_str()) {
@@ -568,15 +665,26 @@ pub async fn chat_open<R: Runtime>(
     let key = (task_id.clone(), agent.clone());
     let open_lock = registry.open_lock(&key);
     let _opening = open_lock.lock().await;
-    let stale = {
+    let (session_id, stale) = {
         let mut sessions = registry.sessions.lock().unwrap();
-        match sessions.get(&key) {
-            Some(session) if mode == OpenMode::Attach && session.status().is_live() => {
-                return Ok(session.attach(on_event));
+        match sessions.primary(&task_id, &agent) {
+            Some((id, session)) if mode == OpenMode::Attach && session.status().is_live() => {
+                return Ok(OpenedChat {
+                    session_id: id.clone(),
+                    snapshot: session.attach(on_event),
+                });
             }
-            Some(_) => sessions.remove(&key),
-            None => None,
+            Some((id, _)) => {
+                let id = id.clone();
+                (id, sessions.remove_primary(&task_id, &agent))
+            }
+            None => (uuid::Uuid::new_v4().to_string(), None),
         }
+    };
+    let owner = ChatOwner {
+        task_id: task_id.clone(),
+        agent: agent.clone(),
+        origin: ChatOrigin::User,
     };
     if let Some(stale) = stale {
         tauri::async_runtime::spawn_blocking(move || stale.terminate())
@@ -659,6 +767,7 @@ pub async fn chat_open<R: Runtime>(
     let remember: Remember = {
         let (store, task_id, agent, cwd) =
             (store.clone(), task_id.clone(), agent.clone(), cwd.clone());
+        let slot = owner.conversation_slot(&session_id);
         let link = handoff.as_ref().map(|handoff| handoff.link.clone());
         Arc::new(move |conversation_id| {
             if let Some(link) = &link {
@@ -669,19 +778,19 @@ pub async fn chat_open<R: Runtime>(
                 cwd: cwd.clone(),
                 fork: None,
             };
-            if let Err(error) = store.remember(&task_id, &agent, conversation) {
+            if let Err(error) = store.remember(&task_id, &slot, conversation) {
                 log::warn!("could not remember chat conversation: {error}");
             }
         })
     };
     let notify: Notify = {
-        let (app, task_id, agent) = (app.clone(), task_id.clone(), agent.clone());
+        let (app, session_id, owner) = (app.clone(), session_id.clone(), owner.clone());
         Arc::new(move |activity| {
             let _ = app.emit(
                 STATUS_EVENT,
                 ChatInfo {
-                    task_id: task_id.clone(),
-                    agent: agent.clone(),
+                    session_id: session_id.clone(),
+                    owner: owner.clone(),
                     activity,
                 },
             );
@@ -701,11 +810,18 @@ pub async fn chat_open<R: Runtime>(
     };
     let session = start_session(&task_id, launch, handoff, setup)?;
     let snapshot = session.attach(on_event);
-    let previous = registry.sessions.lock().unwrap().insert(key, session);
+    let previous = registry
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(session_id.clone(), owner, session);
     if let Some(previous) = previous {
         tauri::async_runtime::spawn_blocking(move || previous.terminate());
     }
-    Ok(snapshot)
+    Ok(OpenedChat {
+        session_id,
+        snapshot,
+    })
 }
 
 #[tauri::command(async)]
@@ -840,11 +956,18 @@ pub fn chat_detach(
     task_id: String,
     agent: String,
     generation: u64,
+    session_id: Option<String>,
 ) {
-    let _ = registry.with_session(&task_id, &agent, |session| {
+    let sessions = registry.sessions.lock().unwrap();
+    let session = match &session_id {
+        Some(id) => sessions.get(id),
+        None => sessions
+            .primary(&task_id, &agent)
+            .map(|(_, session)| session),
+    };
+    if let Some(session) = session {
         session.detach(generation);
-        Ok(())
-    });
+    }
 }
 
 fn primary_folder(folders: &[String]) -> Result<String, String> {
@@ -971,17 +1094,7 @@ pub async fn chat_close<R: Runtime>(
 
 #[tauri::command(async)]
 pub fn chat_list(registry: State<'_, ChatRegistry>) -> Vec<ChatInfo> {
-    registry
-        .sessions
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|((task_id, agent), session)| ChatInfo {
-            task_id: task_id.clone(),
-            agent: agent.clone(),
-            activity: session.activity(),
-        })
-        .collect()
+    registry.sessions.lock().unwrap().list()
 }
 
 #[cfg(test)]
@@ -1165,14 +1278,14 @@ mod tests {
             ]
         );
         let info = serde_json::to_value(ChatInfo {
-            task_id: "t1".into(),
-            agent: "claude".into(),
+            session_id: "s1".into(),
+            owner: owner("t1", "claude", ChatOrigin::User),
             activity: shared.activity(),
         })
         .unwrap();
         assert_eq!(
             info,
-            serde_json::json!({ "taskId": "t1", "agent": "claude", "status": { "kind": "idle" }, "waiting": false, "backgroundAgents": false })
+            serde_json::json!({ "sessionId": "s1", "taskId": "t1", "agent": "claude", "origin": "user", "status": { "kind": "idle" }, "waiting": false, "backgroundAgents": false })
         );
     }
 
@@ -1726,17 +1839,48 @@ mod tests {
         assert!(session.shared.lock().unwrap().snapshot.items.is_empty());
     }
 
+    fn owner(task: &str, agent: &str, origin: ChatOrigin) -> ChatOwner {
+        ChatOwner {
+            task_id: task.into(),
+            agent: agent.into(),
+            origin,
+        }
+    }
+
+    fn register(registry: &ChatRegistry, id: &str, owner: ChatOwner) -> Option<ChatSession> {
+        registry.sessions.lock().unwrap().insert(
+            id.into(),
+            owner,
+            spawn("sleep 60", Arc::default(), Arc::default()),
+        )
+    }
+
+    fn live(registry: &ChatRegistry, id: &str) -> bool {
+        registry
+            .sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|session| session.status().is_live())
+    }
+
     #[test]
     fn registry_closes_every_agent_of_a_task_only() {
         let registry = ChatRegistry::default();
-        for (task, agent) in [("t1", "codex"), ("t1", "claude"), ("t2", "codex")] {
-            registry.sessions.lock().unwrap().insert(
-                (task.into(), agent.into()),
-                spawn("sleep 60", Arc::default(), Arc::default()),
-            );
+        for (id, task, agent) in [
+            ("a", "t1", "codex"),
+            ("b", "t1", "claude"),
+            ("c", "t2", "codex"),
+        ] {
+            register(&registry, id, owner(task, agent, ChatOrigin::User));
         }
+        register(
+            &registry,
+            "run",
+            owner("t1", "codex", ChatOrigin::Automation),
+        );
         let removed = registry.remove_task("t1");
-        assert_eq!(removed.len(), 2);
+        assert_eq!(removed.len(), 3);
         for session in removed {
             session.terminate();
         }
@@ -1744,7 +1888,7 @@ mod tests {
             .with_session("t2", "codex", |s| Ok(s.status().is_live()))
             .unwrap());
         registry.shutdown_all();
-        assert!(registry.sessions.lock().unwrap().is_empty());
+        assert!(registry.sessions.lock().unwrap().0.is_empty());
     }
 
     #[test]
@@ -1753,7 +1897,8 @@ mod tests {
         let statuses = Arc::new(Mutex::new(Vec::new()));
         for agent in ["codex", "claude"] {
             registry.sessions.lock().unwrap().insert(
-                ("t1".into(), agent.into()),
+                agent.into(),
+                owner("t1", agent, ChatOrigin::User),
                 spawn("sleep 60", Arc::default(), statuses.clone()),
             );
         }
@@ -1767,6 +1912,101 @@ mod tests {
             .with_session("t1", "claude", |s| Ok(s.status().is_live()))
             .unwrap());
         registry.shutdown_all();
+    }
+
+    #[test]
+    fn a_task_agent_runs_an_automation_beside_its_primary_session() {
+        let registry = ChatRegistry::default();
+        assert!(register(
+            &registry,
+            "run",
+            owner("t1", "codex", ChatOrigin::Automation)
+        )
+        .is_none());
+        assert!(register(&registry, "pane", owner("t1", "codex", ChatOrigin::User)).is_none());
+        let primary = registry
+            .sessions
+            .lock()
+            .unwrap()
+            .primary("t1", "codex")
+            .map(|(id, _)| id.clone());
+        assert_eq!(primary.as_deref(), Some("pane"));
+
+        let mut infos = registry.sessions.lock().unwrap().list();
+        infos.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+        let described: Vec<_> = infos
+            .iter()
+            .map(|info| (info.session_id.as_str(), info.owner.origin))
+            .collect();
+        assert_eq!(
+            described,
+            [("pane", ChatOrigin::User), ("run", ChatOrigin::Automation)]
+        );
+        let json = serde_json::to_value(&infos[1]).unwrap();
+        assert_eq!(json["sessionId"], "run");
+        assert_eq!(json["origin"], "automation");
+        assert_eq!(json["taskId"], "t1");
+
+        let replaced = register(
+            &registry,
+            "restarted",
+            owner("t1", "codex", ChatOrigin::User),
+        );
+        replaced.unwrap().terminate();
+        assert!(live(&registry, "run"));
+        assert!(live(&registry, "restarted"));
+        registry.shutdown_all();
+    }
+
+    #[test]
+    fn detaching_or_stopping_the_primary_leaves_the_automation_running() {
+        let registry = ChatRegistry::default();
+        register(&registry, "pane", owner("t1", "codex", ChatOrigin::User));
+        register(
+            &registry,
+            "run",
+            owner("t1", "codex", ChatOrigin::Automation),
+        );
+        let (pane_sink, run_sink) = (Channel::new(|_| Ok(())), Channel::new(|_| Ok(())));
+        {
+            let sessions = registry.sessions.lock().unwrap();
+            sessions.get("pane").unwrap().attach(pane_sink);
+            sessions.get("run").unwrap().attach(run_sink);
+        }
+        registry
+            .with_session("t1", "codex", |session| {
+                session.detach(7);
+                Ok(())
+            })
+            .unwrap();
+        let attached = |id: &str| {
+            let sessions = registry.sessions.lock().unwrap();
+            let attached = sessions
+                .get(id)
+                .unwrap()
+                .shared
+                .lock()
+                .unwrap()
+                .sink
+                .is_some();
+            attached
+        };
+        assert!(!attached("pane"));
+        assert!(attached("run"));
+
+        registry.remove("t1", "codex").unwrap().stop();
+        assert!(registry.remove("t1", "codex").is_none());
+        assert!(live(&registry, "run"));
+        assert!(attached("run"));
+        registry.shutdown_all();
+    }
+
+    #[test]
+    fn automation_conversations_never_take_the_primary_slot() {
+        let user = owner("t1", "codex", ChatOrigin::User);
+        let automation = owner("t1", "codex", ChatOrigin::Automation);
+        assert_eq!(user.conversation_slot("pane"), "codex");
+        assert_eq!(automation.conversation_slot("run"), "codex#run");
     }
 
     #[test]
