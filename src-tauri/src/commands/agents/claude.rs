@@ -15,8 +15,8 @@ use std::time::UNIX_EPOCH;
 use serde_json::{json, Value};
 
 use super::{
-    AgentAdapter, ChatRequest, ConversationFork, ForkLaunch, ForkMethod, ForkRequest,
-    LaunchContext, LaunchSpec,
+    AgentAdapter, AgentCapabilities, ChatRequest, ConversationFork, ForkLaunch, ForkMethod,
+    ForkRequest, LaunchContext, LaunchSpec,
 };
 use crate::commands::agent_alerts::{AlertHooks, HookSpec};
 use crate::commands::agent_usage::UsageSource;
@@ -187,8 +187,33 @@ impl Claude {
 }
 
 impl AgentAdapter for Claude {
+    fn id(&self) -> &'static str {
+        "claude"
+    }
+
+    fn label(&self) -> &'static str {
+        "Claude Code"
+    }
+
     fn installed(&self) -> bool {
         cli_available(&self.program)
+    }
+
+    fn capabilities(&self) -> AgentCapabilities {
+        AgentCapabilities {
+            fork: Some(self.fork_method()),
+            review: false,
+            rename: true,
+            archive: false,
+            models: true,
+            effort: true,
+            permission_modes: true,
+            interrupt: true,
+            steer: false,
+            compact: true,
+            images: true,
+            headless: true,
+        }
     }
 
     fn chat_launch(&self, request: ChatRequest) -> Result<Launch, String> {

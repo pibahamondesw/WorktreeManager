@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use super::{AgentAdapter, ChatRequest, ConversationFork, ForkMethod, LaunchContext, LaunchSpec};
+use super::{
+    AgentAdapter, AgentCapabilities, ChatRequest, ConversationFork, ForkMethod, LaunchContext,
+    LaunchSpec,
+};
 use crate::commands::agent_alerts::{AlertHooks, HookSpec};
 use crate::commands::agent_usage::UsageSource;
 use crate::commands::chat::codex::{initialize_params, thread_items, CodexProvider};
@@ -99,8 +102,33 @@ impl Codex {
 }
 
 impl AgentAdapter for Codex {
+    fn id(&self) -> &'static str {
+        "codex"
+    }
+
+    fn label(&self) -> &'static str {
+        "Codex"
+    }
+
     fn installed(&self) -> bool {
         cli_available(&self.program)
+    }
+
+    fn capabilities(&self) -> AgentCapabilities {
+        AgentCapabilities {
+            fork: Some(self.fork_method()),
+            review: true,
+            rename: true,
+            archive: true,
+            models: true,
+            effort: true,
+            permission_modes: true,
+            interrupt: true,
+            steer: true,
+            compact: true,
+            images: true,
+            headless: true,
+        }
     }
 
     fn chat_launch(&self, request: ChatRequest) -> Result<Launch, String> {
