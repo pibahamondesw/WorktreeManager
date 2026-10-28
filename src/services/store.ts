@@ -1,38 +1,25 @@
-import { normalizeOverrides } from "../shortcuts/catalog";
 import { load, Store } from "@tauri-apps/plugin-store";
-import {
-  AgentView,
-  AgentViews,
-  AppState,
-  DEFAULT_EDITOR_APP,
-  DEFAULT_STATE,
-  EDITOR_APPS,
-  EditorApp,
-  VaultConfig,
-  Workspace,
-} from "../types";
+import { AppState, DEFAULT_STATE } from "../types";
 import {
   EMPTY_SECRETS,
-  SecretBundle,
   collectSecrets,
   hasSecrets,
   mergeSecrets,
   migrateLegacyToWorkspaces,
-  normalizeSetup,
-  normalizeTasks,
-  normalizeWorkspaces,
   redactLegacyBackup,
   setupWithSecret,
-  setupWithoutSecret,
   workspacesWithSecrets,
-  workspacesWithoutSecrets,
 } from "../utils";
-import { loadSecrets, saveAndVerifySecrets, saveSecrets } from "./keychain";
-import { NavigationEntry, isNavigationEntry } from "../navigation/history";
-import { AgentAlertSettings, normalizeAgentAlerts } from "./agentActivity";
-import { SYSTEM_THEME_ID } from "../themes";
-
-let store: Store | null = null;
+import { loadSecrets, saveAndVerifySecrets } from "./keychain";
+import {
+  credentialState,
+  getStore,
+  loadPreference,
+  normalizers,
+  persist,
+  PersistedEntry,
+} from "./preferences";
+export { persist } from "./preferences";
 
 /**
  * Bump when the persisted shape changes. 1 = multi-repo workspaces/tasks.
@@ -42,96 +29,10 @@ let store: Store | null = null;
  */
 const SCHEMA_VERSION = 4;
 
-/**
- * The Linear keys as last written to the keychain. `persist` keeps this current so a
- * write that touches only `workspaces` does not drop the setup key from the blob.
- */
-let secrets: SecretBundle = EMPTY_SECRETS;
-
-let secretsReadable = true;
-
 /** Pre-multi-repo root keys, superseded by `workspaces`/`tasks`/`selectedWorkspaceId`. */
 const LEGACY_KEYS = ["repos", "worktrees", "selectedRepoId"];
 
 const LEGACY_BACKUP_FILE = "store.backup-preMultiRepo.json";
-
-async function getStore(): Promise<Store> {
-  if (!store) {
-    store = await load("store.json", { defaults: {}, autoSave: false });
-  }
-  return store;
-}
-
-/**
- * Set one or more keys in the store and flush to disk in a single write.
- * All keys are updated in memory first, then persisted atomically.
- *
- * The Linear keys are diverted to the keychain on the way through, so callers can keep
- * passing whole `setup`/`workspaces` values without knowing where the secrets end up.
- */
-let pendingPersist: Promise<unknown> = Promise.resolve();
-
-export function persist(entries: [string, unknown][]): Promise<void> {
-  const result = pendingPersist.then(() => persistEntries(entries));
-  pendingPersist = result.catch(() => {});
-  return result;
-}
-
-async function persistEntries(entries: [string, unknown][]): Promise<void> {
-  try {
-    const s = await getStore();
-    let next = secrets;
-    let carriesSecrets = false;
-    const toWrite: [string, unknown][] = [];
-
-    for (const [key, value] of entries) {
-      if (key === "setup") {
-        const setup = value as AppState["setup"];
-        next = { ...next, setup: setup.linearApiKey ?? null };
-        carriesSecrets = true;
-        toWrite.push([key, setupWithoutSecret(setup)]);
-      } else if (key === "workspaces") {
-        const workspaces = value as Workspace[];
-        next = { ...next, workspaces: collectSecrets(null, workspaces).workspaces };
-        carriesSecrets = true;
-        toWrite.push([key, workspacesWithoutSecrets(workspaces)]);
-      } else {
-        toWrite.push([key, value]);
-      }
-    }
-
-    const previous = await Promise.all(
-      toWrite.map(async ([key]) => [key, await s.get(key)] as const)
-    );
-    const previousSecrets = secrets;
-    let secretsWritten = false;
-    try {
-      if (carriesSecrets) {
-        if (!secretsReadable)
-          throw new Error("Keychain unreadable; refusing to overwrite the stored secrets");
-        await saveSecrets(next);
-        secretsWritten = true;
-      }
-      for (const [key, value] of toWrite) await s.set(key, value);
-      await s.save();
-      if (secretsWritten) secrets = next;
-    } catch (error) {
-      for (const [key, value] of previous) {
-        if (value === undefined) await s.delete(key);
-        else await s.set(key, value);
-      }
-      if (secretsWritten) await saveSecrets(previousSecrets);
-      throw error;
-    }
-  } catch (e) {
-    console.error(
-      "[persist] failed for keys",
-      entries.map(([k]) => k),
-      e
-    );
-    throw e;
-  }
-}
 
 /**
  * Write a one-shot, credential-free copy of the legacy store data to a sidecar file so
@@ -179,7 +80,7 @@ async function clearLegacyBackup(): Promise<void> {
   }
 }
 
-async function persistOrRetryNextLaunch(entries: [string, unknown][]): Promise<void> {
+async function persistOrRetryNextLaunch(entries: PersistedEntry[]): Promise<void> {
   await persist(entries).catch(() => {});
 }
 
@@ -195,12 +96,15 @@ export async function restoreKeychainSecrets(getState: () => AppState): Promise<
   const stored = await loadSecrets();
   if (!stored.secrets) throw new Error(stored.error);
   const state = getState();
-  secrets = mergeSecrets(stored.secrets, collectSecrets(state.setup, state.workspaces));
-  secretsReadable = true;
+  credentialState.secrets = mergeSecrets(
+    stored.secrets,
+    collectSecrets(state.setup, state.workspaces)
+  );
+  credentialState.readable = true;
   return {
     ...state,
-    setup: setupWithSecret(state.setup, secrets),
-    workspaces: workspacesWithSecrets(state.workspaces, secrets),
+    setup: setupWithSecret(state.setup, credentialState.secrets),
+    workspaces: workspacesWithSecrets(state.workspaces, credentialState.secrets),
   };
 }
 
@@ -208,18 +112,17 @@ export async function loadState(
   onKeychainError?: (error: string | null) => void
 ): Promise<AppState> {
   const s = await getStore();
-  const rawSetup = await s.get<unknown>("setup");
-  const shortcutOverrides = normalizeOverrides(await s.get<unknown>("shortcutOverrides"));
-  const schemaVersion = (await s.get<number>("schemaVersion")) ?? 0;
+  const shortcutOverrides = await loadPreference("shortcutOverrides");
+  const schemaVersion = await loadPreference("schemaVersion");
   const rawWorkspaces = await s.get<unknown[]>("workspaces");
-  const setup = normalizeSetup(rawSetup);
+  const setup = await loadPreference("setup");
 
   // Already on the multi-repo schema: load and normalize directly.
   if (schemaVersion >= 1 || rawWorkspaces) {
-    const workspaces = normalizeWorkspaces(rawWorkspaces);
-    const tasks = normalizeTasks(await s.get<unknown[]>("tasks"));
+    const workspaces = normalizers.workspaces(rawWorkspaces);
+    const tasks = await loadPreference("tasks");
     const selectedWorkspaceId = resolveSelectedWorkspaceId(
-      await s.get<string | null>("selectedWorkspaceId"),
+      await loadPreference("selectedWorkspaceId"),
       workspaces
     );
 
@@ -229,15 +132,18 @@ export async function loadState(
     // Loaded before the migrations below because each one persists through `persist`.
     const stored = await loadSecrets();
     onKeychainError?.(stored.error);
-    secretsReadable = stored.secrets != null;
-    secrets = mergeSecrets(stored.secrets ?? EMPTY_SECRETS, collectSecrets(setup, workspaces));
+    credentialState.readable = stored.secrets != null;
+    credentialState.secrets = mergeSecrets(
+      stored.secrets ?? EMPTY_SECRETS,
+      collectSecrets(setup, workspaces)
+    );
 
     // v1 → v2: the per-workspace notesPath is dropped; the global vault starts
     // disabled — enabling is always an explicit user action against the managed
     // path. Keyed on the vault key being absent so a partial write retries.
-    let vault = await s.get<VaultConfig>("vault");
-    if (vault == null) {
-      vault = DEFAULT_STATE.vault;
+    const rawVault = await s.get<unknown>("vault");
+    const vault = normalizers.vault(rawVault);
+    if (rawVault == null) {
       await persistOrRetryNextLaunch([
         ["vault", vault],
         ["workspaces", workspaces],
@@ -263,7 +169,10 @@ export async function loadState(
     // file is rewritten, so it is only stripped once the keychain demonstrably holds
     // them; an unreachable keychain leaves the file as it is and retries next launch.
     if (schemaVersion < 4) {
-      if (!hasSecrets(secrets) || (secretsReadable && (await saveAndVerifySecrets(secrets)))) {
+      if (
+        !hasSecrets(credentialState.secrets) ||
+        (credentialState.readable && (await saveAndVerifySecrets(credentialState.secrets)))
+      ) {
         await persistOrRetryNextLaunch([
           ["setup", setup],
           ["workspaces", workspaces],
@@ -273,10 +182,10 @@ export async function loadState(
     }
 
     return {
-      setup: setupWithSecret(setup, secrets),
+      setup: setupWithSecret(setup, credentialState.secrets),
       shortcutOverrides,
       vault,
-      workspaces: workspacesWithSecrets(workspaces, secrets),
+      workspaces: workspacesWithSecrets(workspaces, credentialState.secrets),
       tasks,
       selectedWorkspaceId,
     };
@@ -303,7 +212,7 @@ export async function loadState(
   // Linear key — the redacted sidecar above is what structure is recovered from. The keys
   // reach the keychain through `persist`, whose failure aborts before the file is written.
   await pruneLegacyKeys(s);
-  secrets = collectSecrets(setup, workspaces);
+  credentialState.secrets = collectSecrets(setup, workspaces);
   await persist([
     ["setup", setup],
     ["workspaces", workspaces],
@@ -323,71 +232,11 @@ export async function loadState(
   };
 }
 
-export async function loadThemeId(): Promise<string> {
-  const s = await getStore();
-  return (await s.get<string>("themeId")) ?? SYSTEM_THEME_ID;
-}
-
-/**
- * Load the user's saved custom-theme colors, or `null` when they have never
- * customized. `null` is the signal to seed the custom theme from the active
- * preset the first time it is selected.
- */
-export async function loadCustomColors(): Promise<Record<string, string> | null> {
-  const s = await getStore();
-  return (await s.get<Record<string, string>>("customTheme")) ?? null;
-}
-
-const RETIRED_EDITOR_IDS: Record<string, EditorApp> = {
-  "cursor-claude": "cursor",
-  vscode: "vscode-web",
-  "vscode-claude": "vscode-web",
-  opencode: "opencode-web",
-  "zed-claude": "zed",
-  "claude-chat": "claude-code",
-  "codex-chat": "codex",
-};
-
-export async function loadEditorApp(): Promise<EditorApp> {
-  const s = await getStore();
-  const stored = await s.get<string>("editorApp");
-  const editor = (stored && RETIRED_EDITOR_IDS[stored]) ?? stored;
-  // Guard against stale values persisted by older builds whose editor ids no longer exist.
-  return EDITOR_APPS.some((e) => e.id === editor) ? (editor as EditorApp) : DEFAULT_EDITOR_APP;
-}
-
-export async function loadAgentViews(): Promise<AgentViews> {
-  const s = await getStore();
-  const stored = (await s.get<Partial<Record<string, unknown>>>("agentViews")) ?? {};
-  const view = (value: unknown): AgentView => (value === "terminal" ? "terminal" : "chat");
-  return { claude: view(stored.claude), codex: view(stored.codex) };
-}
-
-/** Approved repository script fingerprints, keyed by the repository's main checkout. */
-export async function loadScriptApprovals(): Promise<Record<string, string[]>> {
-  const s = await getStore();
-  const stored = await s.get<unknown>("scriptApprovals");
-  if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return {};
-  return Object.fromEntries(
-    Object.entries(stored).map(([path, hashes]) => [
-      path,
-      Array.isArray(hashes) ? hashes.filter((hash) => typeof hash === "string") : [],
-    ])
-  );
-}
-
-export async function loadSidebarCollapsed(): Promise<boolean> {
-  const s = await getStore();
-  return (await s.get<boolean>("sidebarCollapsed")) ?? false;
-}
-
-export async function loadAgentAlerts(): Promise<AgentAlertSettings> {
-  const s = await getStore();
-  return normalizeAgentAlerts(await s.get<unknown>("agentAlerts"));
-}
-
-export async function loadNavigationHistory(): Promise<NavigationEntry[]> {
-  const s = await getStore();
-  const stored = await s.get<unknown[]>("navigationHistory");
-  return Array.isArray(stored) ? stored.filter(isNavigationEntry) : [];
-}
+export const loadThemeId = () => loadPreference("themeId");
+export const loadCustomColors = () => loadPreference("customTheme");
+export const loadEditorApp = () => loadPreference("editorApp");
+export const loadAgentViews = () => loadPreference("agentViews");
+export const loadScriptApprovals = () => loadPreference("scriptApprovals");
+export const loadSidebarCollapsed = () => loadPreference("sidebarCollapsed");
+export const loadAgentAlerts = () => loadPreference("agentAlerts");
+export const loadNavigationHistory = () => loadPreference("navigationHistory");

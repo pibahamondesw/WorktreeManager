@@ -564,3 +564,24 @@ describe("shortcut configuration", () => {
     expect(savedPaths.size).toBe(0);
   });
 });
+
+describe("vault normalization on load", () => {
+  it.each([
+    {
+      raw: { enabled: true, path: "/vault", extra: "discard" },
+      expected: { enabled: true, path: "/vault" },
+    },
+    {
+      raw: { enabled: false, path: "/old-vault" },
+      expected: { enabled: false, path: "/old-vault" },
+    },
+    { raw: { enabled: "yes", path: 42 }, expected: { enabled: false, path: null } },
+    { raw: [], expected: { enabled: false, path: null } },
+    { raw: true, expected: { enabled: false, path: null } },
+  ])("normalizes $raw without rewriting the migrated store", async ({ raw, expected }) => {
+    seed(STORE, { schemaVersion: 4, workspaces: [], tasks: [], vault: raw });
+    expect((await loadState()).vault).toEqual(expected);
+    expect(read(STORE).vault).toEqual(raw);
+    expect(savedPaths.size).toBe(0);
+  });
+});
