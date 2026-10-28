@@ -18,6 +18,7 @@ mod handoff;
 pub mod history;
 #[cfg(test)]
 mod history_tests;
+pub mod interrupted;
 mod markdown;
 mod model;
 mod preferences;
@@ -25,6 +26,7 @@ mod sessions;
 mod turns;
 
 pub(crate) use conversations::ConversationFork;
+pub use interrupted::record_interrupted_sessions;
 pub(crate) use model::{ChatItem, ItemKind, PlanUsage, UsageWindow};
 pub(crate) use sessions::{exchange, truncate, SessionList, SessionSummary, LIST_LIMIT};
 
@@ -427,6 +429,15 @@ impl ChatSession {
         self.shared.lock().unwrap().activity()
     }
 
+    fn conversation(&self) -> Option<String> {
+        self.shared
+            .lock()
+            .unwrap()
+            .turns
+            .conversation()
+            .map(str::to_string)
+    }
+
     /// Terminate and tell listeners it ended; the conversation mapping is kept for resuming.
     fn stop(&self) {
         self.terminate();
@@ -608,6 +619,30 @@ impl ChatRegistry {
         for chat in sessions.0.into_values() {
             chat.session.terminate();
         }
+    }
+
+    pub fn has_live_sessions(&self) -> bool {
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .any(|session| session.status().is_live())
+    }
+
+    fn live_conversations(&self) -> Vec<interrupted::InterruptedSession> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, session)| session.status().is_live())
+            .filter_map(|((task_id, agent), session)| {
+                Some(interrupted::InterruptedSession {
+                    task_id: task_id.clone(),
+                    agent: agent.clone(),
+                    conversation_id: session.conversation()?,
+                })
+            })
+            .collect()
     }
 
     /// One open at a time per task agent: a session is registered only after it spawns, so a
@@ -1121,6 +1156,11 @@ pub async fn chat_close<R: Runtime>(
         }
         if let Ok(store) = handoff_store(&app) {
             store.forget_task(&task_id);
+        }
+        if let Err(error) =
+            interrupted::interrupted_store(&app).and_then(|store| store.clear(Some(&task_id), None))
+        {
+            log::warn!("could not forget interrupted chat sessions: {error}");
         }
     })
     .await
@@ -1924,6 +1964,51 @@ mod tests {
             .unwrap());
         registry.shutdown_all();
         assert!(registry.sessions.lock().unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn live_sessions_with_a_conversation_are_the_ones_interrupted() {
+        let registry = ChatRegistry::default();
+        assert!(!registry.has_live_sessions());
+        for (agent, conversation) in [
+            ("claude", Some("c1")),
+            ("codex", None),
+            ("opencode", Some("c3")),
+        ] {
+            let session = spawn("sleep 60", Arc::default(), Arc::default());
+            {
+                let turns = &mut session.shared.lock().unwrap().turns;
+                match conversation {
+                    Some(id) => {
+                        turns.change_conversation(id.into());
+                    }
+                    None => *turns = Default::default(),
+                }
+            }
+            registry
+                .sessions
+                .lock()
+                .unwrap()
+                .insert(("t1".into(), agent.into()), session);
+        }
+        registry
+            .with_session("t1", "opencode", |s| {
+                s.terminate();
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(registry.has_live_sessions());
+        assert_eq!(
+            registry.live_conversations(),
+            vec![interrupted::InterruptedSession {
+                task_id: "t1".into(),
+                agent: "claude".into(),
+                conversation_id: "c1".into(),
+            }]
+        );
+        registry.shutdown_all();
+        assert!(!registry.has_live_sessions());
     }
 
     #[test]
