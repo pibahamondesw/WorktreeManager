@@ -301,8 +301,8 @@ fn session_state(
     registry.with_session(task_id, agent, |session| {
         let state = session.shared.lock().unwrap();
         Ok(SessionState {
-            checkpoints: state.checkpoints.clone(),
-            conversation: state.conversation_id.clone(),
+            checkpoints: state.turns.checkpoints().cloned(),
+            conversation: state.turns.conversation().map(String::from),
             user_items: state
                 .snapshot
                 .items

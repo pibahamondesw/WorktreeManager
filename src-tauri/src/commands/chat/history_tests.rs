@@ -468,7 +468,7 @@ fn restoring_shared_files_requires_every_overlapping_agent_to_be_idle() {
         .unwrap();
     assert!(!peer.lock().unwrap().history_busy);
     assert_eq!(peer.lock().unwrap().snapshot.status, ChatStatus::Idle);
-    peer.lock().unwrap().folders.clear();
+    peer.lock().unwrap().turns = Default::default();
     let preview = fixture.preview("codex", "u2").unwrap();
     fixture
         .apply("codex", "u2", HistoryAction::Code, Some(preview.token))
@@ -711,7 +711,7 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
         .preview("codex", "u1")
         .unwrap_err()
         .contains("No code checkpoint"));
-    shared.lock().unwrap().checkpoints = None;
+    shared.lock().unwrap().turns.disable_checkpoints();
     assert!(fixture
         .preview("codex", "u2")
         .unwrap_err()
@@ -891,14 +891,13 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         .unwrap()
         .chat_launch(request(Some("parent")))
         .unwrap();
-    let session = ChatSession::spawn(
-        launched.command,
-        launched.provider,
-        1,
-        Arc::new(drop),
-        Arc::new(|_| {}),
-    )
-    .unwrap();
+    let setup = SessionSetup {
+        generation: 1,
+        turns: Default::default(),
+        remember: Arc::new(drop),
+        notify: Arc::new(|_| {}),
+    };
+    let session = ChatSession::spawn(launched.command, launched.provider, setup).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
     while session.status() == ChatStatus::Starting {
         assert!(Instant::now() < deadline);
@@ -906,7 +905,7 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
     }
     assert_eq!(session.status(), ChatStatus::Idle);
     assert_eq!(
-        session.shared.lock().unwrap().conversation_id.as_deref(),
+        session.shared.lock().unwrap().turns.conversation(),
         Some("parent")
     );
     session.terminate();
@@ -1125,7 +1124,7 @@ fn change_commands_read_turn_checkpoints_of_the_open_conversation() {
         .app
         .state::<ChatRegistry>()
         .with_session("task", "codex", |session| {
-            session.shared.lock().unwrap().checkpoints = None;
+            session.shared.lock().unwrap().turns.disable_checkpoints();
             Ok(())
         })
         .unwrap();

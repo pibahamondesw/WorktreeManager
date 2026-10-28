@@ -7,8 +7,8 @@ use tauri::{AppHandle, Manager, Runtime, State};
 
 use super::super::agents::{Agents, ForkLaunch, ForkMethod, ForkRequest};
 use super::{
-    agent_alerts, blocking, checkpoints, conversation_store, handoff_store, model, ChatRegistry,
-    ChatSession, ChatStatus, Conversation, ConversationFork, Launch, ProviderOutput, Shared,
+    blocking, checkpoints, conversation_store, handoff_store, model, start_session, turns,
+    ChatRegistry, ChatStatus, Conversation, ConversationFork, ProviderOutput, SessionSetup, Shared,
 };
 
 fn history_item(
@@ -41,16 +41,7 @@ pub fn chat_rewind_preview(
     registry.with_session(&task_id, &agent, |session| {
         let state = session.shared.lock().unwrap();
         let item = history_item(&state.snapshot, state.history_busy, generation, &item_id)?;
-        let checkpoints = state
-            .checkpoints
-            .as_ref()
-            .ok_or("Checkpoints are unavailable")?;
-        let checkpoint = item
-            .checkpoint
-            .as_deref()
-            .ok_or("No code checkpoint for this message")?;
-        checkpoints.ensure_folders(checkpoint, &state.folders)?;
-        checkpoints.preview(checkpoint)
+        state.turns.rewind_target(&item)?.preview()
     })
 }
 
@@ -87,30 +78,19 @@ pub async fn chat_history<R: Runtime>(
     let key = (task_id.clone(), agent.clone());
     let open_lock = registry.open_lock(&key);
     let _opening = open_lock.lock().await;
-    let (shared, remember, notify, checkpoint, peers) = {
+    let (shared, remember, notify, rewind, peers) = {
         let sessions = registry.sessions.lock().unwrap();
         let session = sessions.get(&key).ok_or("No chat session for this task")?;
         (|| -> Result<_, String> {
             let mut state = session.shared.lock().unwrap();
             let item = history_item(&state.snapshot, state.history_busy, generation, &item_id)?;
-            let checkpoint = if action != HistoryAction::Conversation {
-                let checkpoint = item
-                    .checkpoint
-                    .ok_or("No code checkpoint for this message")?;
+            let rewind = if action != HistoryAction::Conversation {
+                let rewind = state.turns.rewind_target(&item)?;
                 let token = confirmation
                     .as_deref()
                     .ok_or("Confirm the file changes before restoring code")?;
-                state
-                    .checkpoints
-                    .as_ref()
-                    .ok_or("Checkpoints are unavailable")?
-                    .ensure_folders(&checkpoint, &state.folders)?;
-                state
-                    .checkpoints
-                    .as_ref()
-                    .ok_or("Checkpoints are unavailable")?
-                    .validate(&checkpoint, token)?;
-                Some(checkpoint)
+                rewind.validate(token)?;
+                Some(rewind)
             } else {
                 None
             };
@@ -120,11 +100,7 @@ pub async fn chat_history<R: Runtime>(
                     sessions.iter().filter(|(other_key, _)| *other_key != &key)
                 {
                     let peer = other.shared.lock().unwrap();
-                    if peer
-                        .folders
-                        .iter()
-                        .any(|folder| state.folders.contains(folder))
-                    {
+                    if peer.turns.shares_folders(&state.turns) {
                         if peer.history_busy
                             || matches!(
                                 peer.snapshot.status,
@@ -149,7 +125,7 @@ pub async fn chat_history<R: Runtime>(
                 session.shared.clone(),
                 session.remember.clone(),
                 session.notify.clone(),
-                checkpoint,
+                rewind,
                 peers,
             ))
         })()?
@@ -187,10 +163,11 @@ pub async fn chat_history<R: Runtime>(
             let (folders, conversation, previous_items, handoff) = {
                 let state = shared.lock().unwrap();
                 (
-                    state.folders.clone(),
+                    state.turns.folders().to_vec(),
                     state
-                        .conversation_id
-                        .clone()
+                        .turns
+                        .conversation()
+                        .map(String::from)
                         .ok_or("Conversation is unavailable")?,
                     state.snapshot.items.clone(),
                     state.handoff.clone(),
@@ -212,12 +189,7 @@ pub async fn chat_history<R: Runtime>(
             let history_timeout = registry.history_timeout;
             let (new_session, conversation) = blocking(move || {
                 let ForkLaunch {
-                    launch:
-                        Launch {
-                            mut command,
-                            provider,
-                            mut history,
-                        },
+                    mut launch,
                     source: conversation,
                 } = adapter.fork_launch(ForkRequest {
                     cwd: &cwd,
@@ -228,16 +200,24 @@ pub async fn chat_history<R: Runtime>(
                     item_id: &item_id,
                     handoff: handoff.as_ref().map(|handoff| handoff.digest.as_str()),
                 })?;
-                command
-                    .env(agent_alerts::TASK_ENV, &fork_task)
-                    .env(agent_alerts::SURFACE_ENV, "chat");
-                let session = ChatSession::spawn(
-                    command,
-                    provider,
-                    fork_generation,
-                    fork_remember,
-                    fork_notify,
-                )?;
+                let mut turns = turns::TurnTracker::new(
+                    checkpoints::Checkpoints::new(&app_data),
+                    folders,
+                    Some(fork_id),
+                );
+                turns.copy_fork(&mut launch.history, Some(&conversation), |id| {
+                    previous_items
+                        .iter()
+                        .find(|prior| prior.id == id)
+                        .and_then(|prior| prior.checkpoint.clone())
+                })?;
+                let setup = SessionSetup {
+                    generation: fork_generation,
+                    turns,
+                    remember: fork_remember,
+                    notify: fork_notify,
+                };
+                let session = start_session(&fork_task, launch, handoff, setup)?;
                 let deadline = Instant::now() + history_timeout;
                 loop {
                     match session.status() {
@@ -251,35 +231,7 @@ pub async fn chat_history<R: Runtime>(
                         }
                     }
                 }
-                let setup = (|| -> Result<(), String> {
-                    let mut state = session.shared.lock().unwrap();
-                    let checkpoints = checkpoints::Checkpoints::new(&app_data);
-                    for item in &mut history {
-                        item.checkpoint = previous_items
-                            .iter()
-                            .find(|prior| prior.id == item.id)
-                            .and_then(|prior| prior.checkpoint.clone());
-                        if let Some(checkpoint) = &item.checkpoint {
-                            checkpoints.bind(&fork_id, &item.id, checkpoint)?;
-                        }
-                        if let Some(turn) = checkpoints.find_turn(&conversation, &item.id) {
-                            checkpoints.bind_turn(&fork_id, &item.id, &turn)?;
-                        }
-                    }
-                    state.handoff = handoff;
-                    state.prepend_carried(&mut history);
-                    state.snapshot.items = history;
-                    state.checkpoints = Some(checkpoints);
-                    state.folders = folders;
-                    state.conversation_id = Some(fork_id);
-                    state.last_checkpoint = state.last_history_checkpoint(&state.snapshot.items);
-                    state.history_busy = true;
-                    Ok(())
-                })();
-                if let Err(error) = setup {
-                    session.terminate();
-                    return Err(error);
-                }
+                session.shared.lock().unwrap().history_busy = true;
                 Ok((session, conversation))
             })
             .await?;
@@ -301,13 +253,8 @@ pub async fn chat_history<R: Runtime>(
             }
             return Err("The chat was closed during this action".into());
         }
-        let restored = if let Some(checkpoint) = checkpoint {
-            let state = shared.lock().unwrap();
-            state
-                .checkpoints
-                .as_ref()
-                .ok_or("Checkpoints are unavailable")?
-                .restore(&checkpoint, confirmation.as_deref().unwrap())
+        let restored = if let Some(rewind) = &rewind {
+            rewind.restore(confirmation.as_deref().unwrap())
         } else {
             Ok(String::new())
         };
@@ -330,7 +277,7 @@ pub async fn chat_history<R: Runtime>(
             let (cwd, link) = {
                 let state = session.shared.lock().unwrap();
                 let link = state.handoff.as_ref().map(|handoff| handoff.link.clone());
-                (state.folders[0].clone(), link)
+                (state.turns.folders()[0].clone(), link)
             };
             if let (Some(link), Ok(store)) = (link, handoff_store(&app)) {
                 store.link(&task_id, &agent, &id, &link);
@@ -362,10 +309,11 @@ pub async fn chat_history<R: Runtime>(
                     &agent,
                     Conversation {
                         conversation_id: state
-                            .conversation_id
-                            .clone()
+                            .turns
+                            .conversation()
+                            .map(String::from)
                             .ok_or("Fork has no conversation ID")?,
-                        cwd: state.folders[0].clone(),
+                        cwd: state.turns.folders()[0].clone(),
                         fork: None,
                     },
                 )?;

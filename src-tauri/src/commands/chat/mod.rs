@@ -20,6 +20,7 @@ mod history_tests;
 mod markdown;
 mod model;
 mod sessions;
+mod turns;
 
 pub(crate) use conversations::ConversationFork;
 pub(crate) use model::{ChatItem, ItemKind, PlanUsage, UsageWindow};
@@ -87,12 +88,7 @@ struct Shared {
     snapshot: ChatSnapshot,
     stdin: Option<ChildStdin>,
     sink: Option<Channel<LiveEvent>>,
-    checkpoints: Option<checkpoints::Checkpoints>,
-    folders: Vec<String>,
-    conversation_id: Option<String>,
-    turn_checkpoint: Option<String>,
-    last_checkpoint: Option<String>,
-    turn_messages: Vec<String>,
+    turns: turns::TurnTracker,
     history_reply: Option<std::sync::mpsc::Sender<Result<(), String>>>,
     history_busy: bool,
     /// The conversation from another agent that this one continues.
@@ -100,8 +96,26 @@ struct Shared {
 }
 
 type Notify = Arc<dyn Fn(ChatActivity) + Send + Sync>;
+type Remember = Arc<dyn Fn(String) + Send + Sync>;
 
 impl Shared {
+    fn new(
+        provider: Box<dyn ChatProvider>,
+        snapshot: ChatSnapshot,
+        turns: turns::TurnTracker,
+    ) -> Self {
+        Self {
+            provider,
+            snapshot,
+            stdin: None,
+            sink: None,
+            turns,
+            history_reply: None,
+            history_busy: false,
+            handoff: None,
+        }
+    }
+
     fn waiting(&self) -> bool {
         !self.snapshot.pending.is_empty()
     }
@@ -122,54 +136,6 @@ impl Shared {
         }
     }
 
-    fn capture_checkpoint(&self, previous: Option<&str>) -> Option<String> {
-        self.checkpoints.as_ref().and_then(|checkpoints| {
-            match checkpoints.capture_following(&self.folders, previous) {
-                Ok(checkpoint) => Some(checkpoint),
-                Err(error) => {
-                    log::warn!("could not capture chat checkpoint: {error}");
-                    None
-                }
-            }
-        })
-    }
-
-    fn complete_turn(&mut self) {
-        let before = self.turn_checkpoint.take();
-        let messages = std::mem::take(&mut self.turn_messages);
-        let Some(before) = before else {
-            return;
-        };
-        if let Some(after) = self.capture_checkpoint(Some(&before)) {
-            self.last_checkpoint = Some(after.clone());
-            if let (Some(checkpoints), Some(conversation)) =
-                (&self.checkpoints, &self.conversation_id)
-            {
-                let turn = checkpoints::TurnCheckpoints { before, after };
-                for item in messages {
-                    if let Err(error) = checkpoints.bind_turn(conversation, &item, &turn) {
-                        log::warn!("could not save turn checkpoints: {error}");
-                    }
-                }
-            }
-        }
-    }
-
-    fn last_history_checkpoint(&self, items: &[model::ChatItem]) -> Option<String> {
-        let checkpoints = self.checkpoints.as_ref()?;
-        let conversation = self.conversation_id.as_ref()?;
-        items
-            .iter()
-            .rev()
-            .filter(|item| item.kind == model::ItemKind::User)
-            .find_map(|item| {
-                checkpoints
-                    .find_turn(conversation, &item.id)
-                    .map(|turn| turn.after)
-                    .or_else(|| item.checkpoint.clone())
-            })
-    }
-
     fn prepend_carried(&self, items: &mut Vec<model::ChatItem>) {
         if let Some(handoff) = &self.handoff {
             items.splice(0..0, handoff.carried.iter().cloned());
@@ -177,16 +143,11 @@ impl Shared {
     }
 
     fn commit(&mut self, out: ProviderOutput, conversation: &dyn Fn(String), notify: &Notify) {
-        let previous_conversation = out
-            .conversation
-            .as_ref()
-            .and_then(|_| self.conversation_id.clone());
         if out.completes_turn {
-            self.complete_turn();
+            self.turns.complete_turn();
         }
         if out.starts_turn {
-            self.turn_messages.clear();
-            self.turn_checkpoint = self.capture_checkpoint(self.last_checkpoint.as_deref());
+            self.turns.start_turn();
         }
         for line in out.writes {
             let written = self
@@ -197,73 +158,22 @@ impl Shared {
                 log::warn!("chat stdin write failed: {error}");
             }
         }
-        if let Some(id) = out.conversation {
-            if self.conversation_id.as_ref() != Some(&id) {
-                self.last_checkpoint = None;
-            }
-            self.conversation_id = Some(id.clone());
+        let fork_source = out.conversation.and_then(|id| {
+            let previous = self.turns.change_conversation(id.clone());
             conversation(id);
-        }
+            previous
+        });
         for mut event in out.events {
             match &mut event {
-                ChatEvent::Upsert { item } => {
-                    if item.kind == model::ItemKind::User
-                        && item.status.as_deref() != Some("queued")
-                    {
-                        if let (Some(checkpoints), Some(conversation)) =
-                            (&self.checkpoints, &self.conversation_id)
-                        {
-                            if let Some(checkpoint) = &self.turn_checkpoint {
-                                if !self.turn_messages.contains(&item.id) {
-                                    self.turn_messages.push(item.id.clone());
-                                }
-                                if let Err(error) =
-                                    checkpoints.bind(conversation, &item.id, checkpoint)
-                                {
-                                    log::warn!("could not save chat checkpoint mapping: {error}");
-                                }
-                                item.checkpoint = Some(checkpoint.clone());
-                            } else {
-                                item.checkpoint = checkpoints.find(conversation, &item.id);
-                            }
-                        }
-                    }
-                }
+                ChatEvent::Upsert { item } => self.turns.attach(item),
                 ChatEvent::Items { items } => {
-                    if let (Some(checkpoints), Some(conversation)) =
-                        (&self.checkpoints, &self.conversation_id)
-                    {
-                        for item in items
-                            .iter_mut()
-                            .filter(|item| item.kind == model::ItemKind::User)
-                        {
-                            item.checkpoint = checkpoints
-                                .find(conversation, &item.id)
-                                .or(item.checkpoint.take())
-                                .or_else(|| {
-                                    self.snapshot
-                                        .item(&item.id)
-                                        .and_then(|previous| previous.checkpoint.clone())
-                                });
-                            if let Some(checkpoint) = &item.checkpoint {
-                                if let Err(error) =
-                                    checkpoints.bind(conversation, &item.id, checkpoint)
-                                {
-                                    log::warn!("could not copy fork checkpoint: {error}");
-                                }
-                            }
-                            if let Some(previous) = &previous_conversation {
-                                if let Some(turn) = checkpoints.find_turn(previous, &item.id) {
-                                    if let Err(error) =
-                                        checkpoints.bind_turn(conversation, &item.id, &turn)
-                                    {
-                                        log::warn!("could not copy fork turn checkpoints: {error}");
-                                    }
-                                }
-                            }
-                        }
+                    let snapshot = &self.snapshot;
+                    let copied = self.turns.copy_fork(items, fork_source.as_deref(), |id| {
+                        snapshot.item(id).and_then(|prior| prior.checkpoint.clone())
+                    });
+                    if let Err(error) = copied {
+                        log::warn!("could not copy fork checkpoints: {error}");
                     }
-                    self.last_checkpoint = self.last_history_checkpoint(items);
                     self.prepend_carried(items);
                 }
                 _ => {}
@@ -294,18 +204,58 @@ impl Shared {
 pub struct ChatSession {
     shared: Arc<Mutex<Shared>>,
     process: Arc<Mutex<Option<OwnedProcess>>>,
-    remember: Arc<dyn Fn(String) + Send + Sync>,
+    remember: Remember,
     notify: Notify,
+}
+
+struct SessionSetup {
+    generation: u64,
+    turns: turns::TurnTracker,
+    remember: Remember,
+    notify: Notify,
+}
+
+/// Spawns a launch as the task's chat, with its history and the conversation it continues.
+/// Shared by opening a chat and relaunching one on a fork.
+fn start_session(
+    task_id: &str,
+    launch: Launch,
+    handoff: Option<Handoff>,
+    setup: SessionSetup,
+) -> Result<ChatSession, String> {
+    let Launch {
+        mut command,
+        provider,
+        history,
+    } = launch;
+    command
+        .env(agent_alerts::TASK_ENV, task_id)
+        .env(agent_alerts::SURFACE_ENV, "chat");
+    let session = ChatSession::spawn(command, provider, setup)?;
+    {
+        let mut state = session.shared.lock().unwrap();
+        let mut items = history;
+        items.append(&mut state.snapshot.items);
+        state.turns.restore_history(&mut items);
+        state.handoff = handoff;
+        state.prepend_carried(&mut items);
+        state.snapshot.items = items;
+    }
+    Ok(session)
 }
 
 impl ChatSession {
     fn spawn(
         mut command: Command,
         provider: Box<dyn ChatProvider>,
-        generation: u64,
-        remember: Arc<dyn Fn(String) + Send + Sync>,
-        notify: Notify,
+        setup: SessionSetup,
     ) -> Result<Self, String> {
+        let SessionSetup {
+            generation,
+            turns,
+            remember,
+            notify,
+        } = setup;
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -316,21 +266,9 @@ impl ChatSession {
         let stdout = child.stdout.take().ok_or("agent stdout unavailable")?;
         let stderr = child.stderr.take();
 
-        let shared = Arc::new(Mutex::new(Shared {
-            provider,
-            snapshot: ChatSnapshot::new(generation),
-            stdin,
-            sink: None,
-            checkpoints: None,
-            folders: Vec::new(),
-            conversation_id: None,
-            turn_checkpoint: None,
-            last_checkpoint: None,
-            turn_messages: Vec::new(),
-            history_reply: None,
-            history_busy: false,
-            handoff: None,
-        }));
+        let mut shared = Shared::new(provider, ChatSnapshot::new(generation), turns);
+        shared.stdin = stdin;
+        let shared = Arc::new(Mutex::new(shared));
         let process = Arc::new(Mutex::new(Some(process)));
         let session = Self {
             shared,
@@ -398,7 +336,7 @@ impl ChatSession {
                 },
             };
             let mut out = ProviderOutput {
-                completes_turn: state.turn_checkpoint.is_some(),
+                completes_turn: state.turns.turn_open(),
                 ..Default::default()
             };
             out.status(status);
@@ -474,7 +412,7 @@ impl ChatSession {
         if let Some(mut process) = self.process.lock().unwrap().take() {
             process.terminate();
         }
-        self.shared.lock().unwrap().complete_turn();
+        self.shared.lock().unwrap().turns.complete_turn();
     }
 }
 
@@ -710,13 +648,7 @@ pub async fn chat_open<R: Runtime>(
         .await
         .map_err(|e| format!("Task failed: {e}"))??
     };
-    let Launch {
-        mut command,
-        provider,
-        history,
-    } = launch;
-
-    let remember: Arc<dyn Fn(String) + Send + Sync> = {
+    let remember: Remember = {
         let (store, task_id, agent, cwd) =
             (store.clone(), task_id.clone(), agent.clone(), cwd.clone());
         let link = handoff.as_ref().map(|handoff| handoff.link.clone());
@@ -748,38 +680,18 @@ pub async fn chat_open<R: Runtime>(
         })
     };
 
-    command
-        .env(agent_alerts::TASK_ENV, &task_id)
-        .env(agent_alerts::SURFACE_ENV, "chat");
-    let session = ChatSession::spawn(command, provider, generation, remember, notify)?;
-    {
-        let mut state = session.shared.lock().unwrap();
-        if state.conversation_id.is_none() {
-            state.conversation_id = expected_conversation;
-        }
-        state.checkpoints = Some(checkpoints::Checkpoints::new(
-            &app.path().app_data_dir().map_err(|e| e.to_string())?,
-        ));
-        state.folders = std::iter::once(cwd.clone())
-            .chain(folders.iter().skip(1).map(|folder| canonical(folder)))
-            .collect();
-        let mut items = history;
-        items.append(&mut state.snapshot.items);
-        if let (Some(checkpoints), Some(conversation)) =
-            (&state.checkpoints, &state.conversation_id)
-        {
-            for item in items
-                .iter_mut()
-                .filter(|item| item.kind == model::ItemKind::User)
-            {
-                item.checkpoint = checkpoints.find(conversation, &item.id);
-            }
-        }
-        state.last_checkpoint = state.last_history_checkpoint(&items);
-        state.handoff = handoff;
-        state.prepend_carried(&mut items);
-        state.snapshot.items = items;
-    }
+    let folders = std::iter::once(cwd)
+        .chain(folders.iter().skip(1).map(|folder| canonical(folder)))
+        .collect();
+    let checkpoints =
+        checkpoints::Checkpoints::new(&app.path().app_data_dir().map_err(|e| e.to_string())?);
+    let setup = SessionSetup {
+        generation,
+        turns: turns::TurnTracker::new(checkpoints, folders, expected_conversation),
+        remember,
+        notify,
+    };
+    let session = start_session(&task_id, launch, handoff, setup)?;
     let snapshot = session.attach(on_event);
     let previous = registry.sessions.lock().unwrap().insert(key, session);
     if let Some(previous) = previous {
@@ -1070,21 +982,22 @@ mod tests {
     ) -> Shared {
         let mut snapshot = ChatSnapshot::new(1);
         snapshot.status = ChatStatus::Idle;
-        Shared {
+        Shared::new(
             provider,
             snapshot,
-            stdin: None,
-            sink: None,
-            checkpoints: Some(checkpoints::Checkpoints::new(&fixture.dir.join("app-data"))),
-            folders: fixture.folders.clone(),
-            conversation_id: Some("conv".into()),
-            turn_checkpoint: None,
-            last_checkpoint: None,
-            turn_messages: Vec::new(),
-            history_reply: None,
-            history_busy: false,
-            handoff: None,
-        }
+            fixture_turns(fixture, fixture.folders.clone()),
+        )
+    }
+
+    fn fixture_turns(
+        fixture: &checkpoints::tests::Fixture,
+        folders: Vec<String>,
+    ) -> turns::TurnTracker {
+        turns::TurnTracker::new(
+            checkpoints::Checkpoints::new(&fixture.dir.join("app-data")),
+            folders,
+            Some("conv".into()),
+        )
     }
 
     fn send_checkpoint_message(shared: &mut Shared, text: &str) -> Option<String> {
@@ -1164,14 +1077,15 @@ mod tests {
     ) -> ChatSession {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", script]);
-        ChatSession::spawn(
-            command,
-            Box::new(Echo),
-            7,
-            Arc::new(move |id| remembered.lock().unwrap().push(id)),
-            Arc::new(move |activity: ChatActivity| statuses.lock().unwrap().push(activity.status)),
-        )
-        .unwrap()
+        let setup = SessionSetup {
+            generation: 7,
+            turns: Default::default(),
+            remember: Arc::new(move |id| remembered.lock().unwrap().push(id)),
+            notify: Arc::new(move |activity: ChatActivity| {
+                statuses.lock().unwrap().push(activity.status)
+            }),
+        };
+        ChatSession::spawn(command, Box::new(Echo), setup).unwrap()
     }
 
     #[test]
@@ -1213,21 +1127,7 @@ mod tests {
                     .push((activity.status, activity.background_agents))
             })
         };
-        let mut shared = Shared {
-            provider: Box::new(Echo),
-            snapshot: ChatSnapshot::new(1),
-            stdin: None,
-            sink: None,
-            checkpoints: None,
-            folders: Vec::new(),
-            conversation_id: None,
-            turn_checkpoint: None,
-            last_checkpoint: None,
-            turn_messages: Vec::new(),
-            history_reply: None,
-            history_busy: false,
-            handoff: None,
-        };
+        let mut shared = Shared::new(Box::new(Echo), ChatSnapshot::new(1), Default::default());
         let commit = |shared: &mut Shared, status: ChatStatus, background_agents: Option<bool>| {
             let mut out = ProviderOutput {
                 background_agents,
@@ -1270,21 +1170,7 @@ mod tests {
                 notified.lock().unwrap().push(activity.has_error);
             })
         };
-        let mut shared = Shared {
-            provider: Box::new(Echo),
-            snapshot: ChatSnapshot::new(1),
-            stdin: None,
-            sink: None,
-            checkpoints: None,
-            folders: Vec::new(),
-            conversation_id: None,
-            turn_checkpoint: None,
-            last_checkpoint: None,
-            turn_messages: Vec::new(),
-            history_reply: None,
-            history_busy: false,
-            handoff: None,
-        };
+        let mut shared = Shared::new(Box::new(Echo), ChatSnapshot::new(1), Default::default());
         shared.snapshot.status = ChatStatus::Idle;
         let mut out = ProviderOutput::default();
         out.upsert(ChatItem::new(
@@ -1317,21 +1203,7 @@ mod tests {
                     .push((activity.status, activity.waiting))
             })
         };
-        let mut shared = Shared {
-            provider: Box::new(Echo),
-            snapshot: ChatSnapshot::new(1),
-            stdin: None,
-            sink: None,
-            checkpoints: None,
-            folders: Vec::new(),
-            conversation_id: None,
-            turn_checkpoint: None,
-            last_checkpoint: None,
-            turn_messages: Vec::new(),
-            history_reply: None,
-            history_busy: false,
-            handoff: None,
-        };
+        let mut shared = Shared::new(Box::new(Echo), ChatSnapshot::new(1), Default::default());
         let mut out = ProviderOutput::default();
         out.event(ChatEvent::Status {
             status: ChatStatus::Busy,
@@ -1378,14 +1250,15 @@ mod tests {
         let fixture = checkpoints::tests::Fixture::new(1);
         let statuses = Arc::new(Mutex::new(Vec::new()));
         let session = spawn("sleep 60", Arc::default(), statuses.clone());
-        let before = fixture.store.capture(&fixture.folders).unwrap();
-        {
+        let before = {
             let mut state = session.shared.lock().unwrap();
-            state.checkpoints = Some(checkpoints::Checkpoints::new(&fixture.dir.join("app-data")));
-            state.folders = fixture.folders.clone();
-            state.turn_checkpoint = Some(before.clone());
-            state.turn_messages = vec!["stopped-turn".into()];
-        }
+            state.turns = fixture_turns(&fixture, fixture.folders.clone());
+            state.turns.start_turn();
+            state
+                .turns
+                .attach(&mut ChatItem::new("stopped-turn", ItemKind::User, "stop"));
+            state.turns.turn_checkpoint().unwrap().to_string()
+        };
         std::fs::write(fixture.file(0, "file.txt"), "changes before stop").unwrap();
         session.terminate();
         let turn = fixture.store.find_turn("conv", "stopped-turn").unwrap();
@@ -1415,8 +1288,12 @@ mod tests {
         let session = spawn("sleep 60", Arc::default(), Arc::default());
         {
             let mut state = session.shared.lock().unwrap();
-            state.checkpoints = Some(checkpoints::Checkpoints::new(&dir));
-            state.turn_checkpoint = Some(checkpoint.clone());
+            state.turns = turns::TurnTracker::new(
+                checkpoints::Checkpoints::new(&dir),
+                Vec::new(),
+                Some("conv".into()),
+            );
+            state.turns.open_turn(checkpoint.clone());
             let mut out = ProviderOutput::default();
             out.upsert(ChatItem::new("user-1", ItemKind::User, "hello"));
             state.commit(out, &*session.remember, &session.notify);
@@ -1531,9 +1408,12 @@ mod tests {
                 .capture_following(&fixture.folders, Some(&before_second))
                 .unwrap()
         );
-        assert_eq!(shared.last_checkpoint.as_ref(), Some(&second_turn.after));
+        assert_eq!(
+            shared.turns.last_checkpoint(),
+            Some(second_turn.after.as_str())
+        );
         assert_eq!(shared.snapshot.status, ChatStatus::Idle);
-        assert!(shared.turn_checkpoint.is_none());
+        assert!(shared.turns.turn_checkpoint().is_none());
         let mut resumed = checkpoint_session(
             &fixture,
             Box::new(claude::ClaudeProvider::new("conv".into())),
@@ -1544,7 +1424,10 @@ mod tests {
         });
         let notify: Notify = Arc::new(|_| {});
         resumed.commit(history, &drop, &notify);
-        assert_eq!(resumed.last_checkpoint.as_ref(), Some(&second_turn.after));
+        assert_eq!(
+            resumed.turns.last_checkpoint(),
+            Some(second_turn.after.as_str())
+        );
         let next = send_checkpoint_message(&mut resumed, "after restart").unwrap();
         assert_eq!(
             resumed.snapshot.item(&next).unwrap().checkpoint.as_ref(),
@@ -1591,7 +1474,7 @@ mod tests {
             .unwrap();
         std::fs::write(fixture.file(0, "file.txt"), "first turn changes").unwrap();
         let queued = send_checkpoint_message(&mut shared, "queued").unwrap();
-        assert_eq!(shared.turn_checkpoint, Some(first_before));
+        assert_eq!(shared.turns.turn_checkpoint(), Some(first_before.as_str()));
         assert_eq!(
             shared.snapshot.item(&queued).unwrap().status.as_deref(),
             Some("queued")
@@ -1649,7 +1532,7 @@ mod tests {
             serde_json::json!({ "id": 5, "result": { "thread": { "id": "conv", "status": { "type": "idle" }, "turns": [] } } }),
         );
         send_checkpoint_message(&mut shared, "start");
-        let before = shared.turn_checkpoint.clone().unwrap();
+        let before = shared.turns.turn_checkpoint().unwrap().to_string();
         feed_checkpoint_line(
             &mut shared,
             serde_json::json!({ "method": "turn/started", "params": { "threadId": "conv", "turn": { "id": "turn-1" } } }),
@@ -1660,7 +1543,7 @@ mod tests {
         );
         std::fs::write(fixture.file(0, "file.txt"), "changes before steering").unwrap();
         send_checkpoint_message(&mut shared, "steer this turn");
-        assert_eq!(shared.turn_checkpoint.as_deref(), Some(before.as_str()));
+        assert_eq!(shared.turns.turn_checkpoint(), Some(before.as_str()));
         feed_checkpoint_line(
             &mut shared,
             serde_json::json!({ "method": "item/started", "params": { "threadId": "conv", "turnId": "turn-1", "item": { "type": "userMessage", "id": "user-2", "content": [{ "type": "text", "text": "steer" }] } } }),
@@ -1704,20 +1587,20 @@ mod tests {
             &fixture,
             Box::new(claude::ClaudeProvider::new("conv".into())),
         );
-        shared.folders = vec![fixture.dir.to_string_lossy().into_owned()];
+        shared.turns = fixture_turns(&fixture, vec![fixture.dir.to_string_lossy().into_owned()]);
         let item = send_checkpoint_message(&mut shared, "without a checkpoint").unwrap();
         assert!(shared.snapshot.item(&item).unwrap().checkpoint.is_none());
         assert!(shared
             .provider
             .fork(&item, &mut ProviderOutput::default())
             .is_err());
-        shared.folders = fixture.folders.clone();
+        shared.turns = fixture_turns(&fixture, fixture.folders.clone());
         feed_checkpoint_line(
             &mut shared,
             serde_json::json!({"type":"result", "is_error":false}),
         );
         let item = send_checkpoint_message(&mut shared, "checkpointed turn").unwrap();
-        let before = shared.turn_checkpoint.clone().unwrap();
+        let before = shared.turns.turn_checkpoint().unwrap().to_string();
         let turn = checkpoints::TurnCheckpoints {
             before: before.clone(),
             after: before.clone(),
@@ -1772,7 +1655,11 @@ mod tests {
             &fixture,
             Box::new(claude::ClaudeProvider::new("conv".into())),
         );
-        initializing.conversation_id = None;
+        initializing.turns = turns::TurnTracker::new(
+            checkpoints::Checkpoints::new(&fixture.dir.join("app-data")),
+            fixture.folders.clone(),
+            None,
+        );
         let unbound =
             send_checkpoint_message(&mut initializing, "initializing conversation").unwrap();
         assert!(initializing
