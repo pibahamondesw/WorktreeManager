@@ -196,7 +196,7 @@ export interface ChatResponse {
 }
 
 /** A user session is its task agent's primary chat; automations run beside it. */
-export type ChatOrigin = "user" | "automation";
+type ChatOrigin = "user" | "automation";
 
 export interface ChatInfo {
   sessionId: string;

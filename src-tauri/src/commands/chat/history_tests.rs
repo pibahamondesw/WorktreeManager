@@ -1562,3 +1562,46 @@ fn rewinding_a_continuation_keeps_its_source_and_a_pending_fork_can_be_continued
         ]
     );
 }
+
+#[test]
+fn attaching_reuses_the_live_primary_that_detach_then_releases() {
+    let fixture = Fixture::new();
+    fixture.open("codex", OpenMode::Restart).unwrap();
+    let registry = fixture.app.state::<ChatRegistry>();
+    let primary = registry
+        .sessions
+        .lock()
+        .unwrap()
+        .primary("task", "codex")
+        .map(|(id, _)| id.clone())
+        .unwrap();
+    let attached = tauri::async_runtime::block_on(chat_open(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        fixture.repositories.folders.clone(),
+        OpenMode::Attach,
+        None,
+        None,
+        Channel::new(|_| Ok(())),
+    ))
+    .unwrap();
+    assert_eq!(attached.session_id, primary);
+    let attached_sink = || {
+        registry
+            .with_session("task", "codex", |session| {
+                Ok(session.shared.lock().unwrap().sink.is_some())
+            })
+            .unwrap()
+    };
+    assert!(attached_sink());
+    chat_detach(
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        attached.snapshot.generation,
+        None,
+    );
+    assert!(!attached_sink());
+}

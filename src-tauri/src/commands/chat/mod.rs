@@ -477,6 +477,14 @@ struct RegisteredChat {
 #[derive(Default)]
 struct Sessions(HashMap<String, RegisteredChat>);
 
+enum PrimaryClaim {
+    Attached(Box<OpenedChat>),
+    Replace {
+        session_id: String,
+        stale: Option<ChatSession>,
+    },
+}
+
 impl Sessions {
     fn primary(&self, task_id: &str, agent: &str) -> Option<(&String, &ChatSession)> {
         self.0
@@ -506,6 +514,45 @@ impl Sessions {
         };
         let same_id = self.0.insert(session_id, RegisteredChat { owner, session });
         replaced.or(same_id.map(|chat| chat.session))
+    }
+
+    /// Attaches to the live primary when asked to; otherwise frees its slot and keeps its id.
+    fn claim_primary(
+        &mut self,
+        task_id: &str,
+        agent: &str,
+        mode: OpenMode,
+        on_event: &Channel<LiveEvent>,
+    ) -> PrimaryClaim {
+        match self.primary(task_id, agent) {
+            Some((id, session)) if mode == OpenMode::Attach && session.status().is_live() => {
+                PrimaryClaim::Attached(Box::new(OpenedChat {
+                    session_id: id.clone(),
+                    snapshot: session.attach(on_event.clone()),
+                }))
+            }
+            Some((id, _)) => {
+                let session_id = id.clone();
+                PrimaryClaim::Replace {
+                    session_id,
+                    stale: self.remove_primary(task_id, agent),
+                }
+            }
+            None => PrimaryClaim::Replace {
+                session_id: uuid::Uuid::new_v4().to_string(),
+                stale: None,
+            },
+        }
+    }
+
+    fn detach(&self, task_id: &str, agent: &str, generation: u64, session_id: Option<&str>) {
+        let session = match session_id {
+            Some(id) => self.get(id),
+            None => self.primary(task_id, agent).map(|(_, session)| session),
+        };
+        if let Some(session) = session {
+            session.detach(generation);
+        }
     }
 
     fn remove_primary(&mut self, task_id: &str, agent: &str) -> Option<ChatSession> {
@@ -665,21 +712,14 @@ pub async fn chat_open<R: Runtime>(
     let key = (task_id.clone(), agent.clone());
     let open_lock = registry.open_lock(&key);
     let _opening = open_lock.lock().await;
-    let (session_id, stale) = {
-        let mut sessions = registry.sessions.lock().unwrap();
-        match sessions.primary(&task_id, &agent) {
-            Some((id, session)) if mode == OpenMode::Attach && session.status().is_live() => {
-                return Ok(OpenedChat {
-                    session_id: id.clone(),
-                    snapshot: session.attach(on_event),
-                });
-            }
-            Some((id, _)) => {
-                let id = id.clone();
-                (id, sessions.remove_primary(&task_id, &agent))
-            }
-            None => (uuid::Uuid::new_v4().to_string(), None),
-        }
+    let claim = registry
+        .sessions
+        .lock()
+        .unwrap()
+        .claim_primary(&task_id, &agent, mode, &on_event);
+    let (session_id, stale) = match claim {
+        PrimaryClaim::Attached(opened) => return Ok(*opened),
+        PrimaryClaim::Replace { session_id, stale } => (session_id, stale),
     };
     let owner = ChatOwner {
         task_id: task_id.clone(),
@@ -958,16 +998,11 @@ pub fn chat_detach(
     generation: u64,
     session_id: Option<String>,
 ) {
-    let sessions = registry.sessions.lock().unwrap();
-    let session = match &session_id {
-        Some(id) => sessions.get(id),
-        None => sessions
-            .primary(&task_id, &agent)
-            .map(|(_, session)| session),
-    };
-    if let Some(session) = session {
-        session.detach(generation);
-    }
+    registry
+        .sessions
+        .lock()
+        .unwrap()
+        .detach(&task_id, &agent, generation, session_id.as_deref());
 }
 
 fn primary_folder(folders: &[String]) -> Result<String, String> {
@@ -1998,6 +2033,114 @@ mod tests {
         assert!(registry.remove("t1", "codex").is_none());
         assert!(live(&registry, "run"));
         assert!(attached("run"));
+        registry.shutdown_all();
+    }
+
+    impl PrimaryClaim {
+        fn into_replacement(self) -> Option<(String, Option<ChatSession>)> {
+            match self {
+                PrimaryClaim::Attached(_) => None,
+                PrimaryClaim::Replace { session_id, stale } => Some((session_id, stale)),
+            }
+        }
+    }
+
+    fn sink_attached(registry: &ChatRegistry, id: &str) -> bool {
+        let sessions = registry.sessions.lock().unwrap();
+        let attached = sessions
+            .get(id)
+            .unwrap()
+            .shared
+            .lock()
+            .unwrap()
+            .sink
+            .is_some();
+        attached
+    }
+
+    fn generation(registry: &ChatRegistry, id: &str) -> u64 {
+        let sessions = registry.sessions.lock().unwrap();
+        let generation = sessions
+            .get(id)
+            .unwrap()
+            .shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .generation;
+        generation
+    }
+
+    #[test]
+    fn opening_attaches_to_the_live_primary_or_replaces_it_keeping_its_id() {
+        let registry = ChatRegistry::default();
+        let sink = Channel::new(|_| Ok(()));
+        let claim = |mode| {
+            registry
+                .sessions
+                .lock()
+                .unwrap()
+                .claim_primary("t1", "codex", mode, &sink)
+        };
+        let (session_id, stale) = claim(OpenMode::Attach).into_replacement().unwrap();
+        assert!(uuid::Uuid::parse_str(&session_id).is_ok());
+        assert!(stale.is_none());
+
+        register(&registry, "pane", owner("t1", "codex", ChatOrigin::User));
+        register(
+            &registry,
+            "run",
+            owner("t1", "codex", ChatOrigin::Automation),
+        );
+        assert!(claim(OpenMode::Attach).into_replacement().is_none());
+        assert!(sink_attached(&registry, "pane"));
+        assert!(!sink_attached(&registry, "run"));
+
+        let (session_id, stale) = claim(OpenMode::Restart).into_replacement().unwrap();
+        assert_eq!(session_id, "pane");
+        stale.unwrap().terminate();
+        assert!(registry.sessions.lock().unwrap().get("pane").is_none());
+        assert!(live(&registry, "run"));
+        registry.shutdown_all();
+    }
+
+    #[test]
+    fn detach_targets_the_given_session_or_the_primary() {
+        let registry = ChatRegistry::default();
+        register(&registry, "pane", owner("t1", "codex", ChatOrigin::User));
+        register(
+            &registry,
+            "run",
+            owner("t1", "codex", ChatOrigin::Automation),
+        );
+        {
+            let sessions = registry.sessions.lock().unwrap();
+            sessions
+                .get("pane")
+                .unwrap()
+                .attach(Channel::new(|_| Ok(())));
+            sessions
+                .get("run")
+                .unwrap()
+                .attach(Channel::new(|_| Ok(())));
+        }
+        let detach = |generation, session_id| {
+            registry
+                .sessions
+                .lock()
+                .unwrap()
+                .detach("t1", "codex", generation, session_id)
+        };
+
+        detach(generation(&registry, "run"), Some("run"));
+        assert!(!sink_attached(&registry, "run"));
+        assert!(sink_attached(&registry, "pane"));
+
+        detach(generation(&registry, "pane") + 1, None);
+        assert!(sink_attached(&registry, "pane"));
+        detach(generation(&registry, "pane"), None);
+        assert!(!sink_attached(&registry, "pane"));
+        detach(0, Some("missing"));
         registry.shutdown_all();
     }
 
