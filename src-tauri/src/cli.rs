@@ -1,4 +1,4 @@
-use crate::automation::{failure, read_message, socket_path, Request, MAX_MESSAGE, VERSION};
+use crate::cli_bridge::{failure, read_message, socket_path, Request, MAX_MESSAGE, VERSION};
 use crate::commands::agent_alerts;
 use crate::commands::agents::Agents;
 use crate::commands::doppler;

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_STATE, AppState } from "../types";
 import { Operations } from "./operations";
-import { dispatchAutomation } from "./automation";
+import { dispatchCliBridge } from "./cliBridge";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@tauri-apps/api/path", () => ({ homeDir: vi.fn().mockResolvedValue("/home/test/") }));
@@ -30,9 +30,9 @@ beforeEach(() => {
   );
 });
 const call = (method: string, params: Record<string, unknown> = {}, version = 1) =>
-  dispatchAutomation(operations, { id: "request1", version, method, params });
+  dispatchCliBridge(operations, { id: "request1", version, method, params });
 
-describe("automation contract", () => {
+describe("cli bridge contract", () => {
   it("redacts credentials and rejects credential fields and unknown methods", async () => {
     const listed = await call("workspace.list");
     expect(JSON.stringify(listed)).not.toContain("secret");
@@ -147,7 +147,7 @@ it("routes issue linking through the shared operation and validates its paramete
 it("forwards validated agent events to the app and reports the matched task", async () => {
   const onAgentEvent = vi.fn(() => ({ taskId: "t1" }));
   const event = (params: Record<string, unknown>) =>
-    dispatchAutomation(
+    dispatchCliBridge(
       operations,
       { id: "request1", version: 1, method: "agent.event", params },
       undefined,
