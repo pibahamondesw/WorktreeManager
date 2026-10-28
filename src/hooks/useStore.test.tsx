@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { useStore } from "./useStore";
+import { presetFor } from "../themes";
 import { DEFAULT_STATE } from "../types";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
@@ -92,5 +93,100 @@ describe("useStore workspace switching", () => {
 
     act(() => result.current.selectWorkspace("a"));
     expect(result.current.workspaceSwitching).toBe(false);
+  });
+});
+
+describe("useStore preferences", () => {
+  it("restores the sidebar and shows a banner when saving fails", async () => {
+    const { result } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    vi.mocked(persist).mockRejectedValueOnce(new Error("disk full"));
+
+    await act(async () => result.current.toggleSidebarCollapsed());
+
+    expect(result.current.sidebarCollapsed).toBe(false);
+    expect(result.current.persistError).toBe("Failed to save sidebar preference");
+    act(() => result.current.dismissPersistError());
+    expect(result.current.persistError).toBeNull();
+  });
+
+  it("saves the first custom theme and its seeded colors in one batch", async () => {
+    const { result } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => result.current.updateThemeId("custom"));
+
+    const colors = presetFor("default").colors;
+    expect(persist).toHaveBeenLastCalledWith([
+      ["themeId", "custom"],
+      ["customTheme", colors],
+    ]);
+    expect(result.current.themeId).toBe("custom");
+    expect(result.current.customColors).toEqual(colors);
+    expect(document.documentElement.style.getPropertyValue("--color-accent")).toBe(colors.accent);
+  });
+
+  it("reflects consecutive color edits immediately while the first save is pending", async () => {
+    const { result } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => result.current.updateThemeId("custom"));
+    let finishSave!: () => void;
+    vi.mocked(persist).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        })
+    );
+    const writes: Promise<void>[] = [];
+
+    act(() => {
+      writes.push(
+        result.current.updateCustomColors({ ...result.current.customColors, accent: "#112233" })
+      );
+    });
+    await waitFor(() => expect(finishSave).toBeTypeOf("function"));
+    act(() => {
+      writes.push(
+        result.current.updateCustomColors({
+          ...result.current.customColors,
+          "bg-primary": "#223344",
+        })
+      );
+    });
+    expect(result.current.customColors?.["bg-primary"]).toBe("#223344");
+    act(() => {
+      writes.push(
+        result.current.updateCustomColors({ ...result.current.customColors, success: "#334455" })
+      );
+    });
+    expect(result.current.customColors?.success).toBe("#334455");
+
+    await act(async () => {
+      finishSave();
+      await Promise.all(writes);
+    });
+
+    expect(result.current.customColors).toMatchObject({
+      accent: "#112233",
+      "bg-primary": "#223344",
+      success: "#334455",
+    });
+    expect(persist).toHaveBeenLastCalledWith([["customTheme", result.current.customColors]]);
+  });
+
+  it("restores the rendered theme and colors when the batch fails", async () => {
+    const { result } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => result.current.updateThemeId("ocean"));
+    vi.mocked(persist).mockRejectedValueOnce(new Error("disk full"));
+
+    await act(async () => result.current.updateThemeId("custom"));
+
+    expect(result.current.themeId).toBe("ocean");
+    expect(result.current.customColors).toBeNull();
+    expect(document.documentElement.style.getPropertyValue("--color-accent")).toBe(
+      presetFor("ocean").colors.accent
+    );
+    expect(result.current.persistError).toBe("Failed to save theme preference");
   });
 });

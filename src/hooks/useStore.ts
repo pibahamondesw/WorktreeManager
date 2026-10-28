@@ -16,10 +16,7 @@ import {
 import {
   AgentId,
   AgentView,
-  AgentViews,
   AppState,
-  DEFAULT_AGENT_VIEWS,
-  DEFAULT_EDITOR_APP,
   DEFAULT_STATE,
   EditorApp,
   VaultConfig,
@@ -28,15 +25,19 @@ import {
 import { Operations, CreateTaskInput, DeleteOptions, TaskReady } from "../services/operations";
 import { applyTheme, presetFor, CUSTOM_THEME_ID, SYSTEM_THEME_ID } from "../themes";
 
+import { defaultInterfacePreferences, PreferenceSession } from "../services/preferences";
+
 export function useStore() {
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [loading, setLoading] = useState(true);
-  const [editorApp, setEditorAppState] = useState<EditorApp>(DEFAULT_EDITOR_APP);
-  const [agentViews, setAgentViews] = useState<AgentViews>(DEFAULT_AGENT_VIEWS);
-  const agentViewsRef = useRef(agentViews);
-  const [themeId, setThemeIdState] = useState(SYSTEM_THEME_ID);
-  const [customColors, setCustomColors] = useState<Record<string, string> | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsedState] = useState(false);
+  const [preferences, setPreferences] = useState(defaultInterfacePreferences);
+  const {
+    editorApp,
+    agentViews,
+    themeId,
+    customTheme: customColors,
+    sidebarCollapsed,
+  } = preferences;
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
   const [keychainRetrying, setKeychainRetrying] = useState(false);
@@ -47,16 +48,24 @@ export function useStore() {
   const loadedWorkspaceIdsRef = useRef(new Set<string>());
 
   const stateRef = useRef(state);
-  const editorAppRef = useRef(editorApp);
+  const [preferenceSession] = useState(
+    () =>
+      new PreferenceSession(
+        (next) => {
+          setPreferences(next);
+          applyTheme(
+            next.themeId,
+            next.themeId === CUSTOM_THEME_ID ? (next.customTheme ?? undefined) : undefined
+          );
+        },
+        setPersistError,
+        persist
+      )
+  );
 
   const commit = useCallback((next: AppState) => {
     stateRef.current = next;
     setState(next);
-  }, []);
-
-  const commitEditorApp = useCallback((next: EditorApp) => {
-    editorAppRef.current = next;
-    setEditorAppState(next);
   }, []);
 
   const [operations] = useState(
@@ -64,7 +73,7 @@ export function useStore() {
       new Operations(
         () => stateRef.current,
         commit,
-        () => editorAppRef.current
+        () => preferenceSession.value.editorApp
       )
   );
 
@@ -89,14 +98,14 @@ export function useStore() {
       .then(async ([s, editor, theme, custom, collapsed, views]) => {
         await syncNativeShortcuts(s.shortcutOverrides ?? {});
         setShortcutOverrides(s.shortcutOverrides ?? {});
-        agentViewsRef.current = views;
-        setAgentViews(views);
         commit(s);
-        commitEditorApp(editor);
-        setThemeIdState(theme);
-        setCustomColors(custom);
-        setSidebarCollapsedState(collapsed);
-        applyTheme(theme, theme === CUSTOM_THEME_ID ? (custom ?? undefined) : undefined);
+        preferenceSession.replace({
+          editorApp: editor,
+          agentViews: views,
+          themeId: theme,
+          customTheme: custom,
+          sidebarCollapsed: collapsed,
+        });
         setLoading(false);
 
         const basePaths = [
@@ -113,7 +122,7 @@ export function useStore() {
       .catch((e: unknown) => {
         setLoadError(e instanceof Error ? e : new Error(String(e)));
       });
-  }, [commit, commitEditorApp]);
+  }, [commit, preferenceSession]);
 
   useEffect(() => {
     if (themeId !== SYSTEM_THEME_ID) return;
@@ -229,91 +238,45 @@ export function useStore() {
   );
 
   const updateEditorApp = useCallback(
-    async (editor: EditorApp) => {
-      const prevEditor = editorAppRef.current;
-      commitEditorApp(editor);
-      try {
-        await persist([["editorApp", editor]]);
-      } catch {
-        commitEditorApp(prevEditor);
-        setPersistError("Failed to save editor preference");
-      }
-    },
-    [commitEditorApp]
+    (editor: EditorApp) =>
+      preferenceSession.update({ editorApp: editor }, "Failed to save editor preference"),
+    [preferenceSession]
   );
 
-  const updateAgentView = useCallback(async (agent: AgentId, view: AgentView) => {
-    const previous = agentViewsRef.current;
-    const next = { ...previous, [agent]: view };
-    agentViewsRef.current = next;
-    setAgentViews(next);
-    try {
-      await persist([["agentViews", next]]);
-    } catch {
-      agentViewsRef.current = previous;
-      setAgentViews(previous);
-      setPersistError("Failed to save the agent view preference");
-    }
-  }, []);
+  const updateAgentView = useCallback(
+    (agent: AgentId, view: AgentView) =>
+      preferenceSession.update(
+        (current) => ({ agentViews: { ...current.agentViews, [agent]: view } }),
+        "Failed to save the agent view preference"
+      ),
+    [preferenceSession]
+  );
 
   const toggleSidebarCollapsed = useCallback(() => {
-    setSidebarCollapsedState((prev) => {
-      const next = !prev;
-      void persist([["sidebarCollapsed", next]]).catch(() => {});
-      return next;
-    });
-  }, []);
+    void preferenceSession.update(
+      (current) => ({ sidebarCollapsed: !current.sidebarCollapsed }),
+      "Failed to save sidebar preference"
+    );
+  }, [preferenceSession]);
 
   const updateThemeId = useCallback(
-    async (id: string) => {
-      const prevTheme = themeId;
-      const prevCustom = customColors;
-
-      // First time Custom is selected (no saved colors yet): seed it from the
-      // currently-active preset so the user starts from a familiar palette.
-      let seeded = customColors;
-      if (id === CUSTOM_THEME_ID && !seeded) {
-        const source = presetFor(prevTheme);
-        seeded = { ...source.colors };
-        setCustomColors(seeded);
-      }
-
-      setThemeIdState(id);
-      applyTheme(id, id === CUSTOM_THEME_ID ? (seeded ?? undefined) : undefined);
-
-      try {
-        const entries: [string, unknown][] = [["themeId", id]];
-        if (id === CUSTOM_THEME_ID && !prevCustom && seeded) {
-          entries.push(["customTheme", seeded]);
-        }
-        await persist(entries);
-      } catch {
-        setThemeIdState(prevTheme);
-        setCustomColors(prevCustom);
-        applyTheme(
-          prevTheme,
-          prevTheme === CUSTOM_THEME_ID ? (prevCustom ?? undefined) : undefined
-        );
-        setPersistError("Failed to save theme preference");
-      }
-    },
-    [themeId, customColors]
+    (id: string) =>
+      preferenceSession.update(
+        (current) => ({
+          themeId: id,
+          ...(id === CUSTOM_THEME_ID && !current.customTheme
+            ? { customTheme: { ...presetFor(current.themeId).colors } }
+            : {}),
+        }),
+        "Failed to save theme preference"
+      ),
+    [preferenceSession]
   );
 
   const updateCustomColors = useCallback(
-    async (colors: Record<string, string>) => {
-      const prevCustom = customColors;
-      setCustomColors(colors);
-      applyTheme(CUSTOM_THEME_ID, colors);
-      try {
-        await persist([["customTheme", colors]]);
-      } catch {
-        setCustomColors(prevCustom);
-        applyTheme(CUSTOM_THEME_ID, prevCustom ?? undefined);
-        setPersistError("Failed to save theme preference");
-      }
-    },
-    [customColors]
+    (colors: Record<string, string>) =>
+      preferenceSession.update({ customTheme: colors }, "Failed to save theme preference"),
+    [preferenceSession]
   );
 
   const selectedWorkspace = useMemo(

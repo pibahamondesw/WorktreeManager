@@ -25,6 +25,7 @@ import { compareTaskPins } from "../utils";
 import { LinearService } from "./linear";
 import { taskLinearStore } from "./taskLinear";
 import { persist } from "./store";
+import { persistedEntries } from "./preferences";
 import { archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
 import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
@@ -237,7 +238,7 @@ export class Operations {
 
   private async write(patch: Partial<AppState>) {
     try {
-      await this.save(Object.entries(patch));
+      await this.save(persistedEntries(patch));
     } catch {
       throw new OperationError(
         "persist_failed",
