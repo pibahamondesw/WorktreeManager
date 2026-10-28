@@ -19,6 +19,7 @@ pub mod history;
 mod history_tests;
 mod markdown;
 mod model;
+mod preferences;
 mod sessions;
 mod turns;
 
@@ -618,7 +619,7 @@ pub async fn chat_open<R: Runtime>(
             .filter(|entry| entry.conversation_id == link.conversation_id)
             .and_then(|entry| entry.fork)
     });
-    let (handoff, launch) = {
+    let (handoff, mut launch) = {
         let (handoffs, task_id, agent, cwd) = (
             handoffs.clone(),
             task_id.clone(),
@@ -648,6 +649,13 @@ pub async fn chat_open<R: Runtime>(
         .await
         .map_err(|e| format!("Task failed: {e}"))??
     };
+    if agent == "codex" {
+        match preferences::load(&app) {
+            Ok(Some(selection)) => launch.provider.restore_selection(selection),
+            Ok(None) => {}
+            Err(error) => log::warn!("could not load chat model selection: {error}"),
+        }
+    }
     let remember: Remember = {
         let (store, task_id, agent, cwd) =
             (store.clone(), task_id.clone(), agent.clone(), cwd.clone());
@@ -722,14 +730,21 @@ pub fn chat_send(
 }
 
 #[tauri::command(async)]
-pub fn chat_configure(
+pub fn chat_configure<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
     setting: ChatSetting,
 ) -> Result<(), String> {
     registry.with_session(&task_id, &agent, |session| {
-        session.with_provider(|provider, _, out| provider.configure(&setting, out))
+        session.with_provider(|provider, _, out| provider.configure(&setting, out))?;
+        if agent == "codex" && matches!(setting, ChatSetting::Model(_) | ChatSetting::Effort(_)) {
+            let state = session.shared.lock().unwrap();
+            preferences::save(&app, &state.snapshot.controls)
+                .map_err(|error| format!("Could not remember the model selection: {error}"))?;
+        }
+        Ok(())
     })
 }
 
