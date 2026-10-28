@@ -516,6 +516,51 @@ mod tests {
     }
 
     #[test]
+    fn commands_route_progress_and_completion_to_the_owning_session_only() {
+        use tauri::{
+            test::{mock_builder, mock_context, noop_assets},
+            Manager,
+        };
+        let mut server = Server::new();
+        let app = mock_builder()
+            .manage(server.cli_bridge.take().unwrap())
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let state = || app.state::<CliBridge>();
+        let frontend_session = || {
+            state()
+                .shared
+                .frontend
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|frontend| frontend.session.clone())
+        };
+        let (sender, receiver) = mpsc::channel();
+        state().shared.pending.lock().unwrap().insert(
+            "r1".into(),
+            Pending {
+                session: "old".into(),
+                sender,
+            },
+        );
+
+        cli_bridge_register(state(), "old".into(), Channel::new(|_| Ok(())));
+        cli_bridge_progress(state(), "other".into(), "r1".into(), "ignored".into());
+        cli_bridge_progress(state(), "old".into(), "r1".into(), "working".into());
+        assert_eq!(receiver.recv().unwrap()["progress"], "working");
+        cli_bridge_complete(state(), "other".into(), "r1".into(), json!({ "ok": false }));
+        cli_bridge_complete(state(), "old".into(), "r1".into(), json!({ "ok": true }));
+        assert_eq!(receiver.recv().unwrap()["ok"], true);
+        assert!(state().shared.pending.lock().unwrap().is_empty());
+
+        cli_bridge_register(state(), "new".into(), Channel::new(|_| Ok(())));
+        assert_eq!(frontend_session().as_deref(), Some("new"));
+        cli_bridge_unregister(state(), "new".into());
+        assert_eq!(frontend_session(), None);
+    }
+
+    #[test]
     fn accepted_nonblocking_connections_wait_for_complete_frames() {
         use std::io::Read;
 
