@@ -183,7 +183,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
     },
 ];
 
-fn ensure_support_files(root: &Path) -> Result<(), String> {
+fn ensure_task_note_support(root: &Path) -> Result<(), String> {
     for file in SUPPORT_FILES {
         let path = root.join(file.rel_path);
         if path.exists() {
@@ -237,7 +237,7 @@ pub(crate) fn scaffold_vault_at(root: &Path) -> Result<(), String> {
                 .map_err(|e| format!("chmod {}: {e}", path.display()))?;
         }
     }
-    ensure_support_files(root)
+    ensure_task_note_support(root)
 }
 
 /// Obsidian's registry of known vaults. Registering here is what makes
@@ -403,7 +403,7 @@ pub fn ensure_vault(vault_path: String) -> Result<String, String> {
     if !root.exists() {
         scaffold_vault_at(root)?;
     }
-    ensure_support_files(root)?;
+    ensure_task_note_support(root)?;
     register_vault(&vault_path, false)?;
     Ok(vault_path)
 }
@@ -601,7 +601,7 @@ mod tests {
         fs::create_dir_all(root.join("task-logs/_archive")).unwrap();
         fs::write(root.join("task-logs/legacy.md"), "legacy note").unwrap();
         fs::write(root.join("task-logs/_archive/old.md"), "archived history").unwrap();
-        ensure_support_files(&root).unwrap();
+        ensure_task_note_support(&root).unwrap();
         for file in SUPPORT_FILES {
             assert_eq!(
                 fs::read_to_string(root.join(file.rel_path)).unwrap(),
@@ -621,7 +621,7 @@ mod tests {
         let instructions = fs::read_to_string(root.join("AGENTS.md")).unwrap();
         assert!(instructions.starts_with("User instructions\n"));
         fs::write(root.join("scripts/new-task-note.sh"), "user script").unwrap();
-        ensure_support_files(&root).unwrap();
+        ensure_task_note_support(&root).unwrap();
         assert_eq!(
             fs::read_to_string(root.join("AGENTS.md")).unwrap(),
             instructions
@@ -640,7 +640,7 @@ mod tests {
         );
         assert!(!root.join("templates/plan.md").exists());
         fs::remove_file(root.join("AGENTS.md")).unwrap();
-        ensure_support_files(&root).unwrap();
+        ensure_task_note_support(&root).unwrap();
         assert!(!root.join("AGENTS.md").exists());
         fs::remove_dir_all(root).unwrap();
     }
@@ -653,8 +653,8 @@ mod tests {
         fs::create_dir_all(root.join("skills/wtm")).unwrap();
         fs::write(root.join("skills/wtm/SKILL.md"), "user skill").unwrap();
 
-        ensure_support_files(&root).unwrap();
-        ensure_support_files(&root).unwrap();
+        ensure_task_note_support(&root).unwrap();
+        ensure_task_note_support(&root).unwrap();
 
         assert_eq!(
             fs::read_to_string(root.join("AGENTS.md")).unwrap(),
