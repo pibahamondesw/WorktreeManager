@@ -94,7 +94,7 @@ const VAULT_FILES: &[VaultFile] = &[
     },
 ];
 
-const TASK_NOTE_FILES: &[VaultFile] = &[
+const SUPPORT_FILES: &[VaultFile] = &[
     VaultFile {
         rel_path: "skills/task-log/SKILL.md",
         contents: include_str!("../../../vault-kit/skills/task-log/SKILL.md"),
@@ -110,18 +110,87 @@ const TASK_NOTE_FILES: &[VaultFile] = &[
         contents: include_str!("../../../vault-kit/scripts/archive-task-note.sh"),
         executable: true,
     },
+    VaultFile {
+        rel_path: "skills/wtm/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm/SKILL.md"),
+        executable: false,
+    },
+    VaultFile {
+        rel_path: "skills/wtm-start-task/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-start-task/SKILL.md"),
+        executable: false,
+    },
+    VaultFile {
+        rel_path: "skills/wtm-where-am-i/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-where-am-i/SKILL.md"),
+        executable: false,
+    },
+    VaultFile {
+        rel_path: "skills/wtm-split-work/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-split-work/SKILL.md"),
+        executable: false,
+    },
+    VaultFile {
+        rel_path: "skills/wtm-vault-project/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-vault-project/SKILL.md"),
+        executable: false,
+    },
+    VaultFile {
+        rel_path: "skills/wtm-finish-task/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-finish-task/SKILL.md"),
+        executable: false,
+    },
+    VaultFile {
+        rel_path: "skills/wtm-repo-setup/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-repo-setup/SKILL.md"),
+        executable: false,
+    },
 ];
+
+struct GuideSection {
+    link: &'static str,
+    text: &'static str,
+}
 
 const TASK_NOTE_GUIDE: &str = "\n\n## Task log storage\n\nBefore resolving or writing a task log, read [skills/task-log/SKILL.md](skills/task-log/SKILL.md). Its storage rules supersede legacy instructions about flat filenames and discarding empty notes.\n";
 
-fn ensure_task_note_support(root: &Path) -> Result<(), String> {
-    for file in TASK_NOTE_FILES {
+const WTM_SKILLS_GUIDE: &str = r#"
+
+## WorktreeManager skills
+
+Read the matching skill before acting. When a trigger appears, propose the skill to the user even if they did not ask for it.
+
+| Trigger | Skill |
+| --- | --- |
+| About to create a worktree or branch, work in parallel, or use `wtm` | [skills/wtm/SKILL.md](skills/wtm/SKILL.md) |
+| An issue to start, or a change requested outside a WTM task | [skills/wtm-start-task/SKILL.md](skills/wtm-start-task/SKILL.md) |
+| A session starts or resumes inside a WTM worktree | [skills/wtm-where-am-i/SKILL.md](skills/wtm-where-am-i/SKILL.md) |
+| Work grows past one PR, or a second repository needs its own PR | [skills/wtm-split-work/SKILL.md](skills/wtm-split-work/SKILL.md) |
+| Work spans issues or repositories, or needs a lasting plan or decision | [skills/wtm-vault-project/SKILL.md](skills/wtm-vault-project/SKILL.md) |
+| A decision or learning worth keeping, or the end of a session | [skills/task-log/SKILL.md](skills/task-log/SKILL.md) |
+| The task's PR merged, or the user wants to clean up a task | [skills/wtm-finish-task/SKILL.md](skills/wtm-finish-task/SKILL.md) |
+| Setup warnings, or missing dependencies or env files in a new worktree | [skills/wtm-repo-setup/SKILL.md](skills/wtm-repo-setup/SKILL.md) |
+"#;
+
+const GUIDE_SECTIONS: &[GuideSection] = &[
+    GuideSection {
+        link: "[skills/task-log/SKILL.md](skills/task-log/SKILL.md)",
+        text: TASK_NOTE_GUIDE,
+    },
+    GuideSection {
+        link: "[skills/wtm/SKILL.md](skills/wtm/SKILL.md)",
+        text: WTM_SKILLS_GUIDE,
+    },
+];
+
+fn ensure_support_files(root: &Path) -> Result<(), String> {
+    for file in SUPPORT_FILES {
         let path = root.join(file.rel_path);
         if path.exists() {
             continue;
         }
         fs::create_dir_all(path.parent().unwrap())
-            .map_err(|e| format!("create task note support: {e}"))?;
+            .map_err(|e| format!("create vault support files: {e}"))?;
         UserFile::new(&path)
             .unchanged_from("")
             .replace(file.contents)?;
@@ -133,17 +202,22 @@ fn ensure_task_note_support(root: &Path) -> Result<(), String> {
     let agents = root.join("AGENTS.md");
     if agents.exists() {
         let contents = fs::read_to_string(&agents).map_err(|e| format!("read AGENTS.md: {e}"))?;
-        if !contents.contains("[skills/task-log/SKILL.md](skills/task-log/SKILL.md)") {
+        let missing: String = GUIDE_SECTIONS
+            .iter()
+            .filter(|section| !contents.contains(section.link))
+            .map(|section| section.text)
+            .collect();
+        if !missing.is_empty() {
             UserFile::new(&agents)
                 .unchanged_from(&contents)
-                .replace(format!("{contents}{TASK_NOTE_GUIDE}"))?;
+                .replace(format!("{contents}{missing}"))?;
         }
     }
     Ok(())
 }
 
 /// Scaffold the vault structure at `root`. Idempotent: existing files are
-/// preserved and missing ones created. Task-note support adds a skill reference
+/// preserved and missing ones created. Support files add skill references
 /// to the guide without replacing user instructions.
 pub(crate) fn scaffold_vault_at(root: &Path) -> Result<(), String> {
     for dir in VAULT_DIRS {
@@ -163,7 +237,7 @@ pub(crate) fn scaffold_vault_at(root: &Path) -> Result<(), String> {
                 .map_err(|e| format!("chmod {}: {e}", path.display()))?;
         }
     }
-    ensure_task_note_support(root)
+    ensure_support_files(root)
 }
 
 /// Obsidian's registry of known vaults. Registering here is what makes
@@ -320,7 +394,7 @@ pub fn scaffold_vault(vault_path: String) -> Result<String, String> {
 }
 
 /// Startup self-heal for an enabled vault: recreate it only when the root
-/// folder is missing entirely, repair task-note support,
+/// folder is missing entirely, repair support files and skills,
 /// and keep the Obsidian registration current — without ever disturbing a
 /// running Obsidian.
 #[tauri::command]
@@ -329,7 +403,7 @@ pub fn ensure_vault(vault_path: String) -> Result<String, String> {
     if !root.exists() {
         scaffold_vault_at(root)?;
     }
-    ensure_task_note_support(root)?;
+    ensure_support_files(root)?;
     register_vault(&vault_path, false)?;
     Ok(vault_path)
 }
@@ -362,7 +436,7 @@ mod tests {
             let path = root.join(file.rel_path);
             assert!(path.is_file(), "missing file {}", file.rel_path);
             let expected = if file.rel_path == "AGENTS.md" {
-                format!("{}{TASK_NOTE_GUIDE}", file.contents)
+                format!("{}{TASK_NOTE_GUIDE}{WTM_SKILLS_GUIDE}", file.contents)
             } else {
                 file.contents.to_string()
             };
@@ -510,7 +584,7 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(&agents).unwrap(),
-            format!("user-edited contents{TASK_NOTE_GUIDE}")
+            format!("user-edited contents{TASK_NOTE_GUIDE}{WTM_SKILLS_GUIDE}")
         );
         assert_eq!(
             fs::read_to_string(root.join("templates/plan.md")).unwrap(),
@@ -527,8 +601,8 @@ mod tests {
         fs::create_dir_all(root.join("task-logs/_archive")).unwrap();
         fs::write(root.join("task-logs/legacy.md"), "legacy note").unwrap();
         fs::write(root.join("task-logs/_archive/old.md"), "archived history").unwrap();
-        ensure_task_note_support(&root).unwrap();
-        for file in TASK_NOTE_FILES {
+        ensure_support_files(&root).unwrap();
+        for file in SUPPORT_FILES {
             assert_eq!(
                 fs::read_to_string(root.join(file.rel_path)).unwrap(),
                 file.contents
@@ -547,7 +621,7 @@ mod tests {
         let instructions = fs::read_to_string(root.join("AGENTS.md")).unwrap();
         assert!(instructions.starts_with("User instructions\n"));
         fs::write(root.join("scripts/new-task-note.sh"), "user script").unwrap();
-        ensure_task_note_support(&root).unwrap();
+        ensure_support_files(&root).unwrap();
         assert_eq!(
             fs::read_to_string(root.join("AGENTS.md")).unwrap(),
             instructions
@@ -566,8 +640,46 @@ mod tests {
         );
         assert!(!root.join("templates/plan.md").exists());
         fs::remove_file(root.join("AGENTS.md")).unwrap();
-        ensure_task_note_support(&root).unwrap();
+        ensure_support_files(&root).unwrap();
         assert!(!root.join("AGENTS.md").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skills_upgrade_appends_only_the_missing_guide_section() {
+        let root = temp_dir("skills-upgrade");
+        let existing = format!("User instructions\n{TASK_NOTE_GUIDE}");
+        fs::write(root.join("AGENTS.md"), &existing).unwrap();
+        fs::create_dir_all(root.join("skills/wtm")).unwrap();
+        fs::write(root.join("skills/wtm/SKILL.md"), "user skill").unwrap();
+
+        ensure_support_files(&root).unwrap();
+        ensure_support_files(&root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+            format!("{existing}{WTM_SKILLS_GUIDE}")
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("skills/wtm/SKILL.md")).unwrap(),
+            "user skill"
+        );
+        assert!(root.join("skills/wtm-start-task/SKILL.md").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn guide_links_every_installed_skill() {
+        for file in SUPPORT_FILES
+            .iter()
+            .filter(|file| file.rel_path.starts_with("skills/"))
+        {
+            let link = format!("[{0}]({0})", file.rel_path);
+            assert!(
+                WTM_SKILLS_GUIDE.contains(&link),
+                "{} missing from the guide",
+                file.rel_path
+            );
+        }
     }
 }

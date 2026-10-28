@@ -36,10 +36,10 @@ Everything under [`vault/`](vault/) in this directory, verbatim:
     archive.sh         # archives finished projects into _archive/
     new-task-note.sh    # resolves or creates a task note
     archive-task-note.sh
-  skills/task-log/     # task-note resolution and writing rules
+  skills/              # task-log and the wtm-* WorktreeManager skills
 ```
 
-**Scaffolding preserves existing files.** While the vault is enabled, startup repairs a missing vault and registers it with Obsidian. It also installs missing task-note scripts and `skills/task-log/SKILL.md`, and appends a reference to that skill to the existing `AGENTS.md` once, preserving custom instructions. These support files are repaired if missing; other individually deleted files stay deleted. Existing support files are not overwritten.
+**Scaffolding preserves existing files.** While the vault is enabled, startup repairs a missing vault and registers it with Obsidian. It also installs missing task-note scripts and [skills](#worktreemanager-skills), and appends each missing skill section to the existing `AGENTS.md` once, preserving custom instructions. These support files are repaired if missing; other individually deleted files stay deleted. Existing support files are not overwritten.
 
 New tasks use `task-logs/<task-id>/<note>.md`; deleting them moves the whole folder to `task-logs/_archive/<task-id>/`. Task IDs distinguish separate creations of the same branch. Older tasks keep their flat paths and are always archived too; their historical name collisions are not migrated automatically.
 
@@ -56,6 +56,23 @@ For an already-enabled vault, use **Obsidian vault → Repair agent setup** to c
 For standalone installations without WorktreeManager, or other AI tools, use the snippet's installation instructions.
 
 This is plain Markdown, so it works with any agent that supports global instructions — nothing here is Claude-specific.
+
+### WorktreeManager skills
+
+[`skills/`](skills/) teaches agents to work through WorktreeManager and the vault instead of ad hoc worktrees and notes. The vault's `AGENTS.md` maps each trigger to its skill, so agents read the skill on demand and propose it when the trigger appears, even if the user did not ask.
+
+| Skill | Use |
+| --- | --- |
+| [`wtm`](skills/wtm/SKILL.md) | The `wtm` CLI, and why tasks replace hand-made worktrees. |
+| [`wtm-start-task`](skills/wtm-start-task/SKILL.md) | Issue → workspace, repositories and task with Linear's branch name. |
+| [`wtm-where-am-i`](skills/wtm-where-am-i/SKILL.md) | Session orientation: task, Git state, PRs, notes and a next step. |
+| [`wtm-split-work`](skills/wtm-split-work/SKILL.md) | One sub-issue and one task per PR. |
+| [`wtm-vault-project`](skills/wtm-vault-project/SKILL.md) | Projects for work that spans issues or repositories. |
+| [`task-log`](skills/task-log/SKILL.md) | Distilled decisions and learnings per task. |
+| [`wtm-finish-task`](skills/wtm-finish-task/SKILL.md) | After merge: keep what matters, then delete the task. |
+| [`wtm-repo-setup`](skills/wtm-repo-setup/SKILL.md) | Workspaces, `.worktreemanager.toml` and `.worktreeinclude`. |
+
+They are plain Markdown with `SKILL.md` frontmatter, so any agent can read them. To also get slash commands in Claude Code, copy a skill folder into `~/.claude/skills/`.
 
 ### Optional: the `/task-log` skill (Claude Code)
 
