@@ -29,6 +29,7 @@ const values: Preferences = {
   themeId: "ocean",
   customTheme: { accent: "#123456" },
   sidebarCollapsed: true,
+  keepRunningInBackground: false,
   scriptApprovals: { "/repo": ["sha256"] },
   agentAlerts: {
     sounds: { done: null, waiting: "Ping" },
@@ -124,6 +125,14 @@ describe("normalization", () => {
       values.navigationHistory
     );
   });
+
+  it("keeps running in the background unless explicitly turned off", async () => {
+    const { normalizers } = await import("./preferences");
+    expect(normalizers.keepRunningInBackground(undefined)).toBe(true);
+    expect(normalizers.keepRunningInBackground("false")).toBe(true);
+    expect(normalizers.keepRunningInBackground(true)).toBe(true);
+    expect(normalizers.keepRunningInBackground(false)).toBe(false);
+  });
 });
 
 describe("shared writer", () => {
@@ -155,6 +164,7 @@ describe("optimistic preferences", () => {
     "themeId",
     "customTheme",
     "sidebarCollapsed",
+    "keepRunningInBackground",
   ];
 
   it.each(interfaceKeys)("publishes and rolls back %s, reporting the failure", async (key) => {

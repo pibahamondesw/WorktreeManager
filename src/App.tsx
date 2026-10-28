@@ -63,6 +63,8 @@ function App() {
     updateAgentView,
     sidebarCollapsed,
     toggleSidebarCollapsed,
+    keepRunningInBackground,
+    updateKeepRunningInBackground,
     updateThemeId,
     updateCustomColors,
   } = useStore();
@@ -562,6 +564,10 @@ function App() {
         onRepairVaultAgents={handleRepairVaultAgents}
         alerts={agentActivity.alerts}
         onAlertsChange={agentActivity.updateAlerts}
+        keepRunningInBackground={keepRunningInBackground}
+        onKeepRunningInBackgroundChange={(keepRunning) =>
+          void updateKeepRunningInBackground(keepRunning)
+        }
         severity={doctorSeverity}
         report={doctorReport}
         running={doctorRunning || keychainRetrying}

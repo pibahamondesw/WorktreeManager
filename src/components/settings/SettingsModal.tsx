@@ -39,6 +39,8 @@ interface SettingsModalProps {
   onRepairVaultAgents: (agent?: VaultAgent) => Promise<void>;
   alerts: AgentAlertSettings;
   onAlertsChange: (alerts: AgentAlertSettings) => void;
+  keepRunningInBackground: boolean;
+  onKeepRunningInBackgroundChange: (keepRunning: boolean) => void;
   report: DoctorReport | null;
   running: boolean;
   severity: CheckSeverity | null;
@@ -179,11 +181,17 @@ export function SettingsModal(props: SettingsModalProps) {
                   />
                 )}
                 {id === "alerts" && (
-                  <AgentAlertSettingsPanel
-                    open={section === id}
-                    alerts={props.alerts}
-                    onAlertsChange={props.onAlertsChange}
-                  />
+                  <>
+                    <AgentAlertSettingsPanel
+                      open={section === id}
+                      alerts={props.alerts}
+                      onAlertsChange={props.onAlertsChange}
+                    />
+                    <BackgroundSetting
+                      keepRunning={props.keepRunningInBackground}
+                      onChange={props.onKeepRunningInBackgroundChange}
+                    />
+                  </>
                 )}
               </section>
             ))}
@@ -191,5 +199,26 @@ export function SettingsModal(props: SettingsModalProps) {
         </div>
       )}
     </Modal>
+  );
+}
+
+function BackgroundSetting({
+  keepRunning,
+  onChange,
+}: {
+  keepRunning: boolean;
+  onChange: (keepRunning: boolean) => void;
+}) {
+  return (
+    <div className="px-6 pb-6 space-y-1">
+      <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+        <input type="checkbox" checked={keepRunning} onChange={(e) => onChange(e.target.checked)} />
+        Keep running in the background
+      </label>
+      <p className="text-xs text-text-muted">
+        Closing the window while agent sessions are live hides it instead of quitting, so they keep
+        working. Reopen it from the Dock or with wtm. Quitting ends them; chats can be resumed.
+      </p>
+    </div>
   );
 }
