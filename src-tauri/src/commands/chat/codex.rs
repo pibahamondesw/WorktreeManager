@@ -95,6 +95,7 @@ pub struct CodexProvider {
     busy: bool,
     errors: u64,
     controls: ChatControls,
+    selection_restored: bool,
     skills: HashMap<String, String>,
     config_approval: Option<Value>,
     config_reviewer: Option<Value>,
@@ -159,6 +160,7 @@ impl CodexProvider {
                 ..Default::default()
             },
             skills: HashMap::new(),
+            selection_restored: false,
             config_approval: None,
             config_reviewer: None,
             config_sandbox: None,
@@ -282,11 +284,13 @@ impl CodexProvider {
 
     fn adopt_config(&mut self, result: &Value) {
         let config = &result["config"];
-        if let Some(model) = config["model"].as_str() {
-            self.controls.model = Some(model.to_string());
-        }
-        if let Some(effort) = config["model_reasoning_effort"].as_str() {
-            self.controls.effort = Some(effort.to_string());
+        if !self.selection_restored {
+            if let Some(model) = config["model"].as_str() {
+                self.controls.model = Some(model.to_string());
+            }
+            if let Some(effort) = config["model_reasoning_effort"].as_str() {
+                self.controls.effort = Some(effort.to_string());
+            }
         }
         self.config_approval = Some(config["approval_policy"].clone()).filter(|v| !v.is_null());
         self.config_reviewer = Some(config["approvals_reviewer"].clone()).filter(|v| !v.is_null());
@@ -903,6 +907,12 @@ impl CodexProvider {
 }
 
 impl ChatProvider for CodexProvider {
+    fn restore_selection(&mut self, selection: super::preferences::ModelSelection) {
+        self.controls.model = selection.model;
+        self.controls.effort = selection.effort;
+        self.selection_restored = true;
+    }
+
     fn fork(&mut self, item_id: &str, out: &mut ProviderOutput) -> Result<(), String> {
         if self.busy {
             return Err("Stop the agent before forking".into());
@@ -1030,6 +1040,7 @@ impl ChatProvider for CodexProvider {
                 return Ok(());
             }
             ChatSetting::Model(model) => {
+                self.selection_restored = true;
                 self.controls.model = Some(model.clone());
                 let efforts = self.controls.efforts();
                 if let Some(effort) = &self.controls.effort {
@@ -1038,7 +1049,10 @@ impl ChatProvider for CodexProvider {
                     }
                 }
             }
-            ChatSetting::Effort(effort) => self.controls.effort = Some(effort.clone()),
+            ChatSetting::Effort(effort) => {
+                self.selection_restored = true;
+                self.controls.effort = Some(effort.clone());
+            }
             ChatSetting::Mode(mode) => {
                 if !self.controls.modes.iter().any(|m| &m.id == mode) {
                     return Err(format!("Unknown mode: {mode}"));
@@ -2109,6 +2123,92 @@ mod tests {
             json!({ "method": "serverRequest/resolved", "params": { "threadId": "th1", "requestId": 5 } }),
         );
         assert!(snapshot.pending.is_empty());
+    }
+
+    #[test]
+    fn uses_config_model_and_effort_without_a_remembered_selection() {
+        let (mut provider, _) = ready(None);
+        provider.adopt_config(&json!({ "config": {
+            "model": "configured", "model_reasoning_effort": "low"
+        } }));
+        assert_eq!(provider.controls.model.as_deref(), Some("configured"));
+        assert_eq!(provider.controls.effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn remembered_selection_overrides_config_and_is_sent_on_the_first_turn() {
+        for resume in [None, Some("th1")] {
+            for config_first in [true, false] {
+                let (mut provider, mut snapshot) = ready(resume);
+                provider.restore_selection(super::super::preferences::ModelSelection {
+                    model: Some("economical".into()),
+                    effort: Some("low".into()),
+                });
+                feed(
+                    &mut provider,
+                    &mut snapshot,
+                    json!({ "id": 2, "result": { "account": {} } }),
+                );
+                let config = json!({ "id": 4, "result": { "config": {
+                    "model": "expensive", "model_reasoning_effort": "high"
+                } } });
+                let models = json!({ "id": 3, "result": { "data": [
+                    { "id": "expensive", "isDefault": true },
+                    { "id": "economical", "supportedReasoningEfforts": [{ "reasoningEffort": "low" }] }
+                ] } });
+                let responses = if config_first {
+                    [config, models]
+                } else {
+                    [models, config]
+                };
+                for response in responses {
+                    feed(&mut provider, &mut snapshot, response);
+                }
+                feed(
+                    &mut provider,
+                    &mut snapshot,
+                    json!({ "id": THREAD_CALL, "result": {
+                    "thread": { "id": "th1", "turns": [] }
+                } }),
+                );
+                assert_eq!(snapshot.controls.model.as_deref(), Some("economical"));
+                assert_eq!(snapshot.controls.effort.as_deref(), Some("low"));
+                let mut out = ProviderOutput::default();
+                provider.send("go", &[], &mut out).unwrap();
+                let turn = request(&out, "turn/start");
+                assert_eq!(turn["params"]["model"], "economical");
+                assert_eq!(turn["params"]["effort"], "low");
+            }
+        }
+    }
+
+    #[test]
+    fn changing_model_does_not_restore_an_incompatible_effort_from_config() {
+        let (mut provider, _) = resumed();
+        provider.adopt_models(&json!({ "data": [
+            { "id": "economical", "supportedReasoningEfforts": [{ "reasoningEffort": "low" }] }
+        ] }));
+        provider.controls.effort = Some("high".into());
+        provider
+            .configure(
+                &ChatSetting::Model("economical".into()),
+                &mut ProviderOutput::default(),
+            )
+            .unwrap();
+        provider.adopt_config(
+            &json!({ "config": { "model": "expensive", "model_reasoning_effort": "high" } }),
+        );
+        assert_eq!(provider.controls.model.as_deref(), Some("economical"));
+        assert_eq!(provider.controls.effort, None);
+        let saved = super::super::preferences::ModelSelection {
+            model: provider.controls.model.clone(),
+            effort: None,
+        };
+        let (mut restored, _) = ready(None);
+        restored.restore_selection(saved);
+        restored.adopt_config(&json!({ "config": { "model_reasoning_effort": "high" } }));
+        assert_eq!(restored.controls.effort, None);
+        assert_eq!(restored.controls.model.as_deref(), Some("economical"));
     }
 
     #[test]

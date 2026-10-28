@@ -545,6 +545,7 @@ pub fn user_display_text(text: &str, image_count: usize) -> String {
 /// steer or queue the message rather than refusing it. The session owns the process and threading; the
 /// provider only sees lines and user actions. `snapshot` is the state before this input.
 pub trait ChatProvider: Send {
+    fn restore_selection(&mut self, _selection: super::preferences::ModelSelection) {}
     fn fork(&mut self, _item_id: &str, _out: &mut ProviderOutput) -> Result<(), String> {
         Err("This agent cannot fork a running conversation".into())
     }

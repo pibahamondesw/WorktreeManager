@@ -1550,6 +1550,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn codex_model_selection_does_not_change_claude_controls() {
+        let mut provider = ClaudeProvider::new("session".into());
+        let controls = provider.controls.clone();
+        provider.restore_selection(super::super::preferences::ModelSelection {
+            model: Some("codex-model".into()),
+            effort: Some("low".into()),
+        });
+        assert_eq!(provider.controls, controls);
+    }
+
+    #[test]
     fn fork_points_cut_before_the_user_message_and_leave_the_original_intact() {
         let text = [
             json!({ "type": "user", "uuid": "u1", "parentUuid": null, "message": { "content": "first" } }),

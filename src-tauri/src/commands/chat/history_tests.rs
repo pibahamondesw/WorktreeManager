@@ -126,6 +126,7 @@ impl Fixture {
             .to_string_lossy()
             .into_owned();
         let app = mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
             .invoke_handler(tauri::generate_handler![
                 super::history::chat_history,
                 super::history::chat_rewind_preview,
@@ -1020,6 +1021,133 @@ fn task_close_retains_a_mapping_if_the_auxiliary_cleanup_cannot_be_written() {
         .unwrap()
         .get("task", "codex", &fixture.repositories.folders[0])
         .is_some());
+}
+
+#[test]
+fn codex_model_selection_survives_fresh_sessions_and_is_persisted_on_disk() {
+    let fixture = Fixture::new();
+    assert!(preferences::load(fixture.app.handle()).unwrap().is_none());
+    fixture.open("codex", OpenMode::Fresh).unwrap();
+    for setting in [
+        ChatSetting::Model("economical".into()),
+        ChatSetting::Effort("low".into()),
+    ] {
+        chat_configure(
+            fixture.app.handle().clone(),
+            fixture.app.state(),
+            "task".into(),
+            "codex".into(),
+            setting,
+        )
+        .unwrap();
+    }
+    let path = fixture
+        .app
+        .path()
+        .app_data_dir()
+        .unwrap()
+        .join("chat-preferences.json");
+    let saved: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(
+        saved["codex"],
+        json!({ "model": "economical", "effort": "low" })
+    );
+    let snapshot = fixture.open("codex", OpenMode::Fresh).unwrap();
+    assert_eq!(snapshot.controls.model.as_deref(), Some("economical"));
+    assert_eq!(snapshot.controls.effort.as_deref(), Some("low"));
+    assert_eq!(snapshot.controls.mode.as_deref(), Some("auto"));
+    fixture.open("claude", OpenMode::Fresh).unwrap();
+    chat_configure(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "claude".into(),
+        ChatSetting::Model("haiku".into()),
+    )
+    .unwrap();
+    assert_eq!(
+        preferences::load(fixture.app.handle())
+            .unwrap()
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("economical")
+    );
+}
+
+#[test]
+fn codex_model_selection_ignores_malformed_values_and_reports_save_failures() {
+    use tauri_plugin_store::StoreExt;
+
+    let fixture = Fixture::new();
+    let store = fixture
+        .app
+        .store_builder("chat-preferences.json")
+        .disable_auto_save()
+        .build()
+        .unwrap();
+    for malformed in [
+        Value::Null,
+        json!({}),
+        json!({ "model": " " }),
+        json!({ "model": 42 }),
+    ] {
+        store.set("codex", malformed);
+        assert!(preferences::load(fixture.app.handle()).unwrap().is_none());
+    }
+    fixture.open("codex", OpenMode::Fresh).unwrap();
+    let path = fixture
+        .app
+        .path()
+        .app_data_dir()
+        .unwrap()
+        .join("chat-preferences.json");
+    fs::create_dir_all(path).unwrap();
+    let error = chat_configure(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        ChatSetting::Model("economical".into()),
+    )
+    .unwrap_err();
+    assert!(error.contains("Could not remember the model selection"));
+    assert_eq!(
+        fixture.snapshot("codex").controls.model.as_deref(),
+        Some("economical")
+    );
+    assert_eq!(store.get("codex"), Some(json!({ "model": 42 })));
+    store.delete("codex");
+    assert!(chat_configure(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        ChatSetting::Effort("low".into()),
+    )
+    .is_err());
+    assert!(store.get("codex").is_none());
+}
+
+#[test]
+fn codex_model_selection_load_failure_does_not_prevent_opening_a_chat() {
+    use tauri_plugin_store::{Store, StoreExt};
+
+    let fixture = Fixture::new();
+    let store = fixture.app.store("chat-preferences.json").unwrap();
+    let mut resources = fixture.app.resources_table();
+    let id = resources
+        .names()
+        .find_map(|(id, _)| resources.get::<Store<MockRuntime>>(id).ok().map(|_| id))
+        .unwrap();
+    resources.take::<Store<MockRuntime>>(id).unwrap();
+    drop(resources);
+    assert!(preferences::load(fixture.app.handle()).is_err());
+    assert_eq!(
+        fixture.open("codex", OpenMode::Fresh).unwrap().status,
+        ChatStatus::Idle
+    );
+    drop(store);
 }
 
 #[test]
