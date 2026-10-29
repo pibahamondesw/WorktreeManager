@@ -625,20 +625,22 @@ impl ChatRegistry {
         self.sessions
             .lock()
             .unwrap()
-            .values()
-            .any(|session| session.status().is_live())
+            .sessions()
+            .any(|(_, session)| session.status().is_live())
     }
 
     fn live_conversations(&self) -> Vec<interrupted::InterruptedSession> {
         self.sessions
             .lock()
             .unwrap()
-            .iter()
-            .filter(|(_, session)| session.status().is_live())
-            .filter_map(|((task_id, agent), session)| {
+            .sessions()
+            .filter(|(owner, session)| {
+                owner.origin == ChatOrigin::User && session.status().is_live()
+            })
+            .filter_map(|(owner, session)| {
                 Some(interrupted::InterruptedSession {
-                    task_id: task_id.clone(),
-                    agent: agent.clone(),
+                    task_id: owner.task_id.clone(),
+                    agent: owner.agent.clone(),
                     conversation_id: session.conversation()?,
                 })
             })
@@ -1303,11 +1305,15 @@ pub(crate) mod tests {
                 None => *turns = Default::default(),
             }
         }
-        registry
-            .sessions
-            .lock()
-            .unwrap()
-            .insert((task_id.into(), agent.into()), session);
+        registry.sessions.lock().unwrap().insert(
+            format!("{task_id}:{agent}"),
+            ChatOwner {
+                task_id: task_id.into(),
+                agent: agent.into(),
+                origin: ChatOrigin::User,
+            },
+            session,
+        );
     }
 
     #[test]
@@ -1986,7 +1992,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn live_sessions_with_a_conversation_are_the_ones_interrupted() {
+    fn live_user_sessions_with_a_conversation_are_the_ones_interrupted() {
         let registry = ChatRegistry::default();
         assert!(!registry.has_live_sessions());
         for (agent, conversation) in [
@@ -1996,6 +2002,19 @@ pub(crate) mod tests {
         ] {
             insert_live_session(&registry, "t1", agent, conversation);
         }
+        register(
+            &registry,
+            "run",
+            owner("t1", "claude", ChatOrigin::Automation),
+        );
+        let sessions = registry.sessions.lock().unwrap();
+        let automation = &sessions.get("run").unwrap().shared;
+        automation
+            .lock()
+            .unwrap()
+            .turns
+            .change_conversation("c9".into());
+        drop(sessions);
         registry
             .with_session("t1", "opencode", |s| {
                 s.terminate();
