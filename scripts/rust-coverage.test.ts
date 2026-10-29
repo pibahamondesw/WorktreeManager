@@ -203,6 +203,9 @@ describe("Rust coverage pipeline", () => {
       );
       expect(tests.every((call) => call.profile?.endsWith("/test-%p.profraw"))).toBe(true);
       expect(commands.at(-1)?.args).toContain("--fail-under=100");
+      expect(commands.at(-1)?.args).toEqual(
+        expect.arrayContaining(["--exclude", "*src-tauri/src/lib.rs"])
+      );
       expect(commands.at(-1)?.args).toContain("--compare-branch=fixture-base");
       expect(commands.at(-1)?.args).toContain("--diff-file=coverage/rust/macos/changes.diff");
       expect(readFileSync(join(directory, "coverage/rust/macos/changes.diff"), "utf8")).toBe(

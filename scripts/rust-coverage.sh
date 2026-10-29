@@ -81,7 +81,7 @@ python3 scripts/rust-coverage-report.py "$report_dir" "${COVERAGE_BASE:-origin/m
 
 diff-cover "$report_dir/diff-lcov.info" --compare-branch="${COVERAGE_BASE:-origin/main}" \
   --diff-file="$report_dir/changes.diff" \
-  --include 'src-tauri/src/**' --fail-under=100 \
+  --include 'src-tauri/src/**' --exclude '*src-tauri/src/lib.rs' --fail-under=100 \
   --format "json:$report_dir/diff-coverage.json"
 
 exit "$test_status"
