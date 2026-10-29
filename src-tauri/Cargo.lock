@@ -6286,7 +6286,7 @@ dependencies = [
 
 [[package]]
 name = "worktree-manager"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "base64 0.22.1",
  "jsonc-parser",
