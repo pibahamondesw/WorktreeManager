@@ -2,6 +2,7 @@ pub mod agent_alerts;
 pub mod agent_notifications;
 pub mod agent_usage;
 pub mod agents;
+pub mod automations;
 pub mod chat;
 pub mod claude_config;
 pub mod claude_usage;
