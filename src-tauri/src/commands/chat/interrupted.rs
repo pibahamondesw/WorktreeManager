@@ -25,6 +25,7 @@ impl InterruptedSession {
 }
 
 pub struct InterruptedStore {
+    dir: PathBuf,
     path: PathBuf,
 }
 
@@ -33,6 +34,7 @@ static STORE_LOCK: Mutex<()> = Mutex::new(());
 impl InterruptedStore {
     pub fn new(dir: &Path) -> Self {
         Self {
+            dir: dir.to_path_buf(),
             path: dir.join("chat-interrupted.json"),
         }
     }
@@ -75,9 +77,7 @@ impl InterruptedStore {
     }
 
     fn write(&self, entries: &[InterruptedSession]) -> Result<(), String> {
-        if let Some(dir) = self.path.parent() {
-            fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-        }
+        fs::create_dir_all(&self.dir).map_err(|e| format!("create {}: {e}", self.dir.display()))?;
         let text = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
         let tmp = self.path.with_extension("json.tmp");
         fs::write(&tmp, text).map_err(|e| format!("write {}: {e}", tmp.display()))?;
@@ -94,12 +94,22 @@ pub(super) fn interrupted_store<R: Runtime>(
         .map_err(|e| format!("app data dir: {e}"))
 }
 
+fn warn_on_error(result: Result<(), String>, action: &str) {
+    if let Err(error) = result {
+        log::warn!("could not {action} interrupted chat sessions: {error}");
+    }
+}
+
 /// Call before the registry shuts down: terminating a session makes it no longer live.
 pub fn record_interrupted_sessions<R: Runtime>(app: &AppHandle<R>) {
     let sessions = app.state::<ChatRegistry>().live_conversations();
-    if let Err(error) = interrupted_store(app).and_then(|store| store.record(sessions)) {
-        log::warn!("could not record interrupted chat sessions: {error}");
-    }
+    let recorded = interrupted_store(app).and_then(|store| store.record(sessions));
+    warn_on_error(recorded, "record");
+}
+
+pub(super) fn forget_task<R: Runtime>(app: &AppHandle<R>, task_id: &str) {
+    let forgotten = interrupted_store(app).and_then(|store| store.clear(Some(task_id), None));
+    warn_on_error(forgotten, "forget");
 }
 
 #[tauri::command(async)]
@@ -120,7 +130,9 @@ pub fn chat_interrupted_clear<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::insert_live_session;
     use super::*;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
 
     fn store(tag: &str) -> InterruptedStore {
         let dir = std::env::temp_dir().join(format!("wm-interrupted-{tag}-{}", std::process::id()));
@@ -147,7 +159,7 @@ mod tests {
             .unwrap();
         store.record(vec![session("t1", "claude", "c3")]).unwrap();
 
-        let reloaded = InterruptedStore::new(store.path.parent().unwrap());
+        let reloaded = InterruptedStore::new(&store.dir);
         assert_eq!(
             reloaded.list(),
             vec![session("t2", "codex", "c2"), session("t1", "claude", "c3")]
@@ -186,9 +198,53 @@ mod tests {
     }
 
     #[test]
+    fn quitting_records_live_chats_that_the_commands_list_and_clear() {
+        let dir = std::env::temp_dir().join(format!("wm-interrupted-app-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let mut context = mock_context(noop_assets());
+        context.config_mut().identifier = dir.to_string_lossy().into_owned();
+        let app = mock_builder()
+            .manage(ChatRegistry::default())
+            .build(context)
+            .unwrap();
+        let registry = app.state::<ChatRegistry>();
+        insert_live_session(&registry, "t1", "claude", Some("c1"));
+        insert_live_session(&registry, "t2", "codex", None);
+
+        record_interrupted_sessions(app.handle());
+        registry.shutdown_all();
+        let list = || chat_interrupted_list(app.handle().clone()).unwrap();
+        assert_eq!(list(), vec![session("t1", "claude", "c1")]);
+        forget_task(app.handle(), "t2");
+        assert_eq!(list(), vec![session("t1", "claude", "c1")]);
+        chat_interrupted_clear(app.handle().clone(), Some("t1".into()), None).unwrap();
+        assert!(list().is_empty());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn write_failures_are_reported_and_leave_the_list_unchanged() {
+        let store = store("unwritable");
+        store.record(vec![session("t1", "claude", "c1")]).unwrap();
+        fs::create_dir_all(store.path.with_extension("json.tmp")).unwrap();
+        let error = store
+            .record(vec![session("t2", "codex", "c2")])
+            .unwrap_err();
+        assert!(error.starts_with("write "));
+        warn_on_error(Err(error), "record");
+        assert_eq!(store.list(), vec![session("t1", "claude", "c1")]);
+
+        let blocked = InterruptedStore::new(&store.path.join("nested"));
+        let error = blocked
+            .record(vec![session("t1", "claude", "c1")])
+            .unwrap_err();
+        assert!(error.starts_with("create "));
+    }
+
+    #[test]
     fn malformed_file_reads_as_empty_and_is_replaced_on_record() {
         let store = store("malformed");
-        fs::create_dir_all(store.path.parent().unwrap()).unwrap();
+        fs::create_dir_all(&store.dir).unwrap();
         fs::write(&store.path, "{not json").unwrap();
         assert!(store.list().is_empty());
         store.record(vec![session("t1", "claude", "c1")]).unwrap();

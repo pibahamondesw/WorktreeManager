@@ -1157,11 +1157,7 @@ pub async fn chat_close<R: Runtime>(
         if let Ok(store) = handoff_store(&app) {
             store.forget_task(&task_id);
         }
-        if let Err(error) =
-            interrupted::interrupted_store(&app).and_then(|store| store.clear(Some(&task_id), None))
-        {
-            log::warn!("could not forget interrupted chat sessions: {error}");
-        }
+        interrupted::forget_task(&app, &task_id);
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))
@@ -1173,7 +1169,7 @@ pub fn chat_list(registry: State<'_, ChatRegistry>) -> Vec<ChatInfo> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::model::{ChatItem, ItemKind};
     use super::*;
 
@@ -1289,6 +1285,29 @@ mod tests {
             }),
         };
         ChatSession::spawn(command, Box::new(Echo), setup).unwrap()
+    }
+
+    pub(crate) fn insert_live_session(
+        registry: &ChatRegistry,
+        task_id: &str,
+        agent: &str,
+        conversation: Option<&str>,
+    ) {
+        let session = spawn("sleep 60", Arc::default(), Arc::default());
+        {
+            let turns = &mut session.shared.lock().unwrap().turns;
+            match conversation {
+                Some(id) => {
+                    turns.change_conversation(id.into());
+                }
+                None => *turns = Default::default(),
+            }
+        }
+        registry
+            .sessions
+            .lock()
+            .unwrap()
+            .insert((task_id.into(), agent.into()), session);
     }
 
     #[test]
@@ -1975,21 +1994,7 @@ mod tests {
             ("codex", None),
             ("opencode", Some("c3")),
         ] {
-            let session = spawn("sleep 60", Arc::default(), Arc::default());
-            {
-                let turns = &mut session.shared.lock().unwrap().turns;
-                match conversation {
-                    Some(id) => {
-                        turns.change_conversation(id.into());
-                    }
-                    None => *turns = Default::default(),
-                }
-            }
-            registry
-                .sessions
-                .lock()
-                .unwrap()
-                .insert(("t1".into(), agent.into()), session);
+            insert_live_session(&registry, "t1", agent, conversation);
         }
         registry
             .with_session("t1", "opencode", |s| {

@@ -39,7 +39,6 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(lifecycle::on_window_event)
         .invoke_handler({
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 menu::set_shortcut_menu,
