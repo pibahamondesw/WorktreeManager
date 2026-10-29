@@ -36,6 +36,7 @@ const values: Preferences = {
     notifications: { done: false, waiting: true },
   },
   navigationHistory: [{ kind: "task", taskId: "t1", workspaceId: "w1", at: "2026-10-28" }],
+  automationsDir: "/skills/automations",
 };
 
 beforeEach(() => {
@@ -124,6 +125,14 @@ describe("normalization", () => {
     expect(normalizers.navigationHistory([null, {}, ...values.navigationHistory])).toEqual(
       values.navigationHistory
     );
+  });
+
+  it("falls back to the default automations directory unless given an absolute path", async () => {
+    const { normalizers } = await import("./preferences");
+    expect(normalizers.automationsDir(undefined)).toBeNull();
+    expect(normalizers.automationsDir("skills")).toBeNull();
+    expect(normalizers.automationsDir(42)).toBeNull();
+    expect(normalizers.automationsDir("/skills")).toBe("/skills");
   });
 
   it("keeps running in the background unless explicitly turned off", async () => {
