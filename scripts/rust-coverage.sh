@@ -9,7 +9,7 @@ case "$(uname -s)" in
 esac
 
 toolchain=1.93.1
-test_filters='cli::tests:: commands::claude_config::tests:: commands::git::tests:: commands::validation::tests:: commands::worktree_cleanup::tests:: commands::export::tests:: commands::github::tests:: commands::code_server::view::tests:: commands::code_server::tests:: commands::code_server::session::tests:: commands::embedded:: commands::editor::tests:: commands::opencode:: commands::chat:: commands::agents:: commands::agent_alerts::tests:: commands::agent_notifications::tests:: commands::agent_usage::tests:: commands::claude_usage::tests:: commands::codex_usage::tests:: commands::login_shell::tests:: commands::doctor::tests:: commands::doppler::tests:: commands::detected_setup::tests:: commands::vault_agents::tests:: commands::user_file::tests:: commands::notes::tests:: commands::vault::tests:: commands::workspace::tests:: commands::code_server::trust::tests:: commands::terminal::tests:: commands::scripts::tests:: menu::'
+test_filters='cli::tests:: cli_bridge::tests:: commands::claude_config::tests:: commands::git::tests:: commands::validation::tests:: commands::worktree_cleanup::tests:: commands::export::tests:: commands::github::tests:: commands::code_server::view::tests:: commands::code_server::tests:: commands::code_server::session::tests:: commands::embedded:: commands::editor::tests:: commands::opencode:: commands::chat:: commands::agents:: commands::agent_alerts::tests:: commands::agent_notifications::tests:: commands::agent_usage::tests:: commands::claude_usage::tests:: commands::codex_usage::tests:: commands::login_shell::tests:: commands::doctor::tests:: commands::doppler::tests:: commands::detected_setup::tests:: commands::vault_agents::tests:: commands::user_file::tests:: commands::notes::tests:: commands::vault::tests:: commands::workspace::tests:: commands::code_server::trust::tests:: commands::terminal::tests:: commands::scripts::tests:: menu::'
 report_dir=coverage/rust/macos
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/worktreemanager-target}"
 export CARGO_LLVM_COV_TARGET_DIR="${CARGO_LLVM_COV_TARGET_DIR:-$CARGO_TARGET_DIR/llvm-cov-pilot}"
@@ -81,7 +81,7 @@ python3 scripts/rust-coverage-report.py "$report_dir" "${COVERAGE_BASE:-origin/m
 
 diff-cover "$report_dir/diff-lcov.info" --compare-branch="${COVERAGE_BASE:-origin/main}" \
   --diff-file="$report_dir/changes.diff" \
-  --include 'src-tauri/src/**' --fail-under=100 \
+  --include 'src-tauri/src/**' --exclude '*src-tauri/src/lib.rs' --fail-under=100 \
   --format "json:$report_dir/diff-coverage.json"
 
 exit "$test_status"

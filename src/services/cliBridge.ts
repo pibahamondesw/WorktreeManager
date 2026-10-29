@@ -18,7 +18,7 @@ import {
   AgentSurfaceKind,
 } from "./agentActivity";
 
-export interface AutomationRequest {
+export interface CliBridgeRequest {
   id: string;
   version: number;
   method: string;
@@ -207,9 +207,9 @@ function deleteOptions(params: Record<string, unknown>): DeleteOptions | undefin
   };
 }
 
-export async function dispatchAutomation(
+export async function dispatchCliBridge(
   operations: Operations,
-  request: AutomationRequest,
+  request: CliBridgeRequest,
   progress?: (message: string) => void,
   onAgentEvent?: (event: AgentEvent) => { taskId: string | null }
 ) {

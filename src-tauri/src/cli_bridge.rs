@@ -57,7 +57,7 @@ struct Shared {
     next_id: AtomicU64,
 }
 
-pub struct Automation {
+pub struct CliBridge {
     shared: Arc<Shared>,
     socket: PathBuf,
     _lock: File,
@@ -107,7 +107,7 @@ fn prepare_directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-impl Automation {
+impl CliBridge {
     pub fn start(socket: PathBuf) -> Result<Self, String> {
         prepare_directory(socket.parent().ok_or("Invalid socket directory")?)?;
         let lock = OpenOptions::new()
@@ -177,7 +177,7 @@ impl Automation {
     }
 }
 
-impl Drop for Automation {
+impl Drop for CliBridge {
     fn drop(&mut self) {
         self.shared.stopped.store(true, Ordering::Release);
         self.shared.pending.lock().unwrap().clear();
@@ -287,8 +287,8 @@ fn handle_connection(mut stream: UnixStream, shared: Arc<Shared>) {
 }
 
 #[tauri::command]
-pub fn automation_register(
-    state: State<'_, Automation>,
+pub fn cli_bridge_register(
+    state: State<'_, CliBridge>,
     session: String,
     channel: Channel<Delivery>,
 ) {
@@ -306,13 +306,13 @@ pub fn automation_register(
 }
 
 #[tauri::command]
-pub fn automation_unregister(state: State<'_, Automation>, session: String) {
+pub fn cli_bridge_unregister(state: State<'_, CliBridge>, session: String) {
     state.unregister(&session);
 }
 
 #[tauri::command]
-pub fn automation_progress(
-    state: State<'_, Automation>,
+pub fn cli_bridge_progress(
+    state: State<'_, CliBridge>,
     session: String,
     token: String,
     message: String,
@@ -330,8 +330,8 @@ pub fn automation_progress(
 }
 
 #[tauri::command]
-pub fn automation_complete(
-    state: State<'_, Automation>,
+pub fn cli_bridge_complete(
+    state: State<'_, CliBridge>,
     session: String,
     token: String,
     response: Value,
@@ -354,7 +354,7 @@ mod tests {
     static NEXT_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
     struct Server {
-        automation: Option<Automation>,
+        cli_bridge: Option<CliBridge>,
         directory: PathBuf,
     }
     impl Server {
@@ -369,15 +369,15 @@ mod tests {
                 NEXT_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed)
             ));
             Self {
-                automation: Some(Automation::start(directory.join("app.sock")).unwrap()),
+                cli_bridge: Some(CliBridge::start(directory.join("app.sock")).unwrap()),
                 directory,
             }
         }
-        fn automation(&self) -> &Automation {
-            self.automation.as_ref().unwrap()
+        fn cli_bridge(&self) -> &CliBridge {
+            self.cli_bridge.as_ref().unwrap()
         }
         fn request(&self, version: u32) -> Value {
-            let mut stream = UnixStream::connect(&self.automation().socket).unwrap();
+            let mut stream = UnixStream::connect(&self.cli_bridge().socket).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
@@ -387,7 +387,7 @@ mod tests {
     }
     impl Drop for Server {
         fn drop(&mut self) {
-            self.automation.take();
+            self.cli_bridge.take();
             let _ = fs::remove_dir_all(&self.directory);
         }
     }
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn rejects_second_instance_and_exposes_readiness_and_version_errors() {
         let server = Server::new();
-        assert!(Automation::start(server.automation().socket.clone()).is_err());
+        assert!(CliBridge::start(server.cli_bridge().socket.clone()).is_err());
         assert_eq!(server.request(VERSION)["error"]["code"], "app_not_ready");
         assert_eq!(
             server.request(VERSION + 1)["error"]["code"],
@@ -447,7 +447,7 @@ mod tests {
             0o700
         );
         assert_eq!(
-            fs::metadata(&server.automation().socket).unwrap().mode() & 0o777,
+            fs::metadata(&server.cli_bridge().socket).unwrap().mode() & 0o777,
             0o600
         );
     }
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn round_trips_through_frontend_channel_without_reading_the_store() {
         let server = Server::new();
-        let shared = server.automation().shared.clone();
+        let shared = server.cli_bridge().shared.clone();
         let channel = Channel::new(move |body| {
             let delivery: Delivery = body.deserialize().unwrap();
             assert_eq!(delivery.request.method, "workspace.list");
@@ -471,7 +471,7 @@ mod tests {
                 .unwrap();
             Ok(())
         });
-        *server.automation().shared.frontend.lock().unwrap() = Some(Frontend {
+        *server.cli_bridge().shared.frontend.lock().unwrap() = Some(Frontend {
             session: "main".into(),
             channel,
         });
@@ -485,25 +485,25 @@ mod tests {
     fn frontend_reload_fails_pending_requests_and_old_cleanup_keeps_new_session() {
         let server = Server::new();
         let (sender, receiver) = mpsc::channel();
-        server.automation().shared.pending.lock().unwrap().insert(
+        server.cli_bridge().shared.pending.lock().unwrap().insert(
             "r1".into(),
             Pending {
                 session: "old".into(),
                 sender,
             },
         );
-        *server.automation().shared.frontend.lock().unwrap() = Some(Frontend {
+        *server.cli_bridge().shared.frontend.lock().unwrap() = Some(Frontend {
             session: "new".into(),
             channel: Channel::new(|_| Ok(())),
         });
-        server.automation().unregister("old");
+        server.cli_bridge().unregister("old");
         assert_eq!(
             receiver.recv().unwrap()["error"]["code"],
             "frontend_disconnected"
         );
         assert_eq!(
             server
-                .automation()
+                .cli_bridge()
                 .shared
                 .frontend
                 .lock()
@@ -513,6 +513,51 @@ mod tests {
                 .session,
             "new"
         );
+    }
+
+    #[test]
+    fn commands_route_progress_and_completion_to_the_owning_session_only() {
+        use tauri::{
+            test::{mock_builder, mock_context, noop_assets},
+            Manager,
+        };
+        let mut server = Server::new();
+        let app = mock_builder()
+            .manage(server.cli_bridge.take().unwrap())
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let state = || app.state::<CliBridge>();
+        let frontend_session = || {
+            state()
+                .shared
+                .frontend
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|frontend| frontend.session.clone())
+        };
+        let (sender, receiver) = mpsc::channel();
+        state().shared.pending.lock().unwrap().insert(
+            "r1".into(),
+            Pending {
+                session: "old".into(),
+                sender,
+            },
+        );
+
+        cli_bridge_register(state(), "old".into(), Channel::new(|_| Ok(())));
+        cli_bridge_progress(state(), "other".into(), "r1".into(), "ignored".into());
+        cli_bridge_progress(state(), "old".into(), "r1".into(), "working".into());
+        assert_eq!(receiver.recv().unwrap()["progress"], "working");
+        cli_bridge_complete(state(), "other".into(), "r1".into(), json!({ "ok": false }));
+        cli_bridge_complete(state(), "old".into(), "r1".into(), json!({ "ok": true }));
+        assert_eq!(receiver.recv().unwrap()["ok"], true);
+        assert!(state().shared.pending.lock().unwrap().is_empty());
+
+        cli_bridge_register(state(), "new".into(), Channel::new(|_| Ok(())));
+        assert_eq!(frontend_session().as_deref(), Some("new"));
+        cli_bridge_unregister(state(), "new".into());
+        assert_eq!(frontend_session(), None);
     }
 
     #[test]
@@ -552,12 +597,12 @@ mod tests {
     fn cleans_up_socket_and_recovers_a_stale_socket_under_the_instance_lock() {
         let mut server = Server::new();
         assert_eq!(server.request(VERSION)["error"]["code"], "app_not_ready");
-        let socket = server.automation().socket.clone();
-        server.automation.take();
+        let socket = server.cli_bridge().socket.clone();
+        server.cli_bridge.take();
         assert!(!socket.exists());
         let stale = UnixListener::bind(&socket).unwrap();
         drop(stale);
-        server.automation = Some(Automation::start(socket).unwrap());
+        server.cli_bridge = Some(CliBridge::start(socket).unwrap());
         assert_eq!(server.request(VERSION)["error"]["code"], "app_not_ready");
     }
 

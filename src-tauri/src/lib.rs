@@ -1,9 +1,9 @@
 use tauri::Manager;
 
 #[cfg(unix)]
-mod automation;
-#[cfg(unix)]
 pub mod cli;
+#[cfg(unix)]
+mod cli_bridge;
 mod commands;
 mod menu;
 
@@ -22,7 +22,7 @@ pub fn run() {
             std::thread::spawn(commands::chat::purge_stale_chat_images);
             #[cfg(unix)]
             app.manage(
-                automation::Automation::start(automation::socket_path(&app.config().identifier))
+                cli_bridge::CliBridge::start(cli_bridge::socket_path(&app.config().identifier))
                     .map_err(std::io::Error::other)?,
             );
             menu::setup(app)?;
@@ -43,10 +43,10 @@ pub fn run() {
                 menu::set_shortcut_menu,
                 menu::set_shortcut_capture,
                 menu::set_shortcut_context,
-                automation::automation_register,
-                automation::automation_unregister,
-                automation::automation_progress,
-                automation::automation_complete,
+                cli_bridge::cli_bridge_register,
+                cli_bridge::cli_bridge_unregister,
+                cli_bridge::cli_bridge_progress,
+                cli_bridge::cli_bridge_complete,
                 commands::validation::validate_workspace_repos,
                 commands::validation::validate_task_worktrees,
                 commands::git::git_worktree_add,

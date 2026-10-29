@@ -24,7 +24,7 @@ import { CheckSeverity, DoctorConfig } from "./services/doctor";
 import { EditorApp, Task, TaskSurface, VaultConfig } from "./types";
 import type { SetupRetry } from "./services/operations";
 import { listen } from "@tauri-apps/api/event";
-import { useAutomation } from "./hooks/useAutomation";
+import { useCliBridge } from "./hooks/useCliBridge";
 import { editorPresentation } from "./services/codeEditor";
 import { useAgentSessions } from "./hooks/useAgentSessions";
 import { useAgentActivity } from "./hooks/useAgentActivity";
@@ -239,7 +239,7 @@ function App() {
     openedTaskId: openedTask?.taskId ?? null,
     onOpenTarget: openNotificationTarget,
   });
-  useAutomation(operations, !loading, agentActivity.handleAgentEvent);
+  useCliBridge(operations, !loading, agentActivity.handleAgentEvent);
 
   useEffect(() => {
     const unlisten = listen<string>("editor-navigate", ({ payload }) => {
