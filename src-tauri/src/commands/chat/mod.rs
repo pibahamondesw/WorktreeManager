@@ -18,6 +18,7 @@ mod handoff;
 pub mod history;
 #[cfg(test)]
 mod history_tests;
+pub mod interrupted;
 mod markdown;
 mod model;
 mod preferences;
@@ -25,6 +26,7 @@ mod sessions;
 mod turns;
 
 pub(crate) use conversations::ConversationFork;
+pub use interrupted::record_interrupted_sessions;
 pub(crate) use model::{ChatItem, ItemKind, PlanUsage, UsageWindow};
 pub(crate) use sessions::{exchange, truncate, SessionList, SessionSummary, LIST_LIMIT};
 
@@ -51,7 +53,7 @@ use model::{
     ProviderOutput, ReviewTarget,
 };
 
-const STATUS_EVENT: &str = "chat-status";
+pub(crate) const STATUS_EVENT: &str = "chat-status";
 const EXIT_WAIT: Duration = Duration::from_secs(5);
 const STDERR_TAIL: usize = 4096;
 
@@ -427,6 +429,15 @@ impl ChatSession {
         self.shared.lock().unwrap().activity()
     }
 
+    fn conversation(&self) -> Option<String> {
+        self.shared
+            .lock()
+            .unwrap()
+            .turns
+            .conversation()
+            .map(str::to_string)
+    }
+
     /// Terminate and tell listeners it ended; the conversation mapping is kept for resuming.
     fn stop(&self) {
         self.terminate();
@@ -608,6 +619,32 @@ impl ChatRegistry {
         for chat in sessions.0.into_values() {
             chat.session.terminate();
         }
+    }
+
+    pub fn has_turn_in_progress(&self) -> bool {
+        self.sessions
+            .lock()
+            .unwrap()
+            .sessions()
+            .any(|(_, session)| session.status().turn_in_progress())
+    }
+
+    fn live_conversations(&self) -> Vec<interrupted::InterruptedSession> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .sessions()
+            .filter(|(owner, session)| {
+                owner.origin == ChatOrigin::User && session.status().is_live()
+            })
+            .filter_map(|(owner, session)| {
+                Some(interrupted::InterruptedSession {
+                    task_id: owner.task_id.clone(),
+                    agent: owner.agent.clone(),
+                    conversation_id: session.conversation()?,
+                })
+            })
+            .collect()
     }
 
     /// One open at a time per task agent: a session is registered only after it spawns, so a
@@ -1122,6 +1159,7 @@ pub async fn chat_close<R: Runtime>(
         if let Ok(store) = handoff_store(&app) {
             store.forget_task(&task_id);
         }
+        interrupted::forget_task(&app, &task_id);
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))
@@ -1133,7 +1171,7 @@ pub fn chat_list(registry: State<'_, ChatRegistry>) -> Vec<ChatInfo> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::model::{ChatItem, ItemKind};
     use super::*;
 
@@ -1249,6 +1287,48 @@ mod tests {
             }),
         };
         ChatSession::spawn(command, Box::new(Echo), setup).unwrap()
+    }
+
+    pub(crate) fn insert_live_session(
+        registry: &ChatRegistry,
+        task_id: &str,
+        agent: &str,
+        conversation: Option<&str>,
+    ) {
+        let session = spawn("sleep 60", Arc::default(), Arc::default());
+        {
+            let turns = &mut session.shared.lock().unwrap().turns;
+            match conversation {
+                Some(id) => {
+                    turns.change_conversation(id.into());
+                }
+                None => *turns = Default::default(),
+            }
+        }
+        registry.sessions.lock().unwrap().insert(
+            format!("{task_id}:{agent}"),
+            ChatOwner {
+                task_id: task_id.into(),
+                agent: agent.into(),
+                origin: ChatOrigin::User,
+            },
+            session,
+        );
+        set_turn(registry, task_id, agent, false);
+    }
+
+    pub(crate) fn set_turn(registry: &ChatRegistry, task_id: &str, agent: &str, in_progress: bool) {
+        let status = if in_progress {
+            ChatStatus::Busy
+        } else {
+            ChatStatus::Idle
+        };
+        registry
+            .with_session(task_id, agent, |session| {
+                session.shared.lock().unwrap().snapshot.status = status;
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -1924,6 +2004,66 @@ mod tests {
             .unwrap());
         registry.shutdown_all();
         assert!(registry.sessions.lock().unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn live_user_sessions_with_a_conversation_are_the_ones_interrupted() {
+        let registry = ChatRegistry::default();
+        for (agent, conversation) in [
+            ("claude", Some("c1")),
+            ("codex", None),
+            ("opencode", Some("c3")),
+        ] {
+            insert_live_session(&registry, "t1", agent, conversation);
+        }
+        register(
+            &registry,
+            "run",
+            owner("t1", "claude", ChatOrigin::Automation),
+        );
+        let sessions = registry.sessions.lock().unwrap();
+        let automation = &sessions.get("run").unwrap().shared;
+        automation
+            .lock()
+            .unwrap()
+            .turns
+            .change_conversation("c9".into());
+        drop(sessions);
+        registry
+            .with_session("t1", "opencode", |s| {
+                s.terminate();
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(
+            registry.live_conversations(),
+            vec![interrupted::InterruptedSession {
+                task_id: "t1".into(),
+                agent: "claude".into(),
+                conversation_id: "c1".into(),
+            }]
+        );
+        registry.shutdown_all();
+    }
+
+    #[test]
+    fn only_starting_or_busy_sessions_have_a_turn_in_progress() {
+        let registry = ChatRegistry::default();
+        assert!(!registry.has_turn_in_progress());
+        insert_live_session(&registry, "t1", "claude", None);
+        assert!(!registry.has_turn_in_progress());
+        set_turn(&registry, "t1", "claude", true);
+        assert!(registry.has_turn_in_progress());
+        registry
+            .with_session("t1", "claude", |session| {
+                session.shared.lock().unwrap().snapshot.status = ChatStatus::Starting;
+                Ok(())
+            })
+            .unwrap();
+        assert!(registry.has_turn_in_progress());
+        registry.shutdown_all();
+        assert!(!registry.has_turn_in_progress());
     }
 
     #[test]

@@ -20,6 +20,7 @@ function renderSettings() {
   const onThemeChange = vi.fn();
   const onVaultChange = vi.fn();
   const onAlertsChange = vi.fn();
+  const onKeepRunningInBackgroundChange = vi.fn();
   const onRecheck = vi.fn();
   const onClose = vi.fn();
   function Harness() {
@@ -41,6 +42,8 @@ function renderSettings() {
         onRepairVaultAgents={vi.fn()}
         alerts={DEFAULT_AGENT_ALERTS}
         onAlertsChange={onAlertsChange}
+        keepRunningInBackground
+        onKeepRunningInBackgroundChange={onKeepRunningInBackgroundChange}
         report={null}
         running={false}
         severity="warning"
@@ -49,7 +52,14 @@ function renderSettings() {
     );
   }
   render(<Harness />);
-  return { onThemeChange, onVaultChange, onAlertsChange, onRecheck, onClose };
+  return {
+    onThemeChange,
+    onVaultChange,
+    onAlertsChange,
+    onKeepRunningInBackgroundChange,
+    onRecheck,
+    onClose,
+  };
 }
 
 describe("SettingsModal", () => {
@@ -120,6 +130,16 @@ describe("SettingsModal", () => {
       ...DEFAULT_AGENT_ALERTS,
       sounds: { ...DEFAULT_AGENT_ALERTS.sounds, done: null },
     });
+  });
+
+  it("turns off keeping the app running in the background", () => {
+    const { onKeepRunningInBackgroundChange } = renderSettings();
+    vi.mocked(invoke).mockResolvedValue(null);
+    fireEvent.click(screen.getByRole("tab", { name: "Agent alerts" }));
+    const toggle = screen.getByRole("checkbox", { name: "Keep running in the background" });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(onKeepRunningInBackgroundChange).toHaveBeenCalledWith(false);
   });
 
   it("shows hooks that report to another app and replaces them only after confirming", async () => {

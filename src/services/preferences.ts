@@ -30,6 +30,7 @@ export interface Preferences {
   themeId: string;
   customTheme: Record<string, string> | null;
   sidebarCollapsed: boolean;
+  keepRunningInBackground: boolean;
   scriptApprovals: Record<string, string[]>;
   agentAlerts: AgentAlertSettings;
   navigationHistory: NavigationEntry[];
@@ -95,6 +96,7 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
       ? null
       : Object.fromEntries(Object.entries(raw).filter(([, value]) => typeof value === "string")),
   sidebarCollapsed: (raw) => raw === true,
+  keepRunningInBackground: (raw) => raw !== false,
   scriptApprovals: (raw) =>
     Object.fromEntries(
       Object.entries(record(raw)).map(([path, hashes]) => [
@@ -192,7 +194,12 @@ async function persistEntries(entries: PersistedEntry[]): Promise<void> {
 
 export type InterfacePreferences = Pick<
   Preferences,
-  "editorApp" | "agentViews" | "themeId" | "customTheme" | "sidebarCollapsed"
+  | "editorApp"
+  | "agentViews"
+  | "themeId"
+  | "customTheme"
+  | "sidebarCollapsed"
+  | "keepRunningInBackground"
 >;
 
 export function defaultInterfacePreferences(): InterfacePreferences {
@@ -202,6 +209,7 @@ export function defaultInterfacePreferences(): InterfacePreferences {
     themeId: normalizers.themeId(undefined),
     customTheme: normalizers.customTheme(undefined),
     sidebarCollapsed: normalizers.sidebarCollapsed(undefined),
+    keepRunningInBackground: normalizers.keepRunningInBackground(undefined),
   };
 }
 

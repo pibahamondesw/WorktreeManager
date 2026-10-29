@@ -18,6 +18,7 @@ import {
   taskForCwd,
   pendingInputCount,
   settledAlerts,
+  surfaceTurnInProgress,
 } from "../services/agentActivity";
 import { sessionRegistry } from "../embedded/sessionTransports";
 import { onOpenCodeActivity } from "../services/opencode";
@@ -163,6 +164,11 @@ export function useAgentActivity({
   useEffect(() => {
     void invoke("agent_badge", { count: unread }).catch(() => undefined);
   }, [unread]);
+
+  const surfaceTurn = surfaceTurnInProgress(activities);
+  useEffect(() => {
+    void invoke("set_surface_turn_in_progress", { inProgress: surfaceTurn }).catch(() => undefined);
+  }, [surfaceTurn]);
 
   useEffect(() => {
     const unlisten = listen<NotificationTarget>(NOTIFICATION_OPEN_EVENT, ({ payload }) => {

@@ -5,6 +5,7 @@ pub mod cli;
 #[cfg(unix)]
 mod cli_bridge;
 mod commands;
+mod lifecycle;
 mod menu;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,6 +19,7 @@ pub fn run() {
         .manage(commands::terminal::TerminalRegistry::default())
         .manage(commands::chat::ChatRegistry::default())
         .manage(commands::code_server::EditorRegistry::default())
+        .manage(lifecycle::Background::default())
         .setup(|app| {
             std::thread::spawn(commands::chat::purge_stale_chat_images);
             #[cfg(unix)]
@@ -119,6 +121,9 @@ pub fn run() {
                 commands::chat::chat_sessions,
                 commands::chat::chat_session_rename,
                 commands::chat::chat_session_archive,
+                commands::chat::interrupted::chat_interrupted_list,
+                commands::chat::interrupted::chat_interrupted_clear,
+                lifecycle::set_surface_turn_in_progress,
                 commands::code_server::vscode_probe,
                 commands::code_server::vscode_install,
                 commands::code_server::vscode_install_status,
@@ -143,13 +148,5 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                app.state::<commands::code_server::EditorRegistry>()
-                    .shutdown_all();
-                app.state::<commands::terminal::TerminalRegistry>()
-                    .shutdown_all();
-                app.state::<commands::chat::ChatRegistry>().shutdown_all();
-            }
-        });
+        .run(lifecycle::on_run_event);
 }

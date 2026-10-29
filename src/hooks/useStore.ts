@@ -11,6 +11,7 @@ import {
   loadThemeId,
   loadCustomColors,
   loadSidebarCollapsed,
+  loadKeepRunningInBackground,
   persist,
 } from "../services/store";
 import {
@@ -37,6 +38,7 @@ export function useStore() {
     themeId,
     customTheme: customColors,
     sidebarCollapsed,
+    keepRunningInBackground,
   } = preferences;
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
@@ -94,8 +96,9 @@ export function useStore() {
       loadCustomColors(),
       loadSidebarCollapsed(),
       loadAgentViews(),
+      loadKeepRunningInBackground(),
     ])
-      .then(async ([s, editor, theme, custom, collapsed, views]) => {
+      .then(async ([s, editor, theme, custom, collapsed, views, keepRunning]) => {
         await syncNativeShortcuts(s.shortcutOverrides ?? {});
         setShortcutOverrides(s.shortcutOverrides ?? {});
         commit(s);
@@ -105,6 +108,7 @@ export function useStore() {
           themeId: theme,
           customTheme: custom,
           sidebarCollapsed: collapsed,
+          keepRunningInBackground: keepRunning,
         });
         setLoading(false);
 
@@ -259,6 +263,15 @@ export function useStore() {
     );
   }, [preferenceSession]);
 
+  const updateKeepRunningInBackground = useCallback(
+    (keepRunning: boolean) =>
+      preferenceSession.update(
+        { keepRunningInBackground: keepRunning },
+        "Failed to save the background preference"
+      ),
+    [preferenceSession]
+  );
+
   const updateThemeId = useCallback(
     (id: string) =>
       preferenceSession.update(
@@ -322,6 +335,8 @@ export function useStore() {
     updateAgentView,
     sidebarCollapsed,
     toggleSidebarCollapsed,
+    keepRunningInBackground,
+    updateKeepRunningInBackground,
     updateThemeId,
     updateCustomColors,
   };

@@ -193,6 +193,7 @@ describe("Rust coverage pipeline", () => {
         "commands::code_server::trust::tests::",
         "commands::terminal::tests::",
         "commands::scripts::tests::",
+        "lifecycle::",
         "menu::",
       ]);
       expect(commands.find((call) => call.tool === "menu")?.args).toEqual([]);

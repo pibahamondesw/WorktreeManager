@@ -20,6 +20,7 @@ import {
   taskIndicator,
   pendingInputCount,
   settledAlerts,
+  surfaceTurnInProgress,
 } from "./agentActivity";
 import { ChatInfo } from "./chat";
 
@@ -95,6 +96,21 @@ describe("activity lifecycle", () => {
     expect(activities.t2).toMatchObject({ state: "waiting", unread: false });
     expect(pendingInputCount(activities)).toBe(0);
     expect(markTaskSeen(activities, "t2")).toBe(activities);
+  });
+
+  it("counts mid-turn agents on embedded surfaces other than chats as a turn in progress", () => {
+    const turns = (...events: ReturnType<typeof event>[]) =>
+      surfaceTurnInProgress(
+        events.reduce<AgentActivities>(
+          (activities, next, index) => applyAgentEvent(activities, `t${index}`, next, false),
+          {}
+        )
+      );
+    expect(turns()).toBe(false);
+    expect(turns(event("working", 1))).toBe(true);
+    expect(turns(event("waiting", 1, "opencode"))).toBe(true);
+    expect(turns(event("done", 1), event("working", 1, "chat"))).toBe(false);
+    expect(turns(event("working", 1, "external"))).toBe(false);
   });
 
   it("ignores events older than the one already applied", () => {
