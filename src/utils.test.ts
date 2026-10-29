@@ -239,13 +239,17 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     expect(legacy.noteFolder).toBeUndefined();
   });
 
-  it("keeps only known task agents", () => {
-    const [codex, unknown] = normalizeTasks([
+  it("keeps task agents outside the catalog and drops malformed ones", () => {
+    const [codex, unknown, empty, malformed] = normalizeTasks([
       { id: "a", workspaceId: "w1", agent: "codex" },
       { id: "b", workspaceId: "w1", agent: "gemini" },
+      { id: "c", workspaceId: "w1", agent: "" },
+      { id: "d", workspaceId: "w1", agent: 42 },
     ]);
     expect(codex.agent).toBe("codex");
-    expect(unknown.agent).toBeUndefined();
+    expect(unknown.agent).toBe("gemini");
+    expect(empty.agent).toBeUndefined();
+    expect(malformed.agent).toBeUndefined();
   });
 
   it("returns empty arrays for nullish input", () => {

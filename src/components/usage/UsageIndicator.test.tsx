@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentUsageIndicator } from "./AgentUsageIndicator";
 import { CachedUsage } from "../../hooks/useCachedUsage";
 import { UsageIndicator } from "./UsageIndicator";
+import { invokeWithAgentCatalog } from "../../services/agents.fixture";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -13,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   openUrl: vi.fn(),
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: mocks.openUrl }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (command: string, args?: unknown) => invokeWithAgentCatalog(mocks.invoke, command, args),
+}));
 vi.mock("../../services/codeEditor", () => ({
   editorPresentation: { suppress: mocks.suppress },
 }));
@@ -37,7 +40,7 @@ function usageSnapshot(percent = 25): CachedUsage {
 
 describe.each([
   {
-    label: "Claude",
+    label: "Claude Code",
     agentLabel: "Claude Code",
     agent: "claude" as const,
   },

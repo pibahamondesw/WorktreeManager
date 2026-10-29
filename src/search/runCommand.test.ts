@@ -52,12 +52,9 @@ describe("runPaletteCommand", () => {
     expect(d.onClose).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    ["open-claude", "claude"],
-    ["open-codex", "codex"],
-  ] as const)("opens the requested agent for %s", async (type, agent) => {
+  it.each(["claude", "codex", "gemini"])("opens the requested agent %s", async (agent) => {
     const d = deps();
-    await runPaletteCommand({ type, taskId: task.id }, d);
+    await runPaletteCommand({ type: "open-agent", taskId: task.id, agent, label: agent }, d);
     expect(d.onOpenTask).toHaveBeenCalledWith(task, {
       agent,
       onMessage: d.showToast,
@@ -68,7 +65,10 @@ describe("runPaletteCommand", () => {
 
   it("keeps the palette open if the Codex task no longer exists", async () => {
     const d = deps();
-    await runPaletteCommand({ type: "open-codex", taskId: "missing" }, d);
+    await runPaletteCommand(
+      { type: "open-agent", taskId: "missing", agent: "codex", label: "Codex" },
+      d
+    );
     expect(d.onOpenTask).not.toHaveBeenCalled();
     expect(d.showToast).toHaveBeenCalledWith("Could not open Codex");
     expect(d.onClose).not.toHaveBeenCalled();

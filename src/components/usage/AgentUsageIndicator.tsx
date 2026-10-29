@@ -1,15 +1,17 @@
 import { useCachedUsage } from "../../hooks/useCachedUsage";
-import { AGENTS } from "../../services/agents";
+import { useAgent } from "../../hooks/useAgentCatalog";
+import { agentPresentation } from "../../services/agents";
 import { AgentId } from "../../types";
 import { UsageIndicator } from "./UsageIndicator";
 
 export function AgentUsageIndicator({ agent }: { agent: AgentId }) {
-  const { label, productName, planUrl, primaryUsageWindows } = AGENTS[agent];
+  const { label } = useAgent(agent);
+  const { planUrl, primaryUsageWindows } = agentPresentation(agent);
   const { snapshot, error, loading, refresh } = useCachedUsage(agent);
   const windows = snapshot?.usage?.windows ?? [];
   return (
     <UsageIndicator
-      agentLabel={productName}
+      agentLabel={label}
       label={label}
       planUrl={planUrl}
       usage={snapshot?.usage ?? null}
@@ -21,7 +23,7 @@ export function AgentUsageIndicator({ agent }: { agent: AgentId }) {
       error={error}
       loading={loading}
       updatedAt={snapshot?.updatedAt}
-      emptyMessage={`No current usage data. Use ${productName} to update it.`}
+      emptyMessage={`No current usage data. Use ${label} to update it.`}
       onRefresh={refresh}
     />
   );

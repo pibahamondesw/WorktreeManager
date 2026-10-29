@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { Task } from "../types";
 import {
   AgentActivities,
@@ -23,6 +23,16 @@ import {
   surfaceTurnInProgress,
 } from "./agentActivity";
 import { ChatInfo } from "./chat";
+import { loadAgentCatalog } from "./agents";
+import { invokeWithAgentCatalog } from "./agents.fixture";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (command: string) => invokeWithAgentCatalog(() => undefined, command),
+}));
+
+beforeAll(async () => {
+  await loadAgentCatalog();
+});
 
 function task(id: string, paths: string[], extra: Partial<Task> = {}): Task {
   return {
@@ -322,7 +332,7 @@ describe("alert settings", () => {
     });
     expect(
       notificationFor(task("t2", []), { state: "done", agent: "claude", surface: "external" })
-    ).toMatchObject({ title: "Claude finished", body: "branch-t2" });
+    ).toMatchObject({ title: "Claude Code finished", body: "branch-t2" });
   });
 
   it("maps notification targets back to embedded surfaces", () => {

@@ -30,6 +30,7 @@ import { useAgentSessions } from "./hooks/useAgentSessions";
 import { useAgentActivity } from "./hooks/useAgentActivity";
 import { SurfaceSwitchDialog } from "./components/task/SurfaceSwitchDialog";
 import { NotificationTarget, embeddedSurface } from "./services/agentActivity";
+import { loadAgentCatalog } from "./services/agents";
 
 function App() {
   const {
@@ -99,6 +100,7 @@ function App() {
 
   useEffect(() => {
     editorPresentation.reset();
+    void loadAgentCatalog().catch(() => undefined);
   }, []);
 
   const openSearch = useCallback(

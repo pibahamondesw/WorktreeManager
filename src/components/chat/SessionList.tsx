@@ -9,7 +9,14 @@ import {
   chatSessions,
   ChatSessionSummary,
 } from "../../services/chat";
-import { AGENTS, installedAgents } from "../../services/agents";
+import {
+  agentPresentation,
+  cachedAgentCatalog,
+  describeAgent,
+  chatAgents,
+  loadAgentCatalog,
+} from "../../services/agents";
+import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import { AgentId } from "../../types";
 
 interface SessionListProps {
@@ -43,13 +50,14 @@ async function loadSessions(
   agent: AgentId,
   folders: string[]
 ): Promise<MergedSessions> {
-  const agents = await installedAgents(agent);
+  const catalog = await loadAgentCatalog().catch(cachedAgentCatalog);
+  const agents = chatAgents(catalog, agent);
   const results = await Promise.allSettled(agents.map((id) => chatSessions(taskId, id, folders)));
   const merged: MergedSessions = { sessions: [], errors: [] };
   results.forEach((result, index) => {
     const owner = agents[index];
     if (result.status === "rejected") {
-      merged.errors.push(`${AGENTS[owner].label}: ${String(result.reason)}`);
+      merged.errors.push(`${describeAgent(owner, catalog).label}: ${String(result.reason)}`);
       return;
     }
     const { canRename, canArchive } = result.value;
@@ -87,6 +95,7 @@ export function SessionList({
     title: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const catalog = useAgentCatalog();
   const foldersKey = folders.join("\n");
 
   const load = useCallback(async () => {
@@ -163,13 +172,13 @@ export function SessionList({
           </span>
           <span className="flex items-center gap-1.5 text-xs text-text-muted">
             <span
-              className={`inline-flex items-center gap-1 rounded px-1 ${AGENTS[session.agent].tone.chip}`}
+              className={`inline-flex items-center gap-1 rounded px-1 ${agentPresentation(session.agent).tone.chip}`}
             >
               <span
                 aria-hidden
-                className={`h-1.5 w-1.5 rounded-full ${AGENTS[session.agent].tone.dot}`}
+                className={`h-1.5 w-1.5 rounded-full ${agentPresentation(session.agent).tone.dot}`}
               />
-              {AGENTS[session.agent].label}
+              {describeAgent(session.agent, catalog).label}
             </span>
             {session.current ? "Current · " : ""}
             {formatUpdated(session.updatedAt)}
@@ -212,7 +221,7 @@ export function SessionList({
       <div className="px-6 py-3 border-b border-border">
         <Button variant="secondary" className="h-8 text-xs" onClick={onNew}>
           <PlusIcon />
-          New {AGENTS[agent].label} conversation
+          New {describeAgent(agent, catalog).label} conversation
         </Button>
       </div>
       {error && <p className="px-6 py-2 text-xs text-danger select-text">{error}</p>}

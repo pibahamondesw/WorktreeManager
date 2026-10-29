@@ -3,11 +3,14 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { invoke } from "@tauri-apps/api/core";
 import { SettingsModal, SettingsSection } from "./SettingsModal";
 import { DEFAULT_AGENT_ALERTS } from "../../services/agentActivity";
+import { invokeWithAgentCatalog } from "../../services/agents.fixture";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (command: string, args?: unknown) => invokeWithAgentCatalog(invoke, command, args),
+}));
 vi.mock("@tauri-apps/api/path", () => ({ homeDir: vi.fn().mockResolvedValue("/Users/test") }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 

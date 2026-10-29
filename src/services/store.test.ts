@@ -485,14 +485,14 @@ describe("loadEditorApp", () => {
 });
 
 describe("loadAgentViews", () => {
-  it("defaults every agent to chat and keeps only valid remembered views", async () => {
-    seed(STORE, { agentViews: { claude: "terminal", codex: "bogus" } });
+  it("keeps only valid remembered views, including agents outside the catalog", async () => {
+    seed(STORE, { agentViews: { claude: "terminal", codex: "bogus", gemini: "terminal" } });
     expect(await (await loadModule()).loadAgentViews()).toEqual({
       claude: "terminal",
-      codex: "chat",
+      gemini: "terminal",
     });
     seed(STORE, {});
-    expect(await (await loadModule()).loadAgentViews()).toEqual({ claude: "chat", codex: "chat" });
+    expect(await (await loadModule()).loadAgentViews()).toEqual({});
   });
 
   it("maps the retired chat editor ids back to their agents", async () => {

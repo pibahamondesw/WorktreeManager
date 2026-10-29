@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { AgentId, Task, TaskSurface } from "../types";
 import { sessionHasError, TerminalStatus } from "./terminal";
 import { ChatInfo, isLive } from "./chat";
+import { describeAgent } from "./agents";
 
 export type AgentActivityState = "working" | "waiting" | "done";
 
@@ -307,11 +308,8 @@ export const INDICATOR_LABELS: Record<TaskIndicator, string> = {
   ended: "Agent session ended",
 };
 
-const AGENT_NAMES: Record<ActivityAgent, string> = {
-  claude: "Claude",
-  codex: "Codex",
-  opencode: "OpenCode",
-};
+export const activityAgentLabel = (agent: ActivityAgent) =>
+  agent === "opencode" ? "OpenCode" : describeAgent(agent).label;
 
 export interface NotificationTarget {
   taskId: string;
@@ -338,8 +336,8 @@ export function notificationFor(
     : task.branchName;
   const title =
     event.state === "waiting"
-      ? `${AGENT_NAMES[event.agent]} needs your input`
-      : `${AGENT_NAMES[event.agent]} finished`;
+      ? `${activityAgentLabel(event.agent)} needs your input`
+      : `${activityAgentLabel(event.agent)} finished`;
   const target: NotificationTarget = {
     taskId: task.id,
     surface: event.surface,
@@ -353,10 +351,7 @@ export type HooksState =
   | { state: "missing" | "outdated" | "installed" }
   | { state: "otherApp"; target: string };
 
-export interface AgentHooksStatus {
-  claude: HooksState;
-  codex: HooksState;
-}
+export type AgentHooksStatus = Partial<Record<AgentId, HooksState>>;
 
 export const agentHooksStatus = () => invoke<AgentHooksStatus>("agent_hooks_status");
 export const installAgentHooks = (agent: AgentId, replaceOtherApp = false) =>

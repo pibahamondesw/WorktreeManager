@@ -6,7 +6,8 @@ import {
   type ShortcutOverrides,
 } from "../shortcuts/catalog";
 import { CUSTOM_THEME_ID, SYSTEM_THEME_ID, themeAppearance, themes } from "../themes";
-import { EditorApp, EDITOR_APPS, PullRequestInfo, Task, Workspace } from "../types";
+import { AgentId, EditorApp, EDITOR_APPS, PullRequestInfo, Task, Workspace } from "../types";
+import { AgentDescriptor } from "../services/agents";
 
 export type WorkspaceAction =
   | { kind: "settings" }
@@ -23,8 +24,7 @@ export type CommandAction =
   | { type: "copy-linear"; taskId: string }
   | { type: "ready-pr"; taskId: string; pr: PullRequestInfo }
   | { type: "open-pr"; taskId: string; repoId: string }
-  | { type: "open-claude"; taskId: string }
-  | { type: "open-codex"; taskId: string }
+  | { type: "open-agent"; taskId: string; agent: AgentId; label: string }
   | { type: "new-task" };
 
 type CommandGroup = "workspace" | "settings" | "action";
@@ -70,6 +70,7 @@ interface BuildCommandsArgs {
   tasks: Task[];
   themeId: string;
   editorApp: EditorApp;
+  agents: AgentDescriptor[];
   readyPrsByTask?: Record<string, PullRequestInfo[]>;
 }
 
@@ -92,6 +93,7 @@ export function buildCommands({
   tasks,
   themeId,
   editorApp,
+  agents,
   readyPrsByTask = {},
   shortcutOverrides = {},
 }: BuildCommandsArgs): PaletteCommand[] {
@@ -258,25 +260,16 @@ export function buildCommands({
       });
     }
 
-    commands.push({
-      id: `open-codex:${task.id}`,
-      label: `Open in Codex · ${label}`,
-      hint,
-      group: "action",
-      keywords: `open codex terminal agent ${taskKeywords}`,
-      emptyVisible: false,
-      action: { type: "open-codex", taskId: task.id },
-    });
-
-    commands.push({
-      id: `open-claude:${task.id}`,
-      label: `Open in Claude Code · ${label}`,
-      hint,
-      group: "action",
-      keywords: `open in claude code ${taskKeywords}`,
-      emptyVisible: false,
-      action: { type: "open-claude", taskId: task.id },
-    });
+    for (const agent of agents)
+      commands.push({
+        id: `open-${agent.id}:${task.id}`,
+        label: `Open in ${agent.label} · ${label}`,
+        hint,
+        group: "action",
+        keywords: `open in ${agent.label} ${agent.id} terminal agent ${taskKeywords}`.toLowerCase(),
+        emptyVisible: false,
+        action: { type: "open-agent", taskId: task.id, agent: agent.id, label: agent.label },
+      });
   }
 
   return commands;

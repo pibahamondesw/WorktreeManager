@@ -8,6 +8,7 @@ import { QuickSearchModal } from "./QuickSearchModal";
 import { Task, Workspace } from "../../types";
 import { setShortcutOverrides } from "../../shortcuts/runtime";
 import { shortcut } from "../../shortcuts/catalog";
+import { invokeWithAgentCatalog } from "../../services/agents.fixture";
 
 const linearMocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("../../services/linear", () => ({
@@ -17,6 +18,9 @@ vi.mock("../../services/linear", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (command: string) => invokeWithAgentCatalog(() => Promise.resolve(undefined), command),
+}));
 vi.mock("../../services/pullRequest", () => ({
   openPrForMember: vi.fn().mockResolvedValue(true),
 }));
@@ -278,9 +282,9 @@ describe("QuickSearchModal commands", () => {
     expect(onWorkspaceAction).toHaveBeenCalledWith({ kind: "vault" });
   });
 
-  it("opens Claude Code for the matching task", () => {
+  it("opens Claude Code for the matching task", async () => {
     const { onOpenTask } = renderModal({ initialQuery: "claude wor-12" });
-    fireEvent.click(screen.getByRole("button", { name: /Open in Claude Code/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Open in Claude Code/ }));
     expect(onOpenTask).toHaveBeenCalledWith(
       otherTask,
       expect.objectContaining({ agent: "claude" })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildCommands } from "./commands";
+import { AGENT_CATALOG } from "../services/agents.fixture";
 import { Task, Workspace } from "../types";
 
 const workspaces: Workspace[] = [
@@ -39,6 +40,7 @@ function ids(overrides: Partial<Parameters<typeof buildCommands>[0]> = {}) {
     tasks: [task],
     themeId: "default",
     editorApp: "cursor",
+    agents: AGENT_CATALOG,
     ...overrides,
   }).map((c) => c.id);
 }
@@ -54,6 +56,7 @@ describe("buildCommands", () => {
       tasks: [task],
       themeId: "default",
       editorApp: editor,
+      agents: AGENT_CATALOG,
     });
 
     expect(commands.filter((command) => command.label === `Editor: ${label}`)).toEqual([
@@ -92,6 +95,7 @@ describe("buildCommands", () => {
       tasks: [task],
       themeId: "default",
       editorApp: "cursor",
+      agents: AGENT_CATALOG,
     });
     const empty = commands.filter((c) => c.emptyVisible).map((c) => c.id);
     expect(empty).toContain("switch-ws:ws-2");
@@ -109,7 +113,7 @@ describe("buildCommands", () => {
     expect(ids({ selectedWorkspaceId: null })).not.toContain("new-task");
   });
 
-  it("emits a PR command per member repo plus copy-linear and Claude", () => {
+  it("emits a PR command per member repo plus copy-linear and one per catalog agent", () => {
     const all = ids();
     expect(all).toEqual(
       expect.arrayContaining([
@@ -117,8 +121,10 @@ describe("buildCommands", () => {
         "open-pr:t-1:r1",
         "open-pr:t-1:r2",
         "open-claude:t-1",
+        "open-codex:t-1",
       ])
     );
+    expect(ids({ agents: [] }).some((id) => id.startsWith("open-claude"))).toBe(false);
     expect(all.filter((id) => id.startsWith("open-pr:t-1:")).length).toBe(2);
   });
 
@@ -129,6 +135,7 @@ describe("buildCommands", () => {
       tasks: [task],
       themeId: "default",
       editorApp: "cursor",
+      agents: AGENT_CATALOG,
     });
 
     expect(commands.find((command) => command.id === "settings")?.shortcut).toEqual({
@@ -163,6 +170,7 @@ it("identifies ready actions by task, repo and PR number", () => {
     tasks: [task],
     themeId: "default",
     editorApp: "cursor",
+    agents: AGENT_CATALOG,
     readyPrsByTask: { [task.id]: [pr, { ...pr, number: 2 }, { ...pr, repoSlug: "other/repo" }] },
   });
   const ready = commands.filter((command) => command.action.type === "ready-pr");
@@ -178,6 +186,7 @@ it("uses personal bindings in command badges and removes disabled defaults", () 
     tasks: [task],
     themeId: "default",
     editorApp: "cursor",
+    agents: AGENT_CATALOG,
     shortcutOverrides: {
       "palette.settings": [{ key: "y", modifiers: ["meta"] }],
       "palette.new": [],

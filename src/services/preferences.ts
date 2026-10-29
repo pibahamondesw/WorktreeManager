@@ -1,6 +1,7 @@
 import { load, Store } from "@tauri-apps/plugin-store";
 import {
   AppState,
+  AgentView,
   AgentViews,
   DEFAULT_EDITOR_APP,
   EDITOR_APPS,
@@ -80,13 +81,12 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
     const editor = typeof raw === "string" ? (RETIRED_EDITOR_IDS[raw] ?? raw) : null;
     return EDITOR_APPS.some((e) => e.id === editor) ? (editor as EditorApp) : DEFAULT_EDITOR_APP;
   },
-  agentViews: (raw) => {
-    const value = record(raw);
-    return {
-      claude: value.claude === "terminal" ? "terminal" : "chat",
-      codex: value.codex === "terminal" ? "terminal" : "chat",
-    };
-  },
+  agentViews: (raw) =>
+    Object.fromEntries(
+      Object.entries(record(raw)).filter(
+        (entry): entry is [string, AgentView] => entry[1] === "chat" || entry[1] === "terminal"
+      )
+    ),
   themeId: (raw) =>
     raw === CUSTOM_THEME_ID || raw === SYSTEM_THEME_ID || themes.some((theme) => theme.id === raw)
       ? (raw as string)

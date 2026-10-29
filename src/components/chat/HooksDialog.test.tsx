@@ -31,7 +31,14 @@ afterEach(cleanup);
 
 it("shows the definition and trusts only the selected hash after an explicit click", async () => {
   const onConfigure = vi.fn().mockResolvedValue(undefined);
-  render(<HooksDialog hooks={hooks()} onConfigure={onConfigure} onClose={() => undefined} />);
+  render(
+    <HooksDialog
+      agentLabel="Codex"
+      hooks={hooks()}
+      onConfigure={onConfigure}
+      onClose={() => undefined}
+    />
+  );
   expect(onConfigure).toHaveBeenCalledExactlyOnceWith({ kind: "hooks" });
   expect(screen.getByText(hook.command!)).toBeVisible();
   expect(screen.getByText(hook.sourcePath)).toBeVisible();
@@ -47,6 +54,7 @@ it("shows the definition and trusts only the selected hash after an explicit cli
 it("keeps managed hooks immutable and does not offer trust for hidden definitions", () => {
   render(
     <HooksDialog
+      agentLabel="Codex"
       hooks={hooks([
         { ...hook, key: "managed", isManaged: true },
         {
@@ -74,7 +82,12 @@ it("keeps managed hooks immutable and does not offer trust for hidden definition
 it("disables a hook without granting trust and blocks actions during updates", async () => {
   const onConfigure = vi.fn().mockResolvedValue(undefined);
   const { rerender } = render(
-    <HooksDialog hooks={hooks()} onConfigure={onConfigure} onClose={() => undefined} />
+    <HooksDialog
+      agentLabel="Codex"
+      hooks={hooks()}
+      onConfigure={onConfigure}
+      onClose={() => undefined}
+    />
   );
   fireEvent.click(screen.getByRole("button", { name: "Disable" }));
   await waitFor(() =>
@@ -85,6 +98,7 @@ it("disables a hook without granting trust and blocks actions during updates", a
   );
   rerender(
     <HooksDialog
+      agentLabel="Codex"
       hooks={{ ...hooks(), loading: true }}
       onConfigure={onConfigure}
       onClose={() => undefined}
@@ -99,7 +113,14 @@ it("shows failed requests and permits refreshing", async () => {
     .fn()
     .mockRejectedValueOnce("Codex is unavailable")
     .mockResolvedValue(undefined);
-  render(<HooksDialog hooks={undefined} onConfigure={onConfigure} onClose={() => undefined} />);
+  render(
+    <HooksDialog
+      agentLabel="Codex"
+      hooks={undefined}
+      onConfigure={onConfigure}
+      onClose={() => undefined}
+    />
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent("Codex is unavailable");
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));

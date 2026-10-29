@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildCommands } from "./commands";
+import { AGENT_CATALOG } from "../services/agents.fixture";
 import { searchPalette } from "./searchPalette";
 import { Task, Workspace } from "../types";
 
@@ -38,6 +39,7 @@ function run(query: string) {
       tasks: [task],
       themeId: "default",
       editorApp: "cursor",
+      agents: AGENT_CATALOG,
     }),
   });
 }
