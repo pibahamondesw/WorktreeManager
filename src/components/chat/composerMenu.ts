@@ -1,14 +1,14 @@
 import { ChatControls, CommandOption, effortsFor, ReviewTarget } from "../../services/chat";
 
 export type MenuTrigger =
-  | { kind: "slash"; query: string }
+  | { kind: "slash"; query: string; start: number }
   | { kind: "mention"; query: string; start: number };
 
-/** Which completion menu the caret is in: a leading `/command` or an `@path` token. */
+/** Which completion menu the caret is in: a `/command` or an `@path` token. */
 export function menuTrigger(text: string, caret: number): MenuTrigger | null {
   const before = text.slice(0, caret);
-  const slash = /^\/(\S*)$/.exec(before);
-  if (slash) return { kind: "slash", query: slash[1] };
+  const slash = /(^|\s)\/(\S*)$/.exec(before);
+  if (slash) return { kind: "slash", query: slash[2], start: caret - slash[2].length - 1 };
   const mention = /(^|\s)@(\S*)$/.exec(before);
   if (mention) return { kind: "mention", query: mention[2], start: caret - mention[2].length - 1 };
   return null;
@@ -29,6 +29,25 @@ export function filterCommands(commands: CommandOption[], query: string): Comman
     .filter((entry) => entry.rank >= 0)
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map((entry) => entry.command);
+}
+
+/**
+ * Mid-message only commands that insert text apply, matched by name so a path-like word
+ * such as `/src` doesn't hijack Enter through a description match.
+ */
+export function matchSlashCommands(commands: CommandOption[], start: number, query: string) {
+  if (start === 0) return filterCommands(commands, query);
+  const q = query.toLowerCase();
+  const inserting = commands.filter(
+    (command) => command.action.kind === "insert" && command.name.toLowerCase().includes(q)
+  );
+  return filterCommands(inserting, query);
+}
+
+export function insertCommand(text: string, start: number, caret: number, insertion: string) {
+  const rest = text.slice(caret);
+  const inserted = /^\s/.test(rest) ? insertion.trimEnd() : insertion;
+  return { text: `${text.slice(0, start)}${inserted}${rest}`, caret: start + inserted.length };
 }
 
 export function insertMention(text: string, start: number, caret: number, path: string) {

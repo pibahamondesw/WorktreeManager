@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   filterCommands,
+  insertCommand,
   insertMention,
   localCommand,
   menuTrigger,
   promptMemory,
   reviewTarget,
+  matchSlashCommands,
 } from "./composerMenu";
 import { ChatControls, CommandOption, EMPTY_CONTROLS } from "../../services/chat";
 
@@ -34,10 +36,11 @@ const controls: ChatControls = {
 };
 
 describe("menuTrigger", () => {
-  it("opens commands only for a leading slash word and files for an @ token", () => {
-    expect(menuTrigger("/mo", 3)).toEqual({ kind: "slash", query: "mo" });
+  it("opens commands for a slash word and files for an @ token", () => {
+    expect(menuTrigger("/mo", 3)).toEqual({ kind: "slash", query: "mo", start: 0 });
     expect(menuTrigger("/model x", 8)).toBeNull();
-    expect(menuTrigger("see /mo", 7)).toBeNull();
+    expect(menuTrigger("see /mo", 7)).toEqual({ kind: "slash", query: "mo", start: 4 });
+    expect(menuTrigger("and/or", 6)).toBeNull();
     expect(menuTrigger("fix @src/ch", 11)).toEqual({ kind: "mention", query: "src/ch", start: 4 });
     expect(menuTrigger("mail a@b", 8)).toBeNull();
   });
@@ -48,6 +51,35 @@ describe("filterCommands", () => {
     const names = filterCommands(controls.commands, "mod").map((c) => c.name);
     expect(names).toEqual(["model", "simplify"]);
     expect(filterCommands(controls.commands, "")).toHaveLength(controls.commands.length);
+  });
+});
+
+describe("matchSlashCommands", () => {
+  const names = (start: number, query: string) =>
+    matchSlashCommands(controls.commands, start, query).map((c) => c.name);
+
+  it("offers every command at the start and only inserting ones mid-message", () => {
+    expect(names(0, "")).toEqual(controls.commands.map((c) => c.name));
+    expect(names(4, "")).toEqual(["review", "simplify"]);
+  });
+
+  it("matches descriptions only at the start of the message", () => {
+    expect(names(0, "layer")).toEqual(["simplify"]);
+    expect(names(4, "layer")).toEqual([]);
+    expect(names(4, "simp")).toEqual(["simplify"]);
+  });
+});
+
+describe("insertCommand", () => {
+  it("replaces the slash query in place and moves the caret past it", () => {
+    expect(insertCommand("use /sim then go", 4, 8, "/simplify ")).toEqual({
+      text: "use /simplify then go",
+      caret: 13,
+    });
+    expect(insertCommand("use /sim", 4, 8, "/simplify ")).toEqual({
+      text: "use /simplify ",
+      caret: 14,
+    });
   });
 });
 
