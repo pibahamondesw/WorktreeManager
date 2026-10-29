@@ -6,6 +6,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::agents::permission::PendingDefault;
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ChatStatus {
@@ -163,6 +165,14 @@ pub struct PendingRequest {
     pub format: DetailFormat,
     #[serde(flatten)]
     pub kind: PendingKind,
+}
+
+/// A request an unattended session resolved with its default because no one answered in time.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnansweredRequest {
+    pub request: PendingRequest,
+    pub resolution: PendingDefault,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
@@ -407,6 +417,8 @@ pub struct ChatSnapshot {
     pub status: ChatStatus,
     pub items: Vec<ChatItem>,
     pub pending: Vec<PendingRequest>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unanswered: Vec<UnansweredRequest>,
     pub controls: ChatControls,
     #[serde(skip)]
     pub background_agents: bool,
@@ -419,6 +431,7 @@ impl ChatSnapshot {
             status: ChatStatus::Starting,
             items: Vec::new(),
             pending: Vec::new(),
+            unanswered: Vec::new(),
             controls: ChatControls::default(),
             background_agents: false,
         }
@@ -580,6 +593,8 @@ pub trait ChatProvider: Send {
         snapshot: &ChatSnapshot,
         out: &mut ProviderOutput,
     ) -> Result<(), String>;
+    /// The answer that resolves a request no one answered in time with `default`.
+    fn unattended_response(&self, default: PendingDefault) -> ChatResponse;
 }
 
 #[cfg(test)]

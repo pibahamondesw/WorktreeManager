@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use super::model::*;
+use crate::commands::agents::permission::PendingDefault;
 
 const ASK_USER_TOOL: &str = "AskUserQuestion";
 const TODO_TOOL: &str = "TodoWrite";
@@ -62,6 +63,7 @@ struct QueuedMessage {
     content: Value,
 }
 
+const UNANSWERED_MESSAGE: &str = "No one answered in time, so this was denied.";
 const UNSUPPORTED_CONTROL: &str = "Unsupported control request";
 const EVENT_USAGE_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -75,18 +77,21 @@ pub(crate) const HEADLESS_ARGS: [&str; 6] = [
     "--verbose",
 ];
 
-pub fn launch_args(session_id: &str, resume: bool, extra_dirs: &[String]) -> Vec<String> {
+pub fn launch_args(
+    session_id: &str,
+    resume: bool,
+    extra_dirs: &[String],
+    permission: &[String],
+) -> Vec<String> {
     let mut args: Vec<String> = HEADLESS_ARGS
         .iter()
         .chain(&[
             "--include-partial-messages",
             "--permission-prompt-tool",
             "stdio",
-            "--permission-mode",
-            "auto",
-            "--allow-dangerously-skip-permissions",
         ])
         .map(|arg| arg.to_string())
+        .chain(permission.iter().cloned())
         .collect();
     args.push(if resume { "--resume" } else { "--session-id" }.to_string());
     args.push(session_id.to_string());
@@ -785,7 +790,9 @@ impl ChatProvider for ClaudeProvider {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        let decision = if request["tool_name"] == ASK_USER_TOOL {
+        let decision = if request["tool_name"] == ASK_USER_TOOL
+            && response.decision.as_deref() != Some("deny")
+        {
             let answers: serde_json::Map<String, Value> = input["questions"]
                 .as_array()
                 .into_iter()
@@ -842,6 +849,18 @@ impl ChatProvider for ClaudeProvider {
             id: request_id.to_string(),
         });
         Ok(())
+    }
+
+    fn unattended_response(&self, default: PendingDefault) -> ChatResponse {
+        let decision = match default {
+            PendingDefault::Allow => "allow",
+            PendingDefault::Deny => "deny",
+        };
+        ChatResponse {
+            decision: Some(decision.into()),
+            message: Some(UNANSWERED_MESSAGE.into()),
+            ..Default::default()
+        }
     }
 }
 
@@ -1782,23 +1801,70 @@ mod tests {
         (provider, snapshot)
     }
 
+    fn tool_request(id: &str, tool: &str, input: Value) -> Value {
+        json!({ "type": "control_request", "request_id": id, "request": {
+            "subtype": "can_use_tool", "tool_name": tool, "input": input,
+        }})
+    }
+
+    fn resolve_unanswered(
+        provider: &mut ClaudeProvider,
+        snapshot: &ChatSnapshot,
+        id: &str,
+        default: PendingDefault,
+    ) -> Value {
+        let mut out = ProviderOutput::default();
+        let response = provider.unattended_response(default);
+        provider.respond(id, &response, snapshot, &mut out).unwrap();
+        written(&out).remove(0)["response"]["response"].clone()
+    }
+
+    #[test]
+    fn unanswered_requests_resolve_with_the_unattended_default() {
+        let (mut provider, mut snapshot) = started();
+        let pending = [
+            tool_request("r1", "Bash", json!({ "command": "rm x" })),
+            tool_request(
+                "r2",
+                ASK_USER_TOOL,
+                json!({ "questions": [{ "question": "Which?", "options": [] }] }),
+            ),
+            tool_request("r3", EXIT_PLAN_TOOL, json!({ "plan": "1. Ship" })),
+            tool_request("r4", "Edit", json!({ "file_path": "/a" })),
+        ];
+        for line in pending {
+            feed(&mut provider, &mut snapshot, line);
+        }
+        assert_eq!(snapshot.pending.len(), 4);
+        for id in ["r1", "r2", "r3"] {
+            assert_eq!(
+                resolve_unanswered(&mut provider, &snapshot, id, PendingDefault::Deny),
+                json!({ "behavior": "deny", "message": UNANSWERED_MESSAGE }),
+                "{id}"
+            );
+        }
+        assert_eq!(
+            resolve_unanswered(&mut provider, &snapshot, "r4", PendingDefault::Allow),
+            json!({ "behavior": "allow", "updatedInput": { "file_path": "/a" } })
+        );
+    }
+
     #[test]
     fn launch_pins_the_session_and_grants_peer_repos() {
-        let fresh = launch_args("s1", false, &["/wt/b".into()]);
+        let permission = ["--permission-mode".to_string(), "auto".to_string()];
+        let fresh = launch_args("s1", false, &["/wt/b".into()], &permission);
         assert!(fresh.windows(2).any(|w| w == ["--session-id", "s1"]));
         assert!(fresh.windows(2).any(|w| w == ["--add-dir", "/wt/b"]));
         assert!(fresh.windows(2).any(|w| w == ["--permission-mode", "auto"]));
-        assert!(fresh.contains(&"--allow-dangerously-skip-permissions".to_string()));
         assert!(fresh
             .windows(2)
             .any(|w| w == ["--permission-prompt-tool", "stdio"]));
-        let resumed = launch_args("s1", true, &[]);
+        let resumed = launch_args("s1", true, &[], &permission);
         assert!(resumed.windows(2).any(|w| w == ["--resume", "s1"]));
         assert!(!resumed.contains(&"--session-id".to_string()));
         assert!(resumed
             .windows(2)
             .any(|w| w == ["--permission-mode", "auto"]));
-        assert!(resumed.contains(&"--allow-dangerously-skip-permissions".to_string()));
     }
 
     #[test]

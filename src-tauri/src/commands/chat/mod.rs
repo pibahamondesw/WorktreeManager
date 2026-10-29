@@ -44,18 +44,21 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::agent_alerts;
+use super::agents::permission::{PendingResolution, PermissionPolicy, UnattendedPolicy};
 use super::agents::{Agents, ChatRequest};
 use super::process::OwnedProcess;
 use conversations::{Conversation, ConversationStore};
 use handoff::{Handoff, HandoffLink, HandoffStore};
 use model::{
     ChatEvent, ChatImage, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus,
-    ProviderOutput, ReviewTarget,
+    PendingRequest, ProviderOutput, ReviewTarget, UnansweredRequest,
 };
 
 pub(crate) const STATUS_EVENT: &str = "chat-status";
 const EXIT_WAIT: Duration = Duration::from_secs(5);
 const STDERR_TAIL: usize = 4096;
+const PENDING_CHECK_MIN: Duration = Duration::from_millis(10);
+const PENDING_CHECK_MAX: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +91,14 @@ pub struct ChatOwner {
 impl ChatOwner {
     fn is_primary_of(&self, task_id: &str, agent: &str) -> bool {
         self.origin == ChatOrigin::User && self.task_id == task_id && self.agent == agent
+    }
+
+    /// Automation sessions run with no one watching, so they never wait on a person.
+    fn permission(&self) -> PermissionPolicy {
+        match self.origin {
+            ChatOrigin::User => PermissionPolicy::Interactive,
+            ChatOrigin::Automation => PermissionPolicy::Unattended(UnattendedPolicy::default()),
+        }
     }
 
     /// Where the session's conversation is remembered: the primary keeps the legacy `task:agent`
@@ -131,6 +142,9 @@ struct Shared {
     history_busy: bool,
     /// The conversation from another agent that this one continues.
     handoff: Option<Handoff>,
+    /// How an unattended session resolves requests no one answers.
+    pending_resolution: Option<PendingResolution>,
+    pending_deadlines: HashMap<String, Instant>,
 }
 
 type Notify = Arc<dyn Fn(ChatActivity) + Send + Sync>;
@@ -151,6 +165,8 @@ impl Shared {
             history_reply: None,
             history_busy: false,
             handoff: None,
+            pending_resolution: None,
+            pending_deadlines: HashMap::new(),
         }
     }
 
@@ -214,6 +230,7 @@ impl Shared {
                     }
                     self.prepend_carried(items);
                 }
+                ChatEvent::Pending { request } => self.start_deadline(&request.id),
                 _ => {}
             }
             let before = self.activity();
@@ -237,6 +254,69 @@ impl Shared {
             }
         }
     }
+
+    fn start_deadline(&mut self, request_id: &str) {
+        if let Some(resolution) = self.pending_resolution {
+            self.pending_deadlines
+                .entry(request_id.to_string())
+                .or_insert_with(|| Instant::now() + resolution.timeout);
+        }
+    }
+
+    /// Resolves every request still pending past its deadline with the unattended default and
+    /// records it for the Inbox.
+    fn resolve_unanswered(&mut self, now: Instant, conversation: &dyn Fn(String), notify: &Notify) {
+        let Some(resolution) = self.pending_resolution else {
+            return;
+        };
+        let pending = &self.snapshot.pending;
+        self.pending_deadlines
+            .retain(|id, _| pending.iter().any(|request| &request.id == id));
+        let expired: Vec<PendingRequest> = pending
+            .iter()
+            .filter(|request| {
+                self.pending_deadlines
+                    .get(&request.id)
+                    .is_some_and(|deadline| *deadline <= now)
+            })
+            .cloned()
+            .collect();
+        for request in expired {
+            self.pending_deadlines.remove(&request.id);
+            let response = self.provider.unattended_response(resolution.default);
+            let mut out = ProviderOutput::default();
+            let responded = self
+                .provider
+                .respond(&request.id, &response, &self.snapshot, &mut out);
+            if responded.is_ok() {
+                self.snapshot.unanswered.push(UnansweredRequest {
+                    request,
+                    resolution: resolution.default,
+                });
+                self.commit(out, conversation, notify);
+            }
+        }
+    }
+}
+
+/// Checks the session's pending requests until it ends.
+fn watch_unanswered(
+    shared: &Mutex<Shared>,
+    timeout: Duration,
+    conversation: &dyn Fn(String),
+    notify: &Notify,
+) {
+    let interval = timeout.clamp(PENDING_CHECK_MIN, PENDING_CHECK_MAX);
+    loop {
+        thread::sleep(interval);
+        let mut state = shared.lock().unwrap();
+        if !state.snapshot.status.is_live() {
+            return;
+        }
+        if !state.history_busy {
+            state.resolve_unanswered(Instant::now(), conversation, notify);
+        }
+    }
 }
 
 pub struct ChatSession {
@@ -251,6 +331,7 @@ struct SessionSetup {
     turns: turns::TurnTracker,
     remember: Remember,
     notify: Notify,
+    pending_resolution: Option<PendingResolution>,
 }
 
 /// Spawns a launch as the task's chat, with its history and the conversation it continues.
@@ -293,6 +374,7 @@ impl ChatSession {
             turns,
             remember,
             notify,
+            pending_resolution,
         } = setup;
         command
             .stdin(Stdio::piped())
@@ -306,6 +388,7 @@ impl ChatSession {
 
         let mut shared = Shared::new(provider, ChatSnapshot::new(generation), turns);
         shared.stdin = stdin;
+        shared.pending_resolution = pending_resolution;
         let shared = Arc::new(Mutex::new(shared));
         let process = Arc::new(Mutex::new(Some(process)));
         let session = Self {
@@ -334,6 +417,17 @@ impl ChatSession {
                         tail.drain(..cut);
                     }
                 }
+            });
+        }
+
+        if let Some(resolution) = pending_resolution {
+            let (shared, remember, notify) = (
+                session.shared.clone(),
+                session.remember.clone(),
+                session.notify.clone(),
+            );
+            thread::spawn(move || {
+                watch_unanswered(&shared, resolution.timeout, &*remember, &notify)
             });
         }
 
@@ -763,6 +857,8 @@ pub async fn chat_open<R: Runtime>(
         agent: agent.clone(),
         origin: ChatOrigin::User,
     };
+    let permission = owner.permission();
+    let pending_resolution = permission.pending_resolution();
     if let Some(stale) = stale {
         tauri::async_runtime::spawn_blocking(move || stale.terminate())
             .await
@@ -828,6 +924,7 @@ pub async fn chat_open<R: Runtime>(
                 pinned,
                 fork,
                 handoff: handoff.as_ref().map(|handoff| handoff.digest.clone()),
+                permission,
             };
             adapter.chat_launch(request).map(|launch| (handoff, launch))
         })
@@ -884,6 +981,7 @@ pub async fn chat_open<R: Runtime>(
         turns: turns::TurnTracker::new(checkpoints, folders, expected_conversation),
         remember,
         notify,
+        pending_resolution,
     };
     let session = start_session(&task_id, launch, handoff, setup)?;
     let snapshot = session.attach(on_event);
@@ -1174,6 +1272,7 @@ pub fn chat_list(registry: State<'_, ChatRegistry>) -> Vec<ChatInfo> {
 pub(crate) mod tests {
     use super::model::{ChatItem, ItemKind};
     use super::*;
+    use crate::commands::agents::permission::PendingDefault;
 
     struct Echo;
 
@@ -1258,6 +1357,9 @@ pub(crate) mod tests {
         ) -> Result<(), String> {
             Ok(())
         }
+        fn unattended_response(&self, _: PendingDefault) -> ChatResponse {
+            ChatResponse::default()
+        }
     }
 
     fn wait_for(session: &ChatSession, done: impl Fn(&ChatSnapshot) -> bool) -> ChatSnapshot {
@@ -1285,6 +1387,7 @@ pub(crate) mod tests {
             notify: Arc::new(move |activity: ChatActivity| {
                 statuses.lock().unwrap().push(activity.status)
             }),
+            pending_resolution: None,
         };
         ChatSession::spawn(command, Box::new(Echo), setup).unwrap()
     }
@@ -1356,6 +1459,138 @@ pub(crate) mod tests {
         assert!(session
             .with_provider(|p, _, out| p.send("late", &[], out))
             .is_err());
+    }
+
+    const BASH_REQUEST: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"rm x"}}}"#;
+
+    fn silent() -> Notify {
+        Arc::new(|_| {})
+    }
+
+    fn unattended(timeout: Duration, default: PendingDefault) -> Option<PendingResolution> {
+        Some(PendingResolution { timeout, default })
+    }
+
+    fn claude_shared(pending_resolution: Option<PendingResolution>) -> Shared {
+        let mut snapshot = ChatSnapshot::new(1);
+        snapshot.status = ChatStatus::Idle;
+        let mut shared = Shared::new(
+            Box::new(claude::ClaudeProvider::new("s1".into())),
+            snapshot,
+            Default::default(),
+        );
+        shared.pending_resolution = pending_resolution;
+        shared
+    }
+
+    fn receive_line(shared: &mut Shared, line: &str) {
+        let mut out = ProviderOutput::default();
+        let Shared {
+            provider, snapshot, ..
+        } = shared;
+        provider.handle_line(line, snapshot, &mut out);
+        shared.commit(out, &drop, &silent());
+    }
+
+    fn resolve_at(shared: &mut Shared, at: Instant) {
+        shared.resolve_unanswered(at, &drop, &silent());
+    }
+
+    #[test]
+    fn automation_sessions_run_unattended_and_user_sessions_ask() {
+        assert_eq!(
+            owner("t1", "claude", ChatOrigin::User).permission(),
+            PermissionPolicy::Interactive
+        );
+        assert_eq!(
+            owner("t1", "claude", ChatOrigin::Automation).permission(),
+            PermissionPolicy::Unattended(UnattendedPolicy::default())
+        );
+        assert!(Echo
+            .unattended_response(PendingDefault::Deny)
+            .decision
+            .is_none());
+    }
+
+    #[test]
+    fn unanswered_requests_resolve_with_the_default_after_the_timeout() {
+        let mut shared = claude_shared(unattended(Duration::from_secs(60), PendingDefault::Deny));
+        receive_line(&mut shared, BASH_REQUEST);
+        receive_line(&mut shared, BASH_REQUEST);
+        resolve_at(&mut shared, Instant::now());
+        assert_eq!(shared.snapshot.pending.len(), 1);
+        assert!(shared.snapshot.unanswered.is_empty());
+
+        let request = shared.snapshot.pending[0].clone();
+        resolve_at(&mut shared, Instant::now() + Duration::from_secs(61));
+        assert!(shared.snapshot.pending.is_empty());
+        assert!(shared.pending_deadlines.is_empty());
+        assert_eq!(
+            shared.snapshot.unanswered,
+            [UnansweredRequest {
+                request,
+                resolution: PendingDefault::Deny,
+            }]
+        );
+        let json = serde_json::to_value(&shared.snapshot).unwrap();
+        assert_eq!(json["unanswered"][0]["resolution"], "deny");
+        assert_eq!(json["unanswered"][0]["request"]["kind"], "approval");
+    }
+
+    #[test]
+    fn interactive_requests_wait_for_the_user() {
+        let mut shared = claude_shared(None);
+        receive_line(&mut shared, BASH_REQUEST);
+        resolve_at(&mut shared, Instant::now() + Duration::from_secs(86_400));
+        assert_eq!(shared.snapshot.pending.len(), 1);
+        assert!(shared.pending_deadlines.is_empty());
+        let json = serde_json::to_value(&shared.snapshot).unwrap();
+        assert!(json.get("unanswered").is_none());
+    }
+
+    #[test]
+    fn the_watcher_resolves_requests_until_the_session_ends() {
+        let mut shared = claude_shared(unattended(Duration::ZERO, PendingDefault::Allow));
+        receive_line(&mut shared, BASH_REQUEST);
+        let shared = Arc::new(Mutex::new(shared));
+        let watcher = {
+            let shared = shared.clone();
+            thread::spawn(move || watch_unanswered(&shared, Duration::ZERO, &drop, &silent()))
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while shared.lock().unwrap().snapshot.unanswered.is_empty() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            shared.lock().unwrap().snapshot.unanswered[0].resolution,
+            PendingDefault::Allow
+        );
+        shared.lock().unwrap().snapshot.status = ChatStatus::Exited { code: None };
+        watcher.join().unwrap();
+    }
+
+    #[test]
+    fn unattended_sessions_resolve_requests_from_the_agent() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", &format!("printf '%s\\n' '{BASH_REQUEST}'; sleep 5")]);
+        let setup = SessionSetup {
+            generation: 1,
+            turns: Default::default(),
+            remember: Arc::new(drop),
+            notify: Arc::new(|_| {}),
+            pending_resolution: unattended(Duration::ZERO, PendingDefault::Deny),
+        };
+        let session = ChatSession::spawn(
+            command,
+            Box::new(claude::ClaudeProvider::new("s1".into())),
+            setup,
+        )
+        .unwrap();
+        let snapshot = wait_for(&session, |snapshot| !snapshot.unanswered.is_empty());
+        assert!(snapshot.pending.is_empty());
+        assert_eq!(snapshot.unanswered[0].request.id, "r1");
+        session.terminate();
     }
 
     #[test]

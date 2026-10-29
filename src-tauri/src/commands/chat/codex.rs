@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use super::codex_hooks;
 use super::model::*;
+use crate::commands::agents::permission::PendingDefault;
 
 const UNSUPPORTED: i64 = -32601;
 const REVIEW_UNSUPPORTED: &str = "This Codex version doesn't support /review; update codex-cli";
@@ -100,6 +101,8 @@ pub struct CodexProvider {
     config_approval: Option<Value>,
     config_reviewer: Option<Value>,
     config_sandbox: Option<Value>,
+    /// Approval policy every turn uses inside the workspace sandbox, whatever the composer mode.
+    fixed_approval: Option<String>,
     usage: PlanUsage,
     image_dir: PathBuf,
     pinned: bool,
@@ -164,6 +167,7 @@ impl CodexProvider {
             config_approval: None,
             config_reviewer: None,
             config_sandbox: None,
+            fixed_approval: None,
             usage: PlanUsage::default(),
         }
     }
@@ -190,6 +194,9 @@ impl CodexProvider {
         }
         let workspace = json!({ "type": "workspaceWrite", "writableRoots": self.extra_dirs });
         let (approval, reviewer, sandbox) = match controls.mode.as_deref() {
+            _ if self.fixed_approval.is_some() => {
+                (json!(self.fixed_approval), json!("user"), workspace)
+            }
             Some("ask") => (json!("on-request"), json!("user"), workspace),
             Some("full") => (
                 json!("never"),
@@ -366,6 +373,11 @@ impl CodexProvider {
 
     pub fn continuing(mut self, handoff: Option<String>) -> Self {
         self.handoff = handoff;
+        self
+    }
+
+    pub fn fixed_approval(mut self, approval: &str) -> Self {
+        self.fixed_approval = Some(approval.to_string());
         self
     }
 
@@ -1152,6 +1164,17 @@ impl ChatProvider for CodexProvider {
             id: request_id.to_string(),
         });
         Ok(())
+    }
+
+    fn unattended_response(&self, default: PendingDefault) -> ChatResponse {
+        let decision = match default {
+            PendingDefault::Allow => "accept",
+            PendingDefault::Deny => "decline",
+        };
+        ChatResponse {
+            decision: Some(decision.into()),
+            ..Default::default()
+        }
     }
 }
 
@@ -2267,6 +2290,58 @@ mod tests {
             turn["collaborationMode"]["settings"]["reasoning_effort"],
             "low"
         );
+    }
+
+    #[test]
+    fn a_fixed_approval_holds_every_turn_inside_the_workspace() {
+        let (provider, mut snapshot) = resumed();
+        let mut provider = provider.fixed_approval("never");
+        for mode in ["full", "ask", "default"] {
+            let mut out = ProviderOutput::default();
+            provider
+                .configure(&ChatSetting::Mode(mode.into()), &mut out)
+                .unwrap();
+            provider.send("go", &[], &mut out).unwrap();
+            let params = &request(&out, "turn/start")["params"];
+            assert_eq!(params["approvalPolicy"], "never", "{mode}");
+            assert_eq!(params["approvalsReviewer"], "user", "{mode}");
+            assert_eq!(
+                params["sandboxPolicy"],
+                json!({ "type": "workspaceWrite", "writableRoots": ["/wt/b"] }),
+                "{mode}"
+            );
+            feed(
+                &mut provider,
+                &mut snapshot,
+                json!({
+                    "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t1" } }
+                }),
+            );
+        }
+    }
+
+    #[test]
+    fn unanswered_approvals_resolve_with_the_unattended_default() {
+        let (mut provider, mut snapshot) = resumed();
+        for (id, default, decision) in [
+            (5, PendingDefault::Deny, "decline"),
+            (6, PendingDefault::Allow, "accept"),
+        ] {
+            feed(
+                &mut provider,
+                &mut snapshot,
+                json!({ "id": id, "method": "item/commandExecution/requestApproval", "params": { "threadId": "th1", "command": "ls", "cwd": "/wt/a" } }),
+            );
+            let mut out = ProviderOutput::default();
+            let response = provider.unattended_response(default);
+            provider
+                .respond(&id.to_string(), &response, &snapshot, &mut out)
+                .unwrap();
+            assert_eq!(
+                written(&out),
+                [json!({ "id": id, "result": { "decision": decision } })]
+            );
+        }
     }
 
     #[test]

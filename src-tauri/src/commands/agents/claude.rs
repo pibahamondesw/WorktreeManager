@@ -14,6 +14,7 @@ use std::time::UNIX_EPOCH;
 
 use serde_json::{json, Value};
 
+use super::permission::{PermissionMode, PermissionPolicy};
 use super::{
     AgentAdapter, AgentCapabilities, ChatRequest, ConversationFork, ForkLaunch, ForkMethod,
     ForkRequest, LaunchContext, LaunchSpec,
@@ -105,8 +106,9 @@ impl Claude {
             ));
         }
         let (anchor, history) = fork_point(self.home(), request.cwd, source, request.item_id)?;
+        let permission = permission_args(&PermissionPolicy::Interactive);
         let args = if let Some(anchor) = anchor {
-            let mut args = launch_args(source, true, request.extra_dirs);
+            let mut args = launch_args(source, true, request.extra_dirs, &permission);
             args.extend([
                 "--fork-session".into(),
                 "--session-id".into(),
@@ -116,7 +118,7 @@ impl Claude {
             ]);
             args
         } else {
-            launch_args(request.fork_id, false, request.extra_dirs)
+            launch_args(request.fork_id, false, request.extra_dirs, &permission)
         };
         let mut provider = ClaudeProvider::new(request.fork_id.to_string()).forking();
         if !history.iter().any(|item| item.kind == ItemKind::User) {
@@ -207,7 +209,7 @@ impl AgentAdapter for Claude {
             archive: false,
             models: true,
             effort: true,
-            permission_modes: true,
+            permission_modes: &[PermissionMode::Interactive, PermissionMode::Unattended],
             interrupt: true,
             steer: false,
             compact: true,
@@ -247,7 +249,12 @@ impl AgentAdapter for Claude {
             command: self
                 .chat_cli(
                     cwd,
-                    launch_args(&session_id, resume.is_some(), &request.extra_dirs),
+                    launch_args(
+                        &session_id,
+                        resume.is_some(),
+                        &request.extra_dirs,
+                        &permission_args(&request.permission),
+                    ),
                 )
                 .command(),
             provider: Box::new(
@@ -496,6 +503,32 @@ fn write_marker(ctx: &LaunchContext, slug: &str) -> Result<(), String> {
     fs::write(&path, body.to_string()).map_err(|e| format!("write session marker: {e}"))
 }
 
+/// Interactive sessions let Claude's classifier approve what it can and ask about the rest.
+/// Unattended ones never prompt: only the allowed tools run without asking, and every other
+/// request is denied.
+fn permission_args(policy: &PermissionPolicy) -> Vec<String> {
+    let PermissionPolicy::Unattended(policy) = policy else {
+        return [
+            "--permission-mode",
+            "auto",
+            "--allow-dangerously-skip-permissions",
+        ]
+        .map(String::from)
+        .to_vec();
+    };
+    let mut args = vec!["--permission-mode".to_string(), "dontAsk".to_string()];
+    for (flag, rules) in [
+        ("--allowedTools", &policy.allow),
+        ("--disallowedTools", &policy.deny),
+    ] {
+        if !rules.is_empty() {
+            args.push(flag.to_string());
+            args.extend(rules.iter().cloned());
+        }
+    }
+    args
+}
+
 /// Derive `wm-…` session slug from branch name, with path fallback.
 pub fn branch_to_session_slug(branch_input: Option<&str>, path_fallback: &str) -> String {
     let trimmed = branch_input.map(str::trim).unwrap_or("");
@@ -556,6 +589,7 @@ fn cli_version(version_output: &str) -> Option<(u32, u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::agents::permission::UnattendedPolicy;
     use std::os::unix::fs::PermissionsExt;
 
     fn temp_store(tag: &str) -> PathBuf {
@@ -816,6 +850,54 @@ mod tests {
     }
 
     #[test]
+    fn interactive_sessions_keep_the_classifier_and_ask_for_the_rest() {
+        assert_eq!(
+            permission_args(&PermissionPolicy::Interactive),
+            [
+                "--permission-mode",
+                "auto",
+                "--allow-dangerously-skip-permissions"
+            ]
+        );
+    }
+
+    #[test]
+    fn unattended_sessions_never_prompt_and_pass_their_tool_rules() {
+        let policy = |allow: &[&str], deny: &[&str]| {
+            PermissionPolicy::Unattended(UnattendedPolicy {
+                allow: allow.iter().map(|rule| rule.to_string()).collect(),
+                deny: deny.iter().map(|rule| rule.to_string()).collect(),
+                ..Default::default()
+            })
+        };
+        assert_eq!(
+            permission_args(&policy(&[], &[])),
+            ["--permission-mode", "dontAsk"]
+        );
+        assert_eq!(
+            permission_args(&policy(&["Bash(git commit *)", "Edit"], &["WebFetch"])),
+            [
+                "--permission-mode",
+                "dontAsk",
+                "--allowedTools",
+                "Bash(git commit *)",
+                "Edit",
+                "--disallowedTools",
+                "WebFetch"
+            ]
+        );
+        assert_eq!(
+            permission_args(&policy(&[], &["Bash(rm *)"])),
+            [
+                "--permission-mode",
+                "dontAsk",
+                "--disallowedTools",
+                "Bash(rm *)"
+            ]
+        );
+    }
+
+    #[test]
     fn missing_cli_fails_every_launch() {
         let claude = Claude::new("/missing-test-agent", None);
         let ctx = LaunchContext {
@@ -834,6 +916,7 @@ mod tests {
                 pinned: false,
                 fork: None,
                 handoff: None,
+                permission: PermissionPolicy::Interactive,
             })
             .is_err());
     }
