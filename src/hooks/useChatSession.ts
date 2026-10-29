@@ -33,10 +33,11 @@ const CONNECTING: ChatSnapshot = {
 };
 
 /**
- * Attaches to the task agent's chat session. The session outlives this hook: unmounting only
- * detaches the sink. Events from an older generation (a session replaced by a restart) are
- * dropped, and events that race the snapshot are queued and replayed on top of it. The first
- * open follows `takeIntent` when the pane was mounted to resume or continue a conversation.
+ * Attaches to the task agent's primary chat session. The session outlives this hook: unmounting
+ * only detaches the sink of the session it opened. Events from an older generation (a session
+ * replaced by a restart) are dropped, and events that race the snapshot are queued and replayed
+ * on top of it. The first open follows `takeIntent` when the pane was mounted to resume or
+ * continue a conversation.
  */
 export function useChatSession(
   taskId: string,
@@ -54,6 +55,7 @@ export function useChatSession(
   useEffect(() => {
     let disposed = false;
     let generation = 0;
+    let sessionId = "";
     let opening = 0;
 
     const open = async (mode: ChatOpenMode, conversation?: string, handoffFrom?: AgentId) => {
@@ -64,7 +66,7 @@ export function useChatSession(
       setError(null);
       setSnapshot(CONNECTING);
       try {
-        const initial = await chatOpen({
+        const { sessionId: openedSession, ...initial } = await chatOpen({
           taskId,
           agent,
           folders: foldersKey.split("\n"),
@@ -82,6 +84,7 @@ export function useChatSession(
           throw new Error("The conversation changed before it was ready");
         }
         generation = initial.generation;
+        sessionId = openedSession;
         ready = true;
         setSnapshot(
           early
@@ -104,7 +107,7 @@ export function useChatSession(
 
     return () => {
       disposed = true;
-      if (generation) void chatDetach(taskId, agent, generation);
+      if (generation) void chatDetach(taskId, agent, generation, sessionId);
     };
   }, [taskId, agent, foldersKey, takeIntent]);
 

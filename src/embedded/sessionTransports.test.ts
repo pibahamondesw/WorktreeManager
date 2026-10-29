@@ -65,6 +65,37 @@ describe("sessionRegistry.listLive", () => {
   });
 });
 
+describe("sessionRegistry chat sessions", () => {
+  it("follows only each task agent's primary session, not automations beside it", async () => {
+    const chat = (sessionId: string, taskId: string, origin: string, status: unknown) => ({
+      sessionId,
+      taskId,
+      agent: "codex",
+      origin,
+      status,
+    });
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_list"
+          ? [
+              chat("run", "t3", "automation", { kind: "busy" }),
+              chat("pane", "t3", "user", { kind: "exited", code: null }),
+              chat("other", "t4", "automation", { kind: "busy" }),
+            ]
+          : []
+      )
+    );
+    await expect(sessionRegistry.listLive("t3")).resolves.toEqual([]);
+    await expect(sessionRegistry.listLive("t4")).resolves.toEqual([]);
+    const unsubscribe = sessionRegistry.subscribe(() => undefined);
+    await vi.waitFor(() =>
+      expect(sessionRegistry.taskStatuses().t3).toEqual({ kind: "exited", code: null })
+    );
+    expect(sessionRegistry.taskStatuses().t4).toBeUndefined();
+    unsubscribe();
+  });
+});
+
 describe("sessionRegistry.listLive with a failing list", () => {
   it("still reports what the other lists know", async () => {
     invoke.mockImplementation((command: string) =>

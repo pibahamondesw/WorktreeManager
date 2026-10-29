@@ -562,6 +562,7 @@ fn closing_the_source_during_a_fork_does_not_reinsert_the_session() {
         .sessions
         .lock()
         .unwrap()
+        .0
         .is_empty());
 }
 
@@ -642,6 +643,7 @@ fn closing_the_source_while_claude_initializes_cleans_up_the_replacement() {
         .sessions
         .lock()
         .unwrap()
+        .0
         .is_empty());
 }
 
@@ -718,11 +720,15 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
         .unwrap_err()
         .contains("unavailable"));
     let session = registry.remove("task", "codex").unwrap();
-    registry
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(("task".into(), "other".into()), session);
+    registry.sessions.lock().unwrap().insert(
+        "other".into(),
+        ChatOwner {
+            task_id: "task".into(),
+            agent: "other".into(),
+            origin: ChatOrigin::User,
+        },
+        session,
+    );
     assert!(fixture
         .apply("other", "u2", HistoryAction::Conversation, None)
         .unwrap_err()
@@ -918,7 +924,8 @@ fn history_commands_run_through_tauri_ipc_and_task_close_removes_the_saved_mappi
     fixture.open("codex", OpenMode::Restart).unwrap();
     let sessions = chat_list(fixture.app.state());
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].agent, "codex");
+    assert_eq!(sessions[0].owner.agent, "codex");
+    assert_eq!(sessions[0].owner.origin, ChatOrigin::User);
     let view = tauri::WebviewWindowBuilder::new(&fixture.app, "main", Default::default())
         .build()
         .unwrap();
@@ -1554,4 +1561,47 @@ fn rewinding_a_continuation_keeps_its_source_and_a_pending_fork_can_be_continued
             "Continued in Codex"
         ]
     );
+}
+
+#[test]
+fn attaching_reuses_the_live_primary_that_detach_then_releases() {
+    let fixture = Fixture::new();
+    fixture.open("codex", OpenMode::Restart).unwrap();
+    let registry = fixture.app.state::<ChatRegistry>();
+    let primary = registry
+        .sessions
+        .lock()
+        .unwrap()
+        .primary("task", "codex")
+        .map(|(id, _)| id.clone())
+        .unwrap();
+    let attached = tauri::async_runtime::block_on(chat_open(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        fixture.repositories.folders.clone(),
+        OpenMode::Attach,
+        None,
+        None,
+        Channel::new(|_| Ok(())),
+    ))
+    .unwrap();
+    assert_eq!(attached.session_id, primary);
+    let attached_sink = || {
+        registry
+            .with_session("task", "codex", |session| {
+                Ok(session.shared.lock().unwrap().sink.is_some())
+            })
+            .unwrap()
+    };
+    assert!(attached_sink());
+    chat_detach(
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        attached.snapshot.generation,
+        None,
+    );
+    assert!(!attached_sink());
 }

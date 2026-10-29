@@ -218,8 +218,10 @@ describe("chatActivityEvent", () => {
     waiting = false,
     backgroundAgents = false
   ): ChatInfo => ({
+    sessionId: "s1",
     taskId: "t1",
     agent: "codex",
+    origin: "user",
     status,
     waiting,
     backgroundAgents,
