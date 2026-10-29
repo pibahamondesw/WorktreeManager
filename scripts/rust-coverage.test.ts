@@ -176,6 +176,7 @@ describe("Rust coverage pipeline", () => {
         "commands::opencode::",
         "commands::chat::",
         "commands::agents::",
+        "commands::automations::",
         "commands::agent_alerts::tests::",
         "commands::agent_notifications::tests::",
         "commands::agent_usage::tests::",
