@@ -75,6 +75,7 @@ pub fn run() {
                 commands::vault::scaffold_vault,
                 commands::vault::ensure_vault,
                 commands::claude_config::cleanup_claude_json_stale,
+                commands::agents::agents_catalog,
                 commands::agent_alerts::agent_hooks_status,
                 commands::agent_alerts::agent_hooks_install,
                 commands::agent_alerts::agent_hooks_remove,
