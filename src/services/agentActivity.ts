@@ -245,6 +245,19 @@ export function pendingInputCount(activities: AgentActivities): number {
   ).length;
 }
 
+/**
+ * Whether an embedded surface other than a chat (the backend tracks chat turns itself) has an
+ * agent mid-turn, including one waiting on you; quitting the app would end it.
+ */
+export function surfaceTurnInProgress(activities: AgentActivities): boolean {
+  return Object.values(activities).some(
+    (activity) =>
+      activity.surface !== "chat" &&
+      EMBEDDED_SURFACES.includes(activity.surface) &&
+      activity.state !== "done"
+  );
+}
+
 /** Agent errors take priority over input, work, idle and ended sessions. */
 export type TaskIndicator = "error" | "input" | "working" | "idle" | "ended";
 

@@ -216,8 +216,9 @@ function BackgroundSetting({
         Keep running in the background
       </label>
       <p className="text-xs text-text-muted">
-        Closing the window while agent sessions are live hides it instead of quitting, so they keep
-        working. Reopen it from the Dock or with wtm. Quitting ends them; chats can be resumed.
+        Closing the window while an agent is mid-turn hides it instead of quitting, so the turn can
+        finish; the app quits once it does. Reopen it from the Dock or with wtm. Quitting ends
+        sessions; chats can be resumed.
       </p>
     </div>
   );

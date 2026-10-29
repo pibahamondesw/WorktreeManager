@@ -84,12 +84,6 @@ impl TerminalRegistry {
             .collect()
     }
 
-    pub fn has_running_sessions(&self) -> bool {
-        self.0.lock().unwrap().iter().any(|((_, name), session)| {
-            !is_script_session(name) && matches!(session.status(), TermStatus::Running)
-        })
-    }
-
     pub fn shutdown_all(&self) {
         let sessions: Vec<TerminalSession> =
             self.0.lock().unwrap().drain().map(|(_, s)| s).collect();
@@ -729,31 +723,6 @@ mod tests {
             registry.0.lock().unwrap().values().next().unwrap().status(),
             TermStatus::Running
         );
-        registry.shutdown_all();
-    }
-
-    #[test]
-    fn only_running_agent_terminals_keep_the_app_alive() {
-        let registry = TerminalRegistry::default();
-        let insert = |name: &str, session| {
-            registry
-                .0
-                .lock()
-                .unwrap()
-                .insert(("task".into(), name.into()), session);
-        };
-        insert("setup:api", cat_session());
-        assert!(!registry.has_running_sessions());
-        insert("claude", cat_session());
-        assert!(registry.has_running_sessions());
-        registry
-            .0
-            .lock()
-            .unwrap()
-            .get_mut(&("task".into(), "claude".into()))
-            .unwrap()
-            .terminate();
-        assert!(!registry.has_running_sessions());
         registry.shutdown_all();
     }
 

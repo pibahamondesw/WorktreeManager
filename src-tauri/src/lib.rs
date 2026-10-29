@@ -19,6 +19,7 @@ pub fn run() {
         .manage(commands::terminal::TerminalRegistry::default())
         .manage(commands::chat::ChatRegistry::default())
         .manage(commands::code_server::EditorRegistry::default())
+        .manage(lifecycle::Background::default())
         .setup(|app| {
             std::thread::spawn(commands::chat::purge_stale_chat_images);
             #[cfg(unix)]
@@ -122,6 +123,7 @@ pub fn run() {
                 commands::chat::chat_session_archive,
                 commands::chat::interrupted::chat_interrupted_list,
                 commands::chat::interrupted::chat_interrupted_clear,
+                lifecycle::set_surface_turn_in_progress,
                 commands::code_server::vscode_probe,
                 commands::code_server::vscode_install,
                 commands::code_server::vscode_install_status,

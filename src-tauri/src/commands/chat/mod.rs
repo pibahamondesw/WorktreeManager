@@ -53,7 +53,7 @@ use model::{
     ProviderOutput, ReviewTarget,
 };
 
-const STATUS_EVENT: &str = "chat-status";
+pub(crate) const STATUS_EVENT: &str = "chat-status";
 const EXIT_WAIT: Duration = Duration::from_secs(5);
 const STDERR_TAIL: usize = 4096;
 
@@ -621,12 +621,12 @@ impl ChatRegistry {
         }
     }
 
-    pub fn has_live_sessions(&self) -> bool {
+    pub fn has_turn_in_progress(&self) -> bool {
         self.sessions
             .lock()
             .unwrap()
             .sessions()
-            .any(|(_, session)| session.status().is_live())
+            .any(|(_, session)| session.status().turn_in_progress())
     }
 
     fn live_conversations(&self) -> Vec<interrupted::InterruptedSession> {
@@ -1314,6 +1314,21 @@ pub(crate) mod tests {
             },
             session,
         );
+        set_turn(registry, task_id, agent, false);
+    }
+
+    pub(crate) fn set_turn(registry: &ChatRegistry, task_id: &str, agent: &str, in_progress: bool) {
+        let status = if in_progress {
+            ChatStatus::Busy
+        } else {
+            ChatStatus::Idle
+        };
+        registry
+            .with_session(task_id, agent, |session| {
+                session.shared.lock().unwrap().snapshot.status = status;
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -1994,7 +2009,6 @@ pub(crate) mod tests {
     #[test]
     fn live_user_sessions_with_a_conversation_are_the_ones_interrupted() {
         let registry = ChatRegistry::default();
-        assert!(!registry.has_live_sessions());
         for (agent, conversation) in [
             ("claude", Some("c1")),
             ("codex", None),
@@ -2022,7 +2036,6 @@ pub(crate) mod tests {
             })
             .unwrap();
 
-        assert!(registry.has_live_sessions());
         assert_eq!(
             registry.live_conversations(),
             vec![interrupted::InterruptedSession {
@@ -2032,7 +2045,25 @@ pub(crate) mod tests {
             }]
         );
         registry.shutdown_all();
-        assert!(!registry.has_live_sessions());
+    }
+
+    #[test]
+    fn only_starting_or_busy_sessions_have_a_turn_in_progress() {
+        let registry = ChatRegistry::default();
+        assert!(!registry.has_turn_in_progress());
+        insert_live_session(&registry, "t1", "claude", None);
+        assert!(!registry.has_turn_in_progress());
+        set_turn(&registry, "t1", "claude", true);
+        assert!(registry.has_turn_in_progress());
+        registry
+            .with_session("t1", "claude", |session| {
+                session.shared.lock().unwrap().snapshot.status = ChatStatus::Starting;
+                Ok(())
+            })
+            .unwrap();
+        assert!(registry.has_turn_in_progress());
+        registry.shutdown_all();
+        assert!(!registry.has_turn_in_progress());
     }
 
     #[test]

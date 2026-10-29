@@ -20,6 +20,10 @@ impl ChatStatus {
     pub fn is_live(&self) -> bool {
         !matches!(self, ChatStatus::Exited { .. } | ChatStatus::Failed { .. })
     }
+
+    pub fn turn_in_progress(&self) -> bool {
+        matches!(self, ChatStatus::Starting | ChatStatus::Busy)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
