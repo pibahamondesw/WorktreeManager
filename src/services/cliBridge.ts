@@ -181,6 +181,23 @@ async function agentEvent(params: Record<string, unknown>): Promise<AgentEvent> 
   return event;
 }
 
+const DEFAULT_RUNS_PAGE = 20;
+
+function pageLimit(value: unknown): number {
+  if (value === undefined) return DEFAULT_RUNS_PAGE;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1)
+    throw new OperationError("invalid_params", "limit must be a positive integer.");
+  return value;
+}
+
+async function readAutomations(command: string, args?: Record<string, unknown>) {
+  try {
+    return await invoke(command, args);
+  } catch (error) {
+    throw new OperationError("operation_failed", String(error));
+  }
+}
+
 function deleteOptions(params: Record<string, unknown>): DeleteOptions | undefined {
   if (params.deleteWorktrees === undefined) {
     if (params.force || params.skipTeardown)
@@ -238,6 +255,10 @@ export async function dispatchCliBridge(
         "prompt",
         "asyncQuestion",
       ],
+      "automation.list": [],
+      "automation.get": ["name"],
+      "automation.runs": ["name", "before", "limit"],
+      "automation.status": ["name", "runId"],
     };
     if (!Object.hasOwn(allowed, request.method))
       throw new OperationError("method_not_found", "Unknown operation. See wtm --help.");
@@ -320,6 +341,25 @@ export async function dispatchCliBridge(
         result = onAgentEvent(event);
         break;
       }
+      case "automation.list":
+        result = await readAutomations("automations_list");
+        break;
+      case "automation.get":
+        result = await readAutomations("automations_get", { name: text(params.name) });
+        break;
+      case "automation.runs":
+        result = await readAutomations("automation_runs_list", {
+          name: text(params.name),
+          before: params.before === undefined ? null : text(params.before),
+          limit: pageLimit(params.limit),
+        });
+        break;
+      case "automation.status":
+        result = await readAutomations("automation_run_get", {
+          name: text(params.name),
+          runId: text(params.runId),
+        });
+        break;
     }
     return { ok: true, data: result, warnings: [] };
   } catch (error) {

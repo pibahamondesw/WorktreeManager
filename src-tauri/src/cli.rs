@@ -15,6 +15,7 @@ const HELP: &str = r#"wtm — control the running WorktreeManager app (JSON outp
 
 Usage: wtm                         Open the app
        wtm [--local] <workspace|task> <operation> [id] [options]
+       wtm [--local] automation <operation> [name] [run_id] [options]
        wtm [--local] agent event <working|waiting|done> --agent <claude|codex>
        worktree-manager --cli [--local] ...
 
@@ -28,6 +29,11 @@ task get <id> [--git]
 task create --input <file|->
 task link-issue <id> --issue <identifier>
 task delete <id> <--keep-worktrees|--delete-worktrees> [--force] [--skip-teardown]
+automation list
+automation get <name>
+automation runs <name> [--before <run_id>] [--limit <n>]   Newest first, 20 per
+                                     page (max 200); pass next_before as --before.
+automation status <name> <run_id>
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
 
@@ -51,6 +57,7 @@ Examples:
   wtm task link-issue TASK_ID --issue WOR-123
   wtm task get TASK_ID --git
   wtm task delete TASK_ID --delete-worktrees
+  wtm automation runs babysitter --limit 5
 
 --local targets isolated development; default targets the installed/shared app.
 --force only works with --delete-worktrees and discards uncommitted files.
@@ -100,6 +107,15 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     json!(args.next().ok_or("--agent requires claude or codex")?),
                 );
             }
+            "--before" if !params.contains_key("before") => {
+                params.insert(
+                    "before".into(),
+                    json!(args.next().ok_or("--before requires a run ID")?),
+                );
+            }
+            "--limit" if !params.contains_key("limit") => {
+                params.insert("limit".into(), json!(page_limit(args.next())?));
+            }
             "--git" if !params.contains_key("git") => {
                 params.insert("git".into(), json!(true));
             }
@@ -124,31 +140,36 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         return Err("Provide a resource and operation; see --help".into());
     }
     let method = format!("{}.{}", words[0], words[1]);
-    let (needs_id, needs_input, allowed): (bool, bool, &[&str]) = match method.as_str() {
-        "workspace.list" => (false, false, &[]),
-        "workspace.get" => (true, false, &[]),
-        "workspace.create" | "task.create" => (false, true, &[]),
-        "workspace.update" => (true, true, &[]),
-        "workspace.delete" | "task.delete" => {
-            (true, false, &["deleteWorktrees", "force", "skipTeardown"])
-        }
-        "task.list" => (false, false, &["workspaceId"]),
-        "task.link-issue" => (true, false, &["issue"]),
-        "task.get" => (true, false, &["git"]),
-        "agent.event" => (true, false, &["agent"]),
+    let (positional, needs_input, allowed): (&[&str], bool, &[&str]) = match method.as_str() {
+        "workspace.list" | "automation.list" => (&[], false, &[]),
+        "workspace.get" => (&["id"], false, &[]),
+        "workspace.create" | "task.create" => (&[], true, &[]),
+        "workspace.update" => (&["id"], true, &[]),
+        "workspace.delete" | "task.delete" => (
+            &["id"],
+            false,
+            &["deleteWorktrees", "force", "skipTeardown"],
+        ),
+        "task.list" => (&[], false, &["workspaceId"]),
+        "task.link-issue" => (&["id"], false, &["issue"]),
+        "task.get" => (&["id"], false, &["git"]),
+        "agent.event" => (&["state"], false, &["agent"]),
+        "automation.get" => (&["name"], false, &[]),
+        "automation.runs" => (&["name"], false, &["before", "limit"]),
+        "automation.status" => (&["name", "runId"], false, &[]),
         _ => return Err("Unknown operation; see --help".into()),
     };
-    if words.len() != if needs_id { 3 } else { 2 }
+    if words.len() != 2 + positional.len()
         || needs_input != input.is_some()
         || params.keys().any(|key| !allowed.contains(&key.as_str()))
     {
         return Err("Invalid arguments for this operation; see --help".into());
     }
-    if needs_id {
-        params.insert("id".into(), json!(words[2]));
+    for (key, word) in positional.iter().zip(&words[2..]) {
+        params.insert((*key).into(), json!(word));
     }
     if method == "agent.event" {
-        let state = params.remove("id").unwrap_or_default();
+        let state = &params["state"];
         if !["working", "waiting", "done"].contains(&state.as_str().unwrap_or_default())
             || !["claude", "codex"].contains(
                 &params
@@ -159,7 +180,6 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         {
             return Err("Provide working, waiting or done and --agent claude or codex".into());
         }
-        params.insert("state".into(), state);
     }
     if method == "task.link-issue" && !params.contains_key("issue") {
         return Err("Provide --issue with a Linear issue identifier".into());
@@ -178,6 +198,13 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         params,
         input,
     })
+}
+
+fn page_limit(value: Option<&String>) -> Result<u64, String> {
+    value
+        .and_then(|value| value.parse().ok())
+        .filter(|limit| *limit > 0)
+        .ok_or_else(|| "--limit requires a positive number".into())
 }
 
 fn execute(mut arguments: Arguments) -> Result<Value, String> {
@@ -806,6 +833,55 @@ mod tests {
                 });
                 assert!(delivered);
             }
+        }
+    }
+
+    #[test]
+    fn parses_automation_reads_with_positional_names_and_paging() {
+        let list = parse(&args("--local automation list")).unwrap();
+        assert!(list.local);
+        assert_eq!(list.method, "automation.list");
+        assert!(list.params.is_empty());
+        assert_eq!(
+            parse(&args("automation get babysitter")).unwrap().params,
+            *json!({ "name": "babysitter" }).as_object().unwrap()
+        );
+        assert_eq!(
+            parse(&args(
+                "automation runs babysitter --before 1700000000000-abcdef12 --limit 5"
+            ))
+            .unwrap()
+            .params,
+            *json!({ "name": "babysitter", "before": "1700000000000-abcdef12", "limit": 5 })
+                .as_object()
+                .unwrap()
+        );
+        let status = parse(&args("automation status babysitter 1700000000000-abcdef12")).unwrap();
+        assert_eq!(status.method, "automation.status");
+        assert_eq!(
+            status.params,
+            *json!({ "name": "babysitter", "runId": "1700000000000-abcdef12" })
+                .as_object()
+                .unwrap()
+        );
+        for invalid in [
+            "automation list babysitter",
+            "automation get",
+            "automation get babysitter --limit 5",
+            "automation runs",
+            "automation runs babysitter --limit",
+            "automation runs babysitter --limit 0",
+            "automation runs babysitter --limit -3",
+            "automation runs babysitter --limit many",
+            "automation runs babysitter --before",
+            "automation runs babysitter --before a --before b",
+            "automation status babysitter",
+            "automation status babysitter r1 extra",
+            "automation status babysitter r1 --before r0",
+            "automation run babysitter",
+            "automation list --input -",
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "{invalid}");
         }
     }
 

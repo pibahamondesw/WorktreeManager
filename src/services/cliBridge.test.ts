@@ -4,9 +4,13 @@ import { Operations } from "./operations";
 import { dispatchCliBridge } from "./cliBridge";
 import { invokeWithAgentCatalog } from "./agents.fixture";
 
+const { invokeCommand } = vi.hoisted(() => ({
+  invokeCommand: vi.fn<(command: string, args?: unknown) => Promise<unknown>>(() =>
+    Promise.resolve(undefined)
+  ),
+}));
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (command: string, args?: unknown) =>
-    invokeWithAgentCatalog(() => Promise.resolve(undefined), command, args),
+  invoke: (command: string, args?: unknown) => invokeWithAgentCatalog(invokeCommand, command, args),
 }));
 vi.mock("@tauri-apps/api/path", () => ({ homeDir: vi.fn().mockResolvedValue("/home/test/") }));
 vi.mock("./store", () => ({ persist: vi.fn().mockResolvedValue(undefined) }));
@@ -199,4 +203,53 @@ it("forwards validated agent events to the app and reports the matched task", as
     ok: false,
     error: { code: "app_not_ready" },
   });
+});
+
+it("reads automations and their runs through the Rust commands", async () => {
+  invokeCommand.mockImplementation((command) =>
+    command === "automation_run_get"
+      ? Promise.reject("No run r9 for automation babysitter")
+      : Promise.resolve({ command })
+  );
+  expect(await call("automation.list")).toMatchObject({
+    ok: true,
+    data: { command: "automations_list" },
+  });
+  expect(await call("automation.get", { name: " babysitter " })).toMatchObject({ ok: true });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automations_get", { name: "babysitter" });
+  await call("automation.runs", { name: "babysitter" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_runs_list", {
+    name: "babysitter",
+    before: null,
+    limit: 20,
+  });
+  await call("automation.runs", { name: "babysitter", before: "r5", limit: 5 });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_runs_list", {
+    name: "babysitter",
+    before: "r5",
+    limit: 5,
+  });
+  expect(await call("automation.status", { name: "babysitter", runId: "r9" })).toEqual({
+    ok: false,
+    error: { code: "operation_failed", message: "No run r9 for automation babysitter" },
+  });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_run_get", {
+    name: "babysitter",
+    runId: "r9",
+  });
+  const calls = invokeCommand.mock.calls.length;
+  for (const [method, params] of [
+    ["automation.list", { name: "babysitter" }],
+    ["automation.get", {}],
+    ["automation.runs", { name: "babysitter", limit: 0 }],
+    ["automation.runs", { name: "babysitter", limit: 2.5 }],
+    ["automation.runs", { name: "babysitter", limit: "5" }],
+    ["automation.runs", { name: "babysitter", before: " " }],
+    ["automation.status", { name: "babysitter" }],
+  ] as const)
+    expect(await call(method, params)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+  expect(invokeCommand).toHaveBeenCalledTimes(calls);
 });
