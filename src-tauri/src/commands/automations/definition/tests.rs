@@ -199,7 +199,6 @@ fn minimal_routine_fills_every_default() {
             "model": "default",
             "effort": null,
             "permission": {
-                "mode": "unattended",
                 "allow": [],
                 "deny": [],
                 "pendingTimeoutSecs": 600,
@@ -720,7 +719,6 @@ fn step_agents_override_the_top_level_agent() {
             "model": "opus",
             "effort": null,
             "permission": {
-                "mode": "unattended",
                 "allow": ["Bash(make:*)"],
                 "deny": ["WebFetch"],
                 "pendingTimeoutSecs": 300,

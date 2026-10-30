@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 const DEFAULT_PENDING_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
@@ -32,12 +32,18 @@ pub struct PendingResolution {
 }
 
 /// Agent-native tool rules: `allow` runs without asking, `deny` never runs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UnattendedPolicy {
     pub allow: Vec<String>,
     pub deny: Vec<String>,
+    #[serde(rename = "pendingTimeoutSecs", serialize_with = "whole_seconds")]
     pub pending_timeout: Duration,
     pub pending_default: PendingDefault,
+}
+
+fn whole_seconds<S: Serializer>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_u64(duration.as_secs())
 }
 
 impl Default for UnattendedPolicy {
@@ -109,6 +115,19 @@ mod tests {
         assert_eq!(
             serde_json::to_value(PermissionMode::Unattended).unwrap(),
             "unattended"
+        );
+    }
+
+    #[test]
+    fn unattended_policies_serialize_their_timeout_in_seconds() {
+        assert_eq!(
+            serde_json::to_value(UnattendedPolicy::default()).unwrap(),
+            serde_json::json!({
+                "allow": [],
+                "deny": [],
+                "pendingTimeoutSecs": 600,
+                "pendingDefault": "deny"
+            })
         );
     }
 }

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
+use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use chrono_tz::Tz;
@@ -14,11 +15,12 @@ use super::fields::{
 use super::{
     AgentSettings, AgentStep, ApprovalDefault, ApprovalStep, Authorization, AutomationDefinition,
     Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency, Environment, GotoLimit,
-    InboxPolicy, IssueKind, LinearTracker, PendingDefault, Permission, PermissionMode, Pools,
-    RepoRef, ReportPolicy, ResultSchema, Schedule, Step, StepKind, StopAfter, Target, TargetRepo,
-    TaskMode, Tracker, Transition, Trigger, Verb, WaitStep, WorkspaceRef,
+    InboxPolicy, IssueKind, LinearTracker, Pools, RepoRef, ReportPolicy, ResultSchema, Schedule,
+    Step, StepKind, StopAfter, Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, Verb,
+    WaitStep, WorkspaceRef,
 };
-use crate::commands::agents::{permission::PermissionMode as AgentPermissionMode, AgentDescriptor};
+use crate::commands::agents::permission::{PendingDefault, PermissionMode, UnattendedPolicy};
+use crate::commands::agents::AgentDescriptor;
 
 const SUPPORTED_SCHEMA: u64 = 1;
 const MAX_DESCRIPTION_CHARS: usize = 500;
@@ -33,7 +35,6 @@ const SCRIPTS_DIR: &str = "scripts/";
 const SCHEMAS_DIR: &str = "schemas/";
 const AGENT_STEP_TIMEOUT_SECS: u64 = 60 * 60;
 const COMMAND_STEP_TIMEOUT_SECS: u64 = 30 * 60;
-const PENDING_TIMEOUT_SECS: u64 = 10 * 60;
 const FORBIDDEN_VERBS: [&str; 2] = ["merge", "no_verify"];
 const VERBS: [(&str, Verb); 11] = [
     ("commit", Verb::Commit),
@@ -69,7 +70,7 @@ struct AgentOverrides {
     id: Option<String>,
     model: Option<String>,
     effort: Option<String>,
-    permission: Option<Permission>,
+    permission: Option<UnattendedPolicy>,
 }
 
 enum Moment {
@@ -665,34 +666,21 @@ fn agent_id(report: &mut Report, env: &Environment, value: &Value, field: &str) 
     Some(id)
 }
 
-fn default_permission() -> Permission {
-    Permission {
-        mode: PermissionMode::Unattended,
-        allow: Vec::new(),
-        deny: Vec::new(),
-        pending_timeout_secs: PENDING_TIMEOUT_SECS,
-        pending_default: PendingDefault::Deny,
-    }
-}
-
-fn permission(report: &mut Report, value: &Value, field: &str) -> Option<Permission> {
+fn permission(report: &mut Report, value: &Value, field: &str) -> Option<UnattendedPolicy> {
     if value.is_string() {
-        let mode = permission_mode(report, value, field)?;
-        return Some(Permission {
-            mode,
-            ..default_permission()
-        });
+        permission_mode(report, value, field)?;
+        return Some(UnattendedPolicy::default());
     }
     let mut fields = Fields::of(report, value, field)?;
-    let defaults = default_permission();
-    let mode = fields.or(report, "mode", defaults.mode, permission_mode);
+    let defaults = UnattendedPolicy::default();
+    let mode = fields.or(report, "mode", PermissionMode::Unattended, permission_mode);
     let allow = fields.or(report, "allow", defaults.allow, string_list);
     let deny = fields.or(report, "deny", defaults.deny, string_list);
-    let pending_timeout_secs = fields.or(
+    let pending_timeout = fields.or(
         report,
         "pending_timeout",
-        defaults.pending_timeout_secs,
-        duration,
+        defaults.pending_timeout,
+        |report, value, field| duration(report, value, field).map(Duration::from_secs),
     );
     let pending_default = fields.or(
         report,
@@ -711,11 +699,11 @@ fn permission(report: &mut Report, value: &Value, field: &str) -> Option<Permiss
         },
     );
     fields.finish(report);
-    Some(Permission {
-        mode: mode?,
+    mode?;
+    Some(UnattendedPolicy {
         allow: allow?,
         deny: deny?,
-        pending_timeout_secs: pending_timeout_secs?,
+        pending_timeout: pending_timeout?,
         pending_default: pending_default?,
     })
 }
@@ -762,7 +750,7 @@ fn resolve_agent(
         permission: step
             .permission
             .or_else(|| defaults.permission.clone())
-            .unwrap_or_else(default_permission),
+            .unwrap_or_default(),
     };
     let agent = env.agents.iter().find(|agent| agent.id == settings.id)?;
     let missing = missing_capabilities(agent, &settings);
@@ -791,7 +779,7 @@ fn missing_capabilities(agent: &AgentDescriptor, settings: &AgentSettings) -> Ve
         (
             !capabilities
                 .permission_modes
-                .contains(&AgentPermissionMode::Unattended),
+                .contains(&PermissionMode::Unattended),
             "permission_modes",
         ),
     ]

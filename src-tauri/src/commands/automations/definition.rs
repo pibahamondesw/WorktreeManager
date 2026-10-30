@@ -19,6 +19,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, Runtime};
 
+use crate::commands::agents::permission::UnattendedPolicy;
 use crate::commands::agents::{AgentDescriptor, Agents};
 use fields::{is_automation_name, Report};
 
@@ -213,30 +214,8 @@ pub struct AgentSettings {
     pub id: String,
     pub model: String,
     pub effort: Option<String>,
-    pub permission: Permission,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Permission {
-    pub mode: PermissionMode,
-    pub allow: Vec<String>,
-    pub deny: Vec<String>,
-    pub pending_timeout_secs: u64,
-    pub pending_default: PendingDefault,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PermissionMode {
-    Unattended,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingDefault {
-    Deny,
-    Allow,
+    /// v1 runs agent steps unattended only.
+    pub permission: UnattendedPolicy,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
