@@ -67,10 +67,12 @@ vi.mock("./components/sidebar/WorkspaceList", () => ({
     workspaces,
     onSelect,
     onOpenSettings,
+    onOpenAutomations,
   }: {
     workspaces: Workspace[];
     onSelect: (workspaceId: string) => void;
     onOpenSettings: () => void;
+    onOpenAutomations: () => void;
   }) => (
     <>
       {workspaces.map((workspace) => (
@@ -79,6 +81,7 @@ vi.mock("./components/sidebar/WorkspaceList", () => ({
         </button>
       ))}
       <button onClick={onOpenSettings}>Settings</button>
+      <button onClick={onOpenAutomations}>Automations</button>
     </>
   ),
 }));
@@ -102,8 +105,20 @@ vi.mock("./components/worktree/WorktreeList", () => ({
   ),
 }));
 vi.mock("./components/search/QuickSearchModal", () => ({
-  QuickSearchModal: ({ open }: { open: boolean }) =>
-    open ? <div role="dialog">Task search</div> : null,
+  QuickSearchModal: ({
+    open,
+    onWorkspaceAction,
+  }: {
+    open: boolean;
+    onWorkspaceAction: (action: { kind: "automations" }) => void;
+  }) => (
+    <>
+      {open && <div role="dialog">Task search</div>}
+      <button onClick={() => onWorkspaceAction({ kind: "automations" })}>
+        Palette: Automations
+      </button>
+    </>
+  ),
 }));
 
 const workspaces = [
@@ -323,6 +338,43 @@ describe("workspace task-surface navigation", () => {
       expect(mocks.recordWorkspaceVisit).toHaveBeenCalledExactlyOnceWith("second");
     }
   );
+});
+
+describe("automations overlay", () => {
+  it("opens over the open task and closes with Escape while focus stays outside it", async () => {
+    const task: Task = {
+      id: "task",
+      workspaceId: "second",
+      branchName: "feature/task",
+      members: [],
+      createdAt: "2026-09-24T00:00:00Z",
+    };
+    const store = mocks.useStore();
+    mocks.useStore.mockReturnValue({
+      ...store,
+      state: { ...store.state, tasks: [task] },
+      selectedTasks: [task],
+      editorApp: "vscode-web",
+    });
+    const view = render(<App />);
+    fireEvent.click(view.getByRole("button", { name: "Open task" }));
+    expect(await view.findByText("Task surface")).toBeTruthy();
+
+    fireEvent.click(view.getByRole("button", { name: "Automations" }));
+    expect(view.getByRole("dialog", { name: "Automations" })).toBeTruthy();
+    expect(view.getByText("Task surface")).toBeTruthy();
+    view.getByRole("button", { name: "Automations" }).focus();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(view.queryByRole("dialog", { name: "Automations" })).toBeNull();
+    expect(view.getByText("Task surface")).toBeTruthy();
+    expect(mocks.invoke).not.toHaveBeenCalledWith("vscode_close", expect.anything());
+  });
+
+  it("opens from the command palette", () => {
+    const view = render(<App />);
+    fireEvent.click(view.getByRole("button", { name: "Palette: Automations" }));
+    expect(view.getByRole("dialog", { name: "Automations" })).toBeTruthy();
+  });
 });
 
 describe("doctor alerts", () => {

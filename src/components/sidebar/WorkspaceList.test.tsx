@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { WorkspaceList } from "./WorkspaceList";
@@ -40,6 +40,8 @@ describe("WorkspaceList session indicator", () => {
         onCollapse={vi.fn()}
         doctorSeverity={null}
         onOpenSettings={vi.fn()}
+        onOpenAutomations={vi.fn()}
+        automationsNeedAttention={false}
       />
     );
 
@@ -72,6 +74,8 @@ describe("WorkspaceList session indicator", () => {
         onCollapse={vi.fn()}
         doctorSeverity={null}
         onOpenSettings={vi.fn()}
+        onOpenAutomations={vi.fn()}
+        automationsNeedAttention={false}
       />
     );
     expect(
@@ -113,6 +117,8 @@ describe("WorkspaceList session indicator", () => {
         onCollapse={vi.fn()}
         doctorSeverity={null}
         onOpenSettings={vi.fn()}
+        onOpenAutomations={vi.fn()}
+        automationsNeedAttention={false}
       />
     );
 
@@ -123,5 +129,41 @@ describe("WorkspaceList session indicator", () => {
       "bg-warning"
     );
     expect(screen.queryByTitle("An agent in this workspace is working")).not.toBeInTheDocument();
+  });
+});
+
+describe("WorkspaceList automations entry point", () => {
+  const renderList = (automationsNeedAttention: boolean, onOpenAutomations = vi.fn()) =>
+    render(
+      <WorkspaceList
+        workspaces={workspaces}
+        tasks={[]}
+        selectedWorkspaceId="ws-idle"
+        onSelect={vi.fn()}
+        onAdd={vi.fn()}
+        onUpdate={vi.fn()}
+        onRemove={vi.fn()}
+        onReorder={vi.fn()}
+        vault={{ enabled: false, path: null }}
+        onCollapse={vi.fn()}
+        doctorSeverity={null}
+        onOpenSettings={vi.fn()}
+        onOpenAutomations={onOpenAutomations}
+        automationsNeedAttention={automationsNeedAttention}
+      />
+    );
+
+  it("opens automations from the footer and flags them only when they need attention", () => {
+    const onOpenAutomations = vi.fn();
+    renderList(false, onOpenAutomations);
+    expect(screen.queryByText("Automations", { selector: "h2" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Automations" }));
+    expect(onOpenAutomations).toHaveBeenCalledOnce();
+
+    cleanup();
+    renderList(true);
+    expect(screen.getByRole("button", { name: "Automations (needs attention)" })).toContainElement(
+      document.querySelector(".bg-warning") as HTMLElement
+    );
   });
 });

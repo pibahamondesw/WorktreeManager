@@ -4,7 +4,7 @@ import { Task, VaultConfig, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { EditWorkspaceModal } from "./EditWorkspaceModal";
 import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
-import { PlusIcon, GearIcon, GripIcon, SidebarIcon } from "../ui/Icons";
+import { PlusIcon, GearIcon, GripIcon, SidebarIcon, AutomationIcon } from "../ui/Icons";
 import { DeleteOptions, OperationResult } from "../../services/operations";
 import { CheckSeverity } from "../../services/doctor";
 import { WorkspaceAction } from "../../search/commands";
@@ -50,6 +50,9 @@ interface WorkspaceListProps {
   /** Worst severity the dependency check found, or null before it has run. */
   doctorSeverity: CheckSeverity | null;
   onOpenSettings: () => void;
+  onOpenAutomations: () => void;
+  /** An automation is invalid, failing or auto-paused. */
+  automationsNeedAttention: boolean;
   /** Palette (or anything else) asking this list to open a sidebar overlay. */
   workspaceAction?: WorkspaceAction | null;
   onWorkspaceActionHandled?: () => void;
@@ -73,6 +76,8 @@ export function WorkspaceList({
   onCollapse,
   doctorSeverity,
   onOpenSettings,
+  onOpenAutomations,
+  automationsNeedAttention,
   workspaceAction,
   onWorkspaceActionHandled,
 }: WorkspaceListProps) {
@@ -297,11 +302,25 @@ export function WorkspaceList({
         })}
       </div>
 
-      {/* Footer: global settings */}
-      <div className="flex-shrink-0 border-t border-border px-4 py-2 space-y-0.5">
+      {/* Footer: automations and global settings */}
+      <div className="flex-shrink-0 border-t border-border px-4 py-2 flex flex-col gap-0.5">
+        <button
+          onClick={onOpenAutomations}
+          aria-label={automationsNeedAttention ? "Automations (needs attention)" : "Automations"}
+          title={
+            automationsNeedAttention ? "Automations: something needs your attention" : "Automations"
+          }
+          className="w-full min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
+        >
+          <AutomationIcon size={14} />
+          Automations
+          {automationsNeedAttention && (
+            <span aria-hidden="true" className="ml-auto w-1.5 h-1.5 rounded-full bg-warning" />
+          )}
+        </button>
         <button
           onClick={onOpenSettings}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
+          className="w-full min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
           title={`Settings (${shortcutLabel("app.settings")})`}
         >
           <GearIcon size={14} />

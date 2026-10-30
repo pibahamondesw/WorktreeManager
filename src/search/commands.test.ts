@@ -77,6 +77,7 @@ describe("buildCommands", () => {
         "remove-ws:ws-1",
         "new-task",
         "settings",
+        "automations",
         "vault",
         "theme-picker",
         "theme:system",
@@ -105,6 +106,7 @@ describe("buildCommands", () => {
     expect(empty).toContain("remove-ws:ws-1");
     expect(empty).toContain("new-task");
     expect(empty).toContain("vault");
+    expect(empty).toContain("automations");
     expect(empty).toContain("theme-picker");
     expect(empty).not.toContain("theme:default");
   });

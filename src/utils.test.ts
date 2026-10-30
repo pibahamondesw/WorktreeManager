@@ -252,6 +252,17 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     expect(malformed.agent).toBeUndefined();
   });
 
+  it("keeps the automation that created a task and drops malformed ones", () => {
+    const [created, manual, malformed] = normalizeTasks([
+      { id: "a", workspaceId: "w1", automationId: "pr-babysitter" },
+      { id: "b", workspaceId: "w1" },
+      { id: "c", workspaceId: "w1", automationId: 7 },
+    ]);
+    expect(created.automationId).toBe("pr-babysitter");
+    expect(manual.automationId).toBeUndefined();
+    expect(malformed.automationId).toBeUndefined();
+  });
+
   it("returns empty arrays for nullish input", () => {
     expect(normalizeWorkspaces(undefined)).toEqual([]);
     expect(normalizeTasks(null)).toEqual([]);

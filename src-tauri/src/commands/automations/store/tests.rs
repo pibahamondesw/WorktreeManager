@@ -711,3 +711,29 @@ fn the_run_command_reads_from_app_data() {
     .unwrap();
     assert_eq!(run.id, id);
 }
+
+#[test]
+fn the_state_command_reads_from_app_data() {
+    let scratch = Scratch::new();
+    let app_data = scratch.0.join("app-data");
+    let state = AutomationState {
+        enabled: true,
+        pause_reason: None,
+        ..AutomationState::default()
+    };
+    RunStore::new(&app_data)
+        .writer("babysitter")
+        .unwrap()
+        .save_state(&state)
+        .unwrap();
+    let mut context = mock_context(noop_assets());
+    context.config_mut().identifier = app_data.to_string_lossy().into_owned();
+    let app = mock_builder().build(context).unwrap();
+
+    let read = |name: &str| {
+        tauri::async_runtime::block_on(automation_state(app.handle().clone(), name.into()))
+    };
+    assert_eq!(read("babysitter").unwrap(), state);
+    assert_eq!(read("never-loaded").unwrap(), AutomationState::default());
+    assert!(read("../escape").is_err());
+}

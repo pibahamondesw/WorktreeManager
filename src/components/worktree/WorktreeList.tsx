@@ -137,6 +137,10 @@ function withExit(exits: Exits, id: string, exit: ExitingTask | undefined): Exit
 
 const SELECTED_CARD_SCROLL_ATTEMPTS = 60;
 
+function listedTasks(tasks: Task[], showAutomationTasks: boolean) {
+  return showAutomationTasks ? tasks : tasks.filter((task) => !task.automationId);
+}
+
 export function WorktreeList({
   tasks: allTasks,
   agentSessions = {},
@@ -180,11 +184,23 @@ export function WorktreeList({
   } = navigation;
   const [projectFilter, setProjectFilter] = useState({ workspaceId: workspace?.id, value: "" });
   const project = projectFilter.workspaceId === workspace?.id ? projectFilter.value : "";
+  const [showAutomationTasks, setShowAutomationTasks] = useState(false);
+  const automationTaskCount = allTasks.filter((task) => task.automationId).length;
   const revealing = !!revealTaskId && allTasks.some((task) => task.id === revealTaskId);
   const tasks = useMemo(
-    () => allTasks.filter((task) => revealing || matchesProject(task, project)),
-    [allTasks, project, revealing]
+    () =>
+      revealing
+        ? allTasks
+        : listedTasks(allTasks, showAutomationTasks).filter((task) =>
+            matchesProject(task, project)
+          ),
+    [allTasks, project, revealing, showAutomationTasks]
   );
+  const changeShowAutomationTasks = (show: boolean) => {
+    setShowAutomationTasks(show);
+    setSelectedIndex(-1);
+    setDeleteRequested(false);
+  };
   const changeProject = (value: string) => {
     setProjectFilter({ workspaceId: workspace?.id, value });
     setSelectedIndex(-1);
@@ -227,14 +243,25 @@ export function WorktreeList({
   // same commit: the task may only appear in `tasks` after that switch.
   useEffect(() => {
     if (!revealTaskId) return;
-    const index = tasks.findIndex((t) => t.id === revealTaskId);
-    if (index === -1) return;
+    const task = tasks.find((t) => t.id === revealTaskId);
+    if (!task) return;
+    const showAutomation = showAutomationTasks || !!task.automationId;
     setProjectFilter({ workspaceId: workspace?.id, value: "" });
-    setSelectedIndex(index);
+    setShowAutomationTasks(showAutomation);
+    setSelectedIndex(listedTasks(allTasks, showAutomation).indexOf(task));
     setRevealNonce((n) => n + 1);
     if (!openedTask) ringTask(revealTaskId);
     onRevealHandled();
-  }, [revealTaskId, tasks, onRevealHandled, openedTask, ringTask, workspace?.id]);
+  }, [
+    revealTaskId,
+    tasks,
+    allTasks,
+    showAutomationTasks,
+    onRevealHandled,
+    openedTask,
+    ringTask,
+    workspace?.id,
+  ]);
 
   // The card may not be mounted yet when a reveal lands mid workspace switch (skeletons are
   // rendered instead). Retries on a timer rather than rAF, which is throttled to nothing while
@@ -286,8 +313,10 @@ export function WorktreeList({
 
   const handleCloseTask = () => {
     if (openTask) {
+      const showAutomation = showAutomationTasks || !!openTask.automationId;
       setProjectFilter({ workspaceId: workspace?.id, value: "" });
-      setSelectedIndex(allTasks.indexOf(openTask));
+      setShowAutomationTasks(showAutomation);
+      setSelectedIndex(listedTasks(allTasks, showAutomation).indexOf(openTask));
       setRevealNonce((n) => n + 1);
     }
     onCloseTask();
@@ -402,7 +431,20 @@ export function WorktreeList({
             repoCount={workspace.repos.length}
             projectFilter={
               allTasks.length > 0 && (
-                <ProjectFilter tasks={allTasks} value={project} onChange={changeProject} />
+                <>
+                  {automationTaskCount > 0 && (
+                    <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showAutomationTasks}
+                        onChange={(event) => changeShowAutomationTasks(event.target.checked)}
+                        className="accent-accent cursor-pointer"
+                      />
+                      Automation tasks ({automationTaskCount})
+                    </label>
+                  )}
+                  <ProjectFilter tasks={allTasks} value={project} onChange={changeProject} />
+                </>
               )
             }
             editorApp={editorApp}
@@ -429,7 +471,7 @@ export function WorktreeList({
             ) : tasks.length === 0 && exits.size === 0 ? (
               allTasks.length > 0 ? (
                 <p className="text-sm text-text-muted text-center py-10">
-                  No tasks in this project
+                  {project ? "No tasks in this project" : "No tasks to show"}
                 </p>
               ) : (
                 <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />

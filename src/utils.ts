@@ -238,6 +238,8 @@ export function normalizeTasks(raw: unknown): Task[] {
           ? t.pinOrder
           : undefined,
       agent: typeof t.agent === "string" && t.agent ? t.agent : undefined,
+      automationId:
+        typeof t.automationId === "string" && t.automationId ? t.automationId : undefined,
       createdAt: persistedString(t.createdAt) ?? new Date().toISOString(),
       members: persistedArray(t.members).map((value) => {
         const m = persistedRecord(value);

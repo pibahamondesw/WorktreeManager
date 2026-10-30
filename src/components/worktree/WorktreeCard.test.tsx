@@ -136,6 +136,23 @@ describe("WorktreeCard session indicator", () => {
   });
 });
 
+it("badges tasks created by an automation", () => {
+  const { rerender } = render(
+    <Card task={task} workspace={workspace} vault={vault} onDelete={vi.fn()} repoSlugs={{}} />
+  );
+  expect(screen.queryByText("Automation")).not.toBeInTheDocument();
+  rerender(
+    <Card
+      task={{ ...task, automationId: "pr-babysitter" }}
+      workspace={workspace}
+      vault={vault}
+      onDelete={vi.fn()}
+      repoSlugs={{}}
+    />
+  );
+  expect(screen.getByTitle("Created by automation pr-babysitter")).toHaveTextContent("Automation");
+});
+
 it("offers linking only for an unlinked task without opening its editor", () => {
   const onLinkIssue = vi.fn();
   const onOpen = vi.fn();

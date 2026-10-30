@@ -13,6 +13,7 @@ export type WorkspaceAction =
   | { kind: "settings" }
   | { kind: "vault" }
   | { kind: "themes" }
+  | { kind: "automations" }
   | { kind: "edit"; workspaceId: string }
   | { kind: "remove"; workspaceId: string };
 
@@ -154,6 +155,15 @@ export function buildCommands({
     emptyVisible: true,
     shortcut: commandShortcut("palette.settings", shortcutOverrides),
     action: { type: "workspace", action: { kind: "settings" } },
+  });
+
+  commands.push({
+    id: "automations",
+    label: "Automations",
+    group: "settings",
+    keywords: "automations routines runs schedule",
+    emptyVisible: true,
+    action: { type: "workspace", action: { kind: "automations" } },
   });
 
   commands.push({

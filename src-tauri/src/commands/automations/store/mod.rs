@@ -93,6 +93,14 @@ impl RunStore {
             .ok_or_else(|| format!("Invalid automation name: {name}"))
     }
 
+    pub fn state(&self, name: &str) -> Result<AutomationState, String> {
+        match fs::read(self.automation_dir(name)?.join("state.json")) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("state.json: {e}")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AutomationState::default()),
+            Err(error) => Err(format!("state.json: {error}")),
+        }
+    }
+
     /// Newest first. `before` is the `next_before` of the previous page.
     pub fn list_runs(
         &self,
@@ -136,14 +144,6 @@ impl RunStore {
 impl RunStore {
     pub fn run_ids(&self, name: &str) -> Result<Vec<String>, String> {
         run_ids(&self.automation_dir(name)?.join("runs"))
-    }
-
-    pub fn state(&self, name: &str) -> Result<AutomationState, String> {
-        match fs::read(self.automation_dir(name)?.join("state.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("state.json: {e}")),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AutomationState::default()),
-            Err(error) => Err(format!("state.json: {error}")),
-        }
     }
 
     /// Blocks until no other writer, in this or another process, holds the automation.
@@ -220,6 +220,17 @@ impl AutomationWriter {
             )
             .collect()
     }
+}
+
+#[tauri::command]
+pub async fn automation_state<R: Runtime>(
+    app: AppHandle<R>,
+    name: String,
+) -> Result<AutomationState, String> {
+    let store = RunStore::of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || store.state(&name))
+        .await
+        .map_err(|_| "Could not read the automation state".to_string())?
 }
 
 #[tauri::command]

@@ -31,6 +31,9 @@ import { useAgentActivity } from "./hooks/useAgentActivity";
 import { SurfaceSwitchDialog } from "./components/task/SurfaceSwitchDialog";
 import { NotificationTarget, embeddedSurface } from "./services/agentActivity";
 import { loadAgentCatalog } from "./services/agents";
+import { useAutomations } from "./hooks/useAutomations";
+import { needsAttention } from "./services/automations";
+import { AutomationsModal } from "./components/automations/AutomationsModal";
 
 function App() {
   const {
@@ -94,9 +97,13 @@ function App() {
     if (action.kind === "settings") setSettingsSection("theme");
     else if (action.kind === "vault") setSettingsSection("vault");
     else if (action.kind === "themes") setSettingsSection("theme");
+    else if (action.kind === "automations") setAutomationsOpen(true);
     else setWorkspaceAction(action);
   };
   const [newTaskRequested, setNewTaskRequested] = useState(false);
+  const automations = useAutomations();
+  const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [selectedAutomationName, setSelectedAutomationName] = useState<string | null>(null);
 
   useEffect(() => {
     editorPresentation.reset();
@@ -492,6 +499,8 @@ function App() {
               onCollapse={toggleSidebarCollapsed}
               doctorSeverity={doctorSeverity}
               onOpenSettings={() => setSettingsSection("theme")}
+              onOpenAutomations={() => setAutomationsOpen(true)}
+              automationsNeedAttention={automations.automations.some(needsAttention)}
               workspaceAction={workspaceAction}
               onWorkspaceActionHandled={() => setWorkspaceAction(null)}
             />
@@ -548,6 +557,15 @@ function App() {
         prompt={surfaceSwitch}
         agentActivity={surfaceSwitch ? agentActivity.activities[surfaceSwitch.taskId] : undefined}
         onChoose={resolveSurfaceSwitch}
+      />
+      <AutomationsModal
+        open={automationsOpen}
+        onClose={() => setAutomationsOpen(false)}
+        automations={automations.automations}
+        error={automations.error}
+        selectedName={selectedAutomationName}
+        onSelect={setSelectedAutomationName}
+        editorApp={editorApp}
       />
       <SettingsModal
         shortcutOperations={operations}

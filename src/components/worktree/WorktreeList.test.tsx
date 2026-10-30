@@ -271,3 +271,26 @@ it("keeps shortcut help visible when the workspace has no tasks", () => {
   expect(screen.getByText(/palette/)).toBeInTheDocument();
   expect(screen.getByText(/history/)).toBeInTheDocument();
 });
+
+it("hides automation tasks until the toggle shows them, and reveals one on request", () => {
+  const automationTasks = TASKS.map((task, index) =>
+    index === 0 ? { ...task, automationId: "pr-babysitter" } : task
+  );
+  const { setTasks } = fixture();
+  setTasks(automationTasks);
+  expect(screen.queryByText("first")).not.toBeInTheDocument();
+  expect(
+    vi.mocked(useWorktreeListKeyboardShortcuts).mock.lastCall?.[0].tasks.map((task) => task.id)
+  ).toEqual(["second", "unpinned"]);
+  const toggle = screen.getByRole("checkbox", { name: "Automation tasks (1)" });
+  fireEvent.click(toggle);
+  expect(screen.getByText("first")).toBeInTheDocument();
+  fireEvent.click(toggle);
+  expect(screen.queryByText("first")).not.toBeInTheDocument();
+
+  cleanup();
+  const revealed = fixture({ revealTaskId: "first" });
+  revealed.setTasks(automationTasks);
+  expect(screen.getByText("first")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Automation tasks (1)" })).toBeChecked();
+});
