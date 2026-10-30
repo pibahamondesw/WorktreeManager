@@ -35,6 +35,8 @@ export interface Preferences {
   scriptApprovals: Record<string, string[]>;
   agentAlerts: AgentAlertSettings;
   navigationHistory: NavigationEntry[];
+  /** Absolute folder of automation definitions; `null` uses `~/.worktreemanager/automations`. */
+  automationsDir: string | null;
 }
 
 export type PersistedValues = Omit<AppState, "shortcutOverrides"> &
@@ -108,6 +110,7 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
     ),
   agentAlerts: normalizeAgentAlerts,
   navigationHistory: (raw) => (Array.isArray(raw) ? raw.filter(isNavigationEntry) : []),
+  automationsDir: (raw) => (typeof raw === "string" && raw.startsWith("/") ? raw : null),
 };
 
 export async function loadPreference<K extends keyof PersistedValues>(

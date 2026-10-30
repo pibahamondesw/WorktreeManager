@@ -225,6 +225,7 @@ describe("ChatPane", () => {
     );
     render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
     await screen.findByText("Message 119");
+    await act(async () => {});
     expect(screen.getByText("Message 70")).toBeInTheDocument();
     expect(screen.queryByText("Message 69")).not.toBeInTheDocument();
 
