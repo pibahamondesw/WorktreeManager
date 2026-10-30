@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -66,6 +67,10 @@ fn step(item: &str, attempt: u32, status: StepStatus) -> RunEvent {
         process_end: None,
         exit_code: None,
         outcome: None,
+        stage: None,
+        verdict: None,
+        cause: None,
+        head: None,
     }
 }
 
@@ -74,7 +79,9 @@ fn item_status(item: &str, status: ItemStatus) -> RunEvent {
         item: item.into(),
         status,
         phase: None,
+        stage: None,
         cause: None,
+        counter: None,
     }
 }
 
@@ -190,7 +197,9 @@ fn reduces_items_and_step_attempts_in_log_order() {
                     item: "a".into(),
                     status: ItemStatus::Active,
                     phase: Some("fix".into()),
+                    stage: Some("strict".into()),
                     cause: None,
+                    counter: Some("budget:repair_rounds".into()),
                 },
             ),
             at(5, step("a", 1, StepStatus::Running)),
@@ -204,6 +213,10 @@ fn reduces_items_and_step_attempts_in_log_order() {
                     process_end: Some(ProcessEnd::Exited),
                     exit_code: Some(2),
                     outcome: Some(StepOutcome::Failure),
+                    stage: Some("strict".into()),
+                    verdict: Some(Verdict::Reject),
+                    cause: Some("timeout".into()),
+                    head: Some("abc".into()),
                 },
             ),
             at(7, step("a", 1, StepStatus::Succeeded)),
@@ -220,8 +233,12 @@ fn reduces_items_and_step_attempts_in_log_order() {
     };
     assert_eq!((a.version.as_str(), a.title.as_deref()), ("1", Some("A")));
     assert_eq!(
-        (a.status, a.phase.as_deref()),
-        (ItemStatus::Active, Some("fix"))
+        (a.status, a.phase.as_deref(), a.stage.as_deref()),
+        (ItemStatus::Active, Some("fix"), Some("strict"))
+    );
+    assert_eq!(
+        a.counters,
+        BTreeMap::from([("budget:repair_rounds".to_string(), 1)])
     );
     assert_eq!(
         a.steps,
@@ -233,6 +250,10 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 process_end: Some(ProcessEnd::Exited),
                 exit_code: Some(2),
                 outcome: Some(StepOutcome::Failure),
+                stage: Some("strict".into()),
+                verdict: Some(Verdict::Reject),
+                cause: Some("timeout".into()),
+                head: Some("abc".into()),
             },
             StepAttemptState {
                 step: "fix".into(),
@@ -241,6 +262,10 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 process_end: None,
                 exit_code: None,
                 outcome: None,
+                stage: None,
+                verdict: None,
+                cause: None,
+                head: None,
             },
         ]
     );

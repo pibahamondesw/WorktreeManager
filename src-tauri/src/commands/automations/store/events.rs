@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,7 +38,12 @@ pub enum RunEvent {
         #[serde(default)]
         phase: Option<String>,
         #[serde(default)]
+        stage: Option<String>,
+        #[serde(default)]
         cause: Option<String>,
+        /// The goto counter this move consumed, such as `budget:repair_rounds`.
+        #[serde(default)]
+        counter: Option<String>,
     },
     StepStatus {
         item: String,
@@ -49,6 +56,15 @@ pub enum RunEvent {
         exit_code: Option<i32>,
         #[serde(default)]
         outcome: Option<StepOutcome>,
+        #[serde(default)]
+        stage: Option<String>,
+        #[serde(default)]
+        verdict: Option<Verdict>,
+        #[serde(default)]
+        cause: Option<String>,
+        /// The PR HEAD a `wait` attempt watched.
+        #[serde(default)]
+        head: Option<String>,
     },
     #[serde(other)]
     Unknown,
@@ -166,6 +182,16 @@ pub enum StepOutcome {
     Noop,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Pass,
+    Reject,
+    Blocked,
+    Defer,
+    Noop,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RunState {
     pub id: String,
@@ -186,7 +212,9 @@ pub struct ItemState {
     pub title: Option<String>,
     pub status: ItemStatus,
     pub phase: Option<String>,
+    pub stage: Option<String>,
     pub cause: Option<String>,
+    pub counters: BTreeMap<String, u64>,
     pub steps: Vec<StepAttemptState>,
 }
 
@@ -198,6 +226,10 @@ pub struct StepAttemptState {
     pub process_end: Option<ProcessEnd>,
     pub exit_code: Option<i32>,
     pub outcome: Option<StepOutcome>,
+    pub stage: Option<String>,
+    pub verdict: Option<Verdict>,
+    pub cause: Option<String>,
+    pub head: Option<String>,
 }
 
 impl RunStatus {
@@ -295,12 +327,18 @@ impl RunState {
                 item,
                 status,
                 phase,
+                stage,
                 cause,
+                counter,
             } => {
                 if let Some(item) = self.open_item(&item) {
                     item.status = status;
                     item.phase = phase;
+                    item.stage = stage;
                     item.cause = cause;
+                    if let Some(counter) = counter {
+                        *item.counters.entry(counter).or_default() += 1;
+                    }
                 }
             }
             RunEvent::StepStatus {
@@ -311,6 +349,10 @@ impl RunState {
                 process_end,
                 exit_code,
                 outcome,
+                stage,
+                verdict,
+                cause,
+                head,
             } => {
                 if let Some(attempt) = self
                     .open_item(&item)
@@ -320,6 +362,10 @@ impl RunState {
                     attempt.process_end = process_end;
                     attempt.exit_code = exit_code;
                     attempt.outcome = outcome;
+                    attempt.stage = stage;
+                    attempt.verdict = verdict;
+                    attempt.cause = cause;
+                    attempt.head = head;
                 }
             }
             RunEvent::Unknown => {}
@@ -351,7 +397,9 @@ impl RunState {
             title,
             status: ItemStatus::Queued,
             phase: None,
+            stage: None,
             cause: None,
+            counters: BTreeMap::new(),
             steps: Vec::new(),
         });
     }
@@ -380,6 +428,10 @@ impl ItemState {
                     process_end: None,
                     exit_code: None,
                     outcome: None,
+                    stage: None,
+                    verdict: None,
+                    cause: None,
+                    head: None,
                 });
                 self.steps.len() - 1
             }
