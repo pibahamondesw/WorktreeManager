@@ -1441,9 +1441,11 @@ describe("switching agents", () => {
   it("runs an agent outside the catalog under its id and offers the installed ones", async () => {
     render(<ChatPane taskId="t1" agent="gemini" folders={["/wt/a"]} onSwitchAgent={vi.fn()} />);
     await screen.findByText("Fix the bug");
-    expect(screen.getByRole("textbox", { name: "Message gemini" })).toHaveAttribute(
-      "aria-placeholder",
-      expect.stringMatching(/^Message gemini — /)
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Message gemini" })).toHaveAttribute(
+        "aria-placeholder",
+        expect.stringMatching(/^Message gemini — /)
+      )
     );
     fireEvent.click(screen.getByRole("button", { name: "Agent: gemini" }));
     expect(
