@@ -302,11 +302,25 @@ export function WorkspaceList({
         })}
       </div>
 
-      {/* Footer: global settings */}
-      <div className="flex-shrink-0 border-t border-border px-4 py-2 flex items-center gap-1">
+      {/* Footer: automations and global settings */}
+      <div className="flex-shrink-0 border-t border-border px-4 py-2 flex flex-col gap-0.5">
+        <button
+          onClick={onOpenAutomations}
+          aria-label={automationsNeedAttention ? "Automations (needs attention)" : "Automations"}
+          title={
+            automationsNeedAttention ? "Automations: something needs your attention" : "Automations"
+          }
+          className="w-full min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
+        >
+          <AutomationIcon size={14} />
+          Automations
+          {automationsNeedAttention && (
+            <span aria-hidden="true" className="ml-auto w-1.5 h-1.5 rounded-full bg-warning" />
+          )}
+        </button>
         <button
           onClick={onOpenSettings}
-          className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
+          className="w-full min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
           title={`Settings (${shortcutLabel("app.settings")})`}
         >
           <GearIcon size={14} />
@@ -322,22 +336,6 @@ export function WorkspaceList({
                   ? "Something this setup needs is missing"
                   : "Something worth a look"
               }
-            />
-          )}
-        </button>
-        <button
-          onClick={onOpenAutomations}
-          aria-label={automationsNeedAttention ? "Automations (needs attention)" : "Automations"}
-          title={
-            automationsNeedAttention ? "Automations: something needs your attention" : "Automations"
-          }
-          className="relative w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-        >
-          <AutomationIcon size={14} />
-          {automationsNeedAttention && (
-            <span
-              aria-hidden="true"
-              className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-warning"
             />
           )}
         </button>
