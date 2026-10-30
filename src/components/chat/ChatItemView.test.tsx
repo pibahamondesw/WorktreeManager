@@ -245,3 +245,48 @@ it("shows a subagent run as a collapsed card with its prompt, steps and report",
   expect(within(card).getByRole("region", { name: "Subagent: Nested look" })).toBeInTheDocument();
   expect(within(card).getByText("lexer.rs")).toBeInTheDocument();
 });
+
+it("shows thinking before text arrives and keeps the dropdown open when it completes", () => {
+  const item = { id: "r", kind: "reasoning" as const, text: "", status: "inProgress" };
+  const { rerender } = render(<ChatItemView item={item} />);
+  const toggle = screen.getByRole("button", { name: "Thinking…" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(toggle);
+  expect(screen.getByText("Waiting for reasoning…")).toBeVisible();
+
+  rerender(<ChatItemView item={{ ...item, text: "Checking the options" }} />);
+  expect(screen.getByText("Checking the options")).toBeVisible();
+
+  rerender(
+    <ChatItemView
+      item={{ ...item, text: "Done thinking", status: "completed", durationMs: 5200 }}
+    />
+  );
+  expect(screen.getByRole("button", { name: "Thought for 5s" })).toHaveAttribute(
+    "aria-expanded",
+    "true"
+  );
+  expect(screen.getByText("Done thinking")).toBeVisible();
+});
+
+it("shows historical reasoning without inventing a duration", () => {
+  render(<ChatItemView item={{ id: "r", kind: "reasoning", text: "Past reasoning" }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Thought" }));
+  expect(screen.getByText("Past reasoning")).toBeVisible();
+});
+
+it("shows completed and stopped reasoning even when no summary was provided", () => {
+  const { rerender } = render(
+    <ChatItemView
+      item={{ id: "r", kind: "reasoning", text: "", status: "completed", durationMs: 100 }}
+    />
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Thought for <1s" }));
+  expect(screen.getByText("No reasoning text provided.")).toBeVisible();
+  rerender(
+    <ChatItemView
+      item={{ id: "r", kind: "reasoning", text: "", status: "stopped", durationMs: 2000 }}
+    />
+  );
+  expect(screen.getByRole("button", { name: "Thought for 2s" })).toBeVisible();
+});

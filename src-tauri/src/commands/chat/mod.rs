@@ -22,6 +22,7 @@ pub mod interrupted;
 mod markdown;
 mod model;
 mod preferences;
+mod reasoning;
 mod sessions;
 mod turns;
 
@@ -138,6 +139,7 @@ struct Shared {
     stdin: Option<ChildStdin>,
     sink: Option<Channel<LiveEvent>>,
     turns: turns::TurnTracker,
+    reasoning: reasoning::ReasoningTracker,
     history_reply: Option<std::sync::mpsc::Sender<Result<(), String>>>,
     history_busy: bool,
     /// The conversation from another agent that this one continues.
@@ -162,6 +164,7 @@ impl Shared {
             stdin: None,
             sink: None,
             turns,
+            reasoning: reasoning::ReasoningTracker::default(),
             history_reply: None,
             history_busy: false,
             handoff: None,
@@ -196,9 +199,22 @@ impl Shared {
         }
     }
 
-    fn commit(&mut self, out: ProviderOutput, conversation: &dyn Fn(String), notify: &Notify) {
+    fn commit(&mut self, mut out: ProviderOutput, conversation: &dyn Fn(String), notify: &Notify) {
         if out.completes_turn {
             self.turns.complete_turn();
+            let unfinished_reasoning = self
+                .snapshot
+                .items
+                .iter()
+                .filter(|item| {
+                    item.kind == ItemKind::Reasoning
+                        && item.status.as_deref() == Some("inProgress")
+                        && item.parent.is_none()
+                })
+                .map(|item| ChatEvent::Upsert {
+                    item: item.clone().with_status("completed"),
+                });
+            out.events.splice(0..0, unfinished_reasoning);
         }
         if out.starts_turn {
             self.turns.start_turn();
@@ -233,14 +249,16 @@ impl Shared {
                 ChatEvent::Pending { request } => self.start_deadline(&request.id),
                 _ => {}
             }
-            let before = self.activity();
-            self.snapshot.apply(&event);
-            self.notify_change(before, notify);
-            if let Some(sink) = &self.sink {
-                let _ = sink.send(LiveEvent {
-                    generation: self.snapshot.generation,
-                    event,
-                });
+            for event in self.reasoning.track(event, &self.snapshot, Instant::now()) {
+                let before = self.activity();
+                self.snapshot.apply(&event);
+                self.notify_change(before, notify);
+                if let Some(sink) = &self.sink {
+                    let _ = sink.send(LiveEvent {
+                        generation: self.snapshot.generation,
+                        event,
+                    });
+                }
             }
         }
         if let Some(background_agents) = out.background_agents {
@@ -548,7 +566,20 @@ impl ChatSession {
             let mut state = self.shared.lock().unwrap();
             state.sink = None;
             state.stdin = None;
-            state.snapshot.status = ChatStatus::Exited { code: None };
+            let Shared {
+                reasoning,
+                snapshot,
+                ..
+            } = &mut *state;
+            for event in reasoning.track(
+                ChatEvent::Status {
+                    status: ChatStatus::Exited { code: None },
+                },
+                snapshot,
+                Instant::now(),
+            ) {
+                snapshot.apply(&event);
+            }
         }
         if let Some(mut process) = self.process.lock().unwrap().take() {
             process.terminate();
@@ -1933,6 +1964,57 @@ pub(crate) mod tests {
         let reloaded = checkpoints::Checkpoints::new(&fixture.dir.join("app-data"));
         assert_eq!(reloaded.find_turn("conv", &first), Some(first_turn));
         assert_eq!(reloaded.find_turn("conv", &second), Some(second_turn));
+    }
+
+    #[test]
+    fn queued_claude_turns_close_unfinished_reasoning_before_the_next_turn() {
+        let mut shared = Shared::new(
+            Box::new(claude::ClaudeProvider::new("conv".into())),
+            ChatSnapshot::new(1),
+            Default::default(),
+        );
+        send_checkpoint_message(&mut shared, "first");
+        for event in [
+            serde_json::json!({ "type": "message_start", "message": { "id": "m1" } }),
+            serde_json::json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking" } }),
+        ] {
+            feed_checkpoint_line(
+                &mut shared,
+                serde_json::json!({ "type": "stream_event", "event": event }),
+            );
+        }
+        let mut background = ProviderOutput::default();
+        background.upsert(
+            ChatItem::new("background", ItemKind::Reasoning, "")
+                .with_status("inProgress")
+                .with_parent(Some("agent")),
+        );
+        let notify: Notify = Arc::new(|_| {});
+        shared.commit(background, &drop, &notify);
+        send_checkpoint_message(&mut shared, "queued");
+        feed_checkpoint_line(
+            &mut shared,
+            serde_json::json!({ "type": "result", "is_error": true }),
+        );
+        assert_eq!(shared.snapshot.status, ChatStatus::Busy);
+        let reasoning = shared.snapshot.item("m1:0").unwrap();
+        assert_eq!(reasoning.status.as_deref(), Some("completed"));
+        let duration = reasoning.duration_ms;
+        assert!(duration.is_some());
+        assert_eq!(
+            shared
+                .snapshot
+                .item("background")
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("inProgress")
+        );
+        feed_checkpoint_line(
+            &mut shared,
+            serde_json::json!({ "type": "result", "is_error": false }),
+        );
+        assert_eq!(shared.snapshot.item("m1:0").unwrap().duration_ms, duration);
     }
 
     #[test]
