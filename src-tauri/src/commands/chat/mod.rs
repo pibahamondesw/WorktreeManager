@@ -1071,8 +1071,8 @@ pub async fn chat_open<R: Runtime>(
         pending_resolution,
         handoff.as_ref().map(|handoff| handoff.link.clone()),
         expected_conversation,
-    )?;
-    let session = start_session(&task_id, launch, handoff, setup)?;
+    );
+    let session = start_session(&task_id, launch, handoff, setup?)?;
     let snapshot = session.attach(on_event);
     let SessionTarget {
         session_id, owner, ..

@@ -1795,3 +1795,11 @@ fn headless_starts_refuse_rules_the_agent_cannot_apply_and_tasks_without_folders
     );
     assert!(chat_list(fixture.app.state()).is_empty());
 }
+
+#[test]
+fn interrupting_the_primary_reaches_its_running_session() {
+    let fixture = Fixture::new();
+    fixture.open("codex", OpenMode::Restart).unwrap();
+    chat_interrupt(fixture.app.state(), "task".into(), "codex".into()).unwrap();
+    assert!(chat_interrupt(fixture.app.state(), "task".into(), "claude".into()).is_err());
+}
