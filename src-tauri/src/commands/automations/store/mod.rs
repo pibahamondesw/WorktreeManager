@@ -131,7 +131,7 @@ impl RunStore {
 
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the scheduler (WOR-248) is the first writer")
+    allow(dead_code, reason = "the scheduler (WOR-248) is the first writer")
 )]
 impl RunStore {
     pub fn state(&self, name: &str) -> Result<AutomationState, String> {
@@ -153,7 +153,7 @@ impl RunStore {
 
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the scheduler (WOR-248) is the first writer")
+    allow(dead_code, reason = "the scheduler (WOR-248) is the first writer")
 )]
 impl AutomationWriter {
     pub fn save_state(&self, state: &AutomationState) -> Result<(), String> {

@@ -63,7 +63,7 @@ pub enum PermissionPolicy {
     Interactive,
     #[cfg_attr(
         not(test),
-        expect(
+        allow(
             dead_code,
             reason = "the automation engine (WOR-249) wraps definition policies"
         )

@@ -14,7 +14,7 @@ use crate::commands::agents::{Agents, ChatRequest};
 /// Where a headless session runs, and the conversation it continues if it is not a new one.
 #[cfg_attr(
     not(test),
-    expect(
+    allow(
         dead_code,
         reason = "the automation engine (WOR-249) is the first caller"
     )
@@ -26,7 +26,7 @@ pub(crate) struct HeadlessRequest {
 
 #[cfg_attr(
     not(test),
-    expect(
+    allow(
         dead_code,
         reason = "the automation engine (WOR-249) is the first caller"
     )
