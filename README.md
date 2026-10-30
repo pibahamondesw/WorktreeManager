@@ -116,7 +116,7 @@ Both jobs report Clippy wall/user/system seconds in the run summary, including f
 
 ### macOS Rust PR check
 
-**Rust (macOS, clippy, native tests)** in the [CI workflow](.github/workflows/ci.yml) runs on standard `macos-14` runners for PRs and pushes to main when Rust sources/configuration, vault-kit files or the CI workflow change. Frontend-only and documentation-only changes skip it. It uses read-only permissions, no release credentials, no signing or publishing, and a separate `macos-pr` dependency cache saved on main.
+**Rust (macOS, clippy, native tests)** in the [CI workflow](.github/workflows/ci.yml) runs on standard `macos-15` runners for PRs and pushes to main when Rust sources/configuration, vault-kit files or the CI workflow change. Frontend-only and documentation-only changes skip it. It uses read-only permissions, no release credentials, no signing or publishing, and a separate `macos-pr` dependency cache saved on main.
 
 Clippy compiles all macOS targets, including conditional native code; formatting is checked too. The focused unit selection covers login-shell launches, notification delegates, embedded session state and menu bindings. The separate native menu executable exercises WebKit key routing, editor focus and embedded lifecycle cleanup. Reproduce the tests on macOS with:
 

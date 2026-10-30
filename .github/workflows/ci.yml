@@ -195,7 +195,7 @@ jobs:
     name: Rust (macOS, clippy, native tests)
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/pr-macos
@@ -259,7 +259,7 @@ jobs:
     name: Rust coverage (macOS, new lines)
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
