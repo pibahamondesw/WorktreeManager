@@ -33,6 +33,8 @@ pub enum RunEvent {
         version: String,
         #[serde(default)]
         title: Option<String>,
+        #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+        data: serde_json::Map<String, serde_json::Value>,
     },
     ItemStatus {
         item: String,
@@ -67,6 +69,12 @@ pub enum RunEvent {
         /// The PR HEAD a `wait` attempt watched.
         #[serde(default)]
         head: Option<String>,
+    },
+    /// A selector candidate that did not become an item.
+    CandidateSkipped {
+        item: String,
+        version: String,
+        reason: SkipReason,
     },
     #[serde(other)]
     Unknown,
@@ -221,6 +229,8 @@ pub struct ItemState {
     pub id: String,
     pub version: String,
     pub title: Option<String>,
+    #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
+    pub data: serde_json::Map<String, serde_json::Value>,
     pub status: ItemStatus,
     pub phase: Option<String>,
     pub stage: Option<String>,
@@ -253,7 +263,7 @@ impl RunStatus {
 }
 
 impl ItemStatus {
-    fn is_terminal(self) -> bool {
+    pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Canceled)
     }
 }
@@ -335,7 +345,8 @@ impl RunState {
                 item,
                 version,
                 title,
-            } => self.create_item(item, version, title),
+                data,
+            } => self.create_item(item, version, title, data),
             RunEvent::ItemStatus {
                 item,
                 status,
@@ -381,7 +392,7 @@ impl RunState {
                     attempt.head = head;
                 }
             }
-            RunEvent::Unknown => {}
+            RunEvent::CandidateSkipped { .. } | RunEvent::Unknown => {}
         }
     }
 
@@ -400,7 +411,13 @@ impl RunState {
         true
     }
 
-    fn create_item(&mut self, id: String, version: String, title: Option<String>) {
+    fn create_item(
+        &mut self,
+        id: String,
+        version: String,
+        title: Option<String>,
+        data: serde_json::Map<String, serde_json::Value>,
+    ) {
         if self.items.iter().any(|item| item.id == id) {
             return;
         }
@@ -408,6 +425,7 @@ impl RunState {
             id,
             version,
             title,
+            data,
             status: ItemStatus::Queued,
             phase: None,
             stage: None,

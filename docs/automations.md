@@ -260,7 +260,7 @@ A verdict `blocked` blocks the item, `defer` defers it and `noop` counts as succ
 
 ### Selector
 
-Present only in campaigns. A deterministic script decides what to work on. **Deferred (WOR-263).**
+Present only in campaigns. A deterministic script decides what to work on. The selection pass (dedupe, caps, `exclusive_on`, cursor, completion) is implemented; parsing `selector` in definitions and running campaigns from the scheduler are **Deferred (WOR-249/WOR-265).**
 
 | Field           | Type              | Default        | Rule                                                                                                                                                 |
 | --------------- | ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -273,10 +273,17 @@ Input on stdin: `{free, active: [{id, version, data}], busy_files: [path], curso
 
 Output on stdout, one of:
 
-- `{"run": false, "reason": "<text>"}`: nothing to do; the run completes with outcome `noop`.
+- `{"run": false, "reason"?: "<text>"}`: nothing to do; the run completes with outcome `noop`.
 - `{"items": [{"id", "version", "title"?, "data"?}], "cursor"?: <json>}`: `id` ≤ 200 characters `[A-Za-z0-9._:/@-]`, stable across runs; `version` changes when the work it names changes; `data` is a JSON object ≤ 64 KiB.
 
-Non-zero exit or invalid output fails the run. The cursor is stored only when the run completes.
+`version` is a string. Non-zero exit, a timeout or invalid output fails the run with `selector_failed`. The cursor is stored only when the run completes; omitting it keeps the previous one.
+
+The engine keeps candidates in the selector's order and records the others on the run with a skip reason:
+
+- `deduped`: an item with the same `id` + `version` exists and is not `failed`. Items of a `failed` run are released too, so its candidates are selected again.
+- `capped`: no free capacity (`pools.active` minus queued and active items) or `max_new_items` reached; an item with the same `id` and another version is still active or resting; or a value of an `exclusive_on` key is held by an active or resting item or by a candidate already kept. List values compare element by element.
+
+Each kept candidate becomes a `queued` item of the run, with its `title` and `data`.
 
 ### Tracker
 
@@ -336,11 +343,11 @@ Findings: non-empty `findings`, a `reject`, `blocked` or `defer` verdict, or a c
 
 ### Completion
 
-| Field            | Type                                       | Default | Rule                                                                                              |
-| ---------------- | ------------------------------------------ | ------- | ------------------------------------------------------------------------------------------------- |
-| `selector_empty` | bool                                       | `false` | Campaigns: complete once the selector returns no items and no item is active, waiting or resting. |
-| `stop_after`     | RFC 3339 instant or duration from enabling | none    | No trigger fires after it.                                                                        |
-| `max_runs`       | integer                                    | none    | Completed runs (skipped runs excluded).                                                           |
+| Field            | Type                                       | Default | Rule                                                                                                     |
+| ---------------- | ------------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------- |
+| `selector_empty` | bool                                       | `false` | Campaigns: complete once a selection pass creates no new item and no item is active, waiting or resting. |
+| `stop_after`     | RFC 3339 instant or duration from enabling | none    | No trigger fires after it.                                                                               |
+| `max_runs`       | integer                                    | none    | Completed runs (skipped runs excluded).                                                                  |
 
 A completed automation is paused with reason `completed` or `stop_after`; existing items keep their state.
 

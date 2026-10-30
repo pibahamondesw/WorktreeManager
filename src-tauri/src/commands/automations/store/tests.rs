@@ -175,6 +175,7 @@ fn reduces_items_and_step_attempts_in_log_order() {
                     item: "a".into(),
                     version: "1".into(),
                     title: Some("A".into()),
+                    data: Default::default(),
                 },
             ),
             at(
@@ -183,6 +184,7 @@ fn reduces_items_and_step_attempts_in_log_order() {
                     item: "a".into(),
                     version: "2".into(),
                     title: None,
+                    data: Default::default(),
                 },
             ),
             at(
@@ -191,6 +193,7 @@ fn reduces_items_and_step_attempts_in_log_order() {
                     item: "b".into(),
                     version: "1".into(),
                     title: None,
+                    data: Default::default(),
                 },
             ),
             at(

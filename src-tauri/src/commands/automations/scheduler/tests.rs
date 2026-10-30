@@ -301,6 +301,7 @@ fn skips_slots_while_running_capped_or_paused() {
                 item: "main".into(),
                 version: "1".into(),
                 title: None,
+                data: Default::default(),
             },
         )
         .unwrap();
