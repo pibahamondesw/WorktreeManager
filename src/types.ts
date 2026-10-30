@@ -56,6 +56,8 @@ export interface Task {
   pinOrder?: number;
   /** Agent the task's chat or terminal last used; reopening the task picks it again. */
   agent?: AgentId;
+  /** Automation that created the task; such tasks are hidden from the task list by default. */
+  automationId?: string;
   createdAt: string;
 }
 

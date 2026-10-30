@@ -31,6 +31,9 @@ import { useAgentActivity } from "./hooks/useAgentActivity";
 import { SurfaceSwitchDialog } from "./components/task/SurfaceSwitchDialog";
 import { NotificationTarget, embeddedSurface } from "./services/agentActivity";
 import { loadAgentCatalog } from "./services/agents";
+import { useAutomations } from "./hooks/useAutomations";
+import { AutomationList } from "./components/automations/AutomationList";
+import { AutomationView } from "./components/automations/AutomationView";
 
 function App() {
   const {
@@ -97,6 +100,11 @@ function App() {
     else setWorkspaceAction(action);
   };
   const [newTaskRequested, setNewTaskRequested] = useState(false);
+  const automations = useAutomations();
+  const [selectedAutomationName, setSelectedAutomationName] = useState<string | null>(null);
+  const selectedAutomation =
+    automations.automations.find((summary) => summary.entry.name === selectedAutomationName) ??
+    null;
 
   useEffect(() => {
     editorPresentation.reset();
@@ -140,6 +148,7 @@ function App() {
         const task = state.tasks.find((t) => t.id === entry.taskId);
         if (task) restoreTask(task);
       } else {
+        setSelectedAutomationName(null);
         closeTask({ animate: entry.workspaceId === state.selectedWorkspaceId });
         if (entry.workspaceId !== state.selectedWorkspaceId) selectWorkspace(entry.workspaceId);
       }
@@ -178,6 +187,18 @@ function App() {
     showTask,
   });
   const agentSessions = useAgentSessions(openedTask !== null);
+
+  useEffect(() => {
+    if (openedTask || revealTaskId) setSelectedAutomationName(null);
+  }, [openedTask, revealTaskId]);
+
+  const selectAutomation = useCallback(
+    (name: string) => {
+      closeTask();
+      setSelectedAutomationName(name);
+    },
+    [closeTask]
+  );
 
   const taskActions = useMemo<TaskActions>(
     () => ({
@@ -261,6 +282,7 @@ function App() {
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
       const isCurrentWorkspace = workspaceId === state.selectedWorkspaceId;
+      setSelectedAutomationName(null);
       if (isCurrentWorkspace && !openedTask) return;
       closeTask({ animate: isCurrentWorkspace });
       if (!isCurrentWorkspace) selectWorkspace(workspaceId);
@@ -494,33 +516,55 @@ function App() {
               onOpenSettings={() => setSettingsSection("theme")}
               workspaceAction={workspaceAction}
               onWorkspaceActionHandled={() => setWorkspaceAction(null)}
+              automations={
+                <AutomationList
+                  automations={automations.automations}
+                  error={automations.error}
+                  selectedName={selectedAutomation?.entry.name ?? null}
+                  onSelect={selectAutomation}
+                />
+              }
             />
           </div>
         </ErrorBoundary>
+        {selectedAutomation && (
+          <ErrorBoundary fallbackClassName="flex-1">
+            <AutomationView
+              key={selectedAutomation.entry.name}
+              summary={selectedAutomation}
+              editorApp={editorApp}
+              sidebarCollapsed={sidebarCollapsed}
+              onExpandSidebar={toggleSidebarCollapsed}
+              onClose={() => setSelectedAutomationName(null)}
+            />
+          </ErrorBoundary>
+        )}
         <ErrorBoundary fallbackClassName="flex-1">
-          <WorktreeList
-            tasks={selectedTasks}
-            agentSessions={agentSessions}
-            agentActivities={agentActivity.activities}
-            workspace={selectedWorkspace}
-            vault={state.vault}
-            taskActions={taskActions}
-            navigation={listNavigation}
-            setupControls={setupControls}
-            editorApp={editorApp}
-            onEditorChange={changeEditorApp}
-            workspaceSwitching={workspaceSwitching}
-            onWorkspaceReady={clearWorkspaceSwitching}
-            searchOpen={search.open}
-            revealTaskId={revealTaskId}
-            onRevealHandled={clearRevealTask}
-            openedTask={openedTask}
-            onOpenTask={openTask}
-            onCloseTask={closeTask}
-            onSwitchSurface={switchTaskSurface}
-            requestNewTask={newTaskRequested}
-            onRequestNewTaskHandled={clearNewTaskRequest}
-          />
+          <div className={selectedAutomation ? "hidden" : "contents"}>
+            <WorktreeList
+              tasks={selectedTasks}
+              agentSessions={agentSessions}
+              agentActivities={agentActivity.activities}
+              workspace={selectedWorkspace}
+              vault={state.vault}
+              taskActions={taskActions}
+              navigation={listNavigation}
+              setupControls={setupControls}
+              editorApp={editorApp}
+              onEditorChange={changeEditorApp}
+              workspaceSwitching={workspaceSwitching}
+              onWorkspaceReady={clearWorkspaceSwitching}
+              searchOpen={search.open || !!selectedAutomation}
+              revealTaskId={revealTaskId}
+              onRevealHandled={clearRevealTask}
+              openedTask={openedTask}
+              onOpenTask={openTask}
+              onCloseTask={closeTask}
+              onSwitchSurface={switchTaskSurface}
+              requestNewTask={newTaskRequested}
+              onRequestNewTaskHandled={clearNewTaskRequest}
+            />
+          </div>
         </ErrorBoundary>
       </div>
       <QuickSearchModal

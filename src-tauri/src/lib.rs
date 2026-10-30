@@ -82,6 +82,7 @@ pub fn run() {
                 commands::automations::definition::automations_get,
                 commands::automations::store::automation_runs_list,
                 commands::automations::store::automation_run_get,
+                commands::automations::store::automation_state,
                 commands::agent_alerts::agent_hooks_status,
                 commands::agent_alerts::agent_hooks_install,
                 commands::agent_alerts::agent_hooks_remove,

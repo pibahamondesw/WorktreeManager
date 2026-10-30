@@ -251,6 +251,11 @@ export const WorktreeCard = memo(function WorktreeCard({
                 <Badge variant={stateVariant[status.type] ?? "default"}>{status.name}</Badge>
               </span>
             )}
+            {task.automationId && (
+              <span className="inline-flex" title={`Created by automation ${task.automationId}`}>
+                <Badge variant="accent">Automation</Badge>
+              </span>
+            )}
             {indicator && <TaskIndicatorDot indicator={indicator} />}
             {agentActivity?.state === "waiting" && <Badge variant="warning">Needs input</Badge>}
             {agentActivity?.state === "done" && agentActivity.unread && (

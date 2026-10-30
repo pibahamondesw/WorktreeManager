@@ -1,5 +1,5 @@
 import { useShortcutLabels } from "../../shortcuts/runtime";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Task, VaultConfig, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { EditWorkspaceModal } from "./EditWorkspaceModal";
@@ -53,6 +53,7 @@ interface WorkspaceListProps {
   /** Palette (or anything else) asking this list to open a sidebar overlay. */
   workspaceAction?: WorkspaceAction | null;
   onWorkspaceActionHandled?: () => void;
+  automations?: ReactNode;
 }
 
 export function WorkspaceList({
@@ -75,6 +76,7 @@ export function WorkspaceList({
   onOpenSettings,
   workspaceAction,
   onWorkspaceActionHandled,
+  automations,
 }: WorkspaceListProps) {
   const shortcutLabel = useShortcutLabels();
   const [showAdd, setShowAdd] = useState(false);
@@ -296,6 +298,8 @@ export function WorkspaceList({
           );
         })}
       </div>
+
+      {automations}
 
       {/* Footer: global settings */}
       <div className="flex-shrink-0 border-t border-border px-4 py-2 space-y-0.5">
