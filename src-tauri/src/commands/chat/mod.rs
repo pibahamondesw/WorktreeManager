@@ -15,6 +15,7 @@ pub use codex::purge_stale_chat_images;
 mod conversations;
 mod files;
 mod handoff;
+mod headless;
 pub mod history;
 #[cfg(test)]
 mod history_tests;
@@ -44,7 +45,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::agent_alerts;
-use super::agents::permission::{PendingResolution, PermissionPolicy, UnattendedPolicy};
+use super::agents::permission::{PendingResolution, PermissionPolicy};
 use super::agents::{Agents, ChatRequest};
 use super::process::OwnedProcess;
 use conversations::{Conversation, ConversationStore};
@@ -91,14 +92,6 @@ pub struct ChatOwner {
 impl ChatOwner {
     fn is_primary_of(&self, task_id: &str, agent: &str) -> bool {
         self.origin == ChatOrigin::User && self.task_id == task_id && self.agent == agent
-    }
-
-    /// Automation sessions run with no one watching, so they never wait on a person.
-    fn permission(&self) -> PermissionPolicy {
-        match self.origin {
-            ChatOrigin::User => PermissionPolicy::Interactive,
-            ChatOrigin::Automation => PermissionPolicy::Unattended(UnattendedPolicy::default()),
-        }
     }
 
     /// Where the session's conversation is remembered: the primary keeps the legacy `task:agent`
@@ -502,6 +495,24 @@ impl ChatSession {
         Ok(())
     }
 
+    fn send(&self, text: &str, images: &[ChatImage]) -> Result<(), String> {
+        let mut state = self.shared.lock().unwrap();
+        if state.history_busy || !state.snapshot.status.is_live() {
+            return Err("The chat is unavailable during a conversation action".into());
+        }
+        let mut out = ProviderOutput::default();
+        state.provider.send(text, images, &mut out)?;
+        state.commit(out, &*self.remember, &self.notify);
+        Ok(())
+    }
+
+    fn interrupt(&self) -> Result<(), String> {
+        self.with_provider(|provider, _, out| {
+            provider.interrupt(out);
+            Ok(())
+        })
+    }
+
     fn attach(&self, sink: Channel<LiveEvent>) -> ChatSnapshot {
         let mut state = self.shared.lock().unwrap();
         state.sink = Some(sink);
@@ -648,6 +659,25 @@ impl Sessions {
                 stale: None,
             },
         }
+    }
+
+    /// Attaches to a session of the task agent by id, whoever started it.
+    fn attach(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        agent: &str,
+        sink: Channel<LiveEvent>,
+    ) -> Result<OpenedChat, String> {
+        let chat = self
+            .0
+            .get(session_id)
+            .filter(|chat| chat.owner.task_id == task_id && chat.owner.agent == agent)
+            .ok_or("No chat session with this id for this task")?;
+        Ok(OpenedChat {
+            session_id: session_id.to_string(),
+            snapshot: chat.session.attach(sink),
+        })
     }
 
     fn detach(&self, task_id: &str, agent: &str, generation: u64, session_id: Option<&str>) {
@@ -797,6 +827,99 @@ fn canonical(path: &str) -> String {
         .to_string()
 }
 
+/// The session about to start: who owns it and the canonical folders it runs in, the first being
+/// its working directory.
+struct SessionTarget {
+    session_id: String,
+    owner: ChatOwner,
+    folders: Vec<String>,
+}
+
+impl SessionTarget {
+    fn new(session_id: String, owner: ChatOwner, folders: &[String]) -> Result<Self, String> {
+        if folders.is_empty() {
+            return Err("No folders for this task".into());
+        }
+        Ok(Self {
+            session_id,
+            owner,
+            folders: folders.iter().map(|folder| canonical(folder)).collect(),
+        })
+    }
+
+    fn cwd(&self) -> &str {
+        &self.folders[0]
+    }
+
+    fn extra_dirs(&self) -> &[String] {
+        &self.folders[1..]
+    }
+}
+
+/// How any session reports its activity and remembers its conversation, whoever starts it.
+fn session_setup<R: Runtime>(
+    app: &AppHandle<R>,
+    registry: &ChatRegistry,
+    target: &SessionTarget,
+    pending_resolution: Option<PendingResolution>,
+    handoff_link: Option<HandoffLink>,
+    expected_conversation: Option<String>,
+) -> Result<SessionSetup, String> {
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let checkpoints = checkpoints::Checkpoints::new(&app_data);
+    Ok(SessionSetup {
+        generation: registry.generation.fetch_add(1, Ordering::SeqCst) + 1,
+        turns: turns::TurnTracker::new(checkpoints, target.folders.clone(), expected_conversation),
+        remember: remember_conversation(&app_data, target, handoff_link),
+        notify: broadcast_activity(app, target),
+        pending_resolution,
+    })
+}
+
+fn remember_conversation(
+    app_data: &std::path::Path,
+    target: &SessionTarget,
+    handoff_link: Option<HandoffLink>,
+) -> Remember {
+    let (store, handoffs) = (
+        ConversationStore::new(app_data),
+        HandoffStore::new(app_data),
+    );
+    let (task_id, agent, cwd) = (
+        target.owner.task_id.clone(),
+        target.owner.agent.clone(),
+        target.cwd().to_string(),
+    );
+    let slot = target.owner.conversation_slot(&target.session_id);
+    Arc::new(move |conversation_id| {
+        if let Some(link) = &handoff_link {
+            handoffs.link(&task_id, &agent, &conversation_id, link);
+        }
+        let conversation = Conversation {
+            conversation_id,
+            cwd: cwd.clone(),
+            fork: None,
+        };
+        if let Err(error) = store.remember(&task_id, &slot, conversation) {
+            log::warn!("could not remember chat conversation: {error}");
+        }
+    })
+}
+
+fn broadcast_activity<R: Runtime>(app: &AppHandle<R>, target: &SessionTarget) -> Notify {
+    let (app, session_id, owner) = (app.clone(), target.session_id.clone(), target.owner.clone());
+    Arc::new(move |activity| {
+        let _ = app.emit(
+            STATUS_EVENT,
+            ChatInfo {
+                session_id: session_id.clone(),
+                owner: owner.clone(),
+                activity,
+            },
+        );
+    })
+}
+
 pub(crate) struct Launch {
     pub command: Command,
     pub provider: Box<dyn ChatProvider>,
@@ -804,7 +927,8 @@ pub(crate) struct Launch {
 }
 
 /// Attach to the running session, restart it on the same conversation, or start a fresh one.
-/// A fresh one may continue the current conversation of `handoff_from`, another agent.
+/// A fresh one may continue the current conversation of `handoff_from`, another agent. An open
+/// naming a session attaches to it as it is, whatever its mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OpenMode {
@@ -833,8 +957,16 @@ pub async fn chat_open<R: Runtime>(
     mode: OpenMode,
     conversation: Option<String>,
     handoff_from: Option<String>,
+    session_id: Option<String>,
     on_event: Channel<LiveEvent>,
 ) -> Result<OpenedChat, String> {
+    if let Some(session_id) = session_id {
+        return registry
+            .sessions
+            .lock()
+            .unwrap()
+            .attach(&session_id, &task_id, &agent, on_event);
+    }
     let agents = Agents::of(&app);
     let adapter = agents.get(&agent)?;
     if handoff_from.as_deref() == Some(agent.as_str()) {
@@ -857,7 +989,7 @@ pub async fn chat_open<R: Runtime>(
         agent: agent.clone(),
         origin: ChatOrigin::User,
     };
-    let permission = owner.permission();
+    let permission = PermissionPolicy::Interactive;
     let pending_resolution = permission.pending_resolution();
     if let Some(stale) = stale {
         tauri::async_runtime::spawn_blocking(move || stale.terminate())
@@ -865,11 +997,11 @@ pub async fn chat_open<R: Runtime>(
             .map_err(|e| format!("Task failed: {e}"))?;
     }
 
-    let mut canonical_folders = folders.iter().map(|folder| canonical(folder));
-    let cwd = canonical_folders.next().ok_or("No folders for this task")?;
-    let extra_dirs: Vec<String> = canonical_folders.collect();
-    let store = Arc::new(conversation_store(&app)?);
-    let handoffs = Arc::new(handoff_store(&app)?);
+    let target = SessionTarget::new(session_id, owner, &folders)?;
+    let cwd = target.cwd().to_string();
+    let extra_dirs = target.extra_dirs().to_vec();
+    let store = conversation_store(&app)?;
+    let handoffs = handoff_store(&app)?;
     let pinned = mode != OpenMode::Fresh && conversation.is_some();
     let resume = match (mode, conversation) {
         (OpenMode::Fresh, _) => None,
@@ -887,7 +1019,6 @@ pub async fn chat_open<R: Runtime>(
             .as_deref()
             .and_then(|id| handoffs.source(&task_id, &agent, id)),
     };
-    let generation = registry.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let fork = store
         .entry(&task_id, &agent, &cwd)
         .filter(|entry| Some(&entry.conversation_id) == resume.as_ref())
@@ -901,12 +1032,7 @@ pub async fn chat_open<R: Runtime>(
             .and_then(|entry| entry.fork)
     });
     let (handoff, mut launch) = {
-        let (handoffs, task_id, agent, cwd) = (
-            handoffs.clone(),
-            task_id.clone(),
-            agent.clone(),
-            cwd.clone(),
-        );
+        let (task_id, agent) = (task_id.clone(), agent.clone());
         tauri::async_runtime::spawn_blocking(move || {
             let handoff = link.map(|link| {
                 let first = link.clone();
@@ -938,53 +1064,19 @@ pub async fn chat_open<R: Runtime>(
             Err(error) => log::warn!("could not load chat model selection: {error}"),
         }
     }
-    let remember: Remember = {
-        let (store, task_id, agent, cwd) =
-            (store.clone(), task_id.clone(), agent.clone(), cwd.clone());
-        let slot = owner.conversation_slot(&session_id);
-        let link = handoff.as_ref().map(|handoff| handoff.link.clone());
-        Arc::new(move |conversation_id| {
-            if let Some(link) = &link {
-                handoffs.link(&task_id, &agent, &conversation_id, link);
-            }
-            let conversation = Conversation {
-                conversation_id,
-                cwd: cwd.clone(),
-                fork: None,
-            };
-            if let Err(error) = store.remember(&task_id, &slot, conversation) {
-                log::warn!("could not remember chat conversation: {error}");
-            }
-        })
-    };
-    let notify: Notify = {
-        let (app, session_id, owner) = (app.clone(), session_id.clone(), owner.clone());
-        Arc::new(move |activity| {
-            let _ = app.emit(
-                STATUS_EVENT,
-                ChatInfo {
-                    session_id: session_id.clone(),
-                    owner: owner.clone(),
-                    activity,
-                },
-            );
-        })
-    };
-
-    let folders = std::iter::once(cwd)
-        .chain(folders.iter().skip(1).map(|folder| canonical(folder)))
-        .collect();
-    let checkpoints =
-        checkpoints::Checkpoints::new(&app.path().app_data_dir().map_err(|e| e.to_string())?);
-    let setup = SessionSetup {
-        generation,
-        turns: turns::TurnTracker::new(checkpoints, folders, expected_conversation),
-        remember,
-        notify,
+    let setup = session_setup(
+        &app,
+        &registry,
+        &target,
         pending_resolution,
-    };
-    let session = start_session(&task_id, launch, handoff, setup)?;
+        handoff.as_ref().map(|handoff| handoff.link.clone()),
+        expected_conversation,
+    );
+    let session = start_session(&task_id, launch, handoff, setup?)?;
     let snapshot = session.attach(on_event);
+    let SessionTarget {
+        session_id, owner, ..
+    } = target;
     let previous = registry
         .sessions
         .lock()
@@ -1008,16 +1100,7 @@ pub fn chat_send(
     images: Option<Vec<ChatImage>>,
 ) -> Result<(), String> {
     let images = images.unwrap_or_default();
-    registry.with_session(&task_id, &agent, |session| {
-        let mut state = session.shared.lock().unwrap();
-        if state.history_busy || !state.snapshot.status.is_live() {
-            return Err("The chat is unavailable during a conversation action".into());
-        }
-        let mut out = ProviderOutput::default();
-        state.provider.send(&text, &images, &mut out)?;
-        state.commit(out, &*session.remember, &session.notify);
-        Ok(())
-    })
+    registry.with_session(&task_id, &agent, |session| session.send(&text, &images))
 }
 
 #[tauri::command(async)]
@@ -1102,12 +1185,7 @@ pub fn chat_interrupt(
     task_id: String,
     agent: String,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, |session| {
-        session.with_provider(|provider, _, out| {
-            provider.interrupt(out);
-            Ok(())
-        })
-    })
+    registry.with_session(&task_id, &agent, ChatSession::interrupt)
 }
 
 #[tauri::command(async)]
@@ -1497,15 +1575,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn automation_sessions_run_unattended_and_user_sessions_ask() {
-        assert_eq!(
-            owner("t1", "claude", ChatOrigin::User).permission(),
-            PermissionPolicy::Interactive
-        );
-        assert_eq!(
-            owner("t1", "claude", ChatOrigin::Automation).permission(),
-            PermissionPolicy::Unattended(UnattendedPolicy::default())
-        );
+    fn providers_may_leave_unattended_requests_undecided() {
         assert!(Echo
             .unattended_response(PendingDefault::Deny)
             .decision

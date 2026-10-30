@@ -2,7 +2,7 @@
 //! events: every transition is recorded in the run log and the item's state is rebuilt from it.
 #![cfg_attr(
     not(test),
-    expect(dead_code, reason = "the item runner (WOR-257) is the first caller")
+    allow(dead_code, reason = "the item runner (WOR-257) is the first caller")
 )]
 
 #[cfg(test)]

@@ -4,7 +4,9 @@ use std::os::unix::fs::PermissionsExt;
 use serde_json::{json, Value};
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 
+use super::super::agents::permission::UnattendedPolicy;
 use super::super::agents::{claude::Claude, codex::Codex, AgentAdapter, LaunchContext};
+use super::headless::HeadlessRequest;
 use super::history::{chat_history, chat_rewind_preview, HistoryAction};
 use super::*;
 
@@ -231,6 +233,7 @@ impl Fixture {
             agent.into(),
             self.repositories.folders.clone(),
             mode,
+            None,
             None,
             None,
             Channel::new(|_| Ok(())),
@@ -1422,6 +1425,7 @@ fn continuing_in_another_agent_seeds_it_and_keeps_the_earlier_items_read_only() 
             mode,
             None,
             handoff_from.map(String::from),
+            None,
             Channel::new(|_| Ok(())),
         ))
     };
@@ -1543,6 +1547,7 @@ fn rewinding_a_continuation_keeps_its_source_and_a_pending_fork_can_be_continued
         OpenMode::Fresh,
         None,
         Some("claude".into()),
+        None,
         Channel::new(|_| Ok(())),
     ))
     .unwrap();
@@ -1586,6 +1591,7 @@ fn attaching_reuses_the_live_primary_that_detach_then_releases() {
         OpenMode::Attach,
         None,
         None,
+        None,
         Channel::new(|_| Ok(())),
     ))
     .unwrap();
@@ -1606,4 +1612,194 @@ fn attaching_reuses_the_live_primary_that_detach_then_releases() {
         None,
     );
     assert!(!attached_sink());
+}
+
+fn start_headless(
+    fixture: &Fixture,
+    agent: &str,
+    folders: Vec<String>,
+    policy: PermissionPolicy,
+) -> Result<String, String> {
+    fixture.app.state::<ChatRegistry>().start_headless(
+        fixture.app.handle(),
+        "task",
+        agent,
+        HeadlessRequest {
+            folders,
+            resume: None,
+        },
+        policy,
+    )
+}
+
+fn headless_snapshot(fixture: &Fixture, session_id: &str) -> ChatSnapshot {
+    let registry = fixture.app.state::<ChatRegistry>();
+    let sessions = registry.sessions.lock().unwrap();
+    let snapshot = sessions
+        .get(session_id)
+        .unwrap()
+        .shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .clone();
+    snapshot
+}
+
+fn wait_for_headless(
+    fixture: &Fixture,
+    session_id: &str,
+    done: impl Fn(&ChatSnapshot) -> bool,
+) -> ChatSnapshot {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let snapshot = headless_snapshot(fixture, session_id);
+        if done(&snapshot) {
+            return snapshot;
+        }
+        assert!(Instant::now() < deadline, "headless session did not settle");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn attach_to(fixture: &Fixture, agent: &str, session_id: &str) -> Result<OpenedChat, String> {
+    tauri::async_runtime::block_on(chat_open(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        agent.into(),
+        fixture.repositories.folders.clone(),
+        OpenMode::Attach,
+        None,
+        None,
+        Some(session_id.into()),
+        Channel::new(|_| Ok(())),
+    ))
+}
+
+#[test]
+fn headless_sessions_run_unattended_until_a_pane_attaches_and_close_with_their_task() {
+    use tauri::Listener;
+    let fixture = Fixture::new();
+    let broadcasts = Arc::new(Mutex::new(Vec::<Value>::new()));
+    {
+        let broadcasts = broadcasts.clone();
+        fixture.app.listen(STATUS_EVENT, move |event| {
+            broadcasts
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(event.payload()).unwrap())
+        });
+    }
+    let policy = PermissionPolicy::Unattended(UnattendedPolicy {
+        allow: vec!["Bash(git status)".into()],
+        ..Default::default()
+    });
+    let session_id = start_headless(
+        &fixture,
+        "claude",
+        fixture.repositories.folders.clone(),
+        policy,
+    )
+    .unwrap();
+    let registry = fixture.app.state::<ChatRegistry>();
+    assert!(registry
+        .sessions
+        .lock()
+        .unwrap()
+        .primary("task", "claude")
+        .is_none());
+    {
+        let sessions = registry.sessions.lock().unwrap();
+        let shared = sessions.get(&session_id).unwrap().shared.lock().unwrap();
+        assert!(shared.sink.is_none());
+        assert!(shared.pending_resolution.is_some());
+    }
+
+    wait_for_headless(&fixture, &session_id, |s| s.status == ChatStatus::Idle);
+    registry.send(&session_id, "hello", &[]).unwrap();
+    let snapshot = wait_for_headless(&fixture, &session_id, |s| {
+        s.status == ChatStatus::Idle && s.items.iter().any(|item| item.text == "hello")
+    });
+    assert!(fixture.logged("argv.jsonl").iter().any(|argv| {
+        let argv = argv.to_string();
+        argv.contains("dontAsk") && argv.contains("Bash(git status)")
+    }));
+    registry.interrupt(&session_id).unwrap();
+    assert!(registry.send("missing", "hello", &[]).is_err());
+    assert!(registry.interrupt("missing").is_err());
+
+    let statuses: Vec<String> = broadcasts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|info| info["sessionId"] == session_id.as_str())
+        .inspect(|info| assert_eq!(info["origin"], "automation"))
+        .map(|info| info["status"]["kind"].as_str().unwrap().to_string())
+        .collect();
+    assert!(statuses.ends_with(&["busy".to_string(), "idle".to_string()]));
+
+    let store = conversation_store(fixture.app.handle()).unwrap();
+    let cwd = &fixture.repositories.folders[0];
+    let slot = format!("claude#{session_id}");
+    assert!(store.get("task", &slot, cwd).is_some());
+    assert_eq!(store.get("task", "claude", cwd).as_deref(), Some("parent"));
+
+    assert!(attach_to(&fixture, "codex", &session_id).is_err());
+    let attached = attach_to(&fixture, "claude", &session_id).unwrap();
+    assert_eq!(attached.session_id, session_id);
+    assert_eq!(attached.snapshot.items, snapshot.items);
+    assert!(registry
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&session_id)
+        .unwrap()
+        .shared
+        .lock()
+        .unwrap()
+        .sink
+        .is_some());
+
+    tauri::async_runtime::block_on(chat_close(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+    ))
+    .unwrap();
+    assert!(chat_list(fixture.app.state()).is_empty());
+    assert!(store.get("task", &slot, cwd).is_none());
+    assert!(attach_to(&fixture, "claude", &session_id).is_err());
+}
+
+#[test]
+fn headless_starts_refuse_rules_the_agent_cannot_apply_and_tasks_without_folders() {
+    let fixture = Fixture::new();
+    let with_rules = PermissionPolicy::Unattended(UnattendedPolicy {
+        deny: vec!["Bash(git push)".into()],
+        ..Default::default()
+    });
+    assert_eq!(
+        start_headless(
+            &fixture,
+            "codex",
+            fixture.repositories.folders.clone(),
+            with_rules
+        ),
+        Err("Codex cannot apply allow or deny tool rules to an unattended session".into())
+    );
+    let unattended = PermissionPolicy::Unattended(UnattendedPolicy::default());
+    assert_eq!(
+        start_headless(&fixture, "codex", Vec::new(), unattended),
+        Err("No folders for this task".into())
+    );
+    assert!(chat_list(fixture.app.state()).is_empty());
+}
+
+#[test]
+fn interrupting_the_primary_reaches_its_running_session() {
+    let fixture = Fixture::new();
+    fixture.open("codex", OpenMode::Restart).unwrap();
+    chat_interrupt(fixture.app.state(), "task".into(), "codex".into()).unwrap();
+    assert!(chat_interrupt(fixture.app.state(), "task".into(), "claude".into()).is_err());
 }

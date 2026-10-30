@@ -148,6 +148,8 @@ The top-level `agent` is the default for every agent step; an agent step can ove
 | `permission.pending_timeout` | duration          | `10m`         | How long a pending request (tool permission, a question, a plan approval) waits before resolving with `pending_default`.                                                                                                             |
 | `permission.pending_default` | `deny` \| `allow` | `deny`        | Every pending request and its resolution is recorded and surfaces in the Inbox.                                                                                                                                                      |
 
+**Agents without per-session tool rules.** Codex has no launch option for per-tool rules: an unattended Codex session runs with `approval_policy="never"` in the `workspace-write` sandbox, and its command rules live in user-wide configuration that a session must not rewrite. An agent step whose unattended policy carries any `allow` or `deny` rule, including rules derived from `authorization`, therefore fails to start on Codex with "Codex cannot apply allow or deny tool rules to an unattended session" instead of running with rules it would ignore.
+
 **Capabilities gate features.** Validation checks the descriptor of every agent the definition uses: agent steps need `headless`; `readonly` needs a read-only permission mode; `result` needs structured output; decisions are steered into live sessions only with `steer` (otherwise they reach the next agent step only); take over needs the agent's normal chat view. A definition that needs a capability the agent lacks is invalid with a message naming the capability, so new agents fit without engine changes.
 
 ### Steps
