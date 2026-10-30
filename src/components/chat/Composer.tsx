@@ -6,12 +6,13 @@ import { ImageAttachment, imageFiles, oversizedImages, readImage } from "./compo
 import { MenuOption, OptionMenu } from "./OptionMenu";
 import { ComposerEditor, ComposerEditorHandle } from "./ComposerEditor";
 import {
-  filterCommands,
+  insertCommand,
   insertMention,
   localCommand,
   menuTrigger,
   promptMemory,
   REVIEW_CHOICES,
+  matchSlashCommands,
 } from "./composerMenu";
 import {
   acceptsImages,
@@ -127,7 +128,11 @@ export function Composer({
   }, [mentionQuery, foldersKey]);
 
   const slashCommands =
-    trigger?.kind === "slash" ? filterCommands(controls.commands, trigger.query) : [];
+    trigger?.kind === "slash"
+      ? matchSlashCommands(controls.commands, trigger.start, trigger.query)
+      : [];
+  const midMessageSlashWithoutMatches =
+    trigger?.kind === "slash" && trigger.start > 0 && !slashCommands.length;
 
   const options: MenuOption[] = picker
     ? pickerOptions(picker, controls, efforts, agent, agents)
@@ -141,7 +146,7 @@ export function Composer({
       : trigger?.kind === "mention"
         ? files.map((file) => ({ id: file.path, label: file.name, description: file.path }))
         : [];
-  const menuOpen = picker !== null || trigger !== null;
+  const menuOpen = picker !== null || (trigger !== null && !midMessageSlashWithoutMatches);
   const activeIndex = Math.min(active, Math.max(0, options.length - 1));
 
   const focus = (nextCaret?: number) =>
@@ -203,7 +208,10 @@ export function Composer({
       }
     } else if (trigger?.kind === "slash") {
       const command = slashCommands.find((c) => c.name === option.id);
-      if (command) runCommand(command);
+      if (command?.action.kind === "insert" && trigger.start > 0) {
+        const next = insertCommand(text, trigger.start, caret, command.action.text);
+        update(next.text, next.caret);
+      } else if (command) runCommand(command);
     } else if (trigger?.kind === "mention") {
       const next = insertMention(text, trigger.start, caret, option.id);
       update(next.text, next.caret);
