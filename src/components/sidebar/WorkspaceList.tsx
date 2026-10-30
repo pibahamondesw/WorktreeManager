@@ -1,10 +1,10 @@
 import { useShortcutLabels } from "../../shortcuts/runtime";
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Task, VaultConfig, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { EditWorkspaceModal } from "./EditWorkspaceModal";
 import { RemoveWorkspaceModal } from "./RemoveWorkspaceModal";
-import { PlusIcon, GearIcon, GripIcon, SidebarIcon } from "../ui/Icons";
+import { PlusIcon, GearIcon, GripIcon, SidebarIcon, AutomationIcon } from "../ui/Icons";
 import { DeleteOptions, OperationResult } from "../../services/operations";
 import { CheckSeverity } from "../../services/doctor";
 import { WorkspaceAction } from "../../search/commands";
@@ -50,10 +50,12 @@ interface WorkspaceListProps {
   /** Worst severity the dependency check found, or null before it has run. */
   doctorSeverity: CheckSeverity | null;
   onOpenSettings: () => void;
+  onOpenAutomations: () => void;
+  /** An automation is invalid, failing or auto-paused. */
+  automationsNeedAttention: boolean;
   /** Palette (or anything else) asking this list to open a sidebar overlay. */
   workspaceAction?: WorkspaceAction | null;
   onWorkspaceActionHandled?: () => void;
-  automations?: ReactNode;
 }
 
 export function WorkspaceList({
@@ -74,9 +76,10 @@ export function WorkspaceList({
   onCollapse,
   doctorSeverity,
   onOpenSettings,
+  onOpenAutomations,
+  automationsNeedAttention,
   workspaceAction,
   onWorkspaceActionHandled,
-  automations,
 }: WorkspaceListProps) {
   const shortcutLabel = useShortcutLabels();
   const [showAdd, setShowAdd] = useState(false);
@@ -299,13 +302,11 @@ export function WorkspaceList({
         })}
       </div>
 
-      {automations}
-
       {/* Footer: global settings */}
-      <div className="flex-shrink-0 border-t border-border px-4 py-2 space-y-0.5">
+      <div className="flex-shrink-0 border-t border-border px-4 py-2 flex items-center gap-1">
         <button
           onClick={onOpenSettings}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
+          className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer text-xs"
           title={`Settings (${shortcutLabel("app.settings")})`}
         >
           <GearIcon size={14} />
@@ -321,6 +322,22 @@ export function WorkspaceList({
                   ? "Something this setup needs is missing"
                   : "Something worth a look"
               }
+            />
+          )}
+        </button>
+        <button
+          onClick={onOpenAutomations}
+          aria-label={automationsNeedAttention ? "Automations (needs attention)" : "Automations"}
+          title={
+            automationsNeedAttention ? "Automations: something needs your attention" : "Automations"
+          }
+          className="relative w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
+        >
+          <AutomationIcon size={14} />
+          {automationsNeedAttention && (
+            <span
+              aria-hidden="true"
+              className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-warning"
             />
           )}
         </button>

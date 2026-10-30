@@ -99,6 +99,15 @@ export function automationStatus({ entry, state, latestRun }: AutomationSummary)
   return state.consecutive_failures > 0 ? "degraded" : "active";
 }
 
+/** Invalid, failing or auto-paused automations flag the sidebar entry point. */
+export function needsAttention({ entry, state }: AutomationSummary): boolean {
+  return (
+    entry.errors.length > 0 ||
+    (state?.consecutive_failures ?? 0) > 0 ||
+    state?.pause_reason === "auto"
+  );
+}
+
 export const AUTOMATION_STATUS_LABELS: Record<AutomationStatus, string> = {
   invalid: "Invalid",
   running: "Running",

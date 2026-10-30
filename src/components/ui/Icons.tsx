@@ -417,6 +417,25 @@ export function GearIcon({ size = 14, className = "" }: IconProps) {
   );
 }
 
+export function AutomationIcon({ size = 14, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+    </svg>
+  );
+}
+
 export function WrenchIcon({ size = 32, className = "" }: IconProps) {
   return (
     <svg

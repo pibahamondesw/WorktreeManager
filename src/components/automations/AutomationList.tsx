@@ -8,20 +8,11 @@ import { AutomationStatusDot } from "./AutomationStatusDot";
 
 interface AutomationListProps {
   automations: AutomationSummary[];
-  error: string | null;
   selectedName: string | null;
   onSelect: (name: string) => void;
 }
 
-function moveFocus(event: KeyboardEvent<HTMLUListElement>) {
-  const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
-  if (!step) return;
-  const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button")];
-  const index = items.indexOf(document.activeElement as HTMLButtonElement);
-  if (index === -1) return;
-  event.preventDefault();
-  items[Math.min(Math.max(index + step, 0), items.length - 1)].focus();
-}
+const automationItemId = (name: string) => `automation-item-${name}`;
 
 function statusDetail(summary: AutomationSummary): string {
   const status = automationStatus(summary);
@@ -30,53 +21,53 @@ function statusDetail(summary: AutomationSummary): string {
   return AUTOMATION_STATUS_LABELS[status];
 }
 
-export function AutomationList({
-  automations,
-  error,
-  selectedName,
-  onSelect,
-}: AutomationListProps) {
+export function AutomationList({ automations, selectedName, onSelect }: AutomationListProps) {
+  const selectWithKeys = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let next: number;
+    if (event.key === "ArrowDown") next = (index + 1) % automations.length;
+    else if (event.key === "ArrowUp") next = (index + automations.length - 1) % automations.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = automations.length - 1;
+    else return;
+    event.preventDefault();
+    const name = automations[next].entry.name;
+    onSelect(name);
+    document.getElementById(automationItemId(name))?.focus();
+  };
+
   return (
-    <section
-      aria-label="Automations"
-      className="flex-shrink-0 max-h-[40%] flex flex-col border-t border-border"
-    >
-      <h2 className="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider text-text-muted">
-        Automations
-      </h2>
-      {error && <p className="px-4 py-1 text-xs text-danger break-words select-text">{error}</p>}
-      {!error && automations.length === 0 && (
-        <p className="px-4 py-1 text-xs text-text-muted">No automations yet</p>
-      )}
-      <ul className="overflow-y-auto pb-2 space-y-0.5" onKeyDown={moveFocus}>
-        {automations.map((summary) => {
-          const { name } = summary.entry;
-          const selected = name === selectedName;
-          return (
-            <li key={name}>
-              <button
-                type="button"
-                onClick={() => onSelect(name)}
-                aria-current={selected ? "page" : undefined}
-                title={summary.entry.definition?.description ?? undefined}
-                className={`w-[calc(100%-1rem)] mx-2 flex items-center gap-2 px-4 py-1.5 rounded-lg text-left cursor-pointer transition-colors outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-                  selected
-                    ? "bg-bg-active text-text-primary"
-                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                }`}
-              >
-                <AutomationStatusDot status={automationStatus(summary)} />
-                <span className="flex flex-col min-w-0">
-                  <span className="text-sm truncate">{name}</span>
-                  <span className="text-[0.625rem] text-text-muted truncate">
-                    {statusDetail(summary)}
-                  </span>
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <div role="tablist" aria-label="Automations" aria-orientation="vertical" className="space-y-1">
+      {automations.map((summary, index) => {
+        const { name } = summary.entry;
+        const selected = name === selectedName;
+        return (
+          <button
+            key={name}
+            id={automationItemId(name)}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            aria-controls="automation-panel"
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onSelect(name)}
+            onKeyDown={(event) => selectWithKeys(event, index)}
+            title={summary.entry.definition?.description ?? undefined}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-colors cursor-pointer focus-visible:outline-accent ${
+              selected
+                ? "bg-bg-active text-text-primary"
+                : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+            }`}
+          >
+            <AutomationStatusDot status={automationStatus(summary)} />
+            <span className="flex flex-col min-w-0">
+              <span className="text-xs truncate">{name}</span>
+              <span className="text-[0.625rem] text-text-muted truncate">
+                {statusDetail(summary)}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }

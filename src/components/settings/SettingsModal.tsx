@@ -67,33 +67,7 @@ export function SettingsModal(props: SettingsModalProps) {
   }, [open]);
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Settings"
-      size="settings"
-      onKeyDown={(event) => {
-        if (event.key !== "Tab") return;
-        const dialog = event.currentTarget;
-        const controls = Array.from(
-          dialog?.querySelectorAll<HTMLElement>(
-            'button, input, select, textarea, a[href], [tabindex="0"]'
-          ) ?? []
-        ).filter(
-          (element) =>
-            !element.closest("[hidden]") && !element.matches(":disabled") && element.tabIndex >= 0
-        );
-        const first = controls[0];
-        const last = controls[controls.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last?.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first?.focus();
-        }
-      }}
-    >
+    <Modal open={open} onClose={onClose} title="Settings" size="settings" trapFocus>
       {open && (
         <div ref={contentRef} className="flex h-full min-h-0">
           <div

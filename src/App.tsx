@@ -32,8 +32,8 @@ import { SurfaceSwitchDialog } from "./components/task/SurfaceSwitchDialog";
 import { NotificationTarget, embeddedSurface } from "./services/agentActivity";
 import { loadAgentCatalog } from "./services/agents";
 import { useAutomations } from "./hooks/useAutomations";
-import { AutomationList } from "./components/automations/AutomationList";
-import { AutomationView } from "./components/automations/AutomationView";
+import { needsAttention } from "./services/automations";
+import { AutomationsModal } from "./components/automations/AutomationsModal";
 
 function App() {
   const {
@@ -97,14 +97,13 @@ function App() {
     if (action.kind === "settings") setSettingsSection("theme");
     else if (action.kind === "vault") setSettingsSection("vault");
     else if (action.kind === "themes") setSettingsSection("theme");
+    else if (action.kind === "automations") setAutomationsOpen(true);
     else setWorkspaceAction(action);
   };
   const [newTaskRequested, setNewTaskRequested] = useState(false);
   const automations = useAutomations();
+  const [automationsOpen, setAutomationsOpen] = useState(false);
   const [selectedAutomationName, setSelectedAutomationName] = useState<string | null>(null);
-  const selectedAutomation =
-    automations.automations.find((summary) => summary.entry.name === selectedAutomationName) ??
-    null;
 
   useEffect(() => {
     editorPresentation.reset();
@@ -148,7 +147,6 @@ function App() {
         const task = state.tasks.find((t) => t.id === entry.taskId);
         if (task) restoreTask(task);
       } else {
-        setSelectedAutomationName(null);
         closeTask({ animate: entry.workspaceId === state.selectedWorkspaceId });
         if (entry.workspaceId !== state.selectedWorkspaceId) selectWorkspace(entry.workspaceId);
       }
@@ -187,18 +185,6 @@ function App() {
     showTask,
   });
   const agentSessions = useAgentSessions(openedTask !== null);
-
-  useEffect(() => {
-    if (openedTask || revealTaskId) setSelectedAutomationName(null);
-  }, [openedTask, revealTaskId]);
-
-  const selectAutomation = useCallback(
-    (name: string) => {
-      closeTask();
-      setSelectedAutomationName(name);
-    },
-    [closeTask]
-  );
 
   const taskActions = useMemo<TaskActions>(
     () => ({
@@ -282,7 +268,6 @@ function App() {
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
       const isCurrentWorkspace = workspaceId === state.selectedWorkspaceId;
-      setSelectedAutomationName(null);
       if (isCurrentWorkspace && !openedTask) return;
       closeTask({ animate: isCurrentWorkspace });
       if (!isCurrentWorkspace) selectWorkspace(workspaceId);
@@ -514,57 +499,37 @@ function App() {
               onCollapse={toggleSidebarCollapsed}
               doctorSeverity={doctorSeverity}
               onOpenSettings={() => setSettingsSection("theme")}
+              onOpenAutomations={() => setAutomationsOpen(true)}
+              automationsNeedAttention={automations.automations.some(needsAttention)}
               workspaceAction={workspaceAction}
               onWorkspaceActionHandled={() => setWorkspaceAction(null)}
-              automations={
-                <AutomationList
-                  automations={automations.automations}
-                  error={automations.error}
-                  selectedName={selectedAutomation?.entry.name ?? null}
-                  onSelect={selectAutomation}
-                />
-              }
             />
           </div>
         </ErrorBoundary>
-        {selectedAutomation && (
-          <ErrorBoundary fallbackClassName="flex-1">
-            <AutomationView
-              key={selectedAutomation.entry.name}
-              summary={selectedAutomation}
-              editorApp={editorApp}
-              sidebarCollapsed={sidebarCollapsed}
-              onExpandSidebar={toggleSidebarCollapsed}
-              onClose={() => setSelectedAutomationName(null)}
-            />
-          </ErrorBoundary>
-        )}
         <ErrorBoundary fallbackClassName="flex-1">
-          <div className={selectedAutomation ? "hidden" : "contents"}>
-            <WorktreeList
-              tasks={selectedTasks}
-              agentSessions={agentSessions}
-              agentActivities={agentActivity.activities}
-              workspace={selectedWorkspace}
-              vault={state.vault}
-              taskActions={taskActions}
-              navigation={listNavigation}
-              setupControls={setupControls}
-              editorApp={editorApp}
-              onEditorChange={changeEditorApp}
-              workspaceSwitching={workspaceSwitching}
-              onWorkspaceReady={clearWorkspaceSwitching}
-              searchOpen={search.open || !!selectedAutomation}
-              revealTaskId={revealTaskId}
-              onRevealHandled={clearRevealTask}
-              openedTask={openedTask}
-              onOpenTask={openTask}
-              onCloseTask={closeTask}
-              onSwitchSurface={switchTaskSurface}
-              requestNewTask={newTaskRequested}
-              onRequestNewTaskHandled={clearNewTaskRequest}
-            />
-          </div>
+          <WorktreeList
+            tasks={selectedTasks}
+            agentSessions={agentSessions}
+            agentActivities={agentActivity.activities}
+            workspace={selectedWorkspace}
+            vault={state.vault}
+            taskActions={taskActions}
+            navigation={listNavigation}
+            setupControls={setupControls}
+            editorApp={editorApp}
+            onEditorChange={changeEditorApp}
+            workspaceSwitching={workspaceSwitching}
+            onWorkspaceReady={clearWorkspaceSwitching}
+            searchOpen={search.open}
+            revealTaskId={revealTaskId}
+            onRevealHandled={clearRevealTask}
+            openedTask={openedTask}
+            onOpenTask={openTask}
+            onCloseTask={closeTask}
+            onSwitchSurface={switchTaskSurface}
+            requestNewTask={newTaskRequested}
+            onRequestNewTaskHandled={clearNewTaskRequest}
+          />
         </ErrorBoundary>
       </div>
       <QuickSearchModal
@@ -592,6 +557,15 @@ function App() {
         prompt={surfaceSwitch}
         agentActivity={surfaceSwitch ? agentActivity.activities[surfaceSwitch.taskId] : undefined}
         onChoose={resolveSurfaceSwitch}
+      />
+      <AutomationsModal
+        open={automationsOpen}
+        onClose={() => setAutomationsOpen(false)}
+        automations={automations.automations}
+        error={automations.error}
+        selectedName={selectedAutomationName}
+        onSelect={setSelectedAutomationName}
+        editorApp={editorApp}
       />
       <SettingsModal
         shortcutOperations={operations}

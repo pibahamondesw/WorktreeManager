@@ -1,6 +1,4 @@
 import { KeyboardEvent, useState } from "react";
-import { useShortcutLabels } from "../../shortcuts/runtime";
-import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 import {
   AUTOMATION_STATUS_LABELS,
   AutomationSummary,
@@ -9,7 +7,6 @@ import {
   triggerSummary,
 } from "../../services/automations";
 import { EditorApp } from "../../types";
-import { ChevronLeftIcon, SidebarIcon } from "../ui/Icons";
 import { AutomationStatusDot } from "./AutomationStatusDot";
 import { AutomationRuns } from "./AutomationRuns";
 import { AutomationDefinition } from "./AutomationDefinition";
@@ -20,31 +17,16 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "definition", label: "Definition" },
 ];
 
-interface AutomationViewProps {
+interface AutomationDetailProps {
   summary: AutomationSummary;
   editorApp: EditorApp;
-  sidebarCollapsed: boolean;
-  onExpandSidebar: () => void;
-  onClose: () => void;
 }
 
-export function AutomationView({
-  summary,
-  editorApp,
-  sidebarCollapsed,
-  onExpandSidebar,
-  onClose,
-}: AutomationViewProps) {
-  useEditorOcclusion(true);
-  const label = useShortcutLabels();
+export function AutomationDetail({ summary, editorApp }: AutomationDetailProps) {
   const [tab, setTab] = useState<Tab>(summary.entry.errors.length > 0 ? "definition" : "runs");
   const { entry } = summary;
+  const status = automationStatus(summary);
 
-  const closeOnEscape = (event: KeyboardEvent) => {
-    if (event.key !== "Escape" || event.defaultPrevented) return;
-    event.preventDefault();
-    onClose();
-  };
   const switchTabWithArrows = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
@@ -58,35 +40,13 @@ export function AutomationView({
   };
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 min-w-0" onKeyDown={closeOnEscape}>
-      <div
-        className="flex items-center gap-3 px-4 min-h-12 py-2 border-b border-border flex-shrink-0"
-        data-drag-region
-      >
-        {sidebarCollapsed && (
-          <button
-            type="button"
-            onClick={onExpandSidebar}
-            className="w-6 h-6 flex items-center justify-center flex-shrink-0 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-            title={`Expand sidebar (${label("app.sidebar")})`}
-          >
-            <SidebarIcon size={14} />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Back to tasks (Esc)"
-          title="Back to tasks (Esc)"
-          className="w-6 h-6 flex items-center justify-center flex-shrink-0 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-        >
-          <ChevronLeftIcon size={14} />
-        </button>
-        <AutomationStatusDot status={automationStatus(summary)} />
-        <h2 className="text-sm font-semibold text-text-primary truncate">{entry.name}</h2>
-        <span className="text-xs text-text-muted">
-          {AUTOMATION_STATUS_LABELS[automationStatus(summary)]}
-        </span>
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center gap-3 px-6 pt-5 pb-3 flex-shrink-0">
+        <AutomationStatusDot status={status} />
+        <h3 className="text-sm font-semibold text-text-primary truncate select-text">
+          {entry.name}
+        </h3>
+        <span className="text-xs text-text-muted">{AUTOMATION_STATUS_LABELS[status]}</span>
       </div>
 
       <AutomationFacts summary={summary} />
@@ -96,7 +56,7 @@ export function AutomationView({
         aria-label="Automation"
         className="flex gap-1 px-4 border-b border-border flex-shrink-0"
       >
-        {TABS.map(({ id, label: tabLabel }) => (
+        {TABS.map(({ id, label }) => (
           <button
             key={id}
             id={`automation-tab-${id}`}
@@ -113,7 +73,7 @@ export function AutomationView({
                 : "border-transparent text-text-muted hover:text-text-primary"
             }`}
           >
-            {tabLabel}
+            {label}
           </button>
         ))}
       </div>
@@ -122,7 +82,7 @@ export function AutomationView({
         id="automation-tab-panel"
         role="tabpanel"
         aria-labelledby={`automation-tab-${tab}`}
-        className="flex-1 overflow-y-auto p-6"
+        className="flex-1 min-h-0 overflow-y-auto p-6"
       >
         {tab === "runs" ? (
           <AutomationRuns key={entry.name} name={entry.name} />
@@ -139,7 +99,7 @@ function AutomationFacts({ summary }: { summary: AutomationSummary }) {
   const pauseReason = pauseReasonLabel(state);
   const nextRun = state?.enabled && state.next_run_at ? new Date(state.next_run_at) : null;
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 px-6 py-3 text-xs border-b border-border flex-shrink-0 select-text">
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 px-6 pb-3 text-xs border-b border-border flex-shrink-0 select-text">
       {entry.definition?.description && (
         <>
           <dt className="text-text-muted">Description</dt>

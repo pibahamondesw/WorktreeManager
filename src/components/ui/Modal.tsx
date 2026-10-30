@@ -1,6 +1,28 @@
-import { KeyboardEventHandler, ReactNode, useEffect, useRef } from "react";
+import { KeyboardEvent as ReactKeyboardEvent, ReactNode, useEffect, useRef } from "react";
 import { CloseIcon } from "./Icons";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
+
+/** Cycles Tab and Shift+Tab through the dialog's visible controls. */
+function keepTabFocusInside(event: ReactKeyboardEvent<HTMLDivElement>) {
+  if (event.key !== "Tab") return;
+  const controls = Array.from(
+    event.currentTarget.querySelectorAll<HTMLElement>(
+      'button, input, select, textarea, a[href], [tabindex="0"]'
+    )
+  ).filter(
+    (element) =>
+      !element.closest("[hidden]") && !element.matches(":disabled") && element.tabIndex >= 0
+  );
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last?.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first?.focus();
+  }
+}
 
 interface ModalProps {
   open: boolean;
@@ -9,10 +31,10 @@ interface ModalProps {
   children: ReactNode;
   wide?: boolean;
   size?: "settings";
-  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
+  trapFocus?: boolean;
 }
 
-export function Modal({ open, onClose, title, children, wide, size, onKeyDown }: ModalProps) {
+export function Modal({ open, onClose, title, children, wide, size, trapFocus }: ModalProps) {
   useEditorOcclusion(open);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -43,7 +65,7 @@ export function Modal({ open, onClose, title, children, wide, size, onKeyDown }:
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        onKeyDown={onKeyDown}
+        onKeyDown={trapFocus ? keepTabFocusInside : undefined}
         className={`motion-rise bg-bg-secondary border border-border rounded-xl shadow-2xl flex flex-col max-h-[80vh] max-w-[92vw] ${
           size === "settings" ? "w-[56rem] h-[40rem]" : wide ? "w-[40rem]" : "w-[30rem]"
         }`}

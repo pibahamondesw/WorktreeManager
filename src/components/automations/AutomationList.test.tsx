@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import { useState } from "react";
 import { AutomationList } from "./AutomationList";
 import { AutomationSummary } from "../../services/automations";
 
@@ -32,54 +33,39 @@ const AUTOMATIONS = [
   }),
 ];
 
+const tab = (name: string) => screen.getByRole("tab", { name: new RegExp(name) });
+
 it("lists automations with their status and selects one", () => {
   const onSelect = vi.fn();
-  render(
-    <AutomationList
-      automations={AUTOMATIONS}
-      error={null}
-      selectedName="nightly"
-      onSelect={onSelect}
-    />
-  );
-  expect(screen.getByRole("button", { name: /babysitter/ })).toHaveTextContent("Active");
-  expect(screen.getByRole("button", { name: /nightly/ })).toHaveAttribute("aria-current", "page");
-  expect(screen.getByRole("button", { name: /nightly/ })).toHaveTextContent("Paused");
-  expect(screen.getByRole("button", { name: /broken/ })).toHaveTextContent("Invalid · 2 errors");
-  fireEvent.click(screen.getByRole("button", { name: /broken/ }));
+  render(<AutomationList automations={AUTOMATIONS} selectedName="nightly" onSelect={onSelect} />);
+  expect(tab("babysitter")).toHaveTextContent("Active");
+  expect(tab("nightly")).toHaveAttribute("aria-selected", "true");
+  expect(tab("nightly")).toHaveTextContent("Paused");
+  expect(tab("broken")).toHaveTextContent("Invalid · 2 errors");
+  fireEvent.click(tab("broken"));
   expect(onSelect).toHaveBeenCalledWith("broken");
 });
 
-it("moves focus between automations with the arrow keys", () => {
-  render(
-    <AutomationList automations={AUTOMATIONS} error={null} selectedName={null} onSelect={vi.fn()} />
-  );
-  const [first, second, third] = screen.getAllByRole("button");
-  first.focus();
-  fireEvent.keyDown(first, { key: "ArrowDown" });
-  expect(second).toHaveFocus();
-  fireEvent.keyDown(second, { key: "ArrowDown" });
-  fireEvent.keyDown(third, { key: "ArrowDown" });
-  expect(third).toHaveFocus();
-  fireEvent.keyDown(third, { key: "ArrowUp" });
-  expect(second).toHaveFocus();
-  fireEvent.keyDown(second, { key: "Enter" });
-  expect(second).toHaveFocus();
-});
-
-it("shows the empty state and loading errors", () => {
-  const { rerender } = render(
-    <AutomationList automations={[]} error={null} selectedName={null} onSelect={vi.fn()} />
-  );
-  expect(screen.getByText("No automations yet")).toBeInTheDocument();
-  rerender(
-    <AutomationList
-      automations={[]}
-      error="Could not read /automations: denied"
-      selectedName={null}
-      onSelect={vi.fn()}
-    />
-  );
-  expect(screen.getByText("Could not read /automations: denied")).toHaveClass("select-text");
-  expect(screen.queryByText("No automations yet")).not.toBeInTheDocument();
+it("selects and focuses automations with the arrow, Home and End keys", () => {
+  function Harness() {
+    const [selected, setSelected] = useState("babysitter");
+    return (
+      <AutomationList automations={AUTOMATIONS} selectedName={selected} onSelect={setSelected} />
+    );
+  }
+  render(<Harness />);
+  tab("babysitter").focus();
+  fireEvent.keyDown(tab("babysitter"), { key: "ArrowDown" });
+  expect(tab("nightly")).toHaveFocus();
+  expect(tab("nightly")).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(tab("nightly"), { key: "End" });
+  expect(tab("broken")).toHaveFocus();
+  fireEvent.keyDown(tab("broken"), { key: "ArrowDown" });
+  expect(tab("babysitter")).toHaveFocus();
+  fireEvent.keyDown(tab("babysitter"), { key: "ArrowUp" });
+  expect(tab("broken")).toHaveFocus();
+  fireEvent.keyDown(tab("broken"), { key: "Home" });
+  expect(tab("babysitter")).toHaveFocus();
+  fireEvent.keyDown(tab("babysitter"), { key: "Enter" });
+  expect(tab("babysitter")).toHaveAttribute("aria-selected", "true");
 });

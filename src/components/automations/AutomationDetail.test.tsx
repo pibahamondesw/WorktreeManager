@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { AutomationView } from "./AutomationView";
+import { AutomationDetail } from "./AutomationDetail";
 import { AutomationRun, AutomationSummary } from "../../services/automations";
 import { openEditorForWorktree } from "../../services/openEditor";
 import { EditorApp } from "../../types";
@@ -12,7 +12,6 @@ import { EditorApp } from "../../types";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn() }));
 vi.mock("../../services/openEditor", () => ({ openEditorForWorktree: vi.fn() }));
-vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
 
 const PATH = "/home/.worktreemanager/automations/pr-babysitter/AUTOMATION.md";
 const summary: AutomationSummary = {
@@ -58,17 +57,7 @@ beforeEach(() => {
 });
 
 function renderView(view: AutomationSummary = summary, editorApp: EditorApp = "cursor") {
-  const onClose = vi.fn();
-  render(
-    <AutomationView
-      summary={view}
-      editorApp={editorApp}
-      sidebarCollapsed={false}
-      onExpandSidebar={vi.fn()}
-      onClose={onClose}
-    />
-  );
-  return { onClose };
+  render(<AutomationDetail summary={view} editorApp={editorApp} />);
 }
 
 it("shows the trigger, pause reason and runs, and pages older runs", async () => {
@@ -162,12 +151,4 @@ it("opens invalid automations on their errors and only reveals with embedded edi
   expect(screen.getByText("steps[0].agent:")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Open in/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Reveal in Finder" })).toBeInTheDocument();
-});
-
-it("closes with the back button or Escape", async () => {
-  vi.mocked(invoke).mockResolvedValue({ runs: [], next_before: null });
-  const { onClose } = renderView();
-  fireEvent.click(screen.getByRole("button", { name: "Back to tasks (Esc)" }));
-  fireEvent.keyDown(screen.getByRole("tab", { name: "Runs" }), { key: "Escape" });
-  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(2));
 });

@@ -7,6 +7,7 @@ import {
   AutomationSummary,
   automationStatus,
   loadAutomationSummaries,
+  needsAttention,
   pauseReasonLabel,
   runDuration,
   runResult,
@@ -68,6 +69,22 @@ describe("automationStatus", () => {
     );
     expect(automationStatus(summary({ latestRun: run() }))).toBe("active");
   });
+});
+
+it("flags only invalid, failing or auto-paused automations as needing attention", () => {
+  const issue = { path: entry.path, field: "trigger", kind: "invalid", message: "bad" };
+  expect(needsAttention(summary())).toBe(false);
+  expect(needsAttention(summary({ state: null }))).toBe(false);
+  expect(
+    needsAttention(summary({ state: { ...enabled, enabled: false, pause_reason: "new" } }))
+  ).toBe(false);
+  expect(needsAttention(summary({ entry: { ...entry, definition: null, errors: [issue] } }))).toBe(
+    true
+  );
+  expect(needsAttention(summary({ state: { ...enabled, consecutive_failures: 1 } }))).toBe(true);
+  expect(
+    needsAttention(summary({ state: { ...enabled, enabled: false, pause_reason: "auto" } }))
+  ).toBe(true);
 });
 
 it("explains why an automation is paused", () => {
