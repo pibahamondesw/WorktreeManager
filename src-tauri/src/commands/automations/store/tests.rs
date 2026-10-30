@@ -133,6 +133,7 @@ fn ignores_transitions_out_of_order_or_after_a_terminal_status() {
                 7,
                 RunEvent::Skipped {
                     reason: SkipReason::Deduped,
+                    missed: None,
                 },
             ),
             at(8, RunEvent::Canceled),
@@ -153,6 +154,7 @@ fn records_skips_and_cancellations() {
             1,
             RunEvent::Skipped {
                 reason: SkipReason::Paused,
+                missed: None,
             },
         )],
     );

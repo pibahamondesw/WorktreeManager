@@ -80,7 +80,7 @@ impl RunStore {
         }
     }
 
-    fn of<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
+    pub fn of<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
         app.path()
             .app_data_dir()
             .map(|dir| Self::new(&dir))
@@ -134,6 +134,10 @@ impl RunStore {
     allow(dead_code, reason = "the scheduler (WOR-248) is the first writer")
 )]
 impl RunStore {
+    pub fn run_ids(&self, name: &str) -> Result<Vec<String>, String> {
+        run_ids(&self.automation_dir(name)?.join("runs"))
+    }
+
     pub fn state(&self, name: &str) -> Result<AutomationState, String> {
         match fs::read(self.automation_dir(name)?.join("state.json")) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("state.json: {e}")),
