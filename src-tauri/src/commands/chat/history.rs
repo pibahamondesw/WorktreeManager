@@ -220,6 +220,7 @@ pub async fn chat_history<R: Runtime>(
                     turns,
                     remember: fork_remember,
                     notify: fork_notify,
+                    pending_resolution: None,
                 };
                 let session = start_session(&fork_task, launch, handoff, setup)?;
                 let deadline = Instant::now() + history_timeout;

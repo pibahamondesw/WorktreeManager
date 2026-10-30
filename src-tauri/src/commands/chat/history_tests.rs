@@ -888,6 +888,7 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         pinned: resume.is_some(),
         fork: None,
         handoff: None,
+        permission: Default::default(),
     };
     let missing = Codex::new("/missing-test-agent", None, None);
     assert!(missing.chat_launch(request(None)).is_err());
@@ -903,6 +904,7 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         turns: Default::default(),
         remember: Arc::new(drop),
         notify: Arc::new(|_| {}),
+        pending_resolution: None,
     };
     let session = ChatSession::spawn(launched.command, launched.provider, setup).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);

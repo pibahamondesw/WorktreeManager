@@ -5,6 +5,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod permission;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use super::agent_usage::UsageSource;
 use super::chat::{ChatItem, ConversationFork, Launch, SessionList};
 
 pub use super::login_shell::LaunchSpec;
+use permission::{PermissionMode, PermissionPolicy};
 
 pub struct LaunchContext<'a> {
     pub canonical_dir: &'a str,
@@ -37,6 +39,7 @@ pub(crate) struct ChatRequest {
     pub pinned: bool,
     pub fork: Option<ConversationFork>,
     pub handoff: Option<String>,
+    pub permission: PermissionPolicy,
 }
 
 /// A new conversation `fork_id` holding `source` up to (excluding) the user message `item_id`.
@@ -80,7 +83,8 @@ pub struct AgentCapabilities {
     pub archive: bool,
     pub models: bool,
     pub effort: bool,
-    pub permission_modes: bool,
+    /// The permission policies a session of this agent can run under.
+    pub permission_modes: &'static [PermissionMode],
     pub interrupt: bool,
     /// A message sent during a turn steers it instead of waiting in a queue.
     pub steer: bool,
@@ -317,7 +321,7 @@ mod tests {
                 archive: false,
                 models: true,
                 effort: true,
-                permission_modes: true,
+                permission_modes: &[PermissionMode::Interactive, PermissionMode::Unattended],
                 interrupt: true,
                 steer: false,
                 compact: true,
@@ -338,7 +342,7 @@ mod tests {
                 archive: true,
                 models: true,
                 effort: true,
-                permission_modes: true,
+                permission_modes: &[PermissionMode::Interactive, PermissionMode::Unattended],
                 interrupt: true,
                 steer: true,
                 compact: true,
@@ -353,6 +357,9 @@ mod tests {
         let codex = missing_agents().get("codex").unwrap().descriptor();
         let json = serde_json::to_value(codex).unwrap();
         assert_eq!(json["capabilities"]["fork"], "inSession");
-        assert_eq!(json["capabilities"]["permissionModes"], true);
+        assert_eq!(
+            json["capabilities"]["permissionModes"],
+            serde_json::json!(["interactive", "unattended"])
+        );
     }
 }

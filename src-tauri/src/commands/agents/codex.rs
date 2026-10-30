@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
+use super::permission::{PermissionMode, PermissionPolicy};
 use super::{
     AgentAdapter, AgentCapabilities, ChatRequest, ConversationFork, ForkMethod, LaunchContext,
     LaunchSpec,
@@ -18,6 +19,15 @@ use crate::commands::chat::{
 };
 use crate::commands::codex_usage::CodexUsage;
 use crate::commands::login_shell::{cli_available, LoginShell};
+
+/// Unattended sessions never wait for approval: commands stay in the workspace sandbox and
+/// anything that needs more fails instead of asking.
+const UNATTENDED_CONFIG: [&str; 4] = [
+    "-c",
+    "approval_policy=\"never\"",
+    "-c",
+    "sandbox_mode=\"workspace-write\"",
+];
 
 const ALERT_HOOKS: &[HookSpec] = &[
     HookSpec {
@@ -74,8 +84,8 @@ impl Codex {
         }
     }
 
-    fn app_server(&self, cwd: &str) -> std::process::Command {
-        LoginShell::program(&self.program, ["app-server"])
+    fn app_server(&self, cwd: &str, config: &[&str]) -> std::process::Command {
+        LoginShell::program(&self.program, ["app-server"].iter().chain(config))
             .current_dir(cwd)
             .command()
     }
@@ -86,7 +96,7 @@ impl Codex {
             json!({ "method": "initialized" }),
             json!({ "id": 2, "method": method, "params": params }),
         ];
-        exchange(self.app_server(cwd), &lines, |message| {
+        exchange(self.app_server(cwd, &[]), &lines, |message| {
             if message["id"] != 2 {
                 return None;
             }
@@ -122,7 +132,7 @@ impl AgentAdapter for Codex {
             archive: true,
             models: true,
             effort: true,
-            permission_modes: true,
+            permission_modes: &[PermissionMode::Interactive, PermissionMode::Unattended],
             interrupt: true,
             steer: true,
             compact: true,
@@ -133,15 +143,19 @@ impl AgentAdapter for Codex {
 
     fn chat_launch(&self, request: ChatRequest) -> Result<Launch, String> {
         self.require_cli()?;
-        let provider = CodexProvider::new(request.cwd.clone(), request.extra_dirs, request.resume)
-            .continuing(request.handoff);
+        let config = permission_config(&request.permission)?;
+        let mut provider =
+            CodexProvider::new(request.cwd.clone(), request.extra_dirs, request.resume)
+                .continuing(request.handoff);
+        if request.pinned {
+            provider = provider.pinned();
+        }
+        if request.permission.mode() == PermissionMode::Unattended {
+            provider = provider.fixed_approval("never");
+        }
         Ok(Launch {
-            command: self.app_server(&request.cwd),
-            provider: Box::new(if request.pinned {
-                provider.pinned()
-            } else {
-                provider
-            }),
+            command: self.app_server(&request.cwd, config),
+            provider: Box::new(provider),
             history: Vec::new(),
         })
     }
@@ -232,6 +246,22 @@ impl AgentAdapter for Codex {
     }
 }
 
+/// Codex takes no per-tool rules at launch, so an unattended policy that lists any is refused
+/// rather than run with rules it would ignore.
+fn permission_config(policy: &PermissionPolicy) -> Result<&'static [&'static str], String> {
+    match policy {
+        PermissionPolicy::Interactive => Ok(&[]),
+        PermissionPolicy::Unattended(policy)
+            if policy.allow.is_empty() && policy.deny.is_empty() =>
+        {
+            Ok(&UNATTENDED_CONFIG)
+        }
+        PermissionPolicy::Unattended(_) => {
+            Err("Codex cannot apply allow or deny tool rules to an unattended session".into())
+        }
+    }
+}
+
 fn read_toml(path: &Path) -> Option<toml::Table> {
     fs::read_to_string(path).ok()?.parse().ok()
 }
@@ -313,6 +343,7 @@ fn threads(result: &Value, current: Option<&str>) -> Vec<SessionSummary> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::agents::permission::UnattendedPolicy;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("wtm-codex-{}-{name}", std::process::id()));
@@ -438,6 +469,66 @@ mod tests {
         assert!(codex.fork_launch(fork).is_err());
     }
 
+    fn chat_request(permission: PermissionPolicy) -> ChatRequest {
+        ChatRequest {
+            cwd: "/tmp".into(),
+            extra_dirs: Vec::new(),
+            resume: None,
+            pinned: true,
+            fork: None,
+            handoff: None,
+            permission,
+        }
+    }
+
+    fn launch_args(launch: &Launch) -> Vec<String> {
+        launch
+            .command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn unattended_sessions_never_ask_and_stay_in_the_workspace() {
+        let codex = Codex::new("true", None, None);
+        let interactive = codex
+            .chat_launch(chat_request(PermissionPolicy::Interactive))
+            .unwrap();
+        assert!(launch_args(&interactive).ends_with(&["app-server".to_string()]));
+        let unattended = codex
+            .chat_launch(chat_request(PermissionPolicy::Unattended(
+                UnattendedPolicy::default(),
+            )))
+            .unwrap();
+        assert!(launch_args(&unattended).ends_with(&[
+            "app-server".to_string(),
+            "-c".to_string(),
+            "approval_policy=\"never\"".to_string(),
+            "-c".to_string(),
+            "sandbox_mode=\"workspace-write\"".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn unattended_tool_rules_are_refused_rather_than_ignored() {
+        let codex = Codex::new("true", None, None);
+        for (allow, deny) in [
+            (vec!["Bash(git *)".to_string()], vec![]),
+            (vec![], vec!["Edit".to_string()]),
+        ] {
+            let policy = PermissionPolicy::Unattended(UnattendedPolicy {
+                allow,
+                deny,
+                ..Default::default()
+            });
+            assert_eq!(
+                codex.chat_launch(chat_request(policy)).err(),
+                Some("Codex cannot apply allow or deny tool rules to an unattended session".into())
+            );
+        }
+    }
+
     #[test]
     fn missing_cli_fails_every_launch() {
         let codex = Codex::new("/missing-test-agent", None, None);
@@ -456,6 +547,7 @@ mod tests {
                 pinned: false,
                 fork: None,
                 handoff: None,
+                permission: PermissionPolicy::Interactive,
             })
             .is_err());
     }
