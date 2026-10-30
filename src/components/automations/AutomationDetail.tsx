@@ -10,10 +10,12 @@ import { EditorApp } from "../../types";
 import { AutomationStatusDot } from "./AutomationStatusDot";
 import { AutomationRuns } from "./AutomationRuns";
 import { AutomationDefinition } from "./AutomationDefinition";
+import { AutomationPipeline } from "./AutomationPipeline";
 
-type Tab = "runs" | "definition";
+type Tab = "runs" | "pipeline" | "definition";
 const TABS: { id: Tab; label: string }[] = [
   { id: "runs", label: "Runs" },
+  { id: "pipeline", label: "Pipeline" },
   { id: "definition", label: "Definition" },
 ];
 
@@ -84,11 +86,14 @@ export function AutomationDetail({ summary, editorApp }: AutomationDetailProps) 
         aria-labelledby={`automation-tab-${tab}`}
         className="flex-1 min-h-0 overflow-y-auto p-6"
       >
-        {tab === "runs" ? (
-          <AutomationRuns key={entry.name} name={entry.name} />
-        ) : (
-          <AutomationDefinition entry={entry} editorApp={editorApp} />
-        )}
+        {tab === "runs" && <AutomationRuns key={entry.name} name={entry.name} />}
+        {tab === "pipeline" &&
+          (entry.definition ? (
+            <AutomationPipeline key={entry.name} name={entry.name} steps={entry.definition.steps} />
+          ) : (
+            <p className="text-sm text-text-muted">Unavailable until the definition is valid</p>
+          ))}
+        {tab === "definition" && <AutomationDefinition entry={entry} editorApp={editorApp} />}
       </div>
     </div>
   );

@@ -22,6 +22,7 @@ const summary: AutomationSummary = {
       name: "pr-babysitter",
       description: "Keeps PRs green",
       trigger: { manual: true, schedule: { cron: "0 * * * *", tz: "UTC", catchUp: "latest" } },
+      steps: [],
     },
     errors: [],
     warnings: [
@@ -46,6 +47,7 @@ const run = (id: string, overrides: Partial<AutomationRun> = {}): AutomationRun 
   outcome: "reported",
   claimed_at_ms: 1_000,
   ended_at_ms: 6_000,
+  items: [],
   ...overrides,
 });
 
@@ -113,7 +115,7 @@ it("opens the definition in an external editor or reveals it in Finder", async (
   renderView();
   const runsTab = screen.getByRole("tab", { name: "Runs" });
   runsTab.focus();
-  fireEvent.keyDown(runsTab, { key: "ArrowRight" });
+  fireEvent.keyDown(runsTab, { key: "ArrowLeft" });
   const definitionTab = screen.getByRole("tab", { name: "Definition" });
   expect(definitionTab).toHaveAttribute("aria-selected", "true");
   expect(definitionTab).toHaveFocus();
