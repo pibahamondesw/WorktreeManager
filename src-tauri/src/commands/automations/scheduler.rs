@@ -349,13 +349,11 @@ fn claim_slot(
         return Ok(None);
     };
     if let Some(reason) = skip_reason(automation, state, active) {
-        writer.append(
-            &run_id,
-            &RunEvent::Skipped {
-                reason,
-                missed: None,
-            },
-        )?;
+        let skipped = RunEvent::Skipped {
+            reason,
+            missed: None,
+        };
+        writer.append(&run_id, &skipped)?;
         return Ok(None);
     }
     Ok(Some(RunRequest {
