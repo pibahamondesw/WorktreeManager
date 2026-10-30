@@ -24,6 +24,7 @@ const entry: AutomationEntry = {
     name: "pr-babysitter",
     description: null,
     trigger: { manual: true, schedule: null },
+    steps: [],
   },
   errors: [],
   warnings: [],
@@ -43,6 +44,7 @@ const run = (overrides: Partial<AutomationRun> = {}): AutomationRun => ({
   outcome: "noop",
   claimed_at_ms: 1_000,
   ended_at_ms: 2_000,
+  items: [],
   ...overrides,
 });
 const summary = (overrides: Partial<AutomationSummary> = {}): AutomationSummary => ({
