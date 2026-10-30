@@ -180,7 +180,39 @@ function Activity({ item }: { item: ChatItem }) {
   );
 }
 
-const isVisibleStep = (item: ChatItem) => item.kind !== "reasoning" || !!item.text;
+function Reasoning({ item }: { item: ChatItem }) {
+  const [open, setOpen] = useState(false);
+  const thinking = item.status === "inProgress";
+  const label = thinking
+    ? "Thinking…"
+    : item.durationMs === undefined
+      ? "Thought"
+      : `Thought for ${item.durationMs < 1000 ? "<1" : Math.round(item.durationMs / 1000)}s`;
+  if (!isVisibleStep(item)) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="self-start flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary cursor-pointer"
+      >
+        <span className={thinking ? "animate-pulse" : undefined}>{label}</span>
+        <ChevronDownIcon
+          className={`opacity-50 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <p className="border-l border-border pl-3 text-xs italic text-text-muted whitespace-pre-wrap select-text">
+          {item.text || (thinking ? "Waiting for reasoning…" : "No reasoning text provided.")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const isVisibleStep = (item: ChatItem) =>
+  item.kind !== "reasoning" || !!item.text || !!item.status || item.durationMs !== undefined;
 const isFailedStep = (item: ChatItem) => item.status === "failed" || item.status === "declined";
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -257,11 +289,7 @@ export function ChatItemView({
         </>
       );
     case "reasoning":
-      return item.text ? (
-        <p className="text-xs italic text-text-muted whitespace-pre-wrap select-text">
-          {item.text}
-        </p>
-      ) : null;
+      return <Reasoning item={item} />;
     case "error":
       return (
         <p role="alert" className="text-sm text-danger whitespace-pre-wrap select-text">
