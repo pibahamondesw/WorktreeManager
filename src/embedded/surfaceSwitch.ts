@@ -1,5 +1,5 @@
-import { AgentId, TaskSurface } from "../types";
-import { AgentActivity, embeddedSurface } from "../services/agentActivity";
+import { TaskSurface } from "../types";
+import { activityAgentLabel, AgentActivity, embeddedSurface } from "../services/agentActivity";
 import { isEmbedded } from "./taskSurface";
 
 export type TaskOpenPlan =
@@ -7,12 +7,6 @@ export type TaskOpenPlan =
   | { kind: "confirm"; current: TaskSurface; requested: TaskSurface; closing: TaskSurface[] };
 
 export type SurfaceSwitchChoice = "keep" | "replace" | "cancel";
-
-const AGENT_PRODUCTS: Record<AgentId | "opencode", string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  opencode: "OpenCode",
-};
 
 const agentOf = (surface: TaskSurface) => ("agent" in surface ? surface.agent : null);
 
@@ -41,9 +35,9 @@ export function surfaceLabel(surface: TaskSurface): string {
     case "opencode":
       return "OpenCode";
     case "chat":
-      return `${AGENT_PRODUCTS[surface.agent]} chat`;
+      return `${activityAgentLabel(surface.agent)} chat`;
     case "terminal":
-      return `${AGENT_PRODUCTS[surface.agent]} terminal`;
+      return `${activityAgentLabel(surface.agent)} terminal`;
     case "external":
       return "an external editor";
   }
@@ -54,5 +48,5 @@ export function interruptedAgent(closing: TaskSurface[], activity?: AgentActivit
   if (activity?.state !== "working") return null;
   const working = embeddedSurface(activity);
   if (!working || !closing.some((surface) => sameSurface(surface, working))) return null;
-  return AGENT_PRODUCTS[activity.agent];
+  return activityAgentLabel(activity.agent);
 }

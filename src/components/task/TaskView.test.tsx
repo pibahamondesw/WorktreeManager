@@ -3,7 +3,7 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import type { invoke } from "@tauri-apps/api/core";
+import type { invoke, InvokeArgs } from "@tauri-apps/api/core";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<typeof invoke>(),
@@ -22,7 +22,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: mocks.invoke,
+  invoke: (command: string, args?: InvokeArgs) =>
+    invokeWithAgentCatalog(mocks.invoke, command, args),
   Channel: class {
     onmessage?: (e: unknown) => void;
     id = ++mocks.channels.opened;
@@ -43,6 +44,7 @@ vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 
 import { TaskView } from "./TaskView";
 import { Task } from "../../types";
+import { invokeWithAgentCatalog } from "../../services/agents.fixture";
 
 const task = {
   id: "t1",
@@ -211,7 +213,7 @@ describe("TaskView", () => {
               context: null,
             },
           })
-        : Promise.resolve(command === "check_app_installed" || undefined)
+        : Promise.resolve(undefined)
     );
     const onSwitchSurface = vi.fn();
     const props = {
@@ -225,7 +227,7 @@ describe("TaskView", () => {
       <TaskView {...props} surface={{ kind: "chat", agent: "claude" }} />
     );
     await screen.findByText("Plan it");
-    fireEvent.click(screen.getByRole("button", { name: "Agent: Claude" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agent: Claude Code" }));
     fireEvent.mouseDown(within(screen.getByRole("listbox", { name: "Agent" })).getByText("Codex"));
     fireEvent.click(screen.getByRole("button", { name: "Continue in Codex" }));
     expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", { taskId: "t1", agent: "claude" });

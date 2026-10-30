@@ -2,8 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_STATE, AppState } from "../types";
 import { Operations } from "./operations";
 import { dispatchCliBridge } from "./cliBridge";
+import { invokeWithAgentCatalog } from "./agents.fixture";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (command: string, args?: unknown) =>
+    invokeWithAgentCatalog(() => Promise.resolve(undefined), command, args),
+}));
 vi.mock("@tauri-apps/api/path", () => ({ homeDir: vi.fn().mockResolvedValue("/home/test/") }));
 vi.mock("./store", () => ({ persist: vi.fn().mockResolvedValue(undefined) }));
 

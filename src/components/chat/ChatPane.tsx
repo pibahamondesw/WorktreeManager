@@ -34,7 +34,8 @@ import {
   isLive,
   totals,
 } from "../../services/chat";
-import { AGENTS } from "../../services/agents";
+import { agentPresentation, describeAgent } from "../../services/agents";
+import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import { AgentId } from "../../types";
 
 const CHAT_PAGE_SIZE = 50;
@@ -84,6 +85,8 @@ export function ChatPane({
   takeOpenIntent,
 }: ChatPaneProps) {
   const session = useChatSession(taskId, agent, folders, takeOpenIntent);
+  const catalog = useAgentCatalog();
+  const agentLabel = describeAgent(agent, catalog).label;
   const { snapshot, error, restart, respond } = session;
   const [approvalDrafts, setApprovalDrafts] = useState<Record<string, ApprovalDraft>>({});
   const [responding, setResponding] = useState<string | null>(null);
@@ -158,7 +161,7 @@ export function ChatPane({
 
   const switchBlocker =
     busy || status.kind === "starting" || pending.length > 0 || historyPending !== null
-      ? `Wait for ${AGENTS[agent].label} to finish or stop it before switching agents.`
+      ? `Wait for ${agentLabel} to finish or stop it before switching agents.`
       : null;
 
   /** Opens `intent.agent` in place of this agent, unless this chat is in the middle of work. */
@@ -333,8 +336,8 @@ export function ChatPane({
             {items.length === 0 && live && (
               <p className="text-sm text-text-muted text-center py-8">
                 {status.kind === "starting"
-                  ? `Starting ${AGENTS[agent].label}…`
-                  : `Ask ${AGENTS[agent].label} to work on this task.`}
+                  ? `Starting ${agentLabel}…`
+                  : `Ask ${agentLabel} to work on this task.`}
               </p>
             )}
             {firstVisible > 0 && (
@@ -377,7 +380,7 @@ export function ChatPane({
                   {item.origin ? (
                     <div
                       data-origin={item.origin}
-                      title={`From the ${AGENTS[item.origin].label} conversation`}
+                      title={`From the ${describeAgent(item.origin, catalog).label} conversation`}
                       className="flex flex-col opacity-70"
                     >
                       {view}
@@ -415,9 +418,7 @@ export function ChatPane({
             ) : (
               busy &&
               pending.length === 0 && (
-                <p className="text-xs text-text-muted animate-pulse">
-                  {AGENTS[agent].label} is working…
-                </p>
+                <p className="text-xs text-text-muted animate-pulse">{agentLabel} is working…</p>
               )
             )}
             {!live && (
@@ -513,9 +514,10 @@ export function ChatPane({
             }
           />
         )}
-        {hooksSession === sessionKey && agent === "codex" && (
+        {hooksSession === sessionKey && (
           <HooksDialog
             key={sessionKey}
+            agentLabel={agentLabel}
             hooks={controls.hooks}
             onConfigure={session.configure}
             onClose={() => setHooksSession(null)}
@@ -532,7 +534,7 @@ export function ChatPane({
         <UsageDialog
           open={usageOpen}
           usage={controls.usage}
-          planUrl={AGENTS[agent].planUrl}
+          planUrl={agentPresentation(agent).planUrl}
           onRefresh={session.refreshUsage}
           onClose={() => setUsageOpen(false)}
         />

@@ -4,12 +4,13 @@ import { Button } from "../ui/Button";
 import { ChatSetting, HookControls, HookOption } from "../../services/chat";
 
 interface HooksDialogProps {
+  agentLabel: string;
   hooks: HookControls | undefined;
   onConfigure: (setting: ChatSetting) => Promise<void>;
   onClose: () => void;
 }
 
-export function HooksDialog({ hooks, onConfigure, onClose }: HooksDialogProps) {
+export function HooksDialog({ agentLabel, hooks, onConfigure, onClose }: HooksDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const run = async (setting: ChatSetting) => {
@@ -33,7 +34,7 @@ export function HooksDialog({ hooks, onConfigure, onClose }: HooksDialogProps) {
     void run({ kind: "hook", value: { key: hook.key, hash: hook.currentHash, ...change } });
 
   return (
-    <Modal open onClose={onClose} title="Codex hooks" wide>
+    <Modal open onClose={onClose} title={`${agentLabel} hooks`} wide>
       <div className="px-6 py-5 space-y-4">
         <p className="text-sm text-text-secondary">
           Review each definition before trusting it. Changes apply to Codex on this machine.

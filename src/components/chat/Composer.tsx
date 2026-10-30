@@ -26,7 +26,13 @@ import {
   FileMatch,
   ReviewTarget,
 } from "../../services/chat";
-import { AGENTS, installedAgents } from "../../services/agents";
+import {
+  AgentDescriptor,
+  agentPresentation,
+  describeAgent,
+  chatAgents,
+} from "../../services/agents";
+import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import { AgentId } from "../../types";
 
 type Picker = "agent" | "model" | "effort" | "mode" | "review";
@@ -73,7 +79,10 @@ export function Composer({
   actions,
   onError,
 }: ComposerProps) {
-  const agentLabel = AGENTS[agent].label;
+  const catalog = useAgentCatalog();
+  const descriptor = describeAgent(agent, catalog);
+  const agentLabel = descriptor.label;
+  const tone = agentPresentation(agent).tone;
   const editorRef = useRef<ComposerEditorHandle>(null);
   const sendingRef = useRef(false);
   const [text, setText] = useState(() => promptMemory.draft(memoryKey));
@@ -85,8 +94,6 @@ export function Composer({
   const [recall, setRecall] = useState<number | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [dragDepth, setDragDepth] = useState(0);
-  const [agents, setAgents] = useState<AgentId[]>([agent]);
-  const canSwitchAgent = !!actions.switchAgent;
   const dragging = dragDepth > 0;
   const busy = status.kind === "busy";
   const ready = status.kind === "idle" || busy;
@@ -99,15 +106,6 @@ export function Composer({
   const foldersKey = folders.join("\n");
 
   useEffect(() => promptMemory.saveDraft(memoryKey, text), [memoryKey, text]);
-
-  useEffect(() => {
-    if (!canSwitchAgent) return;
-    let stale = false;
-    void installedAgents(agent).then((found) => !stale && setAgents(found));
-    return () => {
-      stale = true;
-    };
-  }, [agent, canSwitchAgent]);
 
   useEffect(() => {
     if (ready && nothingFocused()) editorRef.current?.focus();
@@ -135,7 +133,7 @@ export function Composer({
     trigger?.kind === "slash" && trigger.start > 0 && !slashCommands.length;
 
   const options: MenuOption[] = picker
-    ? pickerOptions(picker, controls, efforts, agent, agents)
+    ? pickerOptions(picker, controls, efforts, agent, catalog)
     : trigger?.kind === "slash"
       ? slashCommands.map((command) => ({
           id: command.name,
@@ -368,7 +366,7 @@ export function Composer({
     status.kind === "starting"
       ? `Starting ${agentLabel}…`
       : busy
-        ? `${agentLabel} is working — messages you send now ${AGENTS[agent].steersMidTurn ? "are added to this turn" : "run after this turn"} (Esc to stop)`
+        ? `${agentLabel} is working — messages you send now ${descriptor.capabilities.steer ? "are added to this turn" : "run after this turn"} (Esc to stop)`
         : `Message ${agentLabel} — / for commands, @ for files${canAttach ? ", paste images" : ""}`;
 
   return (
@@ -390,7 +388,7 @@ export function Composer({
           onDragEnter={onDragEnter}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
-          className={`rounded-lg bg-bg-secondary border ${AGENTS[agent].tone.focus} ${
+          className={`rounded-lg bg-bg-secondary border ${tone.focus} ${
             dragging ? "border-accent" : "border-border"
           }`}
         >
@@ -441,7 +439,7 @@ export function Composer({
                 label="Agent"
                 shortcut={shortcutLabel("chat.agent")}
                 value={agentLabel}
-                tone={AGENTS[agent].tone}
+                tone={tone}
                 onClick={() => openPicker("agent")}
               />
             )}
@@ -517,13 +515,13 @@ function pickerOptions(
   controls: ChatControls,
   efforts: string[],
   agent: AgentId,
-  agents: AgentId[]
+  catalog: AgentDescriptor[]
 ): MenuOption[] {
   if (picker === "review") return REVIEW_CHOICES;
   if (picker === "agent")
-    return agents.map((id) => ({
+    return chatAgents(catalog, agent).map((id) => ({
       id,
-      label: AGENTS[id].label,
+      label: describeAgent(id, catalog).label,
       selected: id === agent,
     }));
   if (picker === "model")

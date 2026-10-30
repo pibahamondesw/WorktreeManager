@@ -1,16 +1,20 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { EditorView } from "@codemirror/view";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  catalog: [] as unknown[],
   channels: [] as { onmessage?: (m: unknown) => void }[],
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: mocks.invoke,
+  invoke: (command: string, args?: unknown) =>
+    command === "agents_catalog"
+      ? Promise.resolve(mocks.catalog)
+      : (mocks.invoke(command, args) as Promise<unknown>),
   Channel: class {
     onmessage?: (m: unknown) => void;
     constructor() {
@@ -21,7 +25,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
 
 import { ChatPane } from "./ChatPane";
-import { AGENTS } from "../../services/agents";
+import { describeAgent, loadAgentCatalog } from "../../services/agents";
+import { AGENT_CATALOG } from "../../services/agents.fixture";
 
 const editorOf = (box: HTMLElement) => EditorView.findFromDOM(box)!;
 const composerText = (box: HTMLElement) => editorOf(box).state.doc.toString();
@@ -85,11 +90,16 @@ const snapshot = (overrides = {}) => ({
 const emit = (generation: number, event: unknown) =>
   act(() => mocks.channels.at(-1)!.onmessage?.({ generation, event }));
 
+beforeAll(async () => {
+  mocks.catalog = AGENT_CATALOG;
+  await loadAgentCatalog();
+});
+
 beforeEach(() => {
+  mocks.catalog = AGENT_CATALOG;
   mocks.channels.length = 0;
   mocks.invoke.mockReset().mockImplementation((command: string) => {
     if (command === "chat_open") return Promise.resolve(snapshot());
-    if (command === "check_app_installed") return Promise.resolve(true);
     return Promise.resolve(undefined);
   });
 });
@@ -374,7 +384,7 @@ describe("ChatPane", () => {
 
   it("sends on Enter, streams the reply and ignores a stale generation", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
-    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
     typeInto(box, "Add tests");
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() =>
@@ -409,7 +419,7 @@ describe("ChatPane", () => {
 
   it("attaches pasted and dropped images as removable thumbnails and sends them", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
-    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
     const png = (name: string) => new File(["hi"], name, { type: "image/png" });
     fireEvent.paste(box, { clipboardData: { files: [png("one.png")] } });
     fireEvent.drop(box.parentElement!, {
@@ -432,7 +442,7 @@ describe("ChatPane", () => {
 
   it("skips unsupported image types and reports oversized ones", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
-    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
     const huge = new File(["x"], "huge.jpg", { type: "image/jpeg" });
     Object.defineProperty(huge, "size", { value: 10 * 1024 * 1024 + 1 });
     fireEvent.paste(box, {
@@ -537,9 +547,9 @@ describe("ChatPane", () => {
         : Promise.resolve(undefined)
     );
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
-    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    const box = screen.getByRole("textbox", { name: "Message Claude Code" });
     expect(box).toHaveAttribute("aria-disabled", "true");
-    expect(box).toHaveAttribute("aria-placeholder", "Starting Claude…");
+    expect(box).toHaveAttribute("aria-placeholder", "Starting Claude Code…");
 
     await act(async () => resolveOpen(snapshot()));
     expect(box).not.toHaveAttribute("aria-disabled");
@@ -547,7 +557,7 @@ describe("ChatPane", () => {
   });
 
   it.each([
-    ["claude", "Claude is working — messages you send now run after this turn (Esc to stop)"],
+    ["claude", "Claude Code is working — messages you send now run after this turn (Esc to stop)"],
     ["codex", "Codex is working — messages you send now are added to this turn (Esc to stop)"],
   ] as const)("tells how %s handles messages sent mid-turn", async (agent, placeholder) => {
     mocks.invoke.mockImplementation((command: string) =>
@@ -556,7 +566,7 @@ describe("ChatPane", () => {
         : Promise.resolve(undefined)
     );
     render(<ChatPane taskId="t1" agent={agent} folders={["/wt/a"]} />);
-    const box = screen.getByRole("textbox", { name: `Message ${AGENTS[agent].label}` });
+    const box = screen.getByRole("textbox", { name: `Message ${describeAgent(agent).label}` });
     await waitFor(() => expect(box).toHaveAttribute("aria-placeholder", placeholder));
   });
 
@@ -600,7 +610,7 @@ describe("ChatPane", () => {
 
   it("opens the model picker from /model instead of sending it", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
-    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
     typeInto(box, "/mo");
     const commands = screen.getByRole("listbox", { name: "Commands" });
     expect(within(commands).getAllByRole("option")[0]).toHaveTextContent("/model");
@@ -625,7 +635,7 @@ describe("ChatPane", () => {
 
   it("handles typed UI commands and inserts pass-through ones", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
-    const box = await screen.findByRole("textbox", { name: "Message Claude" });
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
     typeInto(box, "/plan");
     fireEvent.keyDown(box, { key: "Escape" });
     fireEvent.keyDown(box, { key: "Enter" });
@@ -720,7 +730,7 @@ describe("ChatPane", () => {
   it("opens plan usage from /status and the context ring, updating with new limits", async () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     await screen.findByText("Fix the bug");
-    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    const box = screen.getByRole("textbox", { name: "Message Claude Code" });
     typeInto(box, "/status");
     fireEvent.keyDown(box, { key: "Enter" });
     expect(await screen.findByText("Loading usage…")).toBeInTheDocument();
@@ -854,7 +864,6 @@ describe("ChatPane", () => {
   it("lists the worktree's conversations, resumes one and renames another", async () => {
     mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
       if (command === "chat_open") return Promise.resolve(snapshot());
-      if (command === "check_app_installed") return Promise.resolve(true);
       if (command === "chat_sessions" && args?.agent === "codex")
         return Promise.reject("codex app-server crashed");
       if (command === "chat_sessions")
@@ -1386,7 +1395,7 @@ it.each(["claude", "codex"] as const)(
   async (agent) => {
     render(<ChatPane taskId="t1" agent={agent} folders={["/wt/a"]} />);
     await screen.findByRole("textbox", {
-      name: `Message ${agent === "claude" ? "Claude" : "Codex"}`,
+      name: `Message ${describeAgent(agent).label}`,
     });
     const indicator = screen.queryByRole("button", { name: "Claude Code usage and limits" });
     if (agent === "claude") {
@@ -1403,9 +1412,9 @@ it.each(["claude", "codex"] as const)(
 
 describe("switching agents", () => {
   it("offers only installed agents and lists only their conversations", async () => {
+    mocks.catalog = AGENT_CATALOG.map((agent) => ({ ...agent, installed: agent.id === "claude" }));
     mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
       if (command === "chat_open") return Promise.resolve(snapshot());
-      if (command === "check_app_installed") return Promise.resolve(false);
       if (command === "chat_sessions")
         return args?.agent === "claude"
           ? Promise.resolve({ sessions: [], canRename: false, canArchive: false })
@@ -1414,19 +1423,33 @@ describe("switching agents", () => {
     });
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} onSwitchAgent={vi.fn()} />);
     await screen.findByText("Fix the bug");
+    fireEvent.click(screen.getByRole("button", { name: "Agent: Claude Code" }));
     await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith("check_app_installed", { editor: "codex" })
+      expect(
+        within(screen.getByRole("listbox", { name: "Agent" })).getAllByRole("option")
+      ).toHaveLength(1)
     );
-    fireEvent.click(screen.getByRole("button", { name: "Agent: Claude" }));
-    expect(
-      within(screen.getByRole("listbox", { name: "Agent" })).getAllByRole("option")
-    ).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
     expect(await screen.findByText("No conversations in this worktree yet.")).toBeInTheDocument();
     expect(mocks.invoke).not.toHaveBeenCalledWith(
       "chat_sessions",
       expect.objectContaining({ agent: "codex" })
     );
+  });
+
+  it("runs an agent outside the catalog under its id and offers the installed ones", async () => {
+    render(<ChatPane taskId="t1" agent="gemini" folders={["/wt/a"]} onSwitchAgent={vi.fn()} />);
+    await screen.findByText("Fix the bug");
+    expect(screen.getByRole("textbox", { name: "Message gemini" })).toHaveAttribute(
+      "aria-placeholder",
+      expect.stringMatching(/^Message gemini — /)
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Agent: gemini" }));
+    expect(
+      within(screen.getByRole("listbox", { name: "Agent" }))
+        .getAllByRole("option")
+        .map((option) => option.textContent)
+    ).toEqual(["1Claude Code", "2Codex", "3gemini"]);
   });
 
   const pickAgent = async (label: string) => {
@@ -1440,7 +1463,9 @@ describe("switching agents", () => {
       <ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} onSwitchAgent={onSwitchAgent} />
     );
     await screen.findByText("Fix the bug");
-    expect(screen.getByRole("button", { name: "Agent: Claude" })).toHaveClass("text-agent-claude");
+    expect(screen.getByRole("button", { name: "Agent: Claude Code" })).toHaveClass(
+      "text-agent-claude"
+    );
     await pickAgent("Codex");
     const dialog = screen.getByRole("dialog", { name: "Switch to Codex?" });
     expect(dialog).toHaveTextContent("reasoning, raw tool output");
@@ -1463,22 +1488,18 @@ describe("switching agents", () => {
   it("switches an empty chat directly and refuses while the agent works", async () => {
     const onSwitchAgent = vi.fn();
     mocks.invoke.mockImplementation((command: string) =>
-      Promise.resolve(
-        command === "chat_open"
-          ? snapshot({ items: [] })
-          : command === "check_app_installed" || undefined
-      )
+      Promise.resolve(command === "chat_open" ? snapshot({ items: [] }) : undefined)
     );
     render(
       <ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} onSwitchAgent={onSwitchAgent} />
     );
-    await pickAgent("Claude");
+    await pickAgent("Claude Code");
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(onSwitchAgent).toHaveBeenCalledWith({ agent: "claude", mode: "fresh" });
 
     onSwitchAgent.mockClear();
     emit(3, { type: "status", status: { kind: "busy" } });
-    await pickAgent("Claude");
+    await pickAgent("Claude Code");
     expect(onSwitchAgent).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("Wait for Codex to finish");
   });
@@ -1531,7 +1552,6 @@ describe("switching agents", () => {
     const onSwitchAgent = vi.fn();
     mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
       if (command === "chat_open") return Promise.resolve(snapshot());
-      if (command === "check_app_installed") return Promise.resolve(true);
       if (command === "chat_sessions")
         return Promise.resolve({
           sessions:

@@ -131,8 +131,8 @@ export type EditorApp = "cursor" | "vscode-web" | "claude-code" | "codex" | "ope
 
 export const DEFAULT_EDITOR_APP: EditorApp = "vscode-web";
 
-/** CLI agents that can run inside an embedded terminal or chat. */
-export type AgentId = "claude" | "codex";
+/** A CLI agent that can run inside an embedded terminal or chat: an id in the `agents_catalog`. */
+export type AgentId = string;
 
 /** Where a task opens: an external editor process, or a surface rendered inside the app. */
 export type TaskSurface =
@@ -144,8 +144,8 @@ export type TaskSurface =
 
 /** How an agent opens inside a task; remembered per agent, chat unless the user picks terminal. */
 export type AgentView = "chat" | "terminal";
-export type AgentViews = Record<AgentId, AgentView>;
-export const DEFAULT_AGENT_VIEWS: AgentViews = { claude: "chat", codex: "chat" };
+export type AgentViews = Partial<Record<AgentId, AgentView>>;
+export const DEFAULT_AGENT_VIEWS: AgentViews = {};
 
 /**
  * Editor-specific local config directories carried into a new worktree.

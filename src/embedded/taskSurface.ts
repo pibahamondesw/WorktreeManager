@@ -9,7 +9,7 @@ export const agentSurface = (
   agent: AgentId,
   views: AgentViews = DEFAULT_AGENT_VIEWS
 ): TaskSurface => ({
-  kind: views[agent],
+  kind: views[agent] === "terminal" ? "terminal" : "chat",
   agent,
 });
 

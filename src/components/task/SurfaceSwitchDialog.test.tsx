@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const useEditorOcclusion = vi.hoisted(() => vi.fn());
@@ -8,6 +8,16 @@ vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion }));
 import { SurfaceSwitchDialog } from "./SurfaceSwitchDialog";
 import { SurfaceSwitchPrompt } from "../../hooks/useOpenTask";
 import { AgentActivity } from "../../services/agentActivity";
+import { loadAgentCatalog } from "../../services/agents";
+import { invokeWithAgentCatalog } from "../../services/agents.fixture";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (command: string) => invokeWithAgentCatalog(() => undefined, command),
+}));
+
+beforeAll(async () => {
+  await loadAgentCatalog();
+});
 
 const prompt: SurfaceSwitchPrompt = {
   phase: "asking",

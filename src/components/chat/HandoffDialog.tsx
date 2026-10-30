@@ -1,6 +1,7 @@
 import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
-import { AGENTS } from "../../services/agents";
+import { useAgentCatalog } from "../../hooks/useAgentCatalog";
+import { describeAgent } from "../../services/agents";
 import { AgentId } from "../../types";
 
 export type HandoffChoice = "continue" | "new";
@@ -14,8 +15,9 @@ interface HandoffDialogProps {
 
 /** Asks how a conversation in progress moves to another agent, and what does not move with it. */
 export function HandoffDialog({ from, to, onChoose, onClose }: HandoffDialogProps) {
-  const source = AGENTS[from].label;
-  const target = AGENTS[to].label;
+  const catalog = useAgentCatalog();
+  const source = describeAgent(from, catalog).label;
+  const target = describeAgent(to, catalog).label;
   return (
     <Modal open onClose={onClose} title={`Switch to ${target}?`}>
       <div className="px-6 py-4 flex flex-col gap-3 text-sm text-text-secondary">

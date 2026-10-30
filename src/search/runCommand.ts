@@ -90,15 +90,14 @@ export async function runPaletteCommand(
       else deps.showToast("Could not open the pull request");
       return;
     }
-    case "open-claude":
-    case "open-codex": {
+    case "open-agent": {
       const task = deps.tasks.find((t) => t.id === action.taskId);
       if (!task) {
-        deps.showToast(`Could not open ${action.type === "open-codex" ? "Codex" : "Claude Code"}`);
+        deps.showToast(`Could not open ${action.label}`);
         return;
       }
       const opened = await deps.onOpenTask(task, {
-        agent: action.type === "open-codex" ? "codex" : "claude",
+        agent: action.agent,
         onMessage: deps.showToast,
         onError: deps.showToast,
       });

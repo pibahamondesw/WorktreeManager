@@ -3,6 +3,7 @@ import { homeDir } from "@tauri-apps/api/path";
 import { v4 as uuid } from "uuid";
 import { Workspace, WorkspaceRepo, GitStatus } from "../types";
 import { normalizeRepoScripts } from "../utils";
+import { isCatalogAgent } from "./agents";
 import {
   Operations,
   OperationError,
@@ -145,13 +146,13 @@ function taskInput(value: unknown): CreateTaskInput {
   return result;
 }
 
-function agentEvent(params: Record<string, unknown>): AgentEvent {
+async function agentEvent(params: Record<string, unknown>): Promise<AgentEvent> {
   const state = text(params.state);
   const agent = text(params.agent);
   if (!AGENT_ACTIVITY_STATES.includes(state as AgentActivityState))
     throw new OperationError("invalid_params", "state must be working, waiting or done.");
-  if (agent !== "claude" && agent !== "codex")
-    throw new OperationError("invalid_params", "agent must be claude or codex.");
+  if (!(await isCatalogAgent(agent)))
+    throw new OperationError("invalid_params", `agent ${agent} is not in the agent catalog.`);
   if (typeof params.at !== "number" || !Number.isFinite(params.at))
     throw new OperationError("invalid_params", "at must be a timestamp.");
   const event: AgentEvent = {
@@ -313,7 +314,7 @@ export async function dispatchCliBridge(
         return { ok: true, ...(await operations.deleteTask(text(params.id), options)) };
       }
       case "agent.event": {
-        const event = agentEvent(params);
+        const event = await agentEvent(params);
         if (!onAgentEvent)
           throw new OperationError("app_not_ready", "Agent events are not handled yet.");
         result = onAgentEvent(event);

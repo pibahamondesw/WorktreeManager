@@ -1,7 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { TaskSurface } from "../types";
 import { AgentActivity } from "../services/agentActivity";
+import { loadAgentCatalog } from "../services/agents";
+import { invokeWithAgentCatalog } from "../services/agents.fixture";
 import { interruptedAgent, landingSurface, planTaskOpen, surfaceLabel } from "./surfaceSwitch";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (command: string) => invokeWithAgentCatalog(() => undefined, command),
+}));
+
+beforeAll(async () => {
+  await loadAgentCatalog();
+});
 
 const vsCode: TaskSurface = { kind: "editor" };
 const openCode: TaskSurface = { kind: "opencode" };
@@ -71,6 +81,7 @@ describe("surfaceLabel", () => {
       "Codex chat",
     ]);
     expect(surfaceLabel({ kind: "external" })).toBe("an external editor");
+    expect(surfaceLabel({ kind: "chat", agent: "gemini" })).toBe("gemini chat");
   });
 });
 

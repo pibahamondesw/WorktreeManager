@@ -13,6 +13,7 @@ import { SearchIcon } from "../ui/Icons";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { WorktreeListToast } from "../worktree/WorktreeListToast";
 import { OpenTaskOptions } from "../../hooks/useOpenTask";
+import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import {
   parseQuery,
   parsePaletteInput,
@@ -129,6 +130,7 @@ export function QuickSearchModal({
     });
   }, [open, initialQuery]);
 
+  const agents = useAgentCatalog();
   const lastVisitAt = useMemo(() => lastTaskVisits(historyEntries), [historyEntries]);
 
   const commands = useMemo(
@@ -140,6 +142,7 @@ export function QuickSearchModal({
             tasks,
             themeId,
             editorApp,
+            agents,
             readyPrsByTask,
             shortcutOverrides,
           })
@@ -151,6 +154,7 @@ export function QuickSearchModal({
       tasks,
       themeId,
       editorApp,
+      agents,
       readyPrsByTask,
       shortcutOverrides,
     ]

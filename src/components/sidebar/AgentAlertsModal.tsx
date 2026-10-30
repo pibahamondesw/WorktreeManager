@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Button } from "../ui/Button";
 import { AgentId } from "../../types";
-import { AGENT_IDS, AGENTS } from "../../services/agents";
+import { agentPresentation } from "../../services/agents";
+import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import {
   AgentAlertSettings,
   AgentHooksStatus,
@@ -41,6 +42,7 @@ export function AgentAlertSettingsPanel({
   const [busy, setBusy] = useState<AgentId | null>(null);
   const [confirming, setConfirming] = useState<AgentId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const catalog = useAgentCatalog();
 
   useEffect(() => {
     if (!open) return;
@@ -52,7 +54,7 @@ export function AgentAlertSettingsPanel({
   }, [open]);
 
   const toggleHooks = async (agent: AgentId) => {
-    const state = hooks?.[agent].state;
+    const state = hooks?.[agent]?.state;
     if (state === "otherApp" && confirming !== agent) {
       setConfirming(agent);
       return;
@@ -92,8 +94,9 @@ export function AgentAlertSettingsPanel({
           report it on their own. Subagent activity is ignored. Alerts require WorktreeManager to be
           running. Your other hooks are kept as they are.
         </p>
-        {AGENT_IDS.map((id) => {
+        {catalog.map(({ id, label }) => {
           const state = hooks?.[id];
+          const { alertHooksConfig, alertHooksTrust } = agentPresentation(id);
           return (
             <div
               key={id}
@@ -101,14 +104,12 @@ export function AgentAlertSettingsPanel({
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm text-text-primary">{AGENTS[id].productName}</p>
+                  <p className="text-sm text-text-primary">{label}</p>
                   <p className="text-xs font-mono text-text-muted truncate select-text">
-                    {AGENTS[id].alertHooksConfig}
+                    {alertHooksConfig}
                   </p>
-                  {AGENTS[id].alertHooksTrust && state && state.state !== "missing" && (
-                    <p className="text-xs text-text-muted select-text">
-                      {AGENTS[id].alertHooksTrust}
-                    </p>
+                  {alertHooksTrust && state && state.state !== "missing" && (
+                    <p className="text-xs text-text-muted select-text">{alertHooksTrust}</p>
                   )}
                 </div>
                 <Button

@@ -114,7 +114,7 @@ describe("normalization", () => {
       path: null,
     });
     expect(normalizers.agentViews({ claude: "terminal", codex: "bad", extra: "terminal" })).toEqual(
-      { claude: "terminal", codex: "chat" }
+      { claude: "terminal", extra: "terminal" }
     );
     expect(normalizers.customTheme({ accent: "red", broken: 42 })).toEqual({ accent: "red" });
     expect(normalizers.scriptApprovals({ "/a": ["ok", 1], "/b": "bad" })).toEqual({
@@ -237,7 +237,7 @@ describe("optimistic preferences", () => {
     );
     await Promise.all([first, second]);
 
-    expect(session.value.agentViews).toEqual({ claude: "chat", codex: "terminal" });
+    expect(session.value.agentViews).toEqual({ codex: "terminal" });
     expect(data.get("agentViews")).toEqual(session.value.agentViews);
   });
 });
