@@ -119,6 +119,14 @@ impl RunStore {
             .collect();
         Ok(RunPage { runs, next_before })
     }
+
+    pub fn run(&self, name: &str, run_id: &str) -> Result<RunState, String> {
+        let runs_dir = self.automation_dir(name)?.join("runs");
+        if !is_run_id(run_id) || !runs_dir.join(run_id).join(EVENTS_FILE).is_file() {
+            return Err(format!("No run {run_id} for automation {name}"));
+        }
+        read_run(&runs_dir, run_id)
+    }
 }
 
 #[cfg_attr(
@@ -221,6 +229,18 @@ pub async fn automation_runs_list<R: Runtime>(
     tauri::async_runtime::spawn_blocking(move || store.list_runs(&name, before.as_deref(), limit))
         .await
         .map_err(|_| "Could not list automation runs".to_string())?
+}
+
+#[tauri::command]
+pub async fn automation_run_get<R: Runtime>(
+    app: AppHandle<R>,
+    name: String,
+    run_id: String,
+) -> Result<RunState, String> {
+    let store = RunStore::of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || store.run(&name, &run_id))
+        .await
+        .map_err(|_| "Could not read the automation run".to_string())?
 }
 
 fn is_automation_name(name: &str) -> bool {

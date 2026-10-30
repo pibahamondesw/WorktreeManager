@@ -29,6 +29,10 @@ wtm task get <id> --git                  # plus ahead/behind/dirty per member re
 wtm task create --input task.json        # or --input - for stdin
 wtm task link-issue <id> --issue WOR-123
 wtm task delete <id> --keep-worktrees|--delete-worktrees [--force] [--skip-teardown]
+wtm automation list                      # automations with their definition, errors and warnings
+wtm automation get <name>
+wtm automation runs <name> [--before <run_id>] [--limit <n>]   # newest first; page with next_before
+wtm automation status <name> <run_id>    # one run: status, items and step attempts
 ```
 
 Task input: `{"workspaceId":"…","branchName":"…","repoIds":["…"],"linearIssue":{"id":"<uuid>","identifier":"WOR-80","title":"…"}}`. Omit `repoIds` to include every repository. With `linearIssue`, pass Linear's exact `branchName`.

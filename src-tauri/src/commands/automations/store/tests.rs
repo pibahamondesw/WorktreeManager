@@ -636,3 +636,51 @@ fn the_runs_command_lists_from_app_data() {
     .unwrap();
     assert_eq!(page.runs[0].id, id);
 }
+
+#[test]
+fn reads_a_single_run_and_reports_unknown_or_invalid_ids() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let writer = store.writer("babysitter").unwrap();
+    let id = created(writer.claim(trigger("manual:1")).unwrap());
+    writer.append(&id, &RunEvent::Started).unwrap();
+
+    let run = store.run("babysitter", &id).unwrap();
+    assert_eq!(
+        (run.id.as_str(), run.status),
+        (id.as_str(), RunStatus::Running)
+    );
+    for (name, run_id) in [
+        ("babysitter", "0000000000001-abcdef12"),
+        ("babysitter", "../x"),
+        ("other", id.as_str()),
+    ] {
+        assert_eq!(
+            store.run(name, run_id).unwrap_err(),
+            format!("No run {run_id} for automation {name}")
+        );
+    }
+    assert!(store
+        .run("../x", &id)
+        .unwrap_err()
+        .starts_with("Invalid automation name"));
+}
+
+#[test]
+fn the_run_command_reads_from_app_data() {
+    let scratch = Scratch::new();
+    let app_data = scratch.0.join("app-data");
+    let writer = RunStore::new(&app_data).writer("babysitter").unwrap();
+    let id = created(writer.claim(trigger("manual:1")).unwrap());
+    let mut context = mock_context(noop_assets());
+    context.config_mut().identifier = app_data.to_string_lossy().into_owned();
+    let app = mock_builder().build(context).unwrap();
+
+    let run = tauri::async_runtime::block_on(automation_run_get(
+        app.handle().clone(),
+        "babysitter".into(),
+        id.clone(),
+    ))
+    .unwrap();
+    assert_eq!(run.id, id);
+}
