@@ -15,6 +15,8 @@ pub enum RunEvent {
     Claimed(RunTrigger),
     Skipped {
         reason: SkipReason,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        missed: Option<MissedSlots>,
     },
     Started,
     Interrupted,
@@ -80,6 +82,14 @@ pub struct RunTrigger {
     pub definition_hash: Option<String>,
     #[serde(default)]
     pub test: bool,
+}
+
+/// The schedule slots an `asleep` skip stands for, as UTC RFC 3339 instants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissedSlots {
+    pub count: u64,
+    pub first: String,
+    pub last: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,6 +208,7 @@ pub struct RunState {
     pub trigger: Option<RunTrigger>,
     pub status: RunStatus,
     pub skip_reason: Option<SkipReason>,
+    pub missed_slots: Option<MissedSlots>,
     pub failure_reason: Option<FailureReason>,
     pub outcome: Option<RunOutcome>,
     pub claimed_at_ms: Option<u64>,
@@ -273,6 +284,7 @@ pub fn reduce(id: &str, events: impl IntoIterator<Item = LoggedEvent>) -> RunSta
         trigger: None,
         status: RunStatus::Starting,
         skip_reason: None,
+        missed_slots: None,
         failure_reason: None,
         outcome: None,
         claimed_at_ms: None,
@@ -300,9 +312,10 @@ impl RunState {
                 RunStatus::Interrupted,
             ),
             RunEvent::Resumed => self.transition(&[RunStatus::Interrupted], RunStatus::Running),
-            RunEvent::Skipped { reason } => {
+            RunEvent::Skipped { reason, missed } => {
                 if self.end(at_ms, RunStatus::Skipped) {
                     self.skip_reason = Some(reason);
+                    self.missed_slots = missed;
                 }
             }
             RunEvent::Completed { outcome } => {

@@ -543,17 +543,19 @@ impl Sources {
     }
 }
 
+/// Blocking: probes the agent catalog and reads every definition.
+pub fn load_current<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<AutomationEntry>, String> {
+    let (dir, env) = Sources::of(app)?.environment();
+    load_directory(&dir, &env)
+}
+
 #[tauri::command]
 pub async fn automations_list<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<Vec<AutomationEntry>, String> {
-    let sources = Sources::of(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let (dir, env) = sources.environment();
-        load_directory(&dir, &env)
-    })
-    .await
-    .map_err(|_| "Could not load the automations".to_string())?
+    tauri::async_runtime::spawn_blocking(move || load_current(&app))
+        .await
+        .map_err(|_| "Could not load the automations".to_string())?
 }
 
 #[tauri::command]
