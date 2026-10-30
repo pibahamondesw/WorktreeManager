@@ -311,7 +311,9 @@ fn skips_slots_while_running_capped_or_paused() {
                 item: "main".into(),
                 status: ItemStatus::Active,
                 phase: None,
+                stage: None,
                 cause: None,
+                counter: None,
             },
         )
         .unwrap();

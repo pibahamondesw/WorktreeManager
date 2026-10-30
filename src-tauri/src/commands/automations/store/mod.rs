@@ -131,15 +131,11 @@ impl RunStore {
 
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the scheduler (WOR-248) is the first writer")
+    allow(dead_code, reason = "the scheduler (WOR-248) is the first writer")
 )]
 impl RunStore {
     pub fn run_ids(&self, name: &str) -> Result<Vec<String>, String> {
         run_ids(&self.automation_dir(name)?.join("runs"))
-    }
-
-    pub fn run(&self, name: &str, id: &str) -> Result<RunState, String> {
-        read_run(&self.automation_dir(name)?.join("runs"), id)
     }
 
     pub fn state(&self, name: &str) -> Result<AutomationState, String> {
@@ -161,7 +157,7 @@ impl RunStore {
 
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the scheduler (WOR-248) is the first writer")
+    allow(dead_code, reason = "the scheduler (WOR-248) is the first writer")
 )]
 impl AutomationWriter {
     pub fn save_state(&self, state: &AutomationState) -> Result<(), String> {
