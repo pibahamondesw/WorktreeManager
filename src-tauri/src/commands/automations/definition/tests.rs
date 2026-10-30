@@ -6,7 +6,9 @@ use serde_json::{json, Value};
 
 use super::fields::{duration_secs, is_step_id, string_list, template, Fields, Report};
 use super::*;
-use crate::commands::agents::{claude, codex, AgentCapabilities, AgentDescriptor};
+use crate::commands::agents::{
+    claude, codex, permission::PermissionMode, AgentCapabilities, AgentDescriptor,
+};
 
 const TARGET: &str = "target:\n  workspace: Fintoc\n  repos: [fintoc-rails]\n";
 const AGENT: &str = "agent: { id: claude }\n";
@@ -33,7 +35,11 @@ fn capabilities(enabled: bool) -> AgentCapabilities {
         archive: enabled,
         models: enabled,
         effort: enabled,
-        permission_modes: enabled,
+        permission_modes: if enabled {
+            &[PermissionMode::Interactive, PermissionMode::Unattended]
+        } else {
+            &[PermissionMode::Interactive]
+        },
         interrupt: enabled,
         steer: enabled,
         compact: enabled,

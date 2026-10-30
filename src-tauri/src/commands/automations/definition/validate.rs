@@ -18,7 +18,7 @@ use super::{
     RepoRef, ReportPolicy, ResultSchema, Schedule, Step, StepKind, StopAfter, Target, TargetRepo,
     TaskMode, Tracker, Transition, Trigger, Verb, WaitStep, WorkspaceRef,
 };
-use crate::commands::agents::AgentDescriptor;
+use crate::commands::agents::{permission::PermissionMode as AgentPermissionMode, AgentDescriptor};
 
 const SUPPORTED_SCHEMA: u64 = 1;
 const MAX_DESCRIPTION_CHARS: usize = 500;
@@ -788,7 +788,12 @@ fn missing_capabilities(agent: &AgentDescriptor, settings: &AgentSettings) -> Ve
             "models",
         ),
         (settings.effort.is_some() && !capabilities.effort, "effort"),
-        (!capabilities.permission_modes, "permission_modes"),
+        (
+            !capabilities
+                .permission_modes
+                .contains(&AgentPermissionMode::Unattended),
+            "permission_modes",
+        ),
     ]
     .into_iter()
     .filter_map(|(missing, capability)| missing.then_some(capability))
