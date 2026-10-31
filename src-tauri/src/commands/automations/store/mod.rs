@@ -186,12 +186,17 @@ impl AutomationWriter {
         for key in &keys {
             write_atomically(key, id.as_bytes()).map_err(|e| e.to_string())?;
         }
-        let line = event_line(&RunEvent::Claimed(trigger))?;
+        let line = line(&logged(&RunEvent::Claimed(trigger)))?;
         write_atomically(&self.events_path(&id), line.as_bytes()).map_err(|e| e.to_string())?;
         Ok(Claim::Created(id))
     }
 
     pub fn append(&self, run_id: &str, event: &RunEvent) -> Result<(), String> {
+        self.record(run_id, event).map(drop)
+    }
+
+    /// Appends the event and returns it as logged, with its timestamp.
+    pub fn record(&self, run_id: &str, event: &RunEvent) -> Result<LoggedEvent, String> {
         if !is_run_id(run_id) {
             return Err(format!("Invalid run id: {run_id}"));
         }
@@ -201,8 +206,10 @@ impl AutomationWriter {
             .open(self.events_path(run_id))
             .map_err(|e| format!("run {run_id}: {e}"))?;
         drop_truncated_tail(&mut file).map_err(|e| e.to_string())?;
-        file.write_all(event_line(event)?.as_bytes())
-            .map_err(|e| e.to_string())
+        let logged = logged(event);
+        file.write_all(line(&logged)?.as_bytes())
+            .map_err(|e| e.to_string())?;
+        Ok(logged)
     }
 
     fn events_path(&self, run_id: &str) -> PathBuf {
@@ -292,12 +299,15 @@ fn digest(key: &str) -> String {
     format!("{:x}", Sha256::digest(key.as_bytes()))
 }
 
-fn event_line(event: &RunEvent) -> Result<String, String> {
-    let logged = LoggedEvent {
+fn logged(event: &RunEvent) -> LoggedEvent {
+    LoggedEvent {
         at_ms: now_ms(),
         event: event.clone(),
-    };
-    serde_json::to_string(&logged)
+    }
+}
+
+fn line(logged: &LoggedEvent) -> Result<String, String> {
+    serde_json::to_string(logged)
         .map(|json| json + "\n")
         .map_err(|e| e.to_string())
 }

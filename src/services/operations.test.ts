@@ -254,6 +254,19 @@ describe("shared operations", () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  it("marks the tasks an automation creates", async () => {
+    const { operations } = fixture();
+    const { data: manual } = await operations.createTask(input);
+    expect(manual.automationId).toBeUndefined();
+    const { data: created } = await operations.createTask({
+      ...input,
+      branchName: "wtm/pr-babysitter/1a2b3c4d",
+      linearIssue: undefined,
+      automationId: "pr-babysitter",
+    });
+    expect(operations.task(created.id).automationId).toBe("pr-babysitter");
+  });
+
   it("creates with another editor, renames the workspace, opens Cursor and cleans by task ID", async () => {
     const { operations, lifecycle } = fixture([], "codex");
     const { data: created } = await operations.createTask(input);

@@ -215,6 +215,7 @@ impl AgentAdapter for Claude {
             compact: true,
             images: true,
             headless: true,
+            tool_rules: true,
         }
     }
 

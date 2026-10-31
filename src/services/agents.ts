@@ -18,6 +18,8 @@ interface AgentCapabilities {
   compact: boolean;
   images: boolean;
   headless: boolean;
+  /** Unattended sessions enforce per-session allow and deny tool rules. */
+  toolRules: boolean;
 }
 
 export interface AgentDescriptor {
@@ -83,6 +85,7 @@ const NO_CAPABILITIES: AgentCapabilities = {
   compact: false,
   images: false,
   headless: false,
+  toolRules: false,
 };
 
 let lastCatalog: AgentDescriptor[] = [];

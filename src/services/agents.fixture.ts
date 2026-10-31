@@ -13,6 +13,7 @@ const capabilities: AgentDescriptor["capabilities"] = {
   compact: true,
   images: true,
   headless: true,
+  toolRules: true,
 };
 
 /** The catalog `agents_catalog` returns for the built-in agents, both installed. */
@@ -22,7 +23,14 @@ export const AGENT_CATALOG: AgentDescriptor[] = [
     id: "codex",
     label: "Codex",
     installed: true,
-    capabilities: { ...capabilities, fork: "inSession", review: true, archive: true, steer: true },
+    capabilities: {
+      ...capabilities,
+      fork: "inSession",
+      review: true,
+      archive: true,
+      steer: true,
+      toolRules: false,
+    },
   },
 ];
 

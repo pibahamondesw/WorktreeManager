@@ -398,7 +398,7 @@ fn overdue(run: &RunState, deadline: TimeDelta, now: DateTime<Utc>) -> Option<Fa
     }
 }
 
-fn record_failure(state: &mut AutomationState) {
+pub(super) fn record_failure(state: &mut AutomationState) {
     state.consecutive_failures += 1;
     if state.consecutive_failures >= AUTO_PAUSE_FAILURES && state.enabled {
         state.enabled = false;
@@ -406,7 +406,7 @@ fn record_failure(state: &mut AutomationState) {
     }
 }
 
-fn is_active(status: RunStatus) -> bool {
+pub(super) fn is_active(status: RunStatus) -> bool {
     matches!(
         status,
         RunStatus::Starting | RunStatus::Running | RunStatus::Interrupted

@@ -92,6 +92,8 @@ pub struct AgentCapabilities {
     pub images: bool,
     /// Chat runs without a terminal, over the agent's stdio protocol.
     pub headless: bool,
+    /// Unattended sessions enforce per-session allow and deny tool rules.
+    pub tool_rules: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -327,6 +329,7 @@ mod tests {
                 compact: true,
                 images: true,
                 headless: true,
+                tool_rules: true,
             }
         );
     }
@@ -348,6 +351,7 @@ mod tests {
                 compact: true,
                 images: true,
                 headless: true,
+                tool_rules: false,
             }
         );
     }

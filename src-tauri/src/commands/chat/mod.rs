@@ -27,6 +27,7 @@ mod sessions;
 mod turns;
 
 pub(crate) use conversations::ConversationFork;
+pub(crate) use headless::{HeadlessRequest, TurnEnd};
 pub use interrupted::record_interrupted_sessions;
 pub(crate) use model::{ChatItem, ItemKind, PlanUsage, UsageWindow};
 pub(crate) use sessions::{exchange, truncate, SessionList, SessionSummary, LIST_LIMIT};
