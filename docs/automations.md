@@ -299,7 +299,25 @@ The tracker uses the app's Linear credential; when it is missing, firings are sk
 A map from pool name to this automation's limit.
 
 - Built-in, per automation: `active` (items whose current step holds capacity; default `1`) and `open_prs` (open PRs created by this automation, checked against GitHub; default `3`). When either is full, selection stops and candidates are skipped with `capped`.
-- Global lease pools, **Deferred (WOR-255/WOR-265)**: names defined in the app's pool registry, shared by all automations and manual `wtm lease` use. The value is an integer (max leases this automation holds at once) or `{values: [..], hold: step | active | item}` (the subset of a valued pool, such as test slots, this automation may use). `hold: step` leases for each attempt of a step that `uses` it; `active` for as long as the item holds capacity; `item` until the item ends. Leases are released when their holder ends, fails or is interrupted. The registry's environment (for example `TEST_ENV_NUMBER`) is exported to agents and commands.
+- Global lease pools, **`uses` deferred (WOR-265)**: names defined in the app's pool registry (below), shared by all automations and manual `wtm lease` use. The value is an integer (max leases this automation holds at once) or `{values: [..], hold: step | active | item}` (the subset of a valued pool, such as test slots, this automation may use). `hold: step` leases for each attempt of a step that `uses` it; `active` for as long as the item holds capacity; `item` until the item ends. Leases are released when their holder ends, fails or is interrupted. The registry's environment (for example `TEST_ENV_NUMBER`) is exported to agents and commands.
+
+#### Lease pool registry
+
+The running app holds every lease, so automations and manual sessions share the same queues. Pools live in `~/.worktreemanager/pools.toml`; without the file only `heavy_checks` (one slot) exists, and the file adds pools or overrides it. Each pool has either `size` (values `1..size`) or a list of unique `values`, plus optional `env` where `{value}` is replaced by the leased value:
+
+```toml
+[heavy_checks]
+size = 1
+env = { PARALLEL_PROCESSOR_COUNT = "1" }
+
+[test_slot]
+values = [13, 14, 15, 16, 17]
+env = { TEST_ENV_NUMBER = "{value}" }
+```
+
+- `wtm lease run --pool <name> -- <command>` waits its turn (strict FIFO per pool), runs the command with the pool's `env` and releases the lease when the command ends or `wtm` dies (the lease is held by its connection to the app).
+- `wtm lease acquire --pool <name> [--holder <key>] [--pid <pid>]` keeps a lease until `wtm lease release <id>` or `--pool <name> [--holder <key>]`, or until `--pid` exits. `--holder` defaults to the current directory, and acquiring again with the same holder returns the same lease, so one slot per worktree is a single command.
+- `wtm lease status` lists pools, held leases and waiters. Leases live in memory: quitting the app releases them all. The file is read on every request; changes apply to new leases only.
 
 ### Budgets
 

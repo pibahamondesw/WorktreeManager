@@ -196,6 +196,7 @@ describe("Rust coverage pipeline", () => {
         "commands::scripts::tests::",
         "lifecycle::",
         "menu::",
+        "lease::",
       ]);
       expect(commands.find((call) => call.tool === "menu")?.args).toEqual([]);
       const tests = commands.filter((call) => call.tool === "unit tests" || call.tool === "menu");

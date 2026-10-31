@@ -5,6 +5,8 @@ pub mod cli;
 #[cfg(unix)]
 mod cli_bridge;
 mod commands;
+#[cfg(unix)]
+mod lease;
 mod lifecycle;
 mod menu;
 
