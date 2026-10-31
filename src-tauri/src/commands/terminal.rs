@@ -610,14 +610,13 @@ pub async fn run_task_script<R: Runtime>(
         {
             return Err("This script is already running.".to_string());
         }
-        let started = spawn_script(
-            &spec,
-            &session,
-            timeout_secs.map(Duration::from_secs),
-            move |code| {
-                let _ = exit_tx.send(code);
-            },
-        )?;
+        let on_exit = move |code| {
+            let _ = exit_tx.send(code);
+        };
+        let started = spawn_script(&spec, &session, on_exit)?;
+        if let Some(seconds) = timeout_secs {
+            started.interrupt_after(Duration::from_secs(seconds));
+        }
         sessions.insert(key.clone(), started)
     };
     if let Some(mut previous) = previous {
@@ -629,14 +628,9 @@ pub async fn run_task_script<R: Runtime>(
 fn spawn_script(
     spec: &LaunchSpec,
     session: &str,
-    timeout: Option<Duration>,
     on_exit: impl FnOnce(Option<i32>) + Send + 'static,
 ) -> Result<TerminalSession, String> {
-    let started = TerminalSession::spawn(spec, session, SCRIPT_COLS, SCRIPT_ROWS, on_exit)?;
-    if let Some(timeout) = timeout {
-        started.interrupt_after(timeout);
-    }
-    Ok(started)
+    TerminalSession::spawn(spec, session, SCRIPT_COLS, SCRIPT_ROWS, on_exit)
 }
 
 pub(crate) struct HeadlessExit {
@@ -655,9 +649,10 @@ pub(crate) fn run_headless(
     timeout: Option<Duration>,
 ) -> Result<HeadlessExit, String> {
     let (exit_tx, exit_rx) = std::sync::mpsc::channel();
-    let mut started = spawn_script(spec, session, None, move |code| {
+    let on_exit = move |code| {
         let _ = exit_tx.send(code);
-    })?;
+    };
+    let mut started = spawn_script(spec, session, on_exit)?;
     let exited = match timeout {
         Some(timeout) => exit_rx.recv_timeout(timeout).ok(),
         None => exit_rx.recv().ok(),

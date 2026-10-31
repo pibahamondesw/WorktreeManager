@@ -84,17 +84,9 @@ impl<C: CommandContext> CommandExecutor<C> {
 
     fn attempt(&mut self, request: &StepRequest, step: &CommandStep) -> Result<Execution, String> {
         let prepared = self.prepare(request, step)?;
-        if step.bind.is_some() {
-            if let Some(receipt) = self.receipts.current(
-                request.item,
-                request.stage,
-                &request.step.id,
-                &prepared.argv,
-                &prepared.cwd,
-            )? {
-                self.events.push(receipt.event(request.attempt, true));
-                return Ok(Execution::Skipped(receipt.report()));
-            }
+        if let Some(receipt) = self.reusable_receipt(request, step, &prepared)? {
+            self.events.push(receipt.event(request.attempt, true));
+            return Ok(Execution::Skipped(receipt.report()));
         }
         let leases = self.context.hold_leases(request)?;
         let env = [prepared.env.as_slice(), leases.env.as_slice()].concat();
@@ -132,6 +124,24 @@ impl<C: CommandContext> CommandExecutor<C> {
         self.receipts.save(&receipt)?;
         self.events.push(receipt.event(request.attempt, false));
         Ok(Execution::Finished(receipt.report()))
+    }
+
+    fn reusable_receipt(
+        &self,
+        request: &StepRequest,
+        step: &CommandStep,
+        prepared: &PreparedCommand,
+    ) -> Result<Option<Receipt>, String> {
+        if step.bind.is_none() {
+            return Ok(None);
+        }
+        self.receipts.current(
+            request.item,
+            request.stage,
+            &request.step.id,
+            &prepared.argv,
+            &prepared.cwd,
+        )
     }
 
     fn prepare(
