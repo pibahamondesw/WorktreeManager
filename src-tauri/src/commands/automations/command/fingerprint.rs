@@ -8,6 +8,9 @@ use sha2::{Digest, Sha256};
 
 use crate::commands::git::git_command;
 
+const UNSTAGED_DIFF: &[&str] = &["diff", "--binary", "--no-ext-diff", "--no-textconv"];
+const UNTRACKED_FILES: &[&str] = &["ls-files", "--others", "--exclude-standard", "-z"];
+
 /// The state of a worktree a receipt vouches for. Any commit, branch switch, staged change,
 /// edit of a tracked file or untracked file changes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,14 +26,8 @@ pub struct GitFingerprint {
 impl GitFingerprint {
     pub fn of(worktree: &Path) -> Result<Self, String> {
         let index = git(worktree, &["ls-files", "--stage", "-z"])?;
-        let unstaged = git(
-            worktree,
-            &["diff", "--binary", "--no-ext-diff", "--no-textconv"],
-        )?;
-        let untracked = git(
-            worktree,
-            &["ls-files", "--others", "--exclude-standard", "-z"],
-        )?;
+        let unstaged = git(worktree, UNSTAGED_DIFF)?;
+        let untracked = git(worktree, UNTRACKED_FILES)?;
         let mut changes = Sha256::new();
         changes.update(&unstaged);
         for path in untracked.split(|&byte| byte == 0).filter(|p| !p.is_empty()) {
