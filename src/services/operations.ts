@@ -95,6 +95,8 @@ export interface CreateTaskInput {
     projectId?: string;
     projectName?: string;
   };
+  /** The automation that creates the task. */
+  automationId?: string;
 }
 
 export interface DeleteOptions {
@@ -541,6 +543,7 @@ export class Operations {
         members,
         createdAt: new Date().toISOString(),
         workspaceFilePath: null,
+        ...(input.automationId ? { automationId: input.automationId } : {}),
         ...(input.linearIssue
           ? {
               linearIssueId: input.linearIssue.id,

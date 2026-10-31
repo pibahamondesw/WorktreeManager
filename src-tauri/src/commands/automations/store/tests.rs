@@ -256,6 +256,7 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 verdict: Some(Verdict::Reject),
                 cause: Some("timeout".into()),
                 head: Some("abc".into()),
+                session_id: None,
             },
             StepAttemptState {
                 step: "fix".into(),
@@ -268,11 +269,70 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 verdict: None,
                 cause: None,
                 head: None,
+                session_id: None,
             },
         ]
     );
     assert_eq!(b.status, ItemStatus::Canceled);
     assert!(b.steps.is_empty());
+}
+
+#[test]
+fn runs_record_their_task_and_the_session_of_each_agent_attempt() {
+    let created = |item: &str| RunEvent::ItemCreated {
+        item: item.into(),
+        version: "1".into(),
+        title: None,
+    };
+    let session = |step: &str| RunEvent::SessionStarted {
+        item: "routine".into(),
+        step: step.into(),
+        attempt: 1,
+        session_id: format!("{step}-session"),
+    };
+    let run = reduce(
+        "r1",
+        [
+            at(1, RunEvent::Claimed(trigger("manual:1"))),
+            at(
+                2,
+                RunEvent::TaskResolved {
+                    task_id: "t1".into(),
+                    created: true,
+                },
+            ),
+            at(3, created("routine")),
+            at(4, step("routine", 1, StepStatus::Running)),
+            at(5, session("fix")),
+            at(6, step("routine", 1, StepStatus::Succeeded)),
+            at(7, session("fix")),
+        ],
+    );
+    assert_eq!(run.task_id.as_deref(), Some("t1"));
+    assert_eq!(run.task_error, None);
+    assert_eq!(
+        run.items[0].steps[0].session_id.as_deref(),
+        Some("fix-session")
+    );
+
+    let failed = reduce(
+        "r2",
+        [at(
+            1,
+            RunEvent::TaskFailed {
+                message: "Worktrees exist".into(),
+                worktrees: vec!["/w/rails".into()],
+            },
+        )],
+    );
+    assert_eq!(failed.task_id, None);
+    assert_eq!(
+        failed.task_error,
+        Some(TaskError {
+            message: "Worktrees exist".into(),
+            worktrees: vec!["/w/rails".into()],
+        })
+    );
 }
 
 #[test]

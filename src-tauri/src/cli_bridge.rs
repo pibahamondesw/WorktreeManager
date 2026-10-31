@@ -19,7 +19,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{ipc::Channel, State};
+use tauri::{ipc::Channel, AppHandle, Manager, Runtime, State};
+
+use crate::commands::automations::routine::OperationsBridge;
 
 pub const VERSION: u32 = 1;
 pub const MAX_MESSAGE: u64 = 1024 * 1024;
@@ -208,8 +210,9 @@ fn handle_connection(mut stream: UnixStream, shared: Arc<Shared>) {
             return;
         }
     };
+    let id = request.id.clone();
     let mut respond = |mut response: Value| {
-        response["id"] = json!(request.id);
+        response["id"] = json!(id);
         response["version"] = json!(VERSION);
         send(&mut stream, &response)
     };
@@ -227,40 +230,13 @@ fn handle_connection(mut stream: UnixStream, shared: Arc<Shared>) {
         ));
         return;
     }
-    let token = shared.next_id.fetch_add(1, Ordering::Relaxed).to_string();
-    let (sender, receiver) = mpsc::channel();
-    {
-        let frontend = shared.frontend.lock().unwrap();
-        let Some(frontend) = frontend.as_ref() else {
-            let _ = respond(failure(
-                "app_not_ready",
-                "Wait for the app to finish loading.",
-            ));
-            return;
-        };
-        shared.pending.lock().unwrap().insert(
-            token.clone(),
-            Pending {
-                session: frontend.session.clone(),
-                sender,
-            },
-        );
-        if frontend
-            .channel
-            .send(Delivery {
-                token: token.clone(),
-                request: request.clone(),
-            })
-            .is_err()
-        {
-            shared.pending.lock().unwrap().remove(&token);
-            let _ = respond(failure(
-                "frontend_disconnected",
-                "The app interface is unavailable.",
-            ));
+    let (token, receiver) = match deliver(&shared, request) {
+        Ok(delivered) => delivered,
+        Err(response) => {
+            let _ = respond(response);
             return;
         }
-    }
+    };
     loop {
         match receiver.recv_timeout(Duration::from_secs(5)) {
             Ok(value) => {
@@ -284,6 +260,85 @@ fn handle_connection(mut stream: UnixStream, shared: Arc<Shared>) {
         }
     }
     shared.pending.lock().unwrap().remove(&token);
+}
+
+/// Hands the request to the frontend; the receiver gets its progress and its response.
+fn deliver(shared: &Shared, request: Request) -> Result<(String, mpsc::Receiver<Value>), Value> {
+    let token = shared.next_id.fetch_add(1, Ordering::Relaxed).to_string();
+    let (sender, receiver) = mpsc::channel();
+    let frontend = shared.frontend.lock().unwrap();
+    let Some(frontend) = frontend.as_ref() else {
+        return Err(failure(
+            "app_not_ready",
+            "Wait for the app to finish loading.",
+        ));
+    };
+    shared.pending.lock().unwrap().insert(
+        token.clone(),
+        Pending {
+            session: frontend.session.clone(),
+            sender,
+        },
+    );
+    let delivery = Delivery {
+        token: token.clone(),
+        request,
+    };
+    if frontend.channel.send(delivery).is_err() {
+        shared.pending.lock().unwrap().remove(&token);
+        return Err(failure(
+            "frontend_disconnected",
+            "The app interface is unavailable.",
+        ));
+    }
+    Ok((token, receiver))
+}
+
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the routine executor (WOR-249) waits for WOR-253")
+)]
+impl CliBridge {
+    /// Runs an operation through the frontend as a CLI request would, blocking until it answers.
+    pub fn call(&self, method: &str, params: Value) -> Value {
+        let request = Request {
+            id: uuid::Uuid::new_v4().to_string(),
+            version: VERSION,
+            method: method.into(),
+            params,
+        };
+        let (token, receiver) = match deliver(&self.shared, request) {
+            Ok(delivered) => delivered,
+            Err(response) => return response,
+        };
+        let response = loop {
+            match receiver.recv_timeout(Duration::from_secs(5)) {
+                Ok(value) if value.get("ok").is_some() => break value,
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout)
+                    if !self.shared.stopped.load(Ordering::Acquire) => {}
+                Err(_) => break failure("app_closed", "The app closed before answering."),
+            }
+        };
+        self.shared.pending.lock().unwrap().remove(&token);
+        response
+    }
+}
+
+/// The app's bridge as the automation engine calls it.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the routine executor (WOR-249) waits for WOR-253")
+)]
+pub struct AppOperations<R: Runtime>(pub AppHandle<R>);
+
+impl<R: Runtime> OperationsBridge for AppOperations<R> {
+    fn call(&self, method: &str, params: Value) -> Value {
+        match self.0.try_state::<CliBridge>() {
+            Some(bridge) => bridge.call(method, params),
+            None => failure("app_not_ready", "The CLI bridge is not running."),
+        }
+    }
 }
 
 #[tauri::command]
@@ -613,5 +668,111 @@ mod tests {
         let mut oversized = vec![b' '; MAX_MESSAGE as usize];
         oversized.push(b'\n');
         assert!(read_message(&mut std::io::Cursor::new(oversized)).is_err());
+    }
+
+    fn answer_with(server: &Server, answer: impl Fn(&Pending) + Send + Sync + 'static) {
+        let shared = server.cli_bridge().shared.clone();
+        let channel = Channel::new(move |body| {
+            let delivery: Delivery = body.deserialize().unwrap();
+            assert_eq!(delivery.request.method, "task.create");
+            assert_eq!(delivery.request.params["input"]["branchName"], "wtm/demo");
+            let pending = shared.pending.lock().unwrap();
+            answer(pending.get(&delivery.token).unwrap());
+            Ok(())
+        });
+        *server.cli_bridge().shared.frontend.lock().unwrap() = Some(Frontend {
+            session: "main".into(),
+            channel,
+        });
+    }
+
+    #[test]
+    fn in_process_calls_wait_through_progress_for_the_frontend_answer() {
+        let server = Server::new();
+        let params = json!({ "input": { "branchName": "wtm/demo" } });
+        assert_eq!(
+            server.cli_bridge().call("task.create", params.clone())["error"]["code"],
+            "app_not_ready"
+        );
+        answer_with(&server, |pending| {
+            pending
+                .sender
+                .send(json!({ "progress": "Creating" }))
+                .unwrap();
+            pending
+                .sender
+                .send(json!({ "ok": true, "data": { "id": "t1" } }))
+                .unwrap();
+        });
+        let response = server.cli_bridge().call("task.create", params);
+        assert_eq!(response["data"]["id"], "t1");
+        assert!(server
+            .cli_bridge()
+            .shared
+            .pending
+            .lock()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn in_process_calls_fail_when_the_app_closes_before_answering() {
+        let server = Server::new();
+        let shared = server.cli_bridge().shared.clone();
+        answer_with(&server, move |_| {
+            shared.stopped.store(true, Ordering::Release);
+        });
+        let bridge = server.cli_bridge();
+        let pending = bridge.shared.clone();
+        let response = std::thread::scope(|scope| {
+            let call = scope.spawn(|| {
+                bridge.call(
+                    "task.create",
+                    json!({ "input": { "branchName": "wtm/demo" } }),
+                )
+            });
+            while pending.pending.lock().unwrap().is_empty() && !call.is_finished() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            pending.pending.lock().unwrap().clear();
+            call.join().unwrap()
+        });
+        assert_eq!(response["error"]["code"], "app_closed");
+    }
+
+    #[test]
+    fn in_process_calls_report_a_closed_frontend_channel() {
+        let server = Server::new();
+        *server.cli_bridge().shared.frontend.lock().unwrap() = Some(Frontend {
+            session: "main".into(),
+            channel: Channel::new(|_| Err(tauri::Error::FailedToReceiveMessage)),
+        });
+        let response = server.cli_bridge().call("task.create", json!({}));
+        assert_eq!(response["error"]["code"], "frontend_disconnected");
+        assert!(server
+            .cli_bridge()
+            .shared
+            .pending
+            .lock()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn app_operations_call_the_managed_bridge() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let without = mock_builder().build(mock_context(noop_assets())).unwrap();
+        let response = AppOperations(without.handle().clone()).call("task.get", json!({}));
+        assert_eq!(
+            response["error"]["message"],
+            "The CLI bridge is not running."
+        );
+        let mut server = Server::new();
+        let app = mock_builder()
+            .manage(server.cli_bridge.take().unwrap())
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let response = AppOperations(app.handle().clone()).call("task.get", json!({}));
+        assert_eq!(response["error"]["code"], "app_not_ready");
     }
 }

@@ -129,6 +129,20 @@ describe("cli bridge contract", () => {
   });
 });
 
+it("passes the creating automation through task creation", async () => {
+  const create = vi
+    .spyOn(operations, "createTask")
+    .mockResolvedValue({ data: { id: "t1" }, warnings: [] } as never);
+  const input = { workspaceId: "w1", branchName: "wtm/demo/1a2b3c4d", automationId: "demo" };
+  expect(await call("task.create", { input })).toMatchObject({ ok: true, data: { id: "t1" } });
+  expect(create.mock.calls[0][0]).toEqual(input);
+  expect(await call("task.create", { input: { ...input, automationId: " " } })).toMatchObject({
+    ok: false,
+    error: { code: "invalid_params" },
+  });
+  create.mockRestore();
+});
+
 it("routes issue linking through the shared operation and validates its parameters", async () => {
   const link = vi
     .spyOn(operations, "linkTaskIssue")
