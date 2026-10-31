@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -277,9 +278,18 @@ fn is_run_id(id: &str) -> bool {
     })
 }
 
+static LAST_RUN_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Ids sort by creation: two runs claimed in the same millisecond still get increasing prefixes.
 fn new_run_id() -> String {
     let suffix = uuid::Uuid::new_v4().simple().to_string();
-    format!("{:013}-{}", now_ms(), &suffix[..8])
+    let now = now_ms();
+    let previous = LAST_RUN_MS
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+            Some(now.max(last + 1))
+        })
+        .unwrap();
+    format!("{:013}-{}", now.max(previous + 1), &suffix[..8])
 }
 
 fn now_ms() -> u64 {

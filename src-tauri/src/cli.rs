@@ -2,6 +2,7 @@ use crate::cli_bridge::{failure, read_message, socket_path, Request, MAX_MESSAGE
 use crate::commands::agent_alerts;
 use crate::commands::agents::Agents;
 use crate::commands::doppler;
+use crate::lease;
 use serde_json::{json, Map, Value};
 use std::{
     fs,
@@ -17,6 +18,7 @@ Usage: wtm                         Open the app
        wtm [--local] <workspace|task> <operation> [id] [options]
        wtm [--local] automation <operation> [name] [run_id] [options]
        wtm [--local] agent event <working|waiting|done> --agent <claude|codex>
+       wtm [--local] lease <operation> [options] [-- <command>]
        worktree-manager --cli [--local] ...
 
 workspace list
@@ -36,6 +38,17 @@ automation runs <name> [--before <run_id>] [--limit <n>]   Newest first, 20 per
 automation status <name> <run_id>
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
+lease run --pool <name> [--holder <key>] -- <command> [args]
+                                     Waits its turn (FIFO), runs the command with the
+                                     pool's environment and exits with its code. The
+                                     lease is released when the command ends or wtm dies.
+lease acquire --pool <name> [--holder <key>] [--pid <pid>]
+                                     Long-lived lease, kept until released or until
+                                     --pid exits. Repeating it returns the same lease.
+lease release <lease_id> | --pool <name> [--holder <key>]
+lease status                         Pools, held leases and waiters.
+                                     --holder defaults to the current directory. Pools
+                                     live in ~/.worktreemanager/pools.toml.
 
 Workspace input: {"name":"Payments","repos":[{"localPath":"/repos/api"}]}
 Repo fields: id (existing members only), name, localPath, worktreeBasePath.
@@ -344,6 +357,15 @@ fn run_cli(
             }
         });
     }
+    if let Some(code) = lease::client::run_if_requested(&args, |local| {
+        UnixStream::connect(socket_path(if local {
+            "com.worktreemanager.dev.local"
+        } else {
+            "com.worktreemanager.dev"
+        }))
+    }) {
+        return Some(code);
+    }
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{HELP}");
         return Some(0);
@@ -533,6 +555,15 @@ mod tests {
             run_cli("wtm", vec![], || Err("launch failed".into())),
             Some(1)
         );
+    }
+
+    #[test]
+    fn lease_commands_connect_to_the_selected_profile() {
+        let code = |input| run_cli("wtm", args(input), || panic!("unexpected launch"));
+        for input in ["lease status", "--local lease status"] {
+            assert!(matches!(code(input), Some(0 | 1)), "{input}");
+        }
+        assert_eq!(code("lease run -- --help"), Some(2));
     }
 
     #[test]

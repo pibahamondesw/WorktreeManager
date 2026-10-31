@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{ipc::Channel, State};
 
+use crate::lease::{self, Leases};
+
 pub const VERSION: u32 = 1;
 pub const MAX_MESSAGE: u64 = 1024 * 1024;
 
@@ -55,6 +57,7 @@ struct Shared {
     pending: Mutex<HashMap<String, Pending>>,
     stopped: AtomicBool,
     next_id: AtomicU64,
+    leases: Leases,
 }
 
 pub struct CliBridge {
@@ -156,6 +159,14 @@ impl CliBridge {
         })
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "consumed by command steps (WOR-256)")
+    )]
+    pub fn leases(&self) -> Leases {
+        self.shared.leases.clone()
+    }
+
     fn unregister(&self, session: &str) {
         let mut frontend = self.shared.frontend.lock().unwrap();
         if frontend
@@ -225,6 +236,16 @@ fn handle_connection(mut stream: UnixStream, shared: Arc<Shared>) {
             "invalid_request",
             "An ID and object params are required.",
         ));
+        return;
+    }
+    if lease::server::is_lease_method(&request.method) {
+        let mut client = lease::server::StreamClient::new(stream, request.id.clone());
+        lease::server::serve(
+            &shared.leases,
+            &request.method,
+            &request.params,
+            &mut client,
+        );
         return;
     }
     let token = shared.next_id.fetch_add(1, Ordering::Relaxed).to_string();
@@ -604,6 +625,24 @@ mod tests {
         drop(stale);
         server.cli_bridge = Some(CliBridge::start(socket).unwrap());
         assert_eq!(server.request(VERSION)["error"]["code"], "app_not_ready");
+    }
+
+    #[test]
+    fn lease_methods_are_served_natively_without_the_frontend() {
+        let server = Server::new();
+        let mut stream = UnixStream::connect(&server.cli_bridge().socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        send(
+            &mut stream,
+            &json!({ "id": "r1", "version": VERSION, "method": "lease.release", "params": { "id": "missing" } }),
+        )
+        .unwrap();
+        let response = read_message(&mut BufReader::new(stream)).unwrap();
+        assert_eq!(response["id"], "r1");
+        assert_eq!(response["error"]["code"], "not_found");
+        assert!(server.cli_bridge().leases().release(|_| true).is_empty());
     }
 
     #[test]
