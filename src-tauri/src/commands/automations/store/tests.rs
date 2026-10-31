@@ -737,3 +737,9 @@ fn the_state_command_reads_from_app_data() {
     assert_eq!(read("never-loaded").unwrap(), AutomationState::default());
     assert!(read("../escape").is_err());
 }
+
+#[test]
+fn run_ids_strictly_increase_within_the_process() {
+    let ids: Vec<String> = (0..1000).map(|_| new_run_id()).collect();
+    assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+}
