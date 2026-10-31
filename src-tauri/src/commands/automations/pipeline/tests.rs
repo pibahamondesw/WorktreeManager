@@ -212,6 +212,7 @@ impl Harness {
                 item: ITEM.into(),
                 version: "1".into(),
                 title: None,
+                data: Default::default(),
             },
         };
         Self {
