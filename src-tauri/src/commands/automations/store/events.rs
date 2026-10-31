@@ -68,6 +68,19 @@ pub enum RunEvent {
         #[serde(default)]
         head: Option<String>,
     },
+    /// Where a `command` attempt's receipt and log live, relative to the run directory. A
+    /// `reused` receipt is an earlier attempt's whose fingerprint still matches.
+    StepReceipt {
+        item: String,
+        step: String,
+        attempt: u32,
+        #[serde(default)]
+        stage: Option<String>,
+        receipt: String,
+        log: String,
+        #[serde(default)]
+        reused: bool,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -381,7 +394,7 @@ impl RunState {
                     attempt.head = head;
                 }
             }
-            RunEvent::Unknown => {}
+            RunEvent::StepReceipt { .. } | RunEvent::Unknown => {}
         }
     }
 
