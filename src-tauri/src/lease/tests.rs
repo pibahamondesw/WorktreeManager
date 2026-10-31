@@ -579,6 +579,31 @@ mod cli {
     }
 
     #[test]
+    fn a_waiting_cli_reports_progress_until_granted() {
+        let scratch = Scratch::new(POOLS);
+        let leases = scratch.leases();
+        let busy = leases
+            .acquire(request("heavy_checks", "busy"), |_| true)
+            .unwrap();
+        let releaser = {
+            let leases = leases.clone();
+            thread::spawn(move || {
+                eventually(|| waiters(&leases, "heavy_checks") == 1);
+                thread::sleep(Duration::from_millis(300));
+                drop(busy);
+            })
+        };
+        assert_eq!(
+            run_if_requested(
+                &args("lease run --pool heavy_checks -- true"),
+                connect_to(&leases)
+            ),
+            Some(0)
+        );
+        releaser.join().unwrap();
+    }
+
+    #[test]
     fn acquire_release_and_status_round_trip() {
         let scratch = Scratch::new(POOLS);
         let leases = scratch.leases();

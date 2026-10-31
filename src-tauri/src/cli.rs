@@ -559,16 +559,11 @@ mod tests {
 
     #[test]
     fn lease_commands_connect_to_the_selected_profile() {
+        let code = |input| run_cli("wtm", args(input), || panic!("unexpected launch"));
         for input in ["lease status", "--local lease status"] {
-            let code = run_cli("wtm", args(input), || panic!("unexpected launch"));
-            assert!(matches!(code, Some(0 | 1)), "{input}");
+            assert!(matches!(code(input), Some(0 | 1)), "{input}");
         }
-        assert_eq!(
-            run_cli("wtm", args("lease run -- --help"), || {
-                panic!("unexpected launch")
-            }),
-            Some(2)
-        );
+        assert_eq!(code("lease run -- --help"), Some(2));
     }
 
     #[test]
