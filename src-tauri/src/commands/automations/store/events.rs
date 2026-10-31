@@ -89,6 +89,23 @@ pub enum RunEvent {
         #[serde(default)]
         reused: bool,
     },
+    /// The task the run works in, created for it or named by the definition.
+    TaskResolved {
+        task_id: String,
+        created: bool,
+    },
+    /// The run's task could not be resolved; `worktrees` are those a failed creation left on disk.
+    TaskFailed {
+        message: String,
+        #[serde(default)]
+        worktrees: Vec<String>,
+    },
+    SessionStarted {
+        item: String,
+        step: String,
+        attempt: u32,
+        session_id: String,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -155,6 +172,7 @@ pub enum FailureReason {
     StepFailed,
     StartTimeout,
     Deadline,
+    DefinitionChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,6 +253,14 @@ pub struct RunState {
     pub claimed_at_ms: Option<u64>,
     pub ended_at_ms: Option<u64>,
     pub items: Vec<ItemState>,
+    pub task_id: Option<String>,
+    pub task_error: Option<TaskError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TaskError {
+    pub message: String,
+    pub worktrees: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -264,6 +290,7 @@ pub struct StepAttemptState {
     pub verdict: Option<Verdict>,
     pub cause: Option<String>,
     pub head: Option<String>,
+    pub session_id: Option<String>,
 }
 
 impl RunStatus {
@@ -313,6 +340,8 @@ pub fn reduce(id: &str, events: impl IntoIterator<Item = LoggedEvent>) -> RunSta
         claimed_at_ms: None,
         ended_at_ms: None,
         items: Vec::new(),
+        task_id: None,
+        task_error: None,
     };
     for logged in events {
         run.apply(logged);
@@ -405,6 +434,23 @@ impl RunState {
                     attempt.head = head;
                 }
             }
+            RunEvent::TaskResolved { task_id, .. } => self.task_id = Some(task_id),
+            RunEvent::TaskFailed { message, worktrees } => {
+                self.task_error = Some(TaskError { message, worktrees })
+            }
+            RunEvent::SessionStarted {
+                item,
+                step,
+                attempt,
+                session_id,
+            } => {
+                if let Some(attempt) = self
+                    .open_item(&item)
+                    .and_then(|item| item.open_attempt(step, attempt))
+                {
+                    attempt.session_id = Some(session_id);
+                }
+            }
             RunEvent::CandidateSkipped { .. }
             | RunEvent::StepReceipt { .. }
             | RunEvent::Unknown => {}
@@ -478,6 +524,7 @@ impl ItemState {
                     verdict: None,
                     cause: None,
                     head: None,
+                    session_id: None,
                 });
                 self.steps.len() - 1
             }

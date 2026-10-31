@@ -138,6 +138,7 @@ impl AgentAdapter for Codex {
             compact: true,
             images: true,
             headless: true,
+            tool_rules: false,
         }
     }
 

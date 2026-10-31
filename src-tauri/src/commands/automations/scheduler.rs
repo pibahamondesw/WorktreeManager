@@ -406,7 +406,7 @@ pub(super) fn record_failure(state: &mut AutomationState) {
     }
 }
 
-fn is_active(status: RunStatus) -> bool {
+pub(super) fn is_active(status: RunStatus) -> bool {
     matches!(
         status,
         RunStatus::Starting | RunStatus::Running | RunStatus::Interrupted
