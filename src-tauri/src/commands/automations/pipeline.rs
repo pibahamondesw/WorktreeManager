@@ -48,10 +48,17 @@ pub enum Execution {
     Finished(StepReport),
     /// The attempt keeps waiting durably and is re-armed the next time the item is driven.
     Parked,
+    /// An earlier result still holds, such as a bound receipt whose fingerprint matches.
+    Skipped(StepReport),
 }
 
 pub trait StepExecutor {
     fn execute(&mut self, request: &StepRequest) -> Execution;
+
+    /// Evidence of the last attempt, recorded before its result.
+    fn drain_events(&mut self) -> Vec<RunEvent> {
+        Vec::new()
+    }
 }
 
 pub trait RunLog {
@@ -391,8 +398,15 @@ pub fn drive(
             Next::Emit(event) => event,
             Next::Run(request) => {
                 machine.record(log, start_event(&request))?;
-                match executor.execute(&request) {
+                let execution = executor.execute(&request);
+                for evidence in executor.drain_events() {
+                    machine.record(log, evidence)?;
+                }
+                match execution {
                     Execution::Finished(report) => finish_event(&request, report),
+                    Execution::Skipped(report) => {
+                        step_event(&request, StepStatus::Skipped, Some(report))
+                    }
                     Execution::Parked => return Ok(machine.status),
                 }
             }

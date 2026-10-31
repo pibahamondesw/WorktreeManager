@@ -335,7 +335,7 @@ fn drop_truncated_tail(file: &mut File) -> io::Result<()> {
     file.seek(SeekFrom::End(0)).map(drop)
 }
 
-fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(super) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or(path);
     fs::create_dir_all(dir)?;
     let staged = dir.join(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
