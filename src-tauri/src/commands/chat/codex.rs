@@ -699,7 +699,17 @@ impl CodexProvider {
                 out.status(ChatStatus::Idle);
             }
             "item/started" | "item/completed" => {
-                if let Some(item) = map_item(&params["item"]) {
+                if let Some(mut item) = map_item(&params["item"]) {
+                    if item.kind == ItemKind::Reasoning {
+                        item.status = Some(
+                            if method == "item/started" {
+                                "inProgress"
+                            } else {
+                                "completed"
+                            }
+                            .into(),
+                        );
+                    }
                     if item.kind == ItemKind::User {
                         if let Some(turn) = params["turnId"].as_str().or(self.turn_id.as_deref()) {
                             self.user_turns.insert(item.id.clone(), turn.to_string());
@@ -1227,7 +1237,11 @@ fn delta(
         return;
     };
     if snapshot.item(id).is_none() {
-        out.upsert(ChatItem::new(id, kind, ""));
+        let mut item = ChatItem::new(id, kind, "");
+        if kind == ItemKind::Reasoning {
+            item.status = Some("inProgress".into());
+        }
+        out.upsert(item);
     }
     out.event(ChatEvent::Delta {
         id: id.to_string(),
@@ -1905,6 +1919,55 @@ mod tests {
         ] }))
         .unwrap();
         assert_eq!(user.text, "look\n[1 image]");
+    }
+
+    #[test]
+    fn reasoning_delta_without_start_creates_an_active_block() {
+        let (mut provider, mut snapshot) = resumed();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({
+                "method": "item/reasoning/summaryTextDelta",
+                "params": { "threadId": "th1", "itemId": "r1", "delta": "Checking" }
+            }),
+        );
+        let item = snapshot.item("r1").unwrap();
+        assert_eq!(item.kind, ItemKind::Reasoning);
+        assert_eq!(item.status.as_deref(), Some("inProgress"));
+        assert_eq!(item.text, "Checking");
+    }
+
+    #[test]
+    fn reasoning_lifecycle_starts_before_summary_text() {
+        let (mut provider, mut snapshot) = resumed();
+        for (method, status) in [
+            ("item/started", "inProgress"),
+            ("item/completed", "completed"),
+        ] {
+            feed(
+                &mut provider,
+                &mut snapshot,
+                json!({
+                    "method": method,
+                    "params": { "threadId": "th1", "item": { "id": "r1", "type": "reasoning", "summary": [] } }
+                }),
+            );
+            let item = snapshot.item("r1").unwrap();
+            assert_eq!(item.status.as_deref(), Some(status));
+            assert!(item.text.is_empty());
+            if status == "inProgress" {
+                feed(
+                    &mut provider,
+                    &mut snapshot,
+                    json!({
+                        "method": "item/reasoning/summaryTextDelta",
+                        "params": { "threadId": "th1", "itemId": "r1", "delta": "Checking" }
+                    }),
+                );
+                assert_eq!(snapshot.item("r1").unwrap().text, "Checking");
+            }
+        }
     }
 
     #[test]

@@ -60,6 +60,8 @@ pub struct ChatItem {
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     /// The agent whose conversation this item was carried from; read-only in this one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
@@ -78,6 +80,7 @@ impl ChatItem {
             detail: None,
             status: None,
             checkpoint: None,
+            duration_ms: None,
             origin: None,
             parent: None,
         }

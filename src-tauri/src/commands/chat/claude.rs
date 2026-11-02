@@ -433,7 +433,19 @@ impl ClaudeProvider {
                 };
                 self.blocks.insert(index, id.clone());
                 if snapshot.item(&id).is_none() {
-                    out.upsert(ChatItem::new(id, kind, ""));
+                    let mut item = ChatItem::new(id, kind, "");
+                    if kind == ItemKind::Reasoning {
+                        item.status = Some("inProgress".into());
+                    }
+                    out.upsert(item);
+                }
+            }
+            Some("content_block_stop") => {
+                let index = event["index"].as_u64().unwrap_or_default();
+                if let Some(item) = self.blocks.get(&index).and_then(|id| snapshot.item(id)) {
+                    if item.kind == ItemKind::Reasoning {
+                        out.upsert(item.clone().with_status("completed"));
+                    }
                 }
             }
             Some("content_block_delta") => {
@@ -1094,7 +1106,8 @@ fn assistant_block(message_id: &str, index: usize, block: &Value) -> Option<Chat
             id,
             ItemKind::Reasoning,
             block["thinking"].as_str().unwrap_or_default(),
-        ),
+        )
+        .with_status("completed"),
         "tool_use" if block["name"] == TODO_TOOL => return None,
         "tool_use" if block["name"] == EXIT_PLAN_TOOL => ChatItem::new(
             block["id"].as_str()?,
@@ -1883,6 +1896,59 @@ mod tests {
                 { "type": "text", "text": "what is this?" },
             ])
         );
+    }
+
+    #[test]
+    fn repeated_reasoning_start_preserves_streamed_text() {
+        let (mut provider, mut snapshot) = started();
+        let start = json!({ "type": "stream_event", "event": { "type": "content_block_start", "index": 0, "content_block": { "type": "thinking" } } });
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "stream_event", "event": { "type": "message_start", "message": { "id": "m1" } } }),
+        );
+        feed(&mut provider, &mut snapshot, start.clone());
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "stream_event", "event": { "type": "content_block_delta", "index": 0, "delta": { "thinking": "Checking" } } }),
+        );
+        let out = feed(&mut provider, &mut snapshot, start);
+        assert!(out.events.is_empty());
+        let item = snapshot.item("m1:0").unwrap();
+        assert_eq!(item.text, "Checking");
+        assert_eq!(item.status.as_deref(), Some("inProgress"));
+    }
+
+    #[test]
+    fn reasoning_lifecycle_ends_at_block_stop_before_the_final_message() {
+        let (mut provider, mut snapshot) = started();
+        for event in [
+            json!({ "type": "message_start", "message": { "id": "m1" } }),
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking" } }),
+        ] {
+            feed(
+                &mut provider,
+                &mut snapshot,
+                json!({ "type": "stream_event", "event": event }),
+            );
+        }
+        let item = snapshot.item("m1:0").unwrap();
+        assert_eq!(item.status.as_deref(), Some("inProgress"));
+        assert!(item.text.is_empty());
+        for event in [
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "thinking": "Checking" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+        ] {
+            feed(
+                &mut provider,
+                &mut snapshot,
+                json!({ "type": "stream_event", "event": event }),
+            );
+        }
+        let item = snapshot.item("m1:0").unwrap();
+        assert_eq!(item.status.as_deref(), Some("completed"));
+        assert_eq!(item.text, "Checking");
     }
 
     #[test]

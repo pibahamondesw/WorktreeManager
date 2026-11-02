@@ -1,6 +1,6 @@
 import { ChatItem } from "../../services/chat";
 
-const WORK_KINDS = new Set<ChatItem["kind"]>(["reasoning", "command", "fileChange", "tool"]);
+const WORK_KINDS = new Set<ChatItem["kind"]>(["command", "fileChange", "tool"]);
 
 export type ChatEntry =
   | { kind: "item"; id: string; item: ChatItem; lastIndex: number }
@@ -12,7 +12,7 @@ const isWorkItem = (item: ChatItem) => WORK_KINDS.has(item.kind);
 
 export const isMainItem = (item: ChatItem) => !item.parent;
 
-/** Collapses each run of consecutive work items (thinking, tools, edits) into one entry. */
+/** Collapses each run of consecutive tools and edits into one entry. */
 export function chatEntries(items: ChatItem[]): ChatEntry[] {
   const entries: ChatEntry[] = [];
   items.forEach((item, index) => {

@@ -31,6 +31,7 @@ export interface ChatItem {
   detail?: string;
   status?: string;
   checkpoint?: string;
+  durationMs?: number;
   /** Carried from this agent's conversation; read-only here. */
   origin?: AgentId;
   /** The subagent run (an `agent` item's id) this item is a step of. */
