@@ -323,7 +323,9 @@ pub(crate) mod tests {
         app.listen_any(NOTIFICATION_OPEN_EVENT, move |event| {
             seen.lock().unwrap().push(event.payload().to_string());
         });
-        deliver(app.handle(), "Done".into(), "WOR-1".into(), target("t1"));
+        let mut inbox_target = target("t1");
+        inbox_target.inbox_entry = Some("run:demo:r1".into());
+        deliver(app.handle(), "Done".into(), "WOR-1".into(), inbox_target);
         let delegate: Retained<AnyObject> = unsafe { msg_send![&*center, delegate] };
         let delivered = center.deliveredNotifications().objectAtIndex(0);
         let foreign = NSUserNotification::new();
@@ -343,7 +345,12 @@ pub(crate) mod tests {
         assert_eq!(opened.len(), 1);
         assert_eq!(
             serde_json::from_str::<Value>(&opened[0]).unwrap(),
-            json!({ "taskId": "t1", "surface": "chat", "agent": "codex" })
+            json!({
+                "taskId": "t1",
+                "surface": "chat",
+                "agent": "codex",
+                "inboxEntry": "run:demo:r1",
+            })
         );
     }
 

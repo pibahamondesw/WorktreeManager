@@ -379,6 +379,50 @@ fn parsing_ignores_a_truncated_last_line_and_unknown_events() {
 }
 
 #[test]
+fn permission_requests_keep_their_session_request_and_kind_and_read_older_lines() {
+    let older = json!({
+        "at_ms": 1, "type": "permission_requested", "item": "routine", "step": "triage",
+        "attempt": 1, "tool": "Bash", "resolution": "denied",
+    });
+    let question = RunEvent::PermissionRequested {
+        item: "routine".into(),
+        step: "triage".into(),
+        attempt: 1,
+        tool: "Question".into(),
+        input: Some(json!([{ "question": "Which base?" }])),
+        resolution: PermissionResolution::Denied,
+        request_id: Some("r1".into()),
+        session_id: Some("s1".into()),
+        kind: RequestKind::Question,
+    };
+    let body = format!(
+        "{older}\n{}\n",
+        serde_json::to_string(&at(2, question)).unwrap()
+    );
+
+    let run = reduce("r1", parse_log(&body).unwrap());
+
+    let request = |tool: &str, kind, ids: Option<(&str, &str)>| PermissionRequest {
+        item: "routine".into(),
+        step: "triage".into(),
+        attempt: 1,
+        tool: tool.into(),
+        input: (kind == RequestKind::Question).then(|| json!([{ "question": "Which base?" }])),
+        resolution: PermissionResolution::Denied,
+        request_id: ids.map(|(request, _)| request.into()),
+        session_id: ids.map(|(_, session)| session.into()),
+        kind,
+    };
+    assert_eq!(
+        run.permission_requests,
+        [
+            request("Bash", RequestKind::Permission, None),
+            request("Question", RequestKind::Question, Some(("r1", "s1"))),
+        ]
+    );
+}
+
+#[test]
 fn parsing_rejects_a_corrupt_complete_line() {
     let body = format!("{}\nnot json\n", json!({"at_ms": 1, "type": "started"}));
     assert!(parse_log(&body).unwrap_err().starts_with("line 2:"));

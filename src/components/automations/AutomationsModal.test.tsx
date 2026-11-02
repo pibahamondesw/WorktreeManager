@@ -6,6 +6,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AutomationsModal } from "./AutomationsModal";
 import { AutomationSummary } from "../../services/automations";
+import { InboxItem } from "../../services/automationInbox";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -30,9 +31,33 @@ beforeEach(() => {
   vi.mocked(invoke).mockReset().mockResolvedValue({ runs: [], next_before: null });
 });
 
-function Harness({ automations = AUTOMATIONS, error = null as string | null }) {
+const ENTRY: InboxItem = {
+  key: "run:babysitter:1",
+  automation: "babysitter",
+  runId: "1",
+  kind: "findings",
+  title: "Findings to review",
+  detail: "2 findings: PR #12 is red",
+  at: 0,
+  test: false,
+  target: { taskId: "t1", agent: "claude", conversationId: "c1" },
+  autoArchived: false,
+  notify: true,
+  read: false,
+  archived: false,
+};
+
+const openConversation = vi.fn(() => true);
+const setRead = vi.fn();
+
+function Harness({
+  automations = AUTOMATIONS,
+  error = null as string | null,
+  items = [] as InboxItem[],
+}) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [inboxSelected, setInboxSelected] = useState(false);
   return (
     <>
       <button onClick={() => setOpen(true)}>Open automations</button>
@@ -43,8 +68,15 @@ function Harness({ automations = AUTOMATIONS, error = null as string | null }) {
         error={error}
         onChanged={() => {}}
         selectedName={selected}
-        onSelect={setSelected}
+        onSelect={(name) => {
+          setSelected(name);
+          setInboxSelected(false);
+        }}
         editorApp="cursor"
+        inbox={{ items, unread: items.length, setRead, setArchived: vi.fn() }}
+        inboxSelected={inboxSelected}
+        onSelectInbox={() => setInboxSelected(true)}
+        onOpenConversation={openConversation}
       />
     </>
   );
@@ -79,6 +111,21 @@ it("shows the first automation's detail, focused, and switches with the list", (
   fireEvent.keyDown(first, { key: "ArrowDown" });
   expect(screen.getByRole("heading", { name: "nightly" })).toBeInTheDocument();
   expect(screen.getByRole("tabpanel", { name: /nightly/ })).toBeInTheDocument();
+});
+
+it("opens an Inbox entry's conversation from the Inbox tab", () => {
+  render(<Harness items={[ENTRY]} />);
+  fireEvent.click(screen.getByRole("button", { name: "Open automations" }));
+  const inbox = screen.getByRole("tab", { name: /Inbox/ });
+  expect(inbox).toHaveTextContent("1 unread");
+  fireEvent.keyDown(screen.getByRole("tab", { name: /babysitter/ }), { key: "ArrowUp" });
+  expect(inbox).toHaveFocus();
+  expect(screen.getByRole("tabpanel", { name: "Inbox" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Unread: Findings to review" }));
+
+  expect(setRead).toHaveBeenCalledWith([ENTRY.key], true);
+  expect(openConversation).toHaveBeenCalledWith(ENTRY.target);
 });
 
 it("shows the empty state and selectable load errors", () => {

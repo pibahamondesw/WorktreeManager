@@ -45,6 +45,24 @@ vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 import { TaskView } from "./TaskView";
 import { Task } from "../../types";
 import { invokeWithAgentCatalog } from "../../services/agents.fixture";
+import { requestChatIntent } from "../../embedded/chatIntents";
+
+const IDLE_CHAT = {
+  generation: 1,
+  status: { kind: "idle" },
+  items: [],
+  pending: [],
+  controls: {
+    models: [],
+    model: null,
+    effort: null,
+    modes: [],
+    mode: null,
+    commands: [],
+    todos: [],
+    context: null,
+  },
+};
 
 const task = {
   id: "t1",
@@ -239,6 +257,41 @@ describe("TaskView", () => {
       expect(mocks.invoke).toHaveBeenCalledWith(
         "chat_open",
         expect.objectContaining({ agent: "codex", mode: "fresh", handoffFrom: "claude" })
+      )
+    );
+  });
+
+  it("reopens its chat on a conversation another view asked for, for the matching agent", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open" ? Promise.resolve(IDLE_CHAT) : Promise.resolve(undefined)
+    );
+    const props = {
+      task,
+      sidebarCollapsed: false,
+      onExpandSidebar: vi.fn(),
+      onBack: vi.fn(),
+      onSwitchSurface: vi.fn(),
+    };
+    const chatOpens = () => mocks.invoke.mock.calls.filter(([command]) => command === "chat_open");
+    const { rerender } = render(
+      <TaskView {...props} surface={{ kind: "chat", agent: "claude" }} />
+    );
+    await waitFor(() => expect(chatOpens()).toHaveLength(1));
+
+    requestChatIntent("t1", { agent: "codex", mode: "restart", conversation: "c-codex" });
+    requestChatIntent("t1", { agent: "claude", mode: "restart", conversation: "c-claude" });
+    await waitFor(() =>
+      expect(chatOpens().at(-1)?.[1]).toEqual(
+        expect.objectContaining({ agent: "claude", mode: "restart", conversation: "c-claude" })
+      )
+    );
+    expect(chatOpens()).toHaveLength(2);
+
+    requestChatIntent("t1", { agent: "codex", mode: "restart", conversation: "c-codex" });
+    rerender(<TaskView {...props} surface={{ kind: "chat", agent: "codex" }} />);
+    await waitFor(() =>
+      expect(chatOpens().at(-1)?.[1]).toEqual(
+        expect.objectContaining({ agent: "codex", mode: "restart", conversation: "c-codex" })
       )
     );
   });

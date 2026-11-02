@@ -6,6 +6,8 @@ import { ZoomControls } from "./components/ui/ZoomControls";
 import { DEFAULT_STATE, Task, Workspace } from "./types";
 import type { useStore } from "./hooks/useStore";
 import { useState } from "react";
+import type { InboxItem } from "./services/automationInbox";
+import { takeRequestedChatIntent } from "./embedded/chatIntents";
 
 vi.mock("./hooks/useTaskProjects", () => ({ useTaskProjects: vi.fn() }));
 
@@ -24,6 +26,24 @@ const mocks = vi.hoisted(() => ({
     vi.fn<(event: string, callback: (event: { payload: string }) => void) => Promise<() => void>>(),
   unlisten: vi.fn(),
   invoke: vi.fn(),
+  inbox: {
+    items: [] as InboxItem[],
+    openEntry: (() => undefined) as (item: InboxItem) => void,
+  },
+}));
+
+vi.mock("./hooks/useAutomationInbox", () => ({
+  useAutomationInbox: (_: unknown, onOpenEntry: (item: InboxItem) => void) => {
+    mocks.inbox.openEntry = onOpenEntry;
+    const unread = mocks.inbox.items.filter((item) => !item.read).length;
+    return {
+      items: mocks.inbox.items,
+      unread,
+      badge: unread,
+      setRead: vi.fn(),
+      setArchived: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
@@ -185,23 +205,26 @@ describe("native editor navigation", () => {
     const view = render(<App />);
     expect(mocks.listen).toHaveBeenCalledWith("editor-navigate", expect.any(Function));
     expect(view.queryByRole("dialog")).toBeNull();
-    const notify = mocks.listen.mock.calls[0][1];
+    const notify = mocks.listen.mock.calls.find(([event]) => event === "editor-navigate")![1];
     await act(async () => notify({ payload: "search" }));
     expect(view.getByRole("dialog").textContent).toBe("Task search");
   });
 
   it("releases a native subscription that finishes registering after unmount", async () => {
     let registered!: (stop: () => void) => void;
-    mocks.listen.mockReturnValueOnce(
-      new Promise<() => void>((resolve) => {
-        registered = resolve;
-      })
+    const stop = vi.fn();
+    mocks.listen.mockImplementation((event) =>
+      event === "editor-navigate"
+        ? new Promise<() => void>((resolve) => {
+            registered = resolve;
+          })
+        : Promise.resolve(mocks.unlisten)
     );
     const view = render(<App />);
     view.unmount();
-    expect(mocks.unlisten).not.toHaveBeenCalled();
-    await act(async () => registered(mocks.unlisten));
-    expect(mocks.unlisten).toHaveBeenCalledOnce();
+    expect(stop).not.toHaveBeenCalled();
+    await act(async () => registered(stop));
+    expect(stop).toHaveBeenCalledOnce();
   });
 });
 
@@ -374,6 +397,56 @@ describe("automations overlay", () => {
     const view = render(<App />);
     fireEvent.click(view.getByRole("button", { name: "Palette: Automations" }));
     expect(view.getByRole("dialog", { name: "Automations" })).toBeTruthy();
+  });
+
+  const inboxEntry = (target: InboxItem["target"]): InboxItem => ({
+    key: "run:demo:1",
+    automation: "demo",
+    runId: "1",
+    kind: "findings",
+    title: "Findings to review",
+    detail: null,
+    at: 0,
+    test: false,
+    target,
+    autoArchived: false,
+    notify: true,
+    read: false,
+    archived: false,
+  });
+
+  it("closes over an Inbox entry and resumes its conversation in the task's chat", async () => {
+    const task: Task = {
+      id: "task",
+      workspaceId: "second",
+      branchName: "feature/task",
+      members: [],
+      createdAt: "2026-09-24T00:00:00Z",
+    };
+    const store = mocks.useStore();
+    mocks.useStore.mockReturnValue({ ...store, state: { ...store.state, tasks: [task] } });
+    mocks.inbox.items = [inboxEntry({ taskId: "task", agent: "claude", conversationId: "c1" })];
+    const view = render(<App />);
+    fireEvent.click(view.getByRole("button", { name: "Automations" }));
+    fireEvent.click(view.getByRole("button", { name: "Unread: Findings to review" }));
+
+    expect(view.queryByRole("dialog", { name: "Automations" })).toBeNull();
+    expect(await view.findByText("Task surface")).toBeTruthy();
+    expect(takeRequestedChatIntent("task", "claude")).toEqual({
+      agent: "claude",
+      mode: "restart",
+      conversation: "c1",
+    });
+    mocks.inbox.items = [];
+  });
+
+  it("opens the Inbox for a clicked notification whose task is gone", () => {
+    mocks.inbox.items = [inboxEntry({ taskId: "gone", agent: "claude", conversationId: null })];
+    const view = render(<App />);
+    act(() => mocks.inbox.openEntry(mocks.inbox.items[0]));
+    expect(view.getByRole("dialog", { name: "Automations" })).toBeTruthy();
+    expect(view.getByRole("tabpanel", { name: "Inbox" })).toBeTruthy();
+    mocks.inbox.items = [];
   });
 });
 

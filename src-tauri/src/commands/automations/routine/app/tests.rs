@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
-use tauri::App;
+use tauri::{App, Listener};
 
 use super::*;
 use crate::commands::agents::claude::Claude;
@@ -121,9 +121,11 @@ fn chat_sessions_run_turns_of_a_headless_agent_with_the_step_settings() {
     assert_eq!(
         sessions.settled_requests(&session_id),
         [SettledRequest {
+            id: "tu1".into(),
             tool: "Bash".into(),
             input: Some(serde_json::json!({ "command": "gh pr list" })),
             allowed: false,
+            question: false,
         }]
     );
     assert_eq!(
@@ -307,4 +309,19 @@ fn app_definitions_read_the_valid_definitions_of_the_directory() {
     assert_eq!(definitions.current("demo").unwrap().name, "demo");
     assert!(definitions.current("absent").is_none());
     assert!(RoutineExecutor::of(app.handle(), Arc::new(FakeBridge(|_| Value::Null))).is_ok());
+}
+
+#[test]
+fn the_app_executor_tells_the_main_window_which_automation_changed() {
+    let scratch = Scratch::new();
+    let app = scratch.app();
+    let changed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = changed.clone();
+    app.listen_any(RUNS_CHANGED_EVENT, move |event| {
+        seen.lock().unwrap().push(event.payload().to_string());
+    });
+    let executor =
+        RoutineExecutor::of(app.handle(), Arc::new(FakeBridge(|_| Value::Null))).unwrap();
+    (executor.runs_changed)("demo");
+    assert_eq!(*changed.lock().unwrap(), [r#""demo""#]);
 }

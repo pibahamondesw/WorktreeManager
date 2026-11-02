@@ -4,6 +4,16 @@ import { EditorApp } from "../../types";
 import { Modal } from "../ui/Modal";
 import { AutomationList } from "./AutomationList";
 import { AutomationDetail } from "./AutomationDetail";
+import { AutomationInbox } from "./AutomationInbox";
+import { OpenConversation, OpenConversationContext } from "./openConversation";
+import { InboxItem } from "../../services/automationInbox";
+
+interface InboxProps {
+  items: InboxItem[];
+  unread: number;
+  setRead: (keys: string[], read: boolean) => void;
+  setArchived: (keys: string[], archived: boolean) => void;
+}
 
 interface AutomationsModalProps {
   open: boolean;
@@ -16,6 +26,11 @@ interface AutomationsModalProps {
   selectedName: string | null;
   onSelect: (name: string) => void;
   editorApp: EditorApp;
+  inbox: InboxProps;
+  /** The Inbox replaces the selected automation's detail. */
+  inboxSelected: boolean;
+  onSelectInbox: () => void;
+  onOpenConversation: OpenConversation;
 }
 
 export function AutomationsModal({
@@ -27,6 +42,10 @@ export function AutomationsModal({
   selectedName,
   onSelect,
   editorApp,
+  inbox,
+  inboxSelected,
+  onSelectInbox,
+  onOpenConversation,
 }: AutomationsModalProps) {
   const selected =
     automations.find((summary) => summary.entry.name === selectedName) ?? automations[0];
@@ -44,36 +63,48 @@ export function AutomationsModal({
   return (
     <Modal open={open} onClose={onClose} title="Automations" size="settings" trapFocus>
       {open && (
-        <div ref={contentRef} className="flex h-full min-h-0">
-          <div className="w-52 shrink-0 border-r border-border p-3 overflow-y-auto bg-bg-tertiary/30">
-            {error && (
-              <p className="px-1 pb-2 text-xs text-danger break-words select-text">{error}</p>
-            )}
-            {automations.length === 0 && !error && (
-              <p className="px-1 text-xs text-text-muted">No automations yet</p>
-            )}
-            <AutomationList
-              automations={automations}
-              selectedName={selected?.entry.name ?? null}
-              onSelect={onSelect}
-            />
-          </div>
-          <div
-            id="automation-panel"
-            role="tabpanel"
-            aria-label={selected?.entry.name}
-            className="flex-1 min-w-0 min-h-0"
-          >
-            {selected && (
-              <AutomationDetail
-                key={selected.entry.name}
-                summary={selected}
-                editorApp={editorApp}
-                onChanged={onChanged}
+        <OpenConversationContext.Provider value={onOpenConversation}>
+          <div ref={contentRef} className="flex h-full min-h-0">
+            <div className="w-52 shrink-0 border-r border-border p-3 overflow-y-auto bg-bg-tertiary/30">
+              {error && (
+                <p className="px-1 pb-2 text-xs text-danger break-words select-text">{error}</p>
+              )}
+              <AutomationList
+                automations={automations}
+                selectedName={selected?.entry.name ?? null}
+                onSelect={onSelect}
+                inbox={{ unread: inbox.unread, selected: inboxSelected, onSelect: onSelectInbox }}
               />
-            )}
+              {automations.length === 0 && !error && (
+                <p className="px-3 pt-2 text-xs text-text-muted">No automations yet</p>
+              )}
+            </div>
+            <div
+              id="automation-panel"
+              role="tabpanel"
+              aria-label={inboxSelected ? "Inbox" : selected?.entry.name}
+              className="flex-1 min-w-0 min-h-0"
+            >
+              {inboxSelected ? (
+                <AutomationInbox
+                  items={inbox.items}
+                  onOpen={(item) => (item.target ? onOpenConversation(item.target) : true)}
+                  onSetRead={inbox.setRead}
+                  onSetArchived={inbox.setArchived}
+                />
+              ) : (
+                selected && (
+                  <AutomationDetail
+                    key={selected.entry.name}
+                    summary={selected}
+                    editorApp={editorApp}
+                    onChanged={onChanged}
+                  />
+                )
+              )}
+            </div>
           </div>
-        </div>
+        </OpenConversationContext.Provider>
       )}
     </Modal>
   );

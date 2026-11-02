@@ -207,9 +207,11 @@ impl Sessions for FakeSessions {
 
 fn settled(tool: &str, allowed: bool) -> SettledRequest {
     SettledRequest {
+        id: format!("req-{tool}"),
         tool: tool.into(),
         input: Some(json!({ "command": "gh pr list" })),
         allowed,
+        question: false,
     }
 }
 
@@ -1036,7 +1038,14 @@ fn losing_the_run_log_mid_run_still_closes_its_sessions() {
 #[test]
 fn a_test_run_records_what_the_policy_settled_and_leaves_the_state_alone() {
     let sessions = FakeSessions {
-        settled: vec![settled("Bash", false), settled("WebFetch", true)],
+        settled: vec![
+            settled("Bash", false),
+            settled("WebFetch", true),
+            SettledRequest {
+                question: true,
+                ..settled("Question", false)
+            },
+        ],
         ends: Mutex::new(VecDeque::from([TurnEnd::Ended {
             code: Some(1),
             message: None,
@@ -1058,18 +1067,60 @@ fn a_test_run_records_what_the_policy_settled_and_leaves_the_state_alone() {
 
     assert_eq!(run.status, RunStatus::Completed);
     assert_eq!(harness.automation(), state);
-    let request = |tool: &str, resolution| PermissionRequest {
+    let request = |tool: &str, resolution, kind| PermissionRequest {
+        item: "routine".into(),
         step: "triage".into(),
         attempt: 1,
         tool: tool.into(),
         input: Some(json!({ "command": "gh pr list" })),
         resolution,
+        request_id: Some(format!("req-{tool}")),
+        session_id: Some("s1".into()),
+        kind,
     };
     assert_eq!(
         run.permission_requests,
         [
-            request("Bash", PermissionResolution::Denied),
-            request("WebFetch", PermissionResolution::Allowed),
+            request(
+                "Bash",
+                PermissionResolution::Denied,
+                RequestKind::Permission
+            ),
+            request(
+                "WebFetch",
+                PermissionResolution::Allowed,
+                RequestKind::Permission
+            ),
+            request(
+                "Question",
+                PermissionResolution::Denied,
+                RequestKind::Question
+            ),
         ]
     );
+}
+
+#[test]
+fn the_inbox_hears_of_newly_settled_requests_and_of_the_run_end() {
+    let sessions = FakeSessions {
+        settled: vec![settled("Bash", false)],
+        ..FakeSessions::default()
+    };
+    let mut harness = Harness::routine(
+        "steps:\n  - id: triage\n    agent: {}\n  - id: report\n    agent: {}\n",
+        sessions,
+    );
+    let changed = Arc::new(Mutex::new(Vec::new()));
+    let seen = changed.clone();
+    harness.executor = harness
+        .executor
+        .clone()
+        .on_runs_changed(Arc::new(move |name: &str| {
+            seen.lock().unwrap().push(name.to_string())
+        }));
+
+    let run = harness.run();
+
+    assert_eq!(run.permission_requests.len(), 1);
+    assert_eq!(*changed.lock().unwrap(), ["demo", "demo"]);
 }

@@ -241,3 +241,4 @@ export const loadSidebarCollapsed = () => loadPreference("sidebarCollapsed");
 export const loadKeepRunningInBackground = () => loadPreference("keepRunningInBackground");
 export const loadAgentAlerts = () => loadPreference("agentAlerts");
 export const loadNavigationHistory = () => loadPreference("navigationHistory");
+export const loadAutomationInbox = () => loadPreference("automationInbox");

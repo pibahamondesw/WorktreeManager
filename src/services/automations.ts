@@ -7,6 +7,15 @@ export interface DefinitionIssue {
   message: string;
 }
 
+type InboxPolicy = "always" | "on_findings" | "on_failure" | "never";
+
+/** The definition's `report`: when runs reach the Inbox and whether they notify. */
+export interface ReportPolicy {
+  inbox: InboxPolicy;
+  archiveNoop: boolean;
+  notify: boolean;
+}
+
 interface AutomationDefinition {
   name: string;
   description: string | null;
@@ -15,6 +24,7 @@ interface AutomationDefinition {
     schedule: { cron: string; tz: string; catchUp: "latest" | "skip" } | null;
   };
   steps: PipelineStep[];
+  report?: ReportPolicy;
 }
 
 type GotoLimit = { count: number } | { budget: string };
@@ -105,6 +115,9 @@ export interface StepAttempt {
   session_id: string | null;
   /** The agent's conversation, which the task's chat can resume. */
   conversation_id: string | null;
+  /** The agent's final reply, and the structured result read from it. */
+  reply?: string | null;
+  result?: unknown;
 }
 
 export interface AutomationItem {
@@ -113,16 +126,24 @@ export interface AutomationItem {
   status: string;
   /** The step the item is on while it runs. */
   phase: string | null;
+  /** Why a blocked or deferred item rests. */
+  cause?: string | null;
   steps: StepAttempt[];
 }
 
 /** A tool request the agent's unattended policy denied, or that no one answered in time. */
 export interface PermissionRequest {
+  /** Missing in runs recorded before the Inbox. */
+  item?: string;
   step: string;
   attempt: number;
   tool: string;
+  /** For questions, the questions asked. */
   input: unknown;
   resolution: "denied" | "allowed";
+  request_id?: string | null;
+  session_id?: string | null;
+  kind?: "permission" | "question";
 }
 
 type RunStatus =
@@ -144,6 +165,8 @@ export interface AutomationRun {
   claimed_at_ms: number | null;
   ended_at_ms: number | null;
   items: AutomationItem[];
+  task_id?: string | null;
+  task_error?: { message: string; worktrees: string[] } | null;
   permission_requests?: PermissionRequest[];
 }
 
@@ -249,7 +272,7 @@ export function triggerSummary(definition: AutomationDefinition): string {
   return manual ? `${scheduled} · manual` : scheduled;
 }
 
-const humanize = (value: string) => value.replace(/_/g, " ");
+export const humanize = (value: string) => value.replace(/_/g, " ");
 
 export function runResult(run: AutomationRun): string {
   switch (run.status) {

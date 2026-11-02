@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useAgentActivity } from "./useAgentActivity";
 import { Task } from "../types";
 
@@ -67,5 +68,33 @@ describe("useAgentActivity", () => {
       });
     });
     await waitFor(() => expect(surfaceTurnCalls().at(-1)).toEqual({ inProgress: false }));
+  });
+
+  it("adds unread Inbox entries to the Dock badge and leaves Inbox notification clicks alone", async () => {
+    const onOpenTarget = vi.fn();
+    const { rerender } = renderHook(
+      ({ inboxBadge }) =>
+        useAgentActivity({
+          tasks: [task],
+          sessions: {},
+          openedTaskId: null,
+          onOpenTarget,
+          inboxBadge,
+        }),
+      { initialProps: { inboxBadge: 2 } }
+    );
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_badge", { count: 2 }));
+    rerender({ inboxBadge: 0 });
+    await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("agent_badge", { count: 0 }));
+
+    const [, open] = vi
+      .mocked(listen)
+      .mock.calls.filter(([event]) => event === "agent-notification-open")
+      .at(-1)!;
+    const target = { taskId: "t1", surface: "chat", agent: "claude" };
+    act(() => open({ payload: { ...target, inboxEntry: "run:demo:1" } } as never));
+    expect(onOpenTarget).not.toHaveBeenCalled();
+    act(() => open({ payload: target } as never));
+    expect(onOpenTarget).toHaveBeenCalledWith(task, target);
   });
 });
