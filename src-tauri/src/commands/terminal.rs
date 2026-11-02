@@ -610,10 +610,10 @@ pub async fn run_task_script<R: Runtime>(
         {
             return Err("This script is already running.".to_string());
         }
-        let started =
-            TerminalSession::spawn(&spec, &session, SCRIPT_COLS, SCRIPT_ROWS, move |code| {
-                let _ = exit_tx.send(code);
-            })?;
+        let on_exit = move |code| {
+            let _ = exit_tx.send(code);
+        };
+        let started = spawn_script(&spec, &session, on_exit)?;
         if let Some(seconds) = timeout_secs {
             started.interrupt_after(Duration::from_secs(seconds));
         }
@@ -623,6 +623,52 @@ pub async fn run_task_script<R: Runtime>(
         tauri::async_runtime::spawn_blocking(move || previous.terminate());
     }
     Ok(exit_rx.await.unwrap_or(None))
+}
+
+fn spawn_script(
+    spec: &LaunchSpec,
+    session: &str,
+    on_exit: impl FnOnce(Option<i32>) + Send + 'static,
+) -> Result<TerminalSession, String> {
+    TerminalSession::spawn(spec, session, SCRIPT_COLS, SCRIPT_ROWS, on_exit)
+}
+
+pub(crate) struct HeadlessExit {
+    /// `None` when the exit status could not be read.
+    pub code: Option<i32>,
+    pub timed_out: bool,
+    /// The retained scrollback, at most the last `SCROLLBACK_CAP` bytes.
+    pub output: String,
+}
+
+/// Runs a script to completion in a PTY no pane attaches to, blocking the calling thread. Past
+/// `timeout` its process group is interrupted as for a timed-out task script.
+pub(crate) fn run_headless(
+    spec: &LaunchSpec,
+    session: &str,
+    timeout: Option<Duration>,
+) -> Result<HeadlessExit, String> {
+    let (exit_tx, exit_rx) = std::sync::mpsc::channel();
+    let on_exit = move |code| {
+        let _ = exit_tx.send(code);
+    };
+    let mut started = spawn_script(spec, session, on_exit)?;
+    let exited = match timeout {
+        Some(timeout) => exit_rx.recv_timeout(timeout).ok(),
+        None => exit_rx.recv().ok(),
+    };
+    let timed_out = exited.is_none() && timeout.is_some();
+    let code = exited.unwrap_or_else(|| {
+        started.interrupt_after(Duration::ZERO);
+        exit_rx.recv().unwrap_or(None)
+    });
+    let output = started.scrollback.lock().unwrap().replay();
+    started.terminate();
+    Ok(HeadlessExit {
+        code,
+        timed_out,
+        output,
+    })
 }
 
 /// Repository scripts of a task run in parallel, so they get the app's `doppler` shim.
@@ -1005,5 +1051,45 @@ mod tests {
         assert_eq!(session.status(), TermStatus::Exited { code: Some(3) });
         assert!(session.scrollback.lock().unwrap().replay().contains("hi"));
         session.terminate();
+    }
+
+    fn shell(script: &str) -> LaunchSpec {
+        LaunchSpec {
+            program: "/bin/sh".to_string(),
+            args: vec!["-c".to_string(), script.to_string()],
+            env: vec![],
+            env_remove: vec![],
+            cwd: "/tmp".to_string(),
+        }
+    }
+
+    #[test]
+    fn headless_scripts_return_their_output_and_exit_code() {
+        let finished = run_headless(&shell("printf done; exit 2"), "command", None).unwrap();
+        assert_eq!(finished.code, Some(2));
+        assert!(!finished.timed_out);
+        assert!(finished.output.contains("done"));
+
+        let finished = run_headless(
+            &shell("printf ok"),
+            "command",
+            Some(Duration::from_secs(20)),
+        )
+        .unwrap();
+        assert_eq!((finished.code, finished.timed_out), (Some(0), false));
+    }
+
+    #[test]
+    fn headless_scripts_are_interrupted_after_their_timeout() {
+        let started = Instant::now();
+        let finished = run_headless(
+            &shell("printf started; sleep 30"),
+            "command",
+            Some(Duration::from_secs(1)),
+        )
+        .unwrap();
+        assert!(finished.timed_out);
+        assert!(finished.output.contains("started"));
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }

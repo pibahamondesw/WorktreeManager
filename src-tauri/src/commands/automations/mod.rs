@@ -1,3 +1,4 @@
+pub mod command;
 pub mod definition;
 pub mod pipeline;
 #[cfg_attr(
