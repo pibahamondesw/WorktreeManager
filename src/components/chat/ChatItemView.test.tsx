@@ -249,12 +249,14 @@ it("shows a subagent run as a collapsed card with its prompt, steps and report",
 it("shows thinking before text arrives and keeps the dropdown open when it completes", () => {
   const item = { id: "r", kind: "reasoning" as const, text: "", status: "inProgress" };
   const { rerender } = render(<ChatItemView item={item} />);
+  expect(screen.getByText("Thinking…")).toBeVisible();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.queryByText("Waiting for reasoning…")).not.toBeInTheDocument();
+
+  rerender(<ChatItemView item={{ ...item, text: "Checking the options" }} />);
   const toggle = screen.getByRole("button", { name: "Thinking…" });
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(toggle);
-  expect(screen.getByText("Waiting for reasoning…")).toBeVisible();
-
-  rerender(<ChatItemView item={{ ...item, text: "Checking the options" }} />);
   expect(screen.getByText("Checking the options")).toBeVisible();
 
   rerender(
@@ -275,18 +277,20 @@ it("shows historical reasoning without inventing a duration", () => {
   expect(screen.getByText("Past reasoning")).toBeVisible();
 });
 
-it("shows completed and stopped reasoning even when no summary was provided", () => {
+it.each(["", " \n "])("shows only the duration when reasoning text is blank: %j", (text) => {
   const { rerender } = render(
     <ChatItemView
-      item={{ id: "r", kind: "reasoning", text: "", status: "completed", durationMs: 100 }}
+      item={{ id: "r", kind: "reasoning", text, status: "completed", durationMs: 100 }}
     />
   );
-  fireEvent.click(screen.getByRole("button", { name: "Thought for <1s" }));
-  expect(screen.getByText("No reasoning text provided.")).toBeVisible();
+  expect(screen.getByText("Thought for <1s")).toBeVisible();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.queryByText("No reasoning text provided.")).not.toBeInTheDocument();
   rerender(
     <ChatItemView
-      item={{ id: "r", kind: "reasoning", text: "", status: "stopped", durationMs: 2000 }}
+      item={{ id: "r", kind: "reasoning", text, status: "stopped", durationMs: 2000 }}
     />
   );
-  expect(screen.getByRole("button", { name: "Thought for 2s" })).toBeVisible();
+  expect(screen.getByText("Thought for 2s")).toBeVisible();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
