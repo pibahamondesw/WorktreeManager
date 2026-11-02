@@ -189,6 +189,13 @@ function Reasoning({ item }: { item: ChatItem }) {
       ? "Thought"
       : `Thought for ${item.durationMs < 1000 ? "<1" : Math.round(item.durationMs / 1000)}s`;
   if (!isVisibleStep(item)) return null;
+  if (!item.text.trim()) {
+    return (
+      <span className={`self-start text-xs text-text-muted${thinking ? " animate-pulse" : ""}`}>
+        {label}
+      </span>
+    );
+  }
   return (
     <div className="flex flex-col gap-2">
       <button
@@ -204,7 +211,7 @@ function Reasoning({ item }: { item: ChatItem }) {
       </button>
       {open && (
         <p className="border-l border-border pl-3 text-xs italic text-text-muted whitespace-pre-wrap select-text">
-          {item.text || (thinking ? "Waiting for reasoning…" : "No reasoning text provided.")}
+          {item.text}
         </p>
       )}
     </div>

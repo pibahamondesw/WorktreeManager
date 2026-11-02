@@ -322,7 +322,8 @@ describe("ChatPane", () => {
     );
     render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
     await screen.findByText("Here is the answer");
-    expect(screen.getByRole("button", { name: "Thinking…" })).toBeInTheDocument();
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Thinking…" })).not.toBeInTheDocument();
     expect(screen.queryByText("Checking options")).not.toBeInTheDocument();
     expect(screen.queryByText("ls")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Thought for 5s" }));
