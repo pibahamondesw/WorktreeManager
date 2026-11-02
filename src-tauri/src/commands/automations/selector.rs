@@ -20,7 +20,7 @@ use super::store::events::{
     FailureReason, ItemState, ItemStatus, RunEvent, RunOutcome, RunSource, RunState, RunStatus,
     SkipReason,
 };
-use super::store::{PauseReason, RunStore};
+use super::store::{Actor, PauseReason, RunStore, Toggle};
 
 const MAX_ITEM_ID_CHARS: usize = 200;
 const MAX_ITEM_DATA_BYTES: usize = 64 * 1024;
@@ -180,6 +180,8 @@ pub fn complete(pass: &SelectionPass, dispatch: Dispatch) -> Result<(), String> 
     {
         state.enabled = false;
         state.pause_reason = Some(PauseReason::Completed);
+        let reason = "completed its runs".to_string();
+        state.last_toggle = Some(Toggle::now(false, Actor::Auto, Some(reason)));
     }
     writer.save_state(&state)
 }

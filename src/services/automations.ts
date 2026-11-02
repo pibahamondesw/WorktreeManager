@@ -227,24 +227,11 @@ export const AUTOMATION_STATUS_LABELS: Record<AutomationStatus, string> = {
   active: "Active",
 };
 
-const PAUSE_REASON_LABELS: Record<PauseReason, string> = {
-  new: "New automation, not enabled yet",
-  manual: "Paused by you",
-  auto: "Paused after repeated failures",
-  completed: "Completed its runs",
-  stop_after: "Reached its stop_after limit",
-};
-
-export function pauseReasonLabel(state: AutomationState | null): string | null {
-  if (!state || state.enabled) return null;
-  return state.pause_reason ? PAUSE_REASON_LABELS[state.pause_reason] : "Paused";
-}
-
 const ACTOR_LABELS: Record<Actor, string> = { user: "you", cli: "the CLI", auto: "WTM" };
 
 export function toggleSummary(state: AutomationState | null): string | null {
   const toggle = state?.last_toggle;
-  if (!toggle) return null;
+  if (!toggle) return state?.pause_reason === "new" && !state.enabled ? "Never enabled" : null;
   const action = toggle.enabled ? "Resumed" : "Paused";
   const when = new Date(toggle.at).toLocaleString();
   const why = toggle.reason ? `: ${toggle.reason}` : "";

@@ -8,7 +8,7 @@ import {
   automationStatus,
   loadAutomationSummaries,
   needsAttention,
-  pauseReasonLabel,
+  toggleSummary,
   runDuration,
   runResult,
   runStartedAt,
@@ -89,13 +89,10 @@ it("flags only invalid, failing or auto-paused automations as needing attention"
   ).toBe(true);
 });
 
-it("explains why an automation is paused", () => {
-  expect(pauseReasonLabel(enabled)).toBeNull();
-  expect(pauseReasonLabel(null)).toBeNull();
-  expect(pauseReasonLabel({ ...enabled, enabled: false, pause_reason: "auto" })).toBe(
-    "Paused after repeated failures"
-  );
-  expect(pauseReasonLabel({ ...enabled, enabled: false })).toBe("Paused");
+it("says a new automation was never enabled", () => {
+  expect(toggleSummary({ ...enabled, enabled: false, pause_reason: "new" })).toBe("Never enabled");
+  expect(toggleSummary({ ...enabled, enabled: false, pause_reason: "auto" })).toBeNull();
+  expect(toggleSummary(null)).toBeNull();
 });
 
 it("summarizes triggers", () => {

@@ -81,7 +81,7 @@ it("shows the trigger, pause reason and runs, and pages older runs", async () =>
   renderView();
 
   expect(screen.getByText("Schedule 0 * * * * (UTC) · manual")).toBeInTheDocument();
-  expect(screen.getByText("New automation, not enabled yet")).toBeInTheDocument();
+  expect(screen.getByText("Never enabled")).toBeInTheDocument();
   expect(screen.getByText("Not scheduled")).toBeInTheDocument();
   expect(await screen.findByText("Skipped: paused")).toBeInTheDocument();
   expect(screen.getByText("schedule · test")).toBeInTheDocument();
@@ -254,18 +254,6 @@ it("resumes an automation paused by WTM and keeps invalid ones from running", ()
   });
   expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
   expect(screen.getByText(/^Paused by WTM on /)).toBeInTheDocument();
-  expect(screen.queryByText("Paused after repeated failures")).not.toBeInTheDocument();
-  cleanup();
-
-  renderView({
-    ...summary,
-    state: {
-      ...summary.state!,
-      pause_reason: "completed",
-      last_toggle: { enabled: true, by: "user", reason: null, at: "2026-10-30T12:00:00Z" },
-    },
-  });
-  expect(screen.getByText("Completed its runs")).toBeInTheDocument();
   cleanup();
 
   renderView({ ...summary, entry: { ...summary.entry, definition: null }, state: null });
