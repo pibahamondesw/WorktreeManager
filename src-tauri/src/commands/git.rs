@@ -1052,8 +1052,14 @@ mod tests {
         };
         assert_eq!(head("based"), head("develop"));
         let missing = repo.0.join("missing").to_string_lossy().into_owned();
+        let added = tauri::async_runtime::block_on(git_worktree_add(
+            root.clone(),
+            missing,
+            "other".into(),
+            Some("gone".into()),
+        ));
         assert_eq!(
-            worktree_add_blocking(root.clone(), missing, "other".into(), Some("gone".into())).err(),
+            added.err(),
             Some(format!("The base gone does not exist in {root}"))
         );
     }
