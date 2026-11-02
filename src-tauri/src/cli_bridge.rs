@@ -319,6 +319,16 @@ fn deliver(shared: &Shared, request: Request) -> Result<(String, mpsc::Receiver<
     not(test),
     allow(dead_code, reason = "the routine executor (WOR-249) waits for WOR-253")
 )]
+const IN_PROCESS_POLL: Duration = if cfg!(test) {
+    Duration::from_millis(20)
+} else {
+    Duration::from_secs(5)
+};
+
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the routine executor (WOR-249) waits for WOR-253")
+)]
 impl CliBridge {
     /// Runs an operation through the frontend as a CLI request would, blocking until it answers.
     pub fn call(&self, method: &str, params: Value) -> Value {
@@ -333,7 +343,7 @@ impl CliBridge {
             Err(response) => return response,
         };
         let response = loop {
-            match receiver.recv_timeout(Duration::from_secs(5)) {
+            match receiver.recv_timeout(IN_PROCESS_POLL) {
                 Ok(value) if value.get("ok").is_some() => break value,
                 Ok(_) => {}
                 Err(mpsc::RecvTimeoutError::Timeout)
@@ -761,22 +771,18 @@ mod tests {
         answer_with(&server, move |_| {
             shared.stopped.store(true, Ordering::Release);
         });
-        let bridge = server.cli_bridge();
-        let pending = bridge.shared.clone();
-        let response = std::thread::scope(|scope| {
-            let call = scope.spawn(|| {
-                bridge.call(
-                    "task.create",
-                    json!({ "input": { "branchName": "wtm/demo" } }),
-                )
-            });
-            while pending.pending.lock().unwrap().is_empty() && !call.is_finished() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            pending.pending.lock().unwrap().clear();
-            call.join().unwrap()
-        });
+        let response = server.cli_bridge().call(
+            "task.create",
+            json!({ "input": { "branchName": "wtm/demo" } }),
+        );
         assert_eq!(response["error"]["code"], "app_closed");
+        assert!(server
+            .cli_bridge()
+            .shared
+            .pending
+            .lock()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
