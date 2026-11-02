@@ -158,6 +158,9 @@ pub(super) fn definition(
     }
     fields.finish(report);
     check_instructions(report, instructions, steps.as_deref());
+    if let (Some(steps), Some(authorization)) = (&steps, &authorization) {
+        check_enforceable_grants(report, context.env, steps, authorization);
+    }
     if !report.errors.is_empty() {
         return None;
     }
@@ -782,10 +785,49 @@ fn missing_capabilities(agent: &AgentDescriptor, settings: &AgentSettings) -> Ve
                 .contains(&PermissionMode::Unattended),
             "permission_modes",
         ),
+        (
+            has_tool_rules(&settings.permission) && !capabilities.tool_rules,
+            "tool_rules",
+        ),
     ]
     .into_iter()
     .filter_map(|(missing, capability)| missing.then_some(capability))
     .collect()
+}
+
+fn has_tool_rules(policy: &UnattendedPolicy) -> bool {
+    !policy.allow.is_empty() || !policy.deny.is_empty()
+}
+
+/// Allowed verbs become tool rules of every agent step, so each step's agent must enforce them.
+fn check_enforceable_grants(
+    report: &mut Report,
+    env: &Environment,
+    steps: &[Step],
+    authorization: &Authorization,
+) {
+    if authorization.allow.is_empty() {
+        return;
+    }
+    for step in steps {
+        let StepKind::Agent(agent_step) = &step.kind else {
+            continue;
+        };
+        let agent = env
+            .agents
+            .iter()
+            .find(|agent| agent.id == agent_step.agent.id);
+        if let Some(agent) = agent.filter(|agent| !agent.capabilities.tool_rules) {
+            report.error(
+                IssueKind::Capability,
+                "authorization.allow",
+                format!(
+                    "{} lacks the tool_rules capability step {} needs to enforce these verbs",
+                    agent.label, step.id
+                ),
+            );
+        }
+    }
 }
 
 fn implicit_steps(report: &mut Report, scope: &Scope) -> Option<Vec<Step>> {

@@ -45,6 +45,7 @@ fn capabilities(enabled: bool) -> AgentCapabilities {
         compact: enabled,
         images: enabled,
         headless: enabled,
+        tool_rules: enabled,
     }
 }
 
@@ -77,6 +78,13 @@ fn env() -> Environment {
             descriptor("claude", true, true),
             descriptor("codex", false, true),
             descriptor("basic", true, false),
+            AgentDescriptor {
+                capabilities: AgentCapabilities {
+                    tool_rules: false,
+                    ..capabilities(true)
+                },
+                ..descriptor("sandboxed", true, true)
+            },
         ],
         workspaces: stored_workspaces(&json!({ "workspaces": workspaces() })),
         now: "2026-10-29T12:00:00Z".parse::<DateTime<Utc>>().unwrap(),
@@ -516,7 +524,7 @@ fn concurrency_keys_are_templates() {
 #[test]
 fn targets_resolve_workspaces_and_repos_by_name_or_id() {
     let definition = valid(&format!(
-        "schema: 1\nname: demo\n{AGENT}target:\n  workspace: w1\n  repos: [r2, fintoc-rails]\n  base: {{ api: origin/dev }}\n  branch: \"bot/{{run.id}}\"\nsteps:\n  - id: check\n    command: [make]\n    repo: api\n"
+        "schema: 1\nname: demo\n{AGENT}target:\n  workspace: w1\n  repos: [r2, fintoc-rails]\n  base: {{ api: origin/dev }}\n  branch: \"bot/{{run.id}}\"\nsteps:\n  - id: check\n    command: [/bin/echo]\n    repo: api\n"
     ));
     let repos: Vec<_> = definition
         .target
@@ -579,7 +587,7 @@ fn targets_report_unknown_workspaces_and_repos() {
 #[test]
 fn an_invalid_workspace_skips_checks_that_depend_on_its_repos() {
     let entry = load(&format!(
-        "schema: 1\nname: demo\n{AGENT}target:\n  workspace: Personal\n  repos: [web]\n  base: {{ web: main }}\nsteps:\n  - id: check\n    command: [make]\n"
+        "schema: 1\nname: demo\n{AGENT}target:\n  workspace: Personal\n  repos: [web]\n  base: {{ web: main }}\nsteps:\n  - id: check\n    command: [/bin/echo]\n"
     ));
     assert_eq!(
         issues(&entry),
@@ -857,7 +865,7 @@ fn command_steps_report_bad_programs_and_repos() {
         IssueKind::Invalid,
     );
     assert_issue(
-        &routine("steps:\n  - id: run\n    command: [make]\n    repo: web\n"),
+        &routine("steps:\n  - id: run\n    command: [/bin/echo]\n    repo: web\n"),
         "steps[0].repo",
         IssueKind::UnknownRepo,
     );
@@ -866,7 +874,7 @@ fn command_steps_report_bad_programs_and_repos() {
         "steps[0].command[1]",
         IssueKind::Invalid,
     );
-    let two_repos = routine("steps:\n  - id: run\n    command: [make]\n")
+    let two_repos = routine("steps:\n  - id: run\n    command: [/bin/echo]\n")
         .replace("[fintoc-rails]", "[fintoc-rails, api]");
     assert_issue(&two_repos, "steps[0].repo", IssueKind::Missing);
 }
@@ -976,22 +984,22 @@ fn steps_have_exactly_one_supported_kind() {
         IssueKind::Invalid,
     );
     assert_issue(
-        &routine("steps:\n  - id: both\n    agent: {}\n    command: [make]\n"),
+        &routine("steps:\n  - id: both\n    agent: {}\n    command: [/bin/echo]\n"),
         "steps[0]",
         IssueKind::Invalid,
     );
     assert_issue(
-        &routine("steps:\n  - id: run\n    command: [make]\n    uses: [heavy_checks]\n"),
+        &routine("steps:\n  - id: run\n    command: [/bin/echo]\n    uses: [heavy_checks]\n"),
         "steps[0].uses",
         IssueKind::Unsupported,
     );
     valid(&routine(
-        "steps:\n  - id: run\n    command: [make]\n    uses: []\n",
+        "steps:\n  - id: run\n    command: [/bin/echo]\n    uses: []\n",
     ));
     assert_issue(&routine("steps: []\n"), "steps", IssueKind::Invalid);
     assert_issue(&routine("steps: run\n"), "steps", IssueKind::Invalid);
     assert_issue(
-        &routine("steps:\n  - id: Run\n    command: [make]\n"),
+        &routine("steps:\n  - id: Run\n    command: [/bin/echo]\n"),
         "steps[0].id",
         IssueKind::Invalid,
     );
@@ -1005,7 +1013,7 @@ fn transitions_name_existing_steps_and_bound_their_cycles() {
     agent: { skill: fix }
     on_fail: defer
   - id: verify
-    command: [make]
+    command: [/bin/echo]
     on_fail: { goto: repair, max: repair_rounds }
     next: finish
   - id: repair
@@ -1028,11 +1036,11 @@ fn transitions_name_existing_steps_and_bound_their_cycles() {
 
     for (steps, field) in [
         (
-            "  - id: a\n    command: [make]\n    next: z\n",
+            "  - id: a\n    command: [/bin/echo]\n    next: z\n",
             "steps[0].next",
         ),
         (
-            "  - id: a\n    command: [make]\n    on_fail: { goto: z }\n",
+            "  - id: a\n    command: [/bin/echo]\n    on_fail: { goto: z }\n",
             "steps[0].on_fail.goto",
         ),
         (
@@ -1040,15 +1048,15 @@ fn transitions_name_existing_steps_and_bound_their_cycles() {
             "steps[0].approval.on_reject.goto",
         ),
         (
-            "  - id: a\n    command: [make]\n    on_fail: { goto: a, max: forever }\n",
+            "  - id: a\n    command: [/bin/echo]\n    on_fail: { goto: a, max: forever }\n",
             "steps[0].on_fail.max",
         ),
         (
-            "  - id: a\n    command: [make]\n    on_fail: retry\n",
+            "  - id: a\n    command: [/bin/echo]\n    on_fail: retry\n",
             "steps[0].on_fail",
         ),
         (
-            "  - id: a\n    command: [make]\n  - id: a\n    command: [make]\n",
+            "  - id: a\n    command: [/bin/echo]\n  - id: a\n    command: [make]\n",
             "steps[1].id",
         ),
     ] {
@@ -1061,7 +1069,7 @@ fn transitions_name_existing_steps_and_bound_their_cycles() {
     assert_eq!(
         message(
             &routine(
-                "steps:\n  - id: a\n    command: [make]\n  - id: b\n    command: [make]\n    on_fail: { goto: a }\n  - id: c\n    agent: { skill: s }\n    next: b\n"
+                "steps:\n  - id: a\n    command: [/bin/echo]\n  - id: b\n    command: [make]\n    on_fail: { goto: a }\n  - id: c\n    agent: { skill: s }\n    next: b\n"
             ),
             "steps"
         ),
@@ -1170,6 +1178,38 @@ fn authorization_lists_known_verbs_and_never_merge() {
         &routine("authorization: { caps: { push: -1 } }\n"),
         "authorization.caps.push",
         IssueKind::Invalid,
+    );
+}
+
+#[test]
+fn agents_without_tool_rules_reject_rules_and_granted_verbs() {
+    let sandboxed = |extra: &str| routine(extra).replace("{ id: claude }", "{ id: sandboxed }");
+    valid(&sandboxed("authorization: { deny: [push] }\n"));
+    assert_eq!(
+        message(
+            &sandboxed("authorization: { allow: [commit] }\n"),
+            "authorization.allow"
+        ),
+        "sandboxed lacks the tool_rules capability step main needs to enforce these verbs"
+    );
+    assert_eq!(
+        message(
+            &routine(
+                "authorization: { allow: [commit] }\nsteps:\n  - id: work\n    command: [/bin/echo]\n  - id: review\n    agent: { id: sandboxed }\n"
+            ),
+            "authorization.allow"
+        ),
+        "sandboxed lacks the tool_rules capability step review needs to enforce these verbs"
+    );
+    assert_eq!(
+        message(
+            &sandboxed("").replace(
+                "{ id: sandboxed }",
+                "{ id: sandboxed, permission: { deny: [WebFetch] } }"
+            ),
+            "agent"
+        ),
+        "sandboxed lacks the tool_rules capability this step needs"
     );
 }
 

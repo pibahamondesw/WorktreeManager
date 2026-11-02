@@ -123,11 +123,18 @@ async function workspaceInput(value: unknown, existing?: Workspace): Promise<Wor
 }
 
 function taskInput(value: unknown): CreateTaskInput {
-  const input = object(value, ["workspaceId", "branchName", "repoIds", "linearIssue"]);
+  const input = object(value, [
+    "workspaceId",
+    "branchName",
+    "repoIds",
+    "linearIssue",
+    "automationId",
+  ]);
   const result: CreateTaskInput = {
     workspaceId: text(input.workspaceId),
     branchName: text(input.branchName),
   };
+  if (input.automationId !== undefined) result.automationId = text(input.automationId);
   if (input.repoIds !== undefined) {
     if (!Array.isArray(input.repoIds))
       throw new OperationError("invalid_params", "repoIds must be an array.");
