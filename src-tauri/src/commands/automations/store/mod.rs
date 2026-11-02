@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use events::{parse_log, reduce, LoggedEvent, RunEvent, RunState, RunTrigger};
 
 const EVENTS_FILE: &str = "events.jsonl";
+const PAYLOAD_FILE: &str = "payload.json";
 const MAX_PAGE: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +27,37 @@ pub enum PauseReason {
     StopAfter,
 }
 
+/// Who paused or resumed an automation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Actor {
+    User,
+    Cli,
+    Auto,
+}
+
+/// The latest pause or resume: who did it, why and when (UTC RFC 3339).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Toggle {
+    pub enabled: bool,
+    pub by: Actor,
+    #[serde(default)]
+    pub reason: Option<String>,
+    pub at: String,
+}
+
+impl Toggle {
+    pub fn now(enabled: bool, by: Actor, reason: Option<String>) -> Self {
+        let now = chrono::DateTime::<chrono::Utc>::from(SystemTime::now());
+        Self {
+            enabled,
+            by,
+            reason,
+            at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        }
+    }
+}
+
 /// Fields this version does not know are kept in `other` so an older app never drops them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -35,6 +67,7 @@ pub struct AutomationState {
     pub next_run_at: Option<String>,
     pub consecutive_failures: u32,
     pub cursor: Option<serde_json::Value>,
+    pub last_toggle: Option<Toggle>,
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
 }
@@ -47,6 +80,7 @@ impl Default for AutomationState {
             next_run_at: None,
             consecutive_failures: 0,
             cursor: None,
+            last_toggle: None,
             other: serde_json::Map::new(),
         }
     }
@@ -138,10 +172,6 @@ impl RunStore {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the scheduler (WOR-248) is the first writer")
-)]
 impl RunStore {
     pub fn run_ids(&self, name: &str) -> Result<Vec<String>, String> {
         run_ids(&self.automation_dir(name)?.join("runs"))
@@ -154,12 +184,19 @@ impl RunStore {
         let lock = lock_file(&dir.join(".lock")).map_err(|e| format!("lock {name}: {e}"))?;
         Ok(AutomationWriter { dir, _lock: lock })
     }
+
+    /// The trigger payload of the newest run that carried one.
+    pub fn latest_payload(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
+        let runs_dir = self.automation_dir(name)?.join("runs");
+        let mut ids = run_ids(&runs_dir)?;
+        ids.sort_unstable_by(|a, b| b.cmp(a));
+        Ok(ids.iter().find_map(|id| {
+            let bytes = fs::read(runs_dir.join(id).join(PAYLOAD_FILE)).ok()?;
+            serde_json::from_slice(&bytes).ok()
+        }))
+    }
 }
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the scheduler (WOR-248) is the first writer")
-)]
 impl AutomationWriter {
     pub fn save_state(&self, state: &AutomationState) -> Result<(), String> {
         let bytes = serde_json::to_vec_pretty(state).map_err(|e| e.to_string())?;
@@ -190,6 +227,12 @@ impl AutomationWriter {
         let line = line(&logged(&RunEvent::Claimed(trigger)))?;
         write_atomically(&self.events_path(&id), line.as_bytes()).map_err(|e| e.to_string())?;
         Ok(Claim::Created(id))
+    }
+
+    pub fn save_payload(&self, run_id: &str, payload: &serde_json::Value) -> Result<(), String> {
+        let bytes = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
+        let path = self.dir.join("runs").join(run_id).join(PAYLOAD_FILE);
+        write_atomically(&path, &bytes).map_err(|e| e.to_string())
     }
 
     pub fn append(&self, run_id: &str, event: &RunEvent) -> Result<(), String> {

@@ -61,12 +61,23 @@ export interface AutomationEntry {
 
 type PauseReason = "new" | "manual" | "auto" | "completed" | "stop_after";
 
+type Actor = "user" | "cli" | "auto";
+
+/** The latest pause or resume. */
+interface Toggle {
+  enabled: boolean;
+  by: Actor;
+  reason: string | null;
+  at: string;
+}
+
 /** The run store's `state.json`, serialized in snake_case. */
 export interface AutomationState {
   enabled: boolean;
   pause_reason: PauseReason | null;
   next_run_at: string | null;
   consecutive_failures: number;
+  last_toggle?: Toggle | null;
 }
 
 export type StepStatus =
@@ -101,6 +112,15 @@ export interface AutomationItem {
   steps: StepAttempt[];
 }
 
+/** A tool request the agent's unattended policy denied, or that no one answered in time. */
+export interface PermissionRequest {
+  step: string;
+  attempt: number;
+  tool: string;
+  input: unknown;
+  resolution: "denied" | "allowed";
+}
+
 type RunStatus =
   | "skipped"
   | "starting"
@@ -120,6 +140,7 @@ export interface AutomationRun {
   claimed_at_ms: number | null;
   ended_at_ms: number | null;
   items: AutomationItem[];
+  permission_requests?: PermissionRequest[];
 }
 
 export interface AutomationRunPage {
@@ -135,6 +156,27 @@ export interface AutomationSummary {
 }
 
 export type AutomationStatus = "invalid" | "running" | "paused" | "degraded" | "active";
+
+export interface StartedRun {
+  run_id: string;
+  status: RunStatus;
+  skip_reason: string | null;
+}
+
+/** Returns once the run is claimed; it runs in the background. */
+export const startAutomationRun = (
+  name: string,
+  test: boolean,
+  payload: Record<string, unknown> | null = null
+) => invoke<StartedRun>("automation_run", { name, test, payload });
+
+type Operator = Exclude<Actor, "auto">;
+
+export const pauseAutomation = (name: string, by: Operator, reason: string | null = null) =>
+  invoke<AutomationState>("automation_pause", { name, by, reason });
+
+export const resumeAutomation = (name: string, by: Operator, reason: string | null = null) =>
+  invoke<AutomationState>("automation_resume", { name, by, reason });
 
 export const listAutomationRuns = (name: string, before: string | null, limit: number) =>
   invoke<AutomationRunPage>("automation_runs_list", { name, before, limit });
@@ -196,6 +238,17 @@ const PAUSE_REASON_LABELS: Record<PauseReason, string> = {
 export function pauseReasonLabel(state: AutomationState | null): string | null {
   if (!state || state.enabled) return null;
   return state.pause_reason ? PAUSE_REASON_LABELS[state.pause_reason] : "Paused";
+}
+
+const ACTOR_LABELS: Record<Actor, string> = { user: "you", cli: "the CLI", auto: "WTM" };
+
+export function toggleSummary(state: AutomationState | null): string | null {
+  const toggle = state?.last_toggle;
+  if (!toggle) return null;
+  const action = toggle.enabled ? "Resumed" : "Paused";
+  const when = new Date(toggle.at).toLocaleString();
+  const why = toggle.reason ? `: ${toggle.reason}` : "";
+  return `${action} by ${ACTOR_LABELS[toggle.by]} on ${when}${why}`;
 }
 
 export function triggerSummary(definition: AutomationDefinition): string {

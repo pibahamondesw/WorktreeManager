@@ -19,6 +19,7 @@ import {
 } from "../../services/automationPipeline";
 import { Badge } from "../ui/Badge";
 import { AutomationStepDetail } from "./AutomationStepDetail";
+import { AutomationPermissions } from "./AutomationPermissions";
 
 const LIVE_REFRESH_MS = 2000;
 const NODE_HEIGHT = 56;
@@ -100,6 +101,9 @@ export function AutomationPipeline({ name, steps }: { name: string; steps: Pipel
         {live && <span className="text-success">Live</span>}
       </div>
       <PipelineGraph steps={steps} progress={progress} />
+      {run?.permission_requests?.length ? (
+        <AutomationPermissions requests={run.permission_requests} />
+      ) : null}
     </div>
   );
 }

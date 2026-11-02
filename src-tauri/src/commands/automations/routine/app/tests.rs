@@ -20,7 +20,7 @@ while IFS= read -r line; do
     *hang*) ;;
     *'"type":"user"'*)
       printf '%s\n' '{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"All green"}]},"parent_tool_use_id":null}'
-      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"All green"}' ;;
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"All green","permission_denials":[{"tool_name":"Bash","tool_use_id":"tu1","tool_input":{"command":"gh pr list"}}]}' ;;
   esac
 done
 "#;
@@ -99,6 +99,14 @@ fn chat_sessions_run_turns_of_a_headless_agent_with_the_step_settings() {
             reply: Some("All green".into()),
             error: false
         }
+    );
+    assert_eq!(
+        sessions.settled_requests(&session_id),
+        [SettledRequest {
+            tool: "Bash".into(),
+            input: Some(serde_json::json!({ "command": "gh pr list" })),
+            allowed: false,
+        }]
     );
     assert_eq!(
         sessions.run_turn(&session_id, "hang", Duration::from_millis(300)),

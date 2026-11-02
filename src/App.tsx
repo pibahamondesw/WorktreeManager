@@ -563,6 +563,7 @@ function App() {
         onClose={() => setAutomationsOpen(false)}
         automations={automations.automations}
         error={automations.error}
+        onChanged={automations.reload}
         selectedName={selectedAutomationName}
         onSelect={setSelectedAutomationName}
         editorApp={editorApp}

@@ -4,6 +4,7 @@ import {
   AutomationSummary,
   automationStatus,
   pauseReasonLabel,
+  toggleSummary,
   triggerSummary,
 } from "../../services/automations";
 import { EditorApp } from "../../types";
@@ -11,6 +12,7 @@ import { AutomationStatusDot } from "./AutomationStatusDot";
 import { AutomationRuns } from "./AutomationRuns";
 import { AutomationDefinition } from "./AutomationDefinition";
 import { AutomationPipeline } from "./AutomationPipeline";
+import { AutomationActions } from "./AutomationActions";
 
 type Tab = "runs" | "pipeline" | "definition";
 const TABS: { id: Tab; label: string }[] = [
@@ -22,10 +24,12 @@ const TABS: { id: Tab; label: string }[] = [
 interface AutomationDetailProps {
   summary: AutomationSummary;
   editorApp: EditorApp;
+  onChanged: () => void;
 }
 
-export function AutomationDetail({ summary, editorApp }: AutomationDetailProps) {
+export function AutomationDetail({ summary, editorApp, onChanged }: AutomationDetailProps) {
   const [tab, setTab] = useState<Tab>(summary.entry.errors.length > 0 ? "definition" : "runs");
+  const [revision, setRevision] = useState(0);
   const { entry } = summary;
   const status = automationStatus(summary);
 
@@ -49,6 +53,15 @@ export function AutomationDetail({ summary, editorApp }: AutomationDetailProps) 
           {entry.name}
         </h3>
         <span className="text-xs text-text-muted">{AUTOMATION_STATUS_LABELS[status]}</span>
+        <div className="ml-auto">
+          <AutomationActions
+            summary={summary}
+            onChanged={() => {
+              setRevision((current) => current + 1);
+              onChanged();
+            }}
+          />
+        </div>
       </div>
 
       <AutomationFacts summary={summary} />
@@ -86,10 +99,14 @@ export function AutomationDetail({ summary, editorApp }: AutomationDetailProps) 
         aria-labelledby={`automation-tab-${tab}`}
         className="flex-1 min-h-0 overflow-y-auto p-6"
       >
-        {tab === "runs" && <AutomationRuns key={entry.name} name={entry.name} />}
+        {tab === "runs" && <AutomationRuns key={`${entry.name}:${revision}`} name={entry.name} />}
         {tab === "pipeline" &&
           (entry.definition ? (
-            <AutomationPipeline key={entry.name} name={entry.name} steps={entry.definition.steps} />
+            <AutomationPipeline
+              key={`${entry.name}:${revision}`}
+              name={entry.name}
+              steps={entry.definition.steps}
+            />
           ) : (
             <p className="text-sm text-text-muted">Unavailable until the definition is valid</p>
           ))}
@@ -102,6 +119,7 @@ export function AutomationDetail({ summary, editorApp }: AutomationDetailProps) 
 function AutomationFacts({ summary }: { summary: AutomationSummary }) {
   const { entry, state, stateError } = summary;
   const pauseReason = pauseReasonLabel(state);
+  const lastToggle = toggleSummary(state);
   const nextRun = state?.enabled && state.next_run_at ? new Date(state.next_run_at) : null;
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 px-6 pb-3 text-xs border-b border-border flex-shrink-0 select-text">
@@ -125,6 +143,12 @@ function AutomationFacts({ summary }: { summary: AutomationSummary }) {
         <>
           <dt className="text-text-muted">Paused</dt>
           <dd className="text-text-secondary">{pauseReason}</dd>
+        </>
+      )}
+      {lastToggle && (
+        <>
+          <dt className="text-text-muted">Last change</dt>
+          <dd className="text-text-secondary">{lastToggle}</dd>
         </>
       )}
       {stateError && (

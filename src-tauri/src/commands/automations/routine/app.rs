@@ -15,7 +15,7 @@ use super::{
 };
 use crate::commands::agents::permission::PermissionPolicy;
 use crate::commands::agents::Agents;
-use crate::commands::chat::{ChatRegistry, HeadlessRequest, TurnEnd};
+use crate::commands::chat::{ChatRegistry, HeadlessRequest, SettledRequest, TurnEnd};
 
 const DEFAULT_MODEL: &str = "default";
 
@@ -138,6 +138,10 @@ impl<R: Runtime> Sessions for ChatSessions<R> {
 
     fn close(&self, session_id: &str) {
         self.0.state::<ChatRegistry>().close(session_id);
+    }
+
+    fn settled_requests(&self, session_id: &str) -> Vec<SettledRequest> {
+        self.0.state::<ChatRegistry>().settled_requests(session_id)
     }
 }
 

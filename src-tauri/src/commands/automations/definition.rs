@@ -549,6 +549,14 @@ pub fn load_current<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<AutomationEntr
     load_directory(&dir, &env)
 }
 
+pub fn load_current_named<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+) -> Result<AutomationEntry, String> {
+    let (dir, env) = Sources::of(app)?.environment();
+    load_named(&dir, name, &env)
+}
+
 #[tauri::command]
 pub async fn automations_list<R: Runtime>(
     app: AppHandle<R>,

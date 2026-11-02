@@ -638,6 +638,7 @@ impl ChatProvider for ClaudeProvider {
             }
             Some("result") => {
                 out.completes_turn = true;
+                out.denials.extend(permission_denials(&message));
                 out.background_agents = Some(self.background_agents);
                 self.turns = self.turns.saturating_sub(1);
                 if message["is_error"] == true {
@@ -1152,6 +1153,22 @@ fn assistant_block(message_id: &str, index: usize, block: &Value) -> Option<Chat
 
 /// `launch` is the message's `tool_use_result`; a subagent launched in the background keeps
 /// running after its tool call returns and reports through a task notification.
+/// Tool calls `dontAsk` denied during the turn, listed by its `result` message.
+fn permission_denials(result: &Value) -> Vec<PermissionDenial> {
+    result["permission_denials"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|denial| {
+            Some(PermissionDenial {
+                tool_use_id: denial["tool_use_id"].as_str()?.to_string(),
+                tool: denial["tool_name"].as_str()?.to_string(),
+                input: denial["tool_input"].clone(),
+            })
+        })
+        .collect()
+}
+
 fn tool_result(block: &Value, launch: &Value, snapshot: &ChatSnapshot) -> Option<ChatItem> {
     let id = block["tool_use_id"].as_str()?;
     let mut item = snapshot.item(id)?.clone();
@@ -2122,6 +2139,28 @@ mod tests {
         assert!(provider
             .send("next", &[], &mut ProviderOutput::default())
             .is_ok());
+    }
+
+    #[test]
+    fn results_report_the_tool_calls_dont_ask_denied() {
+        let (mut provider, mut snapshot) = started();
+        let result = json!({
+            "type": "result",
+            "is_error": false,
+            "permission_denials": [
+                { "tool_name": "Bash", "tool_use_id": "tu1", "tool_input": { "command": "gh pr list" } },
+                { "tool_name": "Bash" },
+            ],
+        });
+        let out = feed(&mut provider, &mut snapshot, result);
+        assert_eq!(
+            out.denials,
+            [PermissionDenial {
+                tool_use_id: "tu1".into(),
+                tool: "Bash".into(),
+                input: json!({ "command": "gh pr list" }),
+            }]
+        );
     }
 
     #[test]

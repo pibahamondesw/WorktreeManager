@@ -45,7 +45,7 @@ export function useAutomations() {
   }, [startRequest]);
 
   useLoadOnFocus(reload);
-  return { automations, error };
+  return { automations, error, reload };
 }
 
 interface RunsState {

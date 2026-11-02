@@ -267,3 +267,46 @@ it("reads automations and their runs through the Rust commands", async () => {
     });
   expect(invokeCommand).toHaveBeenCalledTimes(calls);
 });
+
+it("starts, pauses and resumes automations for the CLI", async () => {
+  invokeCommand.mockImplementation((command) => Promise.resolve({ command }));
+  expect(await call("automation.run", { name: " babysitter " })).toMatchObject({
+    ok: true,
+    data: { command: "automation_run" },
+  });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_run", {
+    name: "babysitter",
+    test: false,
+    payload: null,
+  });
+  await call("automation.run", { name: "babysitter", payload: { pr: 7 } });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_run", {
+    name: "babysitter",
+    test: false,
+    payload: { pr: 7 },
+  });
+  await call("automation.pause", { name: "babysitter", reason: " vacation " });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_pause", {
+    name: "babysitter",
+    by: "cli",
+    reason: "vacation",
+  });
+  await call("automation.resume", { name: "babysitter" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_resume", {
+    name: "babysitter",
+    by: "cli",
+    reason: null,
+  });
+  const calls = invokeCommand.mock.calls.length;
+  for (const [method, params] of [
+    ["automation.run", { name: "babysitter", payload: [1] }],
+    ["automation.run", { name: "babysitter", payload: null }],
+    ["automation.pause", { name: "babysitter", reason: " " }],
+    ["automation.resume", { name: "babysitter", test: true }],
+  ] as const)
+    expect(await call(method, params)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+  expect(invokeCommand).toHaveBeenCalledTimes(calls);
+});

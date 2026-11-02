@@ -197,7 +197,14 @@ function pageLimit(value: unknown): number {
   return value;
 }
 
-async function readAutomations(command: string, args?: Record<string, unknown>) {
+function payloadObject(value: unknown): Record<string, unknown> | null {
+  if (value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new OperationError("invalid_params", "payload must be a JSON object.");
+  return value as Record<string, unknown>;
+}
+
+async function invokeAutomations(command: string, args?: Record<string, unknown>) {
   try {
     return await invoke(command, args);
   } catch (error) {
@@ -266,6 +273,9 @@ export async function dispatchCliBridge(
       "automation.get": ["name"],
       "automation.runs": ["name", "before", "limit"],
       "automation.status": ["name", "runId"],
+      "automation.run": ["name", "payload"],
+      "automation.pause": ["name", "reason"],
+      "automation.resume": ["name", "reason"],
     };
     if (!Object.hasOwn(allowed, request.method))
       throw new OperationError("method_not_found", "Unknown operation. See wtm --help.");
@@ -349,23 +359,41 @@ export async function dispatchCliBridge(
         break;
       }
       case "automation.list":
-        result = await readAutomations("automations_list");
+        result = await invokeAutomations("automations_list");
         break;
       case "automation.get":
-        result = await readAutomations("automations_get", { name: text(params.name) });
+        result = await invokeAutomations("automations_get", { name: text(params.name) });
         break;
       case "automation.runs":
-        result = await readAutomations("automation_runs_list", {
+        result = await invokeAutomations("automation_runs_list", {
           name: text(params.name),
           before: params.before === undefined ? null : text(params.before),
           limit: pageLimit(params.limit),
         });
         break;
       case "automation.status":
-        result = await readAutomations("automation_run_get", {
+        result = await invokeAutomations("automation_run_get", {
           name: text(params.name),
           runId: text(params.runId),
         });
+        break;
+      case "automation.run":
+        result = await invokeAutomations("automation_run", {
+          name: text(params.name),
+          test: false,
+          payload: payloadObject(params.payload),
+        });
+        break;
+      case "automation.pause":
+      case "automation.resume":
+        result = await invokeAutomations(
+          request.method === "automation.pause" ? "automation_pause" : "automation_resume",
+          {
+            name: text(params.name),
+            by: "cli",
+            reason: params.reason === undefined ? null : text(params.reason),
+          }
+        );
         break;
     }
     return { ok: true, data: result, warnings: [] };

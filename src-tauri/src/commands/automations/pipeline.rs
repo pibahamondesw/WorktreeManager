@@ -1,9 +1,5 @@
 //! Drives one item through the steps of an automation. The machine only reads and writes run
 //! events: every transition is recorded in the run log and the item's state is rebuilt from it.
-#![cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the item runner (WOR-257) is the first caller")
-)]
 
 #[cfg(test)]
 mod tests;

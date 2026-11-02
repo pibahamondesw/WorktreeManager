@@ -1,24 +1,17 @@
 //! Sessions an automation starts from Rust with no pane attached. They run beside the task
 //! agent's primary session under the policy they are given, broadcast `chat-status` like any other
 //! session and remember their conversation in their own slot; a pane can attach later by id.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the scheduler (WOR-253) starts the routine executor, the first caller"
-    )
-)]
-
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde_json::Value;
 use tauri::{AppHandle, Runtime};
 
 use super::model::{ChatImage, ChatSetting, ChatSnapshot, ChatStatus, ItemKind};
 use super::{
     session_setup, start_session, ChatOrigin, ChatOwner, ChatRegistry, ChatSession, SessionTarget,
 };
-use crate::commands::agents::permission::PermissionPolicy;
+use crate::commands::agents::permission::{PendingDefault, PermissionPolicy};
 use crate::commands::agents::{Agents, ChatRequest};
 
 const TURN_POLL: Duration = Duration::from_millis(250);
@@ -37,6 +30,15 @@ pub(crate) enum TurnEnd {
         message: Option<String>,
     },
     TimedOut,
+}
+
+/// A tool request an unattended session settled without anyone: denied by its rules, or resolved
+/// with its default because no one answered in time.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SettledRequest {
+    pub tool: String,
+    pub input: Option<Value>,
+    pub allowed: bool,
 }
 
 /// Where a headless session runs, and the conversation it continues if it is not a new one.
@@ -132,6 +134,14 @@ impl ChatRegistry {
         }
     }
 
+    /// Empty once the session is gone.
+    pub(crate) fn settled_requests(&self, session_id: &str) -> Vec<SettledRequest> {
+        self.with_session_id(session_id, |session| {
+            Ok(settled_requests(&session.shared.lock().unwrap().snapshot))
+        })
+        .unwrap_or_default()
+    }
+
     pub(crate) fn send(
         &self,
         session_id: &str,
@@ -141,6 +151,10 @@ impl ChatRegistry {
         self.with_session_id(session_id, |session| session.send(text, images))
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "canceling a run mid-turn is not wired yet")
+    )]
     pub(crate) fn interrupt(&self, session_id: &str) -> Result<(), String> {
         self.with_session_id(session_id, ChatSession::interrupt)
     }
@@ -177,6 +191,20 @@ fn turn_end(snapshot: &ChatSnapshot) -> Option<TurnEnd> {
     }
 }
 
+fn settled_requests(snapshot: &ChatSnapshot) -> Vec<SettledRequest> {
+    let denied = snapshot.denied.iter().map(|denial| SettledRequest {
+        tool: denial.tool.clone(),
+        input: Some(denial.input.clone()),
+        allowed: false,
+    });
+    let unanswered = snapshot.unanswered.iter().map(|unanswered| SettledRequest {
+        tool: unanswered.request.title.clone(),
+        input: unanswered.request.detail.clone().map(Value::String),
+        allowed: unanswered.resolution == PendingDefault::Allow,
+    });
+    denied.chain(unanswered).collect()
+}
+
 fn last_reply(snapshot: &ChatSnapshot) -> Option<String> {
     snapshot
         .items
@@ -188,7 +216,9 @@ fn last_reply(snapshot: &ChatSnapshot) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::model::ChatItem;
+    use super::super::model::{
+        ChatItem, DetailFormat, PendingKind, PendingRequest, PermissionDenial, UnansweredRequest,
+    };
     use super::super::tests::{insert_live_session, set_turn};
     use super::*;
 
@@ -262,6 +292,48 @@ mod tests {
                 code: None,
                 message: Some("No chat session with this id".into())
             }
+        );
+    }
+
+    #[test]
+    fn settled_requests_list_denials_then_unanswered_requests() {
+        let registry = live_registry();
+        assert_eq!(registry.settled_requests("missing"), []);
+        registry
+            .with_session_id(SESSION, |session| {
+                let snapshot = &mut session.shared.lock().unwrap().snapshot;
+                snapshot.denied.push(PermissionDenial {
+                    tool_use_id: "tu1".into(),
+                    tool: "Bash".into(),
+                    input: serde_json::json!({ "command": "gh pr list" }),
+                });
+                snapshot.unanswered.push(UnansweredRequest {
+                    request: PendingRequest {
+                        id: "r1".into(),
+                        title: "Allow WebFetch?".into(),
+                        detail: Some("https://example.com".into()),
+                        format: DetailFormat::Text,
+                        kind: PendingKind::Unsupported,
+                    },
+                    resolution: PendingDefault::Allow,
+                });
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            registry.settled_requests(SESSION),
+            [
+                SettledRequest {
+                    tool: "Bash".into(),
+                    input: Some(serde_json::json!({ "command": "gh pr list" })),
+                    allowed: false,
+                },
+                SettledRequest {
+                    tool: "Allow WebFetch?".into(),
+                    input: Some(Value::String("https://example.com".into())),
+                    allowed: true,
+                },
+            ]
         );
     }
 

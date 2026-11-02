@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
 
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -11,7 +11,7 @@ use crate::commands::agents::permission::PermissionMode;
 use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
 use crate::commands::automations::definition::{load_named, Environment};
 use crate::commands::automations::store::events::{
-    RunSource, RunState, RunStatus, RunTrigger, StepStatus,
+    PermissionRequest, RunSource, RunState, RunStatus, RunTrigger, StepStatus,
 };
 use crate::commands::automations::store::{AutomationState, Claim, PauseReason};
 
@@ -129,6 +129,9 @@ struct FakeSessions {
     closed: Mutex<Vec<String>>,
     /// Removed when a session starts, to lose the run log mid-run.
     doomed_log: Mutex<Option<PathBuf>>,
+    settled: Vec<SettledRequest>,
+    /// Holds every turn until it receives.
+    gate: Mutex<Option<mpsc::Receiver<()>>>,
 }
 
 impl FakeSessions {
@@ -158,6 +161,9 @@ impl Sessions for FakeSessions {
     }
 
     fn run_turn(&self, session_id: &str, prompt: &str, timeout: Duration) -> TurnEnd {
+        if let Some(gate) = self.gate.lock().unwrap().as_ref() {
+            gate.recv().unwrap();
+        }
         self.turns
             .lock()
             .unwrap()
@@ -171,6 +177,18 @@ impl Sessions for FakeSessions {
 
     fn close(&self, session_id: &str) {
         self.closed.lock().unwrap().push(session_id.into());
+    }
+
+    fn settled_requests(&self, _: &str) -> Vec<SettledRequest> {
+        self.settled.clone()
+    }
+}
+
+fn settled(tool: &str, allowed: bool) -> SettledRequest {
+    SettledRequest {
+        tool: tool.into(),
+        input: Some(json!({ "command": "gh pr list" })),
+        allowed,
     }
 }
 
@@ -237,6 +255,7 @@ impl Harness {
             definition_hash: self.hash(),
             scheduled_for: fired_at,
             fired_at,
+            test,
         }
     }
 
@@ -600,19 +619,35 @@ fn runs_the_sweep_already_ended_are_left_as_they_are() {
 
     let run = harness.state_of(&request);
     assert_eq!(run.failure_reason, Some(FailureReason::StartTimeout));
+    assert_eq!(run.task_id.as_deref(), Some("t1"));
+    assert!(harness.sessions.started.lock().unwrap().is_empty());
     assert_eq!(harness.automation().consecutive_failures, 1);
 }
 
 #[test]
-fn the_scheduler_hands_runs_to_a_background_thread() {
-    let harness = Harness::routine("", FakeSessions::default());
+fn the_scheduler_hands_runs_to_a_background_thread_that_owns_them() {
+    let (open_gate, gate) = mpsc::channel();
+    let sessions = FakeSessions {
+        gate: Mutex::new(Some(gate)),
+        ..FakeSessions::default()
+    };
+    let harness = Harness::routine("", sessions);
     let request = harness.claim(false, now());
-    harness.executor.execute(request.clone());
+    harness
+        .executor
+        .execute(request.clone(), Some(json!({ "pr": 7 })));
+    assert!(harness.executor.owns(&request.run_id));
+    open_gate.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while is_active(harness.state_of(&request).status) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(harness.state_of(&request).status, RunStatus::Completed);
+    assert!(harness.prompts()[0].contains(r#"{"pr":7}"#));
+    while harness.executor.owns(&request.run_id) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!harness.executor.owns(&request.run_id));
 }
 
 #[test]
@@ -646,7 +681,11 @@ fn templates_render_run_variables_and_literal_braces() {
 
 #[test]
 fn losing_the_run_log_mid_run_still_closes_its_sessions() {
-    let harness = Harness::routine("", FakeSessions::default());
+    let sessions = FakeSessions {
+        settled: vec![settled("Bash", false)],
+        ..FakeSessions::default()
+    };
+    let harness = Harness::routine("", sessions);
     harness.save(enabled_with_failures(1));
     let runs = harness.scratch.0.join("data/automations/demo/runs");
     *harness.sessions.doomed_log.lock().unwrap() = Some(runs);
@@ -657,4 +696,45 @@ fn losing_the_run_log_mid_run_still_closes_its_sessions() {
     assert_eq!(*harness.sessions.closed.lock().unwrap(), ["s1"]);
     assert_eq!(harness.sessions.turns.lock().unwrap().len(), 1);
     assert_eq!(harness.automation().consecutive_failures, 1);
+}
+
+#[test]
+fn a_test_run_records_what_the_policy_settled_and_leaves_the_state_alone() {
+    let sessions = FakeSessions {
+        settled: vec![settled("Bash", false), settled("WebFetch", true)],
+        ends: Mutex::new(VecDeque::from([TurnEnd::Ended {
+            code: Some(1),
+            message: None,
+        }])),
+        ..FakeSessions::default()
+    };
+    let harness = Harness::routine(
+        "steps:\n  - id: triage\n    on_fail: continue\n    agent: {}\n  - id: report\n    agent: {}\n",
+        sessions,
+    );
+    let state = AutomationState {
+        next_run_at: Some("2030-01-01T09:00:00Z".into()),
+        cursor: Some(json!("kept")),
+        ..enabled_with_failures(2)
+    };
+    harness.save(state.clone());
+
+    let run = harness.run_with(true, None);
+
+    assert_eq!(run.status, RunStatus::Completed);
+    assert_eq!(harness.automation(), state);
+    let request = |tool: &str, resolution| PermissionRequest {
+        step: "triage".into(),
+        attempt: 1,
+        tool: tool.into(),
+        input: Some(json!({ "command": "gh pr list" })),
+        resolution,
+    };
+    assert_eq!(
+        run.permission_requests,
+        [
+            request("Bash", PermissionResolution::Denied),
+            request("WebFetch", PermissionResolution::Allowed),
+        ]
+    );
 }

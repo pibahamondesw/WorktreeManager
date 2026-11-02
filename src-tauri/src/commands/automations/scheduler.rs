@@ -14,6 +14,7 @@ use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use chrono_tz::Tz;
 use croner::parser::{CronParser, Seconds, Year};
 use croner::Cron;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
 
@@ -22,7 +23,9 @@ use super::store::events::{
     FailureReason, ItemStatus, MissedSlots, RunEvent, RunSource, RunState, RunStatus, RunTrigger,
     SkipReason,
 };
-use super::store::{AutomationState, AutomationWriter, Claim, PauseReason, RunStore};
+use super::store::{
+    Actor, AutomationState, AutomationWriter, Claim, PauseReason, RunStore, Toggle,
+};
 
 const TICK: Duration = Duration::from_secs(60);
 const MAX_STAGGER_SECS: u64 = 120;
@@ -51,12 +54,20 @@ pub struct RunRequest {
     pub definition_hash: String,
     pub scheduled_for: DateTime<Utc>,
     pub fired_at: DateTime<Utc>,
+    /// Test runs leave the automation's state alone and stage their side effects.
+    pub test: bool,
 }
 
 /// Starts a claimed run. The run is already recorded as `starting`; a run the executor never
 /// starts is failed by the sweep.
 pub trait Executor: Send + Sync {
-    fn execute(&self, request: RunRequest);
+    /// `payload` is the untrusted data the trigger carried.
+    fn execute(&self, request: RunRequest, payload: Option<Value>);
+
+    /// Whether this process is still working on the run, so a slow start is not a stuck one.
+    fn owns(&self, _run_id: &str) -> bool {
+        false
+    }
 }
 
 pub struct Automation {
@@ -180,17 +191,20 @@ impl<C: Clock> Scheduler<C> {
 
     fn sweep(&mut self, automation: &Automation, now: DateTime<Utc>) -> Result<(), String> {
         let name = &automation.name;
-        let overdue_runs = self
+        let executor = self.executor.clone();
+        let overdue =
+            |run: &RunState| overdue(run, automation.run_deadline, now, executor.owns(&run.id));
+        if !self
             .active_runs(name)?
-            .into_iter()
-            .any(|run| overdue(&run, automation.run_deadline, now).is_some());
-        if !overdue_runs {
+            .iter()
+            .any(|run| overdue(run).is_some())
+        {
             return Ok(());
         }
         let writer = self.store.writer(name)?;
         let mut state = self.store.state(name)?;
         for run in self.active_runs(name)? {
-            if let Some(reason) = overdue(&run, automation.run_deadline, now) {
+            if let Some(reason) = overdue(&run) {
                 writer.append(&run.id, &RunEvent::Failed { reason })?;
                 if !run.trigger.as_ref().is_some_and(|trigger| trigger.test) {
                     record_failure(&mut state);
@@ -228,7 +242,40 @@ impl<C: Clock> Scheduler<C> {
         writer.save_state(&state)?;
         drop(writer);
         if let Some(request) = request {
-            self.executor.execute(request);
+            self.executor.execute(request, None);
+        }
+        Ok(())
+    }
+
+    /// Ends the runs an earlier app process left active; they are not resumed yet.
+    pub fn recover_interrupted(&mut self, automations: &[Automation]) {
+        let boot_ms = self.clock.now().timestamp_millis() as u64;
+        for automation in automations {
+            if let Err(error) = self.end_interrupted(&automation.name, boot_ms) {
+                log::warn!(
+                    "Automation {} kept its interrupted runs: {error}",
+                    automation.name
+                );
+            }
+        }
+    }
+
+    fn end_interrupted(&mut self, name: &str, boot_ms: u64) -> Result<(), String> {
+        let interrupted: Vec<_> = self
+            .active_runs(name)?
+            .into_iter()
+            .filter(|run| run.claimed_at_ms.is_some_and(|claimed| claimed < boot_ms))
+            .collect();
+        if interrupted.is_empty() {
+            return Ok(());
+        }
+        let writer = self.store.writer(name)?;
+        for run in interrupted {
+            writer.append(&run.id, &RunEvent::Interrupted)?;
+            let failed = RunEvent::Failed {
+                reason: FailureReason::Interrupted,
+            };
+            writer.append(&run.id, &failed)?;
         }
         Ok(())
     }
@@ -236,9 +283,7 @@ impl<C: Clock> Scheduler<C> {
 
 /// Enables the automation, or resumes it after a pause: the failure count restarts and the
 /// schedule fires from its next slot after now, without catching up the slots it missed.
-pub fn resume(store: &RunStore, automation: &Automation, now: DateTime<Utc>) -> Result<(), String> {
-    let writer = store.writer(&automation.name)?;
-    let mut state = store.state(&automation.name)?;
+pub(super) fn reschedule(state: &mut AutomationState, automation: &Automation, now: DateTime<Utc>) {
     state.enabled = true;
     state.pause_reason = None;
     state.consecutive_failures = 0;
@@ -247,7 +292,6 @@ pub fn resume(store: &RunStore, automation: &Automation, now: DateTime<Utc>) -> 
         .as_ref()
         .and_then(|slots| slots.next(now - stagger(&automation.name), false))
         .map(rfc3339);
-    writer.save_state(&state)
 }
 
 /// `None` when nothing is due. A schedule that never ran, or whose pending slot is past its next
@@ -362,6 +406,7 @@ fn claim_slot(
         definition_hash: automation.definition_hash.clone(),
         scheduled_for: slot,
         fired_at: now,
+        test: false,
     }))
 }
 
@@ -370,14 +415,21 @@ fn skip_reason(
     state: &AutomationState,
     active: &[RunState],
 ) -> Option<SkipReason> {
+    if state.enabled {
+        capacity_skip(automation, active)
+    } else {
+        Some(SkipReason::Paused)
+    }
+}
+
+/// Why a run may not start beside the `active` ones, paused or not.
+pub(super) fn capacity_skip(automation: &Automation, active: &[RunState]) -> Option<SkipReason> {
     let busy_items = active
         .iter()
         .flat_map(|run| &run.items)
         .filter(|item| matches!(item.status, ItemStatus::Queued | ItemStatus::Active))
         .count() as u64;
-    if !state.enabled {
-        Some(SkipReason::Paused)
-    } else if active.len() as u64 >= automation.max_runs {
+    if active.len() as u64 >= automation.max_runs {
         Some(SkipReason::AlreadyRunning)
     } else if busy_items >= automation.active_pool {
         Some(SkipReason::Capped)
@@ -386,10 +438,15 @@ fn skip_reason(
     }
 }
 
-fn overdue(run: &RunState, deadline: TimeDelta, now: DateTime<Utc>) -> Option<FailureReason> {
+fn overdue(
+    run: &RunState,
+    deadline: TimeDelta,
+    now: DateTime<Utc>,
+    owned: bool,
+) -> Option<FailureReason> {
     let claimed = DateTime::from_timestamp_millis(run.claimed_at_ms? as i64)?;
     let age = now - claimed;
-    if run.status == RunStatus::Starting && age >= START_TIMEOUT {
+    if run.status == RunStatus::Starting && !owned && age >= START_TIMEOUT {
         Some(FailureReason::StartTimeout)
     } else if age >= deadline {
         Some(FailureReason::Deadline)
@@ -403,6 +460,8 @@ pub(super) fn record_failure(state: &mut AutomationState) {
     if state.consecutive_failures >= AUTO_PAUSE_FAILURES && state.enabled {
         state.enabled = false;
         state.pause_reason = Some(PauseReason::Auto);
+        let reason = format!("{AUTO_PAUSE_FAILURES} consecutive failures");
+        state.last_toggle = Some(Toggle::now(false, Actor::Auto, Some(reason)));
     }
 }
 
@@ -420,7 +479,7 @@ fn stagger(name: &str) -> TimeDelta {
     TimeDelta::seconds((seed % (MAX_STAGGER_SECS + 1)) as i64)
 }
 
-fn rfc3339(instant: DateTime<Utc>) -> String {
+pub(super) fn rfc3339(instant: DateTime<Utc>) -> String {
     instant.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
@@ -444,9 +503,12 @@ pub fn start_scheduler<R: Runtime>(
     executor: Arc<dyn Executor>,
 ) -> Result<(), String> {
     let mut scheduler = Scheduler::new(RunStore::of(&app)?, SystemClock, executor);
-    thread::spawn(move || loop {
-        scheduler.tick(&scheduled(&app));
-        thread::sleep(TICK);
+    thread::spawn(move || {
+        scheduler.recover_interrupted(&scheduled(&app));
+        loop {
+            scheduler.tick(&scheduled(&app));
+            thread::sleep(TICK);
+        }
     });
     Ok(())
 }
