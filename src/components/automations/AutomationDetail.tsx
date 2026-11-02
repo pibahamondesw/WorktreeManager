@@ -118,8 +118,8 @@ export function AutomationDetail({ summary, editorApp, onChanged }: AutomationDe
 
 function AutomationFacts({ summary }: { summary: AutomationSummary }) {
   const { entry, state, stateError } = summary;
-  const pauseReason = pauseReasonLabel(state);
   const lastToggle = toggleSummary(state);
+  const pauseReason = state?.last_toggle?.enabled === false ? null : pauseReasonLabel(state);
   const nextRun = state?.enabled && state.next_run_at ? new Date(state.next_run_at) : null;
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 px-6 pb-3 text-xs border-b border-border flex-shrink-0 select-text">
