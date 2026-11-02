@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{mpsc, Mutex};
@@ -7,11 +7,14 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 
 use super::*;
-use crate::commands::agents::permission::PermissionMode;
+use crate::commands::agents::permission::{Grant, PermissionMode};
 use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
-use crate::commands::automations::definition::{load_named, Environment};
+use crate::commands::automations::command::CommandContext;
+use crate::commands::automations::definition::{
+    load_named, Capacity, Environment, Step, Transition, WaitStep,
+};
 use crate::commands::automations::store::events::{
-    PermissionRequest, RunSource, RunState, RunStatus, RunTrigger, StepStatus,
+    PermissionRequest, RunSource, RunState, RunStatus, RunTrigger, StepStatus, Verdict,
 };
 use crate::commands::automations::store::{AutomationState, Claim, PauseReason};
 
@@ -74,6 +77,8 @@ fn environment() -> Environment {
                 images: true,
                 headless: true,
                 tool_rules: true,
+                read_only: true,
+                structured_output: true,
             },
         }],
         workspaces: serde_json::from_value(json!([
@@ -95,6 +100,8 @@ impl Definitions for DirectoryDefinitions {
 #[derive(Default)]
 struct FakeTasks {
     failure: Option<TaskFailure>,
+    /// The worktree of the task, instead of a path that does not exist.
+    worktree: Option<PathBuf>,
     created: Mutex<Vec<NewTask>>,
     fetched: Mutex<Vec<String>>,
 }
@@ -104,13 +111,18 @@ fn task(id: &str) -> ResolvedTask {
         id: id.into(),
         branch: "wtm/demo/branch".into(),
         folders: vec!["/worktrees/rails".into()],
+        repo_ids: vec!["r1".into()],
     }
 }
 
 impl Tasks for FakeTasks {
     fn create(&self, new_task: &NewTask) -> Result<ResolvedTask, TaskFailure> {
         self.created.lock().unwrap().push(new_task.clone());
-        self.failure.clone().map_or_else(|| Ok(task("t1")), Err)
+        let mut created = task("t1");
+        if let Some(worktree) = &self.worktree {
+            created.folders = vec![worktree.to_string_lossy().into_owned()];
+        }
+        self.failure.clone().map_or_else(|| Ok(created), Err)
     }
 
     fn get(&self, task_id: &str) -> Result<ResolvedTask, TaskFailure> {
@@ -124,7 +136,7 @@ struct FakeSessions {
     unavailable: bool,
     start_error: Option<String>,
     ends: Mutex<VecDeque<TurnEnd>>,
-    started: Mutex<Vec<AgentSettings>>,
+    started: Mutex<Vec<SessionLaunch>>,
     turns: Mutex<Vec<(String, String, Duration)>>,
     closed: Mutex<Vec<String>>,
     /// Removed when a session starts, to lose the run log mid-run.
@@ -148,7 +160,7 @@ impl Sessions for FakeSessions {
         !self.unavailable
     }
 
-    fn start(&self, _: &ResolvedTask, agent: &AgentSettings) -> Result<String, String> {
+    fn start(&self, _: &ResolvedTask, launch: &SessionLaunch) -> Result<String, String> {
         if let Some(error) = &self.start_error {
             return Err(error.clone());
         }
@@ -156,8 +168,17 @@ impl Sessions for FakeSessions {
             fs::remove_dir_all(log).unwrap();
         }
         let mut started = self.started.lock().unwrap();
-        started.push(agent.clone());
+        started.push(launch.clone());
         Ok(format!("s{}", started.len()))
+    }
+
+    /// Known once the session has run a turn, as for agents that report it late.
+    fn conversation(&self, session_id: &str) -> Option<String> {
+        let turns = self.turns.lock().unwrap();
+        turns
+            .iter()
+            .any(|(session, _, _)| session == session_id)
+            .then(|| format!("c-{session_id}"))
     }
 
     fn run_turn(&self, session_id: &str, prompt: &str, timeout: Duration) -> TurnEnd {
@@ -316,6 +337,7 @@ fn a_manual_run_creates_its_task_and_records_the_session_and_outcome() {
             workspace_id: "w1".into(),
             branch: format!("wtm/demo/{short_id}"),
             repo_ids: vec!["r1".into()],
+            bases: BTreeMap::new(),
             automation: "demo".into(),
         }]
     );
@@ -535,7 +557,7 @@ fn steps_share_a_session_unless_they_ask_for_a_fresh_one() {
     assert_eq!(sessions, ["s1", "s1", "s2"]);
     assert_eq!(*harness.sessions.closed.lock().unwrap(), ["s1", "s2"]);
     let started = harness.sessions.started.lock().unwrap();
-    assert_eq!(started[1].effort.as_deref(), Some("high"));
+    assert_eq!(started[1].agent.effort.as_deref(), Some("high"));
     let prompt = &harness.prompts()[0];
     assert!(prompt.starts_with(&format!(
         "Use the fix-it skill.\n\n{INSTRUCTIONS}\n\nFix the first one."
@@ -574,29 +596,313 @@ fn blocked_items_complete_the_run_as_needing_attention() {
     assert_eq!(run.items[0].steps[0].cause.as_deref(), Some("agent_error"));
 }
 
-#[test]
-fn steps_this_executor_cannot_run_or_results_it_cannot_read_fail() {
-    let harness = Harness::routine(
-        "steps:
-  - id: check
-    command: [/bin/echo]
-    on_fail: continue
-  - id: review
-    agent: { result: verdict }
-",
-        FakeSessions::default(),
-    );
-    let run = harness.run();
-    let causes: Vec<_> = run.items[0]
+fn verdict_reply(verdict: &str, findings: Value) -> TurnEnd {
+    let result = json!({ "verdict": verdict, "summary": "Reviewed", "findings": findings });
+    replied(&result.to_string())
+}
+
+fn causes(run: &RunState) -> Vec<Option<&str>> {
+    run.items[0]
         .steps
         .iter()
         .map(|attempt| attempt.cause.as_deref())
+        .collect()
+}
+
+const REVIEWED: &str = "steps:
+  - id: implement
+    agent: {}
+  - id: review
+    agent:
+      fresh_session: true
+      readonly: true
+      result: verdict
+      on_reject: { goto: implement, max: 1 }
+";
+
+#[test]
+fn a_clean_context_reviewer_sends_its_findings_back_to_the_implementation() {
+    let finding =
+        json!([{ "title": "Missing test", "detail": "Cover it", "path": "a.rb", "line": 3 }]);
+    let sessions = FakeSessions::ending([
+        replied("Done"),
+        verdict_reply("reject", finding),
+        replied("Fixed"),
+        verdict_reply("pass", json!([])),
+    ]);
+    let harness = Harness::routine(REVIEWED, sessions);
+
+    let run = harness.run();
+
+    assert_eq!(run.outcome, Some(RunOutcome::Reported));
+    let attempts: Vec<_> = run.items[0]
+        .steps
+        .iter()
+        .map(|attempt| {
+            (
+                format!("{}#{}", attempt.step, attempt.attempt),
+                attempt.status,
+                attempt.verdict,
+                attempt.session_id.clone().unwrap(),
+            )
+        })
         .collect();
     assert_eq!(
-        causes,
-        [Some("unsupported_step:check"), Some("result_unavailable")]
+        attempts,
+        [
+            (
+                "implement#1".into(),
+                StepStatus::Succeeded,
+                None,
+                "s1".into()
+            ),
+            (
+                "review#1".into(),
+                StepStatus::Rejected,
+                Some(Verdict::Reject),
+                "s2".into()
+            ),
+            (
+                "implement#2".into(),
+                StepStatus::Succeeded,
+                None,
+                "s1".into()
+            ),
+            (
+                "review#2".into(),
+                StepStatus::Succeeded,
+                Some(Verdict::Pass),
+                "s3".into()
+            ),
+        ]
     );
+    let review = &run.items[0].steps[1];
+    assert_eq!(
+        review.result.as_ref().unwrap()["findings"][0]["title"],
+        "Missing test"
+    );
+    assert_eq!(
+        run.items[0].steps[0].conversation_id.as_deref(),
+        Some("c-s1")
+    );
+
+    let started = harness.sessions.started.lock().unwrap();
+    let reviewer = &started[1];
+    assert!(reviewer.read_only && !started[0].read_only);
+    assert_eq!(reviewer.output_schema, Some(result::verdict_schema()));
+    assert_eq!(started[0].output_schema, None);
+    assert_eq!(started.len(), 3);
+
+    let prompts = harness.prompts();
+    assert!(prompts[1].contains("Step: review (attempt 1)"));
+    assert!(prompts[1].contains("The outputs and receipts of previous steps is inside"));
+    assert!(prompts[1].contains(r#""reply":"Done""#));
+    assert!(!prompts[1].contains("findings that led here"));
+    let repair = &prompts[2];
+    assert!(repair.contains("Step: implement (attempt 2)"));
+    assert!(repair.contains("The findings that led here is inside"));
+    assert!(repair.contains("Missing test"));
+}
+
+#[test]
+fn a_noop_verdict_completes_the_run_with_nothing_to_report() {
+    let harness = Harness::routine(
+        "steps:\n  - id: triage\n    agent: { result: verdict }\n",
+        FakeSessions::ending([verdict_reply("noop", json!([]))]),
+    );
+    assert_eq!(harness.run().outcome, Some(RunOutcome::Noop));
+}
+
+#[test]
+fn an_unreadable_result_fails_the_step_with_the_reply_as_evidence() {
+    let harness = Harness::routine(
+        "steps:\n  - id: triage\n    agent: { result: verdict }\n",
+        FakeSessions::ending([replied("All good, nothing to do")]),
+    );
+    let run = harness.run();
+    let attempt = &run.items[0].steps[0];
+    assert_eq!(attempt.status, StepStatus::Failed);
+    assert!(attempt
+        .cause
+        .as_deref()
+        .unwrap()
+        .starts_with("invalid_result: the reply is not JSON"));
+    assert_eq!(attempt.reply.as_deref(), Some("All good, nothing to do"));
+    assert_eq!(attempt.result, None);
     assert_eq!(run.failure_reason, Some(FailureReason::StepFailed));
+}
+
+#[test]
+fn a_custom_schema_that_cannot_be_read_fails_the_step_before_any_session() {
+    let harness = Harness::routine("", FakeSessions::default());
+    let schemas = harness.scratch.0.join("automations/demo/schemas");
+    fs::create_dir_all(&schemas).unwrap();
+    fs::write(schemas.join("files.json"), "{").unwrap();
+    harness.scratch.define(&format!(
+        "{TARGET}steps:\n  - id: triage\n    agent: {{ result: schemas/files.json }}\n"
+    ));
+
+    let run = harness.run();
+
+    assert!(causes(&run)[0]
+        .unwrap()
+        .starts_with("result_schema: schemas/files.json: "));
+    assert!(harness.sessions.started.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_shared_session_relaunches_its_conversation_when_a_step_changes_its_settings() {
+    let steps = "steps:
+  - id: implement
+    agent: {}
+  - id: polish
+    agent: { effort: high }
+  - id: wrap_up
+    agent: { effort: high }
+";
+    let harness = Harness::routine(steps, FakeSessions::default());
+
+    let run = harness.run();
+
+    let sessions: Vec<_> = run.items[0]
+        .steps
+        .iter()
+        .map(|attempt| attempt.session_id.clone().unwrap())
+        .collect();
+    assert_eq!(sessions, ["s1", "s2", "s2"]);
+    let started = harness.sessions.started.lock().unwrap();
+    assert_eq!(
+        (started[0].resume.as_deref(), started[1].resume.as_deref()),
+        (None, Some("c-s1"))
+    );
+    assert_eq!(*harness.sessions.closed.lock().unwrap(), ["s1", "s1", "s2"]);
+}
+
+#[test]
+fn authorization_grants_agent_steps_the_operations_it_allows() {
+    let harness = Harness::routine(
+        "authorization: { allow: [commit, push, task_log], deny: [push] }\n",
+        FakeSessions::default(),
+    );
+    harness.run();
+    let started = harness.sessions.started.lock().unwrap();
+    assert_eq!(started[0].grants, [Grant::Commit]);
+}
+
+#[test]
+fn agent_turns_end_with_the_active_time_left() {
+    let harness = Harness::routine(
+        "budgets: { active_time: 10m }\n",
+        FakeSessions::ending([TurnEnd::TimedOut]),
+    );
+    let run = harness.run();
+    assert_eq!(causes(&run), [Some("timeout")]);
+    let timeout = harness.sessions.turns.lock().unwrap()[0].2;
+    assert!(timeout <= Duration::from_secs(600));
+}
+
+#[test]
+fn per_run_tasks_start_from_the_target_base() {
+    let harness = Harness::new(
+        "target: { workspace: Fintoc, repos: [rails], base: origin/develop }\nagent: { id: claude }\n",
+        FakeTasks::default(),
+        FakeSessions::default(),
+    );
+    harness.run();
+    let created = harness.tasks.created.lock().unwrap();
+    assert_eq!(
+        created[0].bases,
+        BTreeMap::from([("r1".to_string(), "origin/develop".to_string())])
+    );
+}
+
+#[test]
+fn command_steps_run_in_the_task_worktree_and_reach_the_next_agent_step() {
+    let worktree = Scratch::new();
+    let tasks = FakeTasks {
+        worktree: Some(worktree.0.clone()),
+        ..FakeTasks::default()
+    };
+    let steps = r#"steps:
+  - id: check
+    command: [/bin/sh, -c, 'printf "%s %s %s" "$WTM_TASK_ID" "$1" "$(cat "$WTM_ITEM_DATA")" > out.txt', sh, "{task.branch}"]
+  - id: fails
+    command: [/bin/sh, -c, "exit 3"]
+    on_fail: continue
+  - id: wait_here
+    wait: { signal: go }
+    on_fail: continue
+  - id: report
+    agent: {}
+"#;
+    let harness = Harness::new(&format!("{TARGET}{steps}"), tasks, FakeSessions::default());
+
+    let run = harness.run();
+
+    assert_eq!(
+        fs::read_to_string(worktree.0.join("out.txt")).unwrap(),
+        "t1 wtm/demo/branch {}"
+    );
+    let statuses: Vec<_> = run.items[0]
+        .steps
+        .iter()
+        .map(|attempt| attempt.status)
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            StepStatus::Succeeded,
+            StepStatus::Failed,
+            StepStatus::Failed,
+            StepStatus::Succeeded
+        ]
+    );
+    assert_eq!(causes(&run)[2], Some("unsupported_step:wait_here"));
+    let prompt = &harness.prompts()[0];
+    assert!(prompt.contains(r#""exit_code":3"#));
+    assert!(prompt.contains("receipts/"));
+    assert!(prompt.contains("attempt-1.log"));
+}
+
+#[test]
+fn commands_fail_for_repositories_without_a_worktree_in_the_task() {
+    let worktree = Scratch::new();
+    let context = TaskCommands::new(
+        &worktree.0,
+        vec![("automation", "demo".to_string())],
+        &task("t1"),
+        &Item {
+            id: "unit".into(),
+            version: "1".into(),
+            title: Some("Fix".into()),
+            data: serde_json::Map::from_iter([("files".to_string(), json!(["a.rb"]))]),
+        },
+    )
+    .unwrap();
+    let step = Step {
+        id: "check".into(),
+        label: "check".into(),
+        next: None,
+        on_fail: Transition::Fail,
+        timeout_secs: None,
+        capacity: Capacity::Hold,
+        kind: StepKind::Wait(WaitStep::Signal("go".into())),
+    };
+    let request = StepRequest {
+        item: "unit",
+        step: &step,
+        attempt: 1,
+        stage: None,
+        active_time_left: Duration::from_secs(60),
+    };
+    assert_eq!(
+        context.worktree(&request, "r2"),
+        Err("task t1 has no worktree for repository r2".into())
+    );
+    assert_eq!(
+        context.render(&request, "{item.title}: {item.data.files}"),
+        Ok(r#"Fix: ["a.rb"]"#.into())
+    );
 }
 
 #[test]
@@ -660,6 +966,35 @@ fn failing_to_write_the_run_log_stops_the_run() {
     harness.executor.run(&request, None);
     assert_eq!(harness.tasks.created.lock().unwrap().len(), 1);
     assert!(harness.sessions.started.lock().unwrap().is_empty());
+}
+
+#[test]
+fn only_git_and_github_verbs_reach_agents_as_grants() {
+    let grants: Vec<_> = [
+        Verb::Commit,
+        Verb::Push,
+        Verb::PrCreate,
+        Verb::PrUpdate,
+        Verb::PrComment,
+        Verb::PrReply,
+        Verb::PrReady,
+        Verb::LinearWrite,
+        Verb::TaskCreate,
+        Verb::TaskDelete,
+        Verb::TaskLog,
+    ]
+    .into_iter()
+    .filter_map(grant_of)
+    .collect();
+    assert_eq!(grants, Grant::ALL);
+}
+
+#[test]
+fn recorded_replies_are_cut_on_a_character_boundary() {
+    let reply = format!("{}é tail", "a".repeat(MAX_RECORDED_REPLY - 1));
+    let recorded = truncated(&reply);
+    assert_eq!(recorded.len(), MAX_RECORDED_REPLY - 1);
+    assert_eq!(truncated("short"), "short");
 }
 
 #[test]

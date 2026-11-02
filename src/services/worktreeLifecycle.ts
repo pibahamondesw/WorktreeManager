@@ -19,7 +19,8 @@ export interface WorktreeLifecycle {
     basePaths: string[],
     ownedPaths: string[]
   ): Promise<WorktreeValidation>;
-  addWorktree(member: TaskMember): Promise<{ warning: string | null }>;
+  /** A new branch starts from `base` when given, otherwise from the default branch. */
+  addWorktree(member: TaskMember, base?: string): Promise<{ warning: string | null }>;
   readScripts(worktreePath: string): Promise<ResolvedScripts>;
   /** Copies `paths` plus the `.worktreeinclude` selection, or `fallbackPaths` without one. */
   copyLocalConfigs(member: TaskMember, paths: string[], fallbackPaths: string[]): Promise<void>;
@@ -52,11 +53,12 @@ export const tauriWorktreeLifecycle: WorktreeLifecycle = {
       () => "valid",
       (error) => (error === "owned" ? "owned" : "invalid")
     ),
-  addWorktree: (member) =>
+  addWorktree: (member, base) =>
     invoke("git_worktree_add", {
       repoPath: member.localPath,
       worktreePath: member.path,
       branchName: member.branchName,
+      base: base ?? null,
     }),
   readScripts: resolveRepoScripts,
   copyLocalConfigs: (member, paths, fallbackPaths) =>

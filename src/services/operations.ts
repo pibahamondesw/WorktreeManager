@@ -97,6 +97,8 @@ export interface CreateTaskInput {
   };
   /** The automation that creates the task. */
   automationId?: string;
+  /** Ref each repository's new branch starts from, by repository id. */
+  baseRefs?: Record<string, string>;
 }
 
 export interface DeleteOptions {
@@ -508,7 +510,7 @@ export class Operations {
       progress(`Creating worktrees… 0/${members.length} completed`);
       const results = await Promise.allSettled(
         members.map(async (member) => {
-          const added = await this.lifecycle.addWorktree(member);
+          const added = await this.lifecycle.addWorktree(member, input.baseRefs?.[member.repoId]);
           completed += 1;
           progress(`Creating worktrees… ${completed}/${members.length} completed`);
           return added;

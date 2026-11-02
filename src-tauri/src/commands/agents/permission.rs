@@ -31,6 +31,31 @@ pub struct PendingResolution {
     pub default: PendingDefault,
 }
 
+/// Git and GitHub operations an unattended session may run, translated by each adapter into its
+/// agent's own rules. Operations not granted are refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grant {
+    Commit,
+    Push,
+    PrCreate,
+    PrUpdate,
+    PrComment,
+    PrReply,
+    PrReady,
+}
+
+impl Grant {
+    pub const ALL: [Grant; 7] = [
+        Grant::Commit,
+        Grant::Push,
+        Grant::PrCreate,
+        Grant::PrUpdate,
+        Grant::PrComment,
+        Grant::PrReply,
+        Grant::PrReady,
+    ];
+}
+
 /// Agent-native tool rules: `allow` runs without asking, `deny` never runs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +65,12 @@ pub struct UnattendedPolicy {
     #[serde(rename = "pendingTimeoutSecs", serialize_with = "whole_seconds")]
     pub pending_timeout: Duration,
     pub pending_default: PendingDefault,
+    /// Set per session by the engine, never by a definition's `permission`.
+    #[serde(skip)]
+    pub grants: Vec<Grant>,
+    /// The session cannot edit files or run mutating tools; it is granted nothing.
+    #[serde(skip)]
+    pub read_only: bool,
 }
 
 fn whole_seconds<S: Serializer>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
@@ -53,6 +84,8 @@ impl Default for UnattendedPolicy {
             deny: Vec::new(),
             pending_timeout: DEFAULT_PENDING_TIMEOUT,
             pending_default: PendingDefault::default(),
+            grants: Vec::new(),
+            read_only: false,
         }
     }
 }

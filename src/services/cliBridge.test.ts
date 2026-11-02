@@ -140,6 +140,14 @@ it("passes the creating automation through task creation", async () => {
     ok: false,
     error: { code: "invalid_params" },
   });
+  const based = { ...input, baseRefs: { r1: "origin/develop" } };
+  expect(await call("task.create", { input: based })).toMatchObject({ ok: true });
+  expect(create.mock.calls[1][0]).toEqual(based);
+  for (const refs of [["origin/develop"], { r1: " " }, null])
+    expect(await call("task.create", { input: { ...input, baseRefs: refs } })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
   create.mockRestore();
 });
 

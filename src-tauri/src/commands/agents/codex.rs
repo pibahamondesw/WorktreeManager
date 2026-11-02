@@ -28,6 +28,13 @@ const UNATTENDED_CONFIG: [&str; 4] = [
     "-c",
     "sandbox_mode=\"workspace-write\"",
 ];
+/// Read-only sessions run every command in Codex's read-only sandbox.
+const READ_ONLY_CONFIG: [&str; 4] = [
+    "-c",
+    "approval_policy=\"never\"",
+    "-c",
+    "sandbox_mode=\"read-only\"",
+];
 
 const ALERT_HOOKS: &[HookSpec] = &[
     HookSpec {
@@ -139,6 +146,8 @@ impl AgentAdapter for Codex {
             images: true,
             headless: true,
             tool_rules: false,
+            read_only: true,
+            structured_output: true,
         }
     }
 
@@ -153,6 +162,12 @@ impl AgentAdapter for Codex {
         }
         if request.permission.mode() == PermissionMode::Unattended {
             provider = provider.fixed_approval("never");
+        }
+        if is_read_only(&request.permission) {
+            provider = provider.read_only();
+        }
+        if let Some(schema) = request.output_schema {
+            provider = provider.output_schema(schema);
         }
         Ok(Launch {
             command: self.app_server(&request.cwd, config),
@@ -253,14 +268,22 @@ fn permission_config(policy: &PermissionPolicy) -> Result<&'static [&'static str
     match policy {
         PermissionPolicy::Interactive => Ok(&[]),
         PermissionPolicy::Unattended(policy)
-            if policy.allow.is_empty() && policy.deny.is_empty() =>
+            if policy.allow.is_empty() && policy.deny.is_empty() && policy.grants.is_empty() =>
         {
-            Ok(&UNATTENDED_CONFIG)
+            Ok(if policy.read_only {
+                &READ_ONLY_CONFIG
+            } else {
+                &UNATTENDED_CONFIG
+            })
         }
         PermissionPolicy::Unattended(_) => {
             Err("Codex cannot apply allow or deny tool rules to an unattended session".into())
         }
     }
+}
+
+fn is_read_only(policy: &PermissionPolicy) -> bool {
+    matches!(policy, PermissionPolicy::Unattended(policy) if policy.read_only)
 }
 
 fn read_toml(path: &Path) -> Option<toml::Table> {
@@ -344,7 +367,7 @@ fn threads(result: &Value, current: Option<&str>) -> Vec<SessionSummary> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::agents::permission::UnattendedPolicy;
+    use crate::commands::agents::permission::{Grant, UnattendedPolicy};
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("wtm-codex-{}-{name}", std::process::id()));
@@ -479,6 +502,7 @@ mod tests {
             fork: None,
             handoff: None,
             permission,
+            output_schema: None,
         }
     }
 
@@ -512,15 +536,33 @@ mod tests {
     }
 
     #[test]
+    fn read_only_sessions_run_in_the_read_only_sandbox() {
+        let codex = Codex::new("true", None, None);
+        let policy = PermissionPolicy::Unattended(UnattendedPolicy {
+            read_only: true,
+            ..Default::default()
+        });
+        let request = ChatRequest {
+            output_schema: Some(json!({ "type": "object" })),
+            ..chat_request(policy)
+        };
+        let launch = codex.chat_launch(request).unwrap();
+        assert!(launch_args(&launch)
+            .ends_with(&["-c".to_string(), "sandbox_mode=\"read-only\"".to_string(),]));
+    }
+
+    #[test]
     fn unattended_tool_rules_are_refused_rather_than_ignored() {
         let codex = Codex::new("true", None, None);
-        for (allow, deny) in [
-            (vec!["Bash(git *)".to_string()], vec![]),
-            (vec![], vec!["Edit".to_string()]),
+        for (allow, deny, grants) in [
+            (vec!["Bash(git *)".to_string()], vec![], vec![]),
+            (vec![], vec!["Edit".to_string()], vec![]),
+            (vec![], vec![], vec![Grant::Commit]),
         ] {
             let policy = PermissionPolicy::Unattended(UnattendedPolicy {
                 allow,
                 deny,
+                grants,
                 ..Default::default()
             });
             assert_eq!(
@@ -549,6 +591,7 @@ mod tests {
                 fork: None,
                 handoff: None,
                 permission: PermissionPolicy::Interactive,
+                output_schema: None,
             })
             .is_err());
     }

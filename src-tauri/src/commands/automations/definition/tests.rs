@@ -46,6 +46,8 @@ fn capabilities(enabled: bool) -> AgentCapabilities {
         images: enabled,
         headless: enabled,
         tool_rules: enabled,
+        read_only: enabled,
+        structured_output: enabled,
     }
 }
 
@@ -84,6 +86,14 @@ fn env() -> Environment {
                     ..capabilities(true)
                 },
                 ..descriptor("sandboxed", true, true)
+            },
+            AgentDescriptor {
+                capabilities: AgentCapabilities {
+                    read_only: false,
+                    structured_output: false,
+                    ..capabilities(true)
+                },
+                ..descriptor("plain", true, true)
             },
         ],
         workspaces: stored_workspaces(&json!({ "workspaces": workspaces() })),
@@ -1210,6 +1220,35 @@ fn agents_without_tool_rules_reject_rules_and_granted_verbs() {
             "agent"
         ),
         "sandboxed lacks the tool_rules capability this step needs"
+    );
+}
+
+#[test]
+fn readonly_and_result_steps_need_the_agent_to_support_them() {
+    let step = |agent: &str| {
+        routine(&format!(
+            "steps:\n  - id: review\n    agent: {{ id: {agent}, fresh_session: true, readonly: true, result: verdict }}\n"
+        ))
+    };
+    valid(&step("claude"));
+    let entry = load(&step("plain"));
+    let messages: Vec<_> = entry
+        .errors
+        .iter()
+        .map(|issue| (issue.field.as_str(), issue.message.as_str()))
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            (
+                "steps[0].agent",
+                "plain lacks the read_only capability this step needs"
+            ),
+            (
+                "steps[0].agent",
+                "plain lacks the structured_output capability this step needs"
+            ),
+        ]
     );
 }
 

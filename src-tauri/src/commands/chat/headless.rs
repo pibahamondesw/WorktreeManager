@@ -41,10 +41,12 @@ pub(crate) struct SettledRequest {
     pub allowed: bool,
 }
 
-/// Where a headless session runs, and the conversation it continues if it is not a new one.
+/// Where a headless session runs, the conversation it continues if it is not a new one, and the
+/// schema its final replies follow.
 pub(crate) struct HeadlessRequest {
     pub folders: Vec<String>,
     pub resume: Option<String>,
+    pub output_schema: Option<Value>,
 }
 
 impl ChatRegistry {
@@ -74,6 +76,7 @@ impl ChatRegistry {
             fork: None,
             handoff: None,
             permission: policy,
+            output_schema: request.output_schema,
         })?;
         let setup = session_setup(app, self, &target, pending_resolution, None, request.resume)?;
         let session = start_session(task_id, launch, None, setup)?;
@@ -132,6 +135,13 @@ impl ChatRegistry {
         if let Some(chat) = removed {
             chat.session.stop();
         }
+    }
+
+    /// The agent's id for the session's conversation, once the agent has reported it.
+    pub(crate) fn conversation(&self, session_id: &str) -> Option<String> {
+        self.with_session_id(session_id, |session| Ok(session.conversation()))
+            .ok()
+            .flatten()
     }
 
     /// Empty once the session is gone.

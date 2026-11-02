@@ -173,6 +173,11 @@ impl RunStore {
 }
 
 impl RunStore {
+    /// Where a run keeps its log and the files its steps leave, such as receipts.
+    pub fn run_dir(&self, name: &str, run_id: &str) -> Result<PathBuf, String> {
+        Ok(self.automation_dir(name)?.join("runs").join(run_id))
+    }
+
     pub fn run_ids(&self, name: &str) -> Result<Vec<String>, String> {
         run_ids(&self.automation_dir(name)?.join("runs"))
     }

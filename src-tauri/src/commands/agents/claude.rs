@@ -14,7 +14,7 @@ use std::time::UNIX_EPOCH;
 
 use serde_json::{json, Value};
 
-use super::permission::{PermissionMode, PermissionPolicy};
+use super::permission::{Grant, PermissionMode, PermissionPolicy};
 use super::{
     AgentAdapter, AgentCapabilities, ChatRequest, ConversationFork, ForkLaunch, ForkMethod,
     ForkRequest, LaunchContext, LaunchSpec,
@@ -216,6 +216,8 @@ impl AgentAdapter for Claude {
             images: true,
             headless: true,
             tool_rules: true,
+            read_only: true,
+            structured_output: true,
         }
     }
 
@@ -254,7 +256,7 @@ impl AgentAdapter for Claude {
                         &session_id,
                         resume.is_some(),
                         &request.extra_dirs,
-                        &permission_args(&request.permission),
+                        &session_args(&request.permission, request.output_schema.as_ref()),
                     ),
                 )
                 .command(),
@@ -504,9 +506,23 @@ fn write_marker(ctx: &LaunchContext, slug: &str) -> Result<(), String> {
     fs::write(&path, body.to_string()).map_err(|e| format!("write session marker: {e}"))
 }
 
+/// Rules no grant ever allows: merging and skipping hooks.
+const ALWAYS_DENIED: [&str; 2] = ["Bash(gh pr merge *)", "Bash(git * --no-verify*)"];
+/// Tools a read-only session must not use.
+const EDITING_TOOLS: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
+
+/// The `--json-schema` comes first: the tool-rule flags after it take every following value.
+fn session_args(policy: &PermissionPolicy, output_schema: Option<&Value>) -> Vec<String> {
+    let schema = output_schema
+        .into_iter()
+        .flat_map(|schema| ["--json-schema".to_string(), schema.to_string()]);
+    schema.chain(permission_args(policy)).collect()
+}
+
 /// Interactive sessions let Claude's classifier approve what it can and ask about the rest.
 /// Unattended ones never prompt: only the allowed tools run without asking, and every other
-/// request is denied.
+/// request is denied. Granted operations become allow rules; the rest are denied outright so no
+/// user-wide rule can allow them.
 fn permission_args(policy: &PermissionPolicy) -> Vec<String> {
     let PermissionPolicy::Unattended(policy) = policy else {
         return [
@@ -517,17 +533,55 @@ fn permission_args(policy: &PermissionPolicy) -> Vec<String> {
         .map(String::from)
         .to_vec();
     };
+    let granted = |grant: &Grant| !policy.read_only && policy.grants.contains(grant);
+    let (allowed, refused): (Vec<Grant>, Vec<Grant>) = Grant::ALL.into_iter().partition(granted);
+    let allow = policy.allow.iter().cloned().chain(
+        allowed
+            .into_iter()
+            .flat_map(grant_rules)
+            .map(|rule| rule.to_string()),
+    );
+    let deny = policy
+        .deny
+        .iter()
+        .cloned()
+        .chain(
+            refused
+                .into_iter()
+                .flat_map(grant_rules)
+                .map(|rule| rule.to_string()),
+        )
+        .chain(ALWAYS_DENIED.map(String::from))
+        .chain(
+            policy
+                .read_only
+                .then_some(EDITING_TOOLS.map(String::from))
+                .into_iter()
+                .flatten(),
+        );
     let mut args = vec!["--permission-mode".to_string(), "dontAsk".to_string()];
     for (flag, rules) in [
-        ("--allowedTools", &policy.allow),
-        ("--disallowedTools", &policy.deny),
+        ("--allowedTools", allow.collect::<Vec<_>>()),
+        ("--disallowedTools", deny.collect()),
     ] {
         if !rules.is_empty() {
             args.push(flag.to_string());
-            args.extend(rules.iter().cloned());
+            args.extend(rules);
         }
     }
     args
+}
+
+fn grant_rules(grant: Grant) -> &'static [&'static str] {
+    match grant {
+        Grant::Commit => &["Bash(git add *)", "Bash(git commit *)"],
+        Grant::Push => &["Bash(git push *)"],
+        Grant::PrCreate => &["Bash(gh pr create *)"],
+        Grant::PrUpdate => &["Bash(gh pr edit *)"],
+        Grant::PrComment => &["Bash(gh pr comment *)"],
+        Grant::PrReply => &["Bash(gh api repos/*/pulls/*/comments/*/replies *)"],
+        Grant::PrReady => &["Bash(gh pr ready *)"],
+    }
 }
 
 /// Derive `wm-…` session slug from branch name, with path fallback.
@@ -862,39 +916,114 @@ mod tests {
         );
     }
 
+    const REFUSED: [&str; 10] = [
+        "Bash(git add *)",
+        "Bash(git commit *)",
+        "Bash(git push *)",
+        "Bash(gh pr create *)",
+        "Bash(gh pr edit *)",
+        "Bash(gh pr comment *)",
+        "Bash(gh api repos/*/pulls/*/comments/*/replies *)",
+        "Bash(gh pr ready *)",
+        "Bash(gh pr merge *)",
+        "Bash(git * --no-verify*)",
+    ];
+
+    fn unattended(allow: &[&str], deny: &[&str], grants: &[Grant]) -> PermissionPolicy {
+        PermissionPolicy::Unattended(UnattendedPolicy {
+            allow: allow.iter().map(|rule| rule.to_string()).collect(),
+            deny: deny.iter().map(|rule| rule.to_string()).collect(),
+            grants: grants.to_vec(),
+            ..Default::default()
+        })
+    }
+
+    fn denied(first: &[&str]) -> Vec<String> {
+        first
+            .iter()
+            .chain(&REFUSED)
+            .map(|rule| rule.to_string())
+            .collect()
+    }
+
     #[test]
     fn unattended_sessions_never_prompt_and_pass_their_tool_rules() {
-        let policy = |allow: &[&str], deny: &[&str]| {
-            PermissionPolicy::Unattended(UnattendedPolicy {
-                allow: allow.iter().map(|rule| rule.to_string()).collect(),
-                deny: deny.iter().map(|rule| rule.to_string()).collect(),
-                ..Default::default()
-            })
-        };
+        let mut expected = ["--permission-mode", "dontAsk", "--disallowedTools"]
+            .map(String::from)
+            .to_vec();
+        expected.extend(denied(&[]));
+        assert_eq!(permission_args(&unattended(&[], &[], &[])), expected);
+        let mut expected = [
+            "--permission-mode",
+            "dontAsk",
+            "--allowedTools",
+            "Bash(git commit *)",
+            "Edit",
+            "--disallowedTools",
+        ]
+        .map(String::from)
+        .to_vec();
+        expected.extend(denied(&["WebFetch"]));
         assert_eq!(
-            permission_args(&policy(&[], &[])),
-            ["--permission-mode", "dontAsk"]
+            permission_args(&unattended(
+                &["Bash(git commit *)", "Edit"],
+                &["WebFetch"],
+                &[]
+            )),
+            expected
         );
+    }
+
+    #[test]
+    fn granted_operations_become_allow_rules_and_the_rest_stay_denied() {
+        let args = permission_args(&unattended(&[], &[], &[Grant::Commit, Grant::PrReply]));
+        let split = args
+            .iter()
+            .position(|arg| arg == "--disallowedTools")
+            .unwrap();
         assert_eq!(
-            permission_args(&policy(&["Bash(git commit *)", "Edit"], &["WebFetch"])),
+            args[..split],
             [
                 "--permission-mode",
                 "dontAsk",
                 "--allowedTools",
+                "Bash(git add *)",
                 "Bash(git commit *)",
-                "Edit",
-                "--disallowedTools",
-                "WebFetch"
+                "Bash(gh api repos/*/pulls/*/comments/*/replies *)",
             ]
         );
+        let deny = &args[split + 1..];
+        assert!(deny.contains(&"Bash(git push *)".to_string()));
+        assert!(!deny.contains(&"Bash(git commit *)".to_string()));
+        assert!(deny.contains(&"Bash(gh pr merge *)".to_string()));
+    }
+
+    #[test]
+    fn read_only_sessions_are_granted_nothing_and_cannot_edit() {
+        let policy = PermissionPolicy::Unattended(UnattendedPolicy {
+            grants: vec![Grant::Push],
+            read_only: true,
+            ..Default::default()
+        });
+        let mut expected = ["--permission-mode", "dontAsk", "--disallowedTools"]
+            .map(String::from)
+            .to_vec();
+        expected.extend(denied(&[]));
+        expected.extend(["Edit", "Write", "NotebookEdit"].map(String::from));
+        assert_eq!(permission_args(&policy), expected);
+    }
+
+    #[test]
+    fn a_session_schema_precedes_the_variadic_rule_flags() {
+        let schema = json!({ "type": "object" });
+        let args = session_args(&PermissionPolicy::Interactive, Some(&schema));
         assert_eq!(
-            permission_args(&policy(&[], &["Bash(rm *)"])),
-            [
-                "--permission-mode",
-                "dontAsk",
-                "--disallowedTools",
-                "Bash(rm *)"
-            ]
+            args[..3],
+            ["--json-schema", r#"{"type":"object"}"#, "--permission-mode"]
+        );
+        assert_eq!(
+            session_args(&PermissionPolicy::Interactive, None),
+            permission_args(&PermissionPolicy::Interactive)
         );
     }
 
@@ -918,6 +1047,7 @@ mod tests {
                 fork: None,
                 handoff: None,
                 permission: PermissionPolicy::Interactive,
+                output_schema: None,
             })
             .is_err());
     }

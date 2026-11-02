@@ -1,10 +1,6 @@
 //! The `command` step: runs an argv in a worktree of the item's task through a headless PTY and
 //! records a receipt. A step bound to the Git fingerprint reuses its last successful receipt
 //! while the worktree is unchanged and runs again once it changes.
-#![cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the item runner (WOR-257) is the first caller")
-)]
 
 mod fingerprint;
 mod receipt;
@@ -97,8 +93,13 @@ impl<C: CommandContext> CommandExecutor<C> {
             request.attempt,
         );
         let started = Instant::now();
-        let timeout = request.step.timeout_secs.map(Duration::from_secs);
-        let finished = self.run(&prepared.argv, &prepared.cwd, &env, timeout);
+        let timeout = request
+            .step
+            .timeout_secs
+            .map_or(request.active_time_left, |secs| {
+                Duration::from_secs(secs).min(request.active_time_left)
+            });
+        let finished = self.run(&prepared.argv, &prepared.cwd, &env, Some(timeout));
         let duration_ms = started.elapsed().as_millis() as u64;
         let mut output = finished.output.clone();
         let after = self.hygiene(&prepared, &env, &mut output);

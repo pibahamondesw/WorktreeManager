@@ -20,7 +20,7 @@ use super::{
     WaitStep, WorkspaceRef,
 };
 use crate::commands::agents::permission::{PendingDefault, PermissionMode, UnattendedPolicy};
-use crate::commands::agents::AgentDescriptor;
+use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
 
 const SUPPORTED_SCHEMA: u64 = 1;
 const MAX_DESCRIPTION_CHARS: usize = 500;
@@ -180,6 +180,7 @@ pub(super) fn definition(
         completion: completion?,
         instructions: instructions.into(),
         hash,
+        folder: context.folder.to_path_buf(),
     })
 }
 
@@ -708,6 +709,7 @@ fn permission(report: &mut Report, value: &Value, field: &str) -> Option<Unatten
         deny: deny?,
         pending_timeout: pending_timeout?,
         pending_default: pending_default?,
+        ..defaults
     })
 }
 
@@ -1038,7 +1040,7 @@ fn agent_step(report: &mut Report, scope: &Scope, value: &Value, field: &str) ->
         );
     }
     let agent = resolve_agent(report, scope.context.env, overrides?, scope.agent?, field)?;
-    Some(AgentStep {
+    let step = AgentStep {
         agent,
         skill: skill?,
         prompt: prompt?,
@@ -1046,7 +1048,41 @@ fn agent_step(report: &mut Report, scope: &Scope, value: &Value, field: &str) ->
         readonly: readonly?,
         result: result?,
         on_reject: on_reject?,
-    })
+    };
+    let descriptor = scope
+        .context
+        .env
+        .agents
+        .iter()
+        .find(|agent| agent.id == step.agent.id)?;
+    let missing = missing_step_capabilities(descriptor.capabilities, &step);
+    for capability in &missing {
+        report.error(
+            IssueKind::Capability,
+            field,
+            format!(
+                "{} lacks the {capability} capability this step needs",
+                descriptor.label
+            ),
+        );
+    }
+    missing.is_empty().then_some(step)
+}
+
+fn missing_step_capabilities(
+    capabilities: AgentCapabilities,
+    step: &AgentStep,
+) -> Vec<&'static str> {
+    [
+        (step.readonly && !capabilities.read_only, "read_only"),
+        (
+            step.result.is_some() && !capabilities.structured_output,
+            "structured_output",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(missing, capability)| missing.then_some(capability))
+    .collect()
 }
 
 fn result_schema(

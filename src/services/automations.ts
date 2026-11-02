@@ -101,6 +101,10 @@ export interface StepAttempt {
   verdict: string | null;
   cause: string | null;
   head: string | null;
+  /** The headless session of an agent attempt. */
+  session_id: string | null;
+  /** The agent's conversation, which the task's chat can resume. */
+  conversation_id: string | null;
 }
 
 export interface AutomationItem {

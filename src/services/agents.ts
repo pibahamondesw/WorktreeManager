@@ -20,6 +20,10 @@ interface AgentCapabilities {
   headless: boolean;
   /** Unattended sessions enforce per-session allow and deny tool rules. */
   toolRules: boolean;
+  /** Unattended sessions can run unable to edit files or run mutating tools. */
+  readOnly: boolean;
+  /** A session can be held to a JSON schema. */
+  structuredOutput: boolean;
 }
 
 export interface AgentDescriptor {
@@ -86,6 +90,8 @@ const NO_CAPABILITIES: AgentCapabilities = {
   images: false,
   headless: false,
   toolRules: false,
+  readOnly: false,
+  structuredOutput: false,
 };
 
 let lastCatalog: AgentDescriptor[] = [];

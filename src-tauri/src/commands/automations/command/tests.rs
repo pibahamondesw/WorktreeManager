@@ -78,6 +78,7 @@ fn request(step: &Step, attempt: u32) -> StepRequest<'_> {
         step,
         attempt,
         stage: None,
+        active_time_left: Duration::from_secs(3_600),
     }
 }
 
@@ -281,6 +282,19 @@ fn commands_past_their_timeout_fail_with_cause_timeout() {
     assert_eq!(report.outcome, StepOutcome::Failure);
     assert_eq!(report.process_end, ProcessEnd::TimedOut);
     assert_eq!(report.cause.as_deref(), Some("timeout"));
+}
+
+#[test]
+fn commands_stop_when_the_item_runs_out_of_active_time() {
+    let fixture = Fixture::new();
+    let worktree = TempDir::new("worktree");
+    let step = command_step(&["/bin/sleep", "30"], None, Vec::new());
+    let request = StepRequest {
+        active_time_left: Duration::from_secs(1),
+        ..request(&step, 1)
+    };
+    let report = finished(fixture.executor(&worktree.0).execute(&request));
+    assert_eq!(report.process_end, ProcessEnd::TimedOut);
 }
 
 #[test]

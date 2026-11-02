@@ -5,6 +5,7 @@
 mod tests;
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use super::definition::{Budgets, Capacity, GotoLimit, Step, StepKind, Transition};
 use super::store::events::{
@@ -27,6 +28,8 @@ pub struct StepRequest<'a> {
     /// Numbered per item and step id across stages; an interrupted attempt keeps its number.
     pub attempt: u32,
     pub stage: Option<&'a str>,
+    /// What is left of the item's `active_time` budget; an attempt should not outlast it.
+    pub active_time_left: Duration,
 }
 
 pub struct StepReport {
@@ -46,6 +49,16 @@ pub enum Execution {
     Parked,
     /// An earlier result still holds, such as a bound receipt whose fingerprint matches.
     Skipped(StepReport),
+}
+
+impl Execution {
+    /// `None` while the attempt waits.
+    pub fn report(&self) -> Option<&StepReport> {
+        match self {
+            Self::Finished(report) | Self::Skipped(report) => Some(report),
+            Self::Parked => None,
+        }
+    }
 }
 
 pub trait StepExecutor {
@@ -229,11 +242,13 @@ impl<'a> ItemMachine<'a> {
 
     fn request(&self, position: Position, step: &'a Step, attempt: u32) -> StepRequest<'a> {
         let stages: &'a [String] = self.pipeline.stages;
+        let budget_ms = self.pipeline.budgets.active_time_secs * 1000;
         StepRequest {
             item: self.item,
             step,
             attempt,
             stage: stages.get(position.stage).map(String::as_str),
+            active_time_left: Duration::from_millis(budget_ms.saturating_sub(self.active_ms)),
         }
     }
 
@@ -255,6 +270,11 @@ impl<'a> ItemMachine<'a> {
                 position,
                 ItemStatus::Blocked,
                 Some(WAIT_PER_HEAD_BUDGET.into()),
+            ),
+            _ if self.exhausted_active_time(step) => self.rest(
+                position,
+                ItemStatus::Blocked,
+                Some(ACTIVE_TIME_BUDGET.into()),
             ),
             _ => self.follow(position, step, &step.on_fail, cause()),
         }

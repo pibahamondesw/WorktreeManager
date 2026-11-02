@@ -21,6 +21,8 @@ const anyTarget: Target = () => true;
 /** In-memory lifecycle: worktrees, copied configs and script runs are plain state to inspect. */
 export class MemoryWorktreeLifecycle implements WorktreeLifecycle {
   readonly worktrees = new Map<string, TaskMember>();
+  /** The base each worktree's branch was asked to start from, by worktree path. */
+  readonly bases = new Map<string, string>();
   readonly copiedConfigs = new Map<string, string[]>();
   /** `.worktreeinclude` selections by repository path. */
   readonly includes = new Map<string, string[]>();
@@ -95,9 +97,10 @@ export class MemoryWorktreeLifecycle implements WorktreeLifecycle {
     );
   }
 
-  async addWorktree(member: TaskMember) {
+  async addWorktree(member: TaskMember, base?: string) {
     await this.enter("addWorktree", member.path);
     this.worktrees.set(member.path, member);
+    if (base) this.bases.set(member.path, base);
     return { warning: null };
   }
 
