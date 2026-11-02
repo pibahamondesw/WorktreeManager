@@ -44,10 +44,9 @@ impl GitFingerprint {
 }
 
 fn content_digest(path: &Path) -> String {
-    fs::read(path).map_or_else(
-        |_| "unreadable".into(),
-        |bytes| format!("{:x}", Sha256::digest(bytes)),
-    )
+    fs::read(path).map_or("unreadable".into(), |bytes| {
+        format!("{:x}", Sha256::digest(bytes))
+    })
 }
 
 fn git(worktree: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
