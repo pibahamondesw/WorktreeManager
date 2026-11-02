@@ -9,6 +9,7 @@ use tauri::App;
 
 use super::*;
 use crate::commands::agents::{claude, codex, Agents};
+use crate::commands::automations::store::events::RunOutcome;
 
 struct Scratch(PathBuf);
 
@@ -59,7 +60,7 @@ impl FakeExecutor {
 }
 
 impl Executor for FakeExecutor {
-    fn execute(&self, request: RunRequest) {
+    fn execute(&self, request: RunRequest, _: Option<Value>) {
         self.0.lock().unwrap().push(request);
     }
 }
@@ -114,6 +115,13 @@ fn missed(count: u64, first: &str, last: &str) -> Option<MissedSlots> {
     })
 }
 
+fn resume(store: &RunStore, automation: &Automation, now: DateTime<Utc>) -> Result<(), String> {
+    let writer = store.writer(&automation.name)?;
+    let mut state = store.state(&automation.name)?;
+    reschedule(&mut state, automation, now);
+    writer.save_state(&state)
+}
+
 fn next_run_at(store: &RunStore, name: &str) -> Option<String> {
     store.state(name).unwrap().next_run_at
 }
@@ -160,6 +168,7 @@ fn fires_daily_slots_in_their_timezone_across_a_dst_change() {
             definition_hash: "hash".into(),
             scheduled_for: utc("2026-04-04T12:00:00Z"),
             fired_at,
+            test: false,
         }]
     );
     let trigger = runs(&store, "daily")[0].trigger.clone().unwrap();
@@ -506,6 +515,11 @@ fn auto_pauses_after_three_failures_and_resume_skips_missed_slots() {
         ),
         (false, Some(PauseReason::Auto), 3)
     );
+    let toggle = state.last_toggle.unwrap();
+    assert_eq!(
+        (toggle.enabled, toggle.by, toggle.reason.as_deref()),
+        (false, Actor::Auto, Some("3 consecutive failures"))
+    );
 
     clock.set(utc("2030-01-01T05:10:00Z"));
     scheduler.tick(std::slice::from_ref(&job));
@@ -546,6 +560,83 @@ fn a_failing_automation_does_not_stop_the_others() {
     assert_eq!(executor.taken()[0].automation, "healthy");
 }
 
+/// Owns every run it is asked about, as an executor still creating the run's task.
+struct BusyExecutor;
+
+impl Executor for BusyExecutor {
+    fn execute(&self, _: RunRequest, _: Option<Value>) {}
+
+    fn owns(&self, _: &str) -> bool {
+        true
+    }
+}
+
+#[test]
+fn a_run_its_executor_is_still_starting_only_fails_at_its_deadline() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let mut job = hourly("slow");
+    job.schedule = None;
+    let starting = manual(&store, "slow", "manual:slow", false);
+    let clock = FakeClock::at(SystemClock.now() + TimeDelta::minutes(30));
+    let mut scheduler = Scheduler::new(scratch.store(), clock.clone(), Arc::new(BusyExecutor));
+    BusyExecutor.execute(scheduler_request(), None);
+
+    scheduler.tick(std::slice::from_ref(&job));
+    assert_eq!(
+        store.run("slow", &starting).unwrap().status,
+        RunStatus::Starting
+    );
+
+    clock.set(SystemClock.now() + TimeDelta::hours(3));
+    scheduler.tick(std::slice::from_ref(&job));
+    let run = store.run("slow", &starting).unwrap();
+    assert_eq!(run.failure_reason, Some(FailureReason::Deadline));
+}
+
+fn scheduler_request() -> RunRequest {
+    RunRequest {
+        automation: "slow".into(),
+        run_id: "1700000000000-abcdef12".into(),
+        definition_hash: "hash".into(),
+        scheduled_for: utc("2025-01-01T00:00:00Z"),
+        fired_at: utc("2025-01-01T00:00:00Z"),
+        test: false,
+    }
+}
+
+#[test]
+fn runs_an_earlier_process_left_active_end_interrupted_without_counting() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let starting = manual(&store, "quit", "manual:starting", false);
+    let running = manual(&store, "quit", "manual:running", false);
+    let done = manual(&store, "quit", "manual:done", false);
+    let writer = store.writer("quit").unwrap();
+    writer.append(&running, &RunEvent::Started).unwrap();
+    let completed = RunEvent::Completed {
+        outcome: RunOutcome::Noop,
+    };
+    writer.append(&done, &completed).unwrap();
+    drop(writer);
+    let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
+    let (mut scheduler, _) = scheduler(&scratch, &clock);
+
+    scheduler.recover_interrupted(&[hourly("Not A Name"), hourly("quit"), hourly("never-ran")]);
+    let status = |id: &str| store.run("quit", id).unwrap().status;
+    for id in [&starting, &running] {
+        let run = store.run("quit", id).unwrap();
+        assert_eq!(run.failure_reason, Some(FailureReason::Interrupted));
+    }
+    assert_eq!(status(&done), RunStatus::Completed);
+    assert_eq!(store.state("quit").unwrap().consecutive_failures, 0);
+
+    let current = manual(&store, "quit", "manual:current", false);
+    clock.set(SystemClock.now() - TimeDelta::minutes(1));
+    scheduler.recover_interrupted(&[hourly("quit")]);
+    assert_eq!(status(&current), RunStatus::Starting);
+}
+
 #[test]
 fn stagger_is_stable_and_bounded_per_automation() {
     assert_eq!(stagger("daily"), stagger("daily"));
@@ -583,7 +674,7 @@ fn app(data_dir: &Path, automations_dir: &Path) -> App<MockRuntime> {
 struct ChannelExecutor(Mutex<mpsc::Sender<RunRequest>>);
 
 impl Executor for ChannelExecutor {
-    fn execute(&self, request: RunRequest) {
+    fn execute(&self, request: RunRequest, _: Option<Value>) {
         let _ = self.0.lock().unwrap().send(request);
     }
 }

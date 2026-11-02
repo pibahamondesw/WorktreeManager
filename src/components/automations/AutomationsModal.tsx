@@ -10,6 +10,8 @@ interface AutomationsModalProps {
   onClose: () => void;
   automations: AutomationSummary[];
   error: string | null;
+  /** Reloads the automations after an action changed one. */
+  onChanged: () => void;
   /** Falls back to the first automation when unset or no longer listed. */
   selectedName: string | null;
   onSelect: (name: string) => void;
@@ -21,6 +23,7 @@ export function AutomationsModal({
   onClose,
   automations,
   error,
+  onChanged,
   selectedName,
   onSelect,
   editorApp,
@@ -66,6 +69,7 @@ export function AutomationsModal({
                 key={selected.entry.name}
                 summary={selected}
                 editorApp={editorApp}
+                onChanged={onChanged}
               />
             )}
           </div>

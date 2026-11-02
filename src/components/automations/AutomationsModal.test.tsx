@@ -41,6 +41,7 @@ function Harness({ automations = AUTOMATIONS, error = null as string | null }) {
         onClose={() => setOpen(false)}
         automations={automations}
         error={error}
+        onChanged={() => {}}
         selectedName={selected}
         onSelect={setSelected}
         editorApp="cursor"

@@ -54,12 +54,15 @@ const run = (id: string, overrides: Partial<AutomationRun> = {}): AutomationRun 
 afterEach(cleanup);
 beforeEach(() => {
   vi.mocked(invoke).mockReset();
+  onChanged.mockReset();
   vi.mocked(revealItemInDir).mockReset().mockResolvedValue(undefined);
   vi.mocked(openEditorForWorktree).mockReset().mockResolvedValue(null);
 });
 
+const onChanged = vi.fn();
+
 function renderView(view: AutomationSummary = summary, editorApp: EditorApp = "cursor") {
-  render(<AutomationDetail summary={view} editorApp={editorApp} />);
+  render(<AutomationDetail summary={view} editorApp={editorApp} onChanged={onChanged} />);
 }
 
 it("shows the trigger, pause reason and runs, and pages older runs", async () => {
@@ -78,7 +81,7 @@ it("shows the trigger, pause reason and runs, and pages older runs", async () =>
   renderView();
 
   expect(screen.getByText("Schedule 0 * * * * (UTC) · manual")).toBeInTheDocument();
-  expect(screen.getByText("New automation, not enabled yet")).toBeInTheDocument();
+  expect(screen.getByText("Never enabled")).toBeInTheDocument();
   expect(screen.getByText("Not scheduled")).toBeInTheDocument();
   expect(await screen.findByText("Skipped: paused")).toBeInTheDocument();
   expect(screen.getByText("schedule · test")).toBeInTheDocument();
@@ -153,4 +156,107 @@ it("opens invalid automations on their errors and only reveals with embedded edi
   expect(screen.getByText("steps[0].agent:")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Open in/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Reveal in Finder" })).toBeInTheDocument();
+});
+
+const runsPage = { runs: [], next_before: null };
+
+function answer(responses: Record<string, unknown>) {
+  vi.mocked(invoke).mockImplementation((command: string) =>
+    command in responses
+      ? responses[command] instanceof Error
+        ? Promise.reject((responses[command] as Error).message)
+        : Promise.resolve(responses[command])
+      : Promise.resolve(runsPage)
+  );
+}
+
+it("runs now, test runs and enables the automation, then reloads it", async () => {
+  answer({
+    automation_run: { run_id: "1761800000009-abcdef12", status: "starting", skip_reason: null },
+    automation_resume: {},
+  });
+  renderView();
+
+  fireEvent.click(screen.getByRole("button", { name: "Run now" }));
+  expect(await screen.findByText("Run 1761800000009-abcdef12 started")).toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("automation_run", {
+    name: "pr-babysitter",
+    test: false,
+    payload: null,
+  });
+  expect(onChanged).toHaveBeenCalledTimes(1);
+
+  answer({
+    automation_run: {
+      run_id: "1761800000010-abcdef12",
+      status: "skipped",
+      skip_reason: "already_running",
+    },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Test run" }));
+  expect(await screen.findByText("Test run skipped: already running")).toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("automation_run", {
+    name: "pr-babysitter",
+    test: true,
+    payload: null,
+  });
+
+  answer({ automation_resume: new Error("pr-babysitter has definition errors; fix them first") });
+  fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+  expect(
+    await screen.findByText("pr-babysitter has definition errors; fix them first")
+  ).toHaveClass("select-text");
+  expect(invoke).toHaveBeenCalledWith("automation_resume", {
+    name: "pr-babysitter",
+    by: "user",
+    reason: null,
+  });
+  expect(onChanged).toHaveBeenCalledTimes(2);
+});
+
+it("pauses an enabled automation and says who last changed it", async () => {
+  answer({ automation_pause: {} });
+  renderView({
+    ...summary,
+    entry: {
+      ...summary.entry,
+      definition: { ...summary.entry.definition!, trigger: { manual: false, schedule: null } },
+    },
+    state: {
+      enabled: true,
+      pause_reason: null,
+      next_run_at: null,
+      consecutive_failures: 0,
+      last_toggle: { enabled: true, by: "cli", reason: "back", at: "2026-10-30T12:00:00Z" },
+    },
+  });
+  expect(screen.queryByRole("button", { name: "Run now" })).not.toBeInTheDocument();
+  expect(screen.getByText(/^Resumed by the CLI on .*: back$/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+  await vi.waitFor(() => expect(onChanged).toHaveBeenCalled());
+  expect(invoke).toHaveBeenCalledWith("automation_pause", {
+    name: "pr-babysitter",
+    by: "user",
+    reason: null,
+  });
+});
+
+it("resumes an automation paused by WTM and keeps invalid ones from running", () => {
+  vi.mocked(invoke).mockResolvedValue(runsPage);
+  renderView({
+    ...summary,
+    state: {
+      ...summary.state!,
+      pause_reason: "auto",
+      last_toggle: { enabled: false, by: "auto", reason: null, at: "2026-10-30T12:00:00Z" },
+    },
+  });
+  expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
+  expect(screen.getByText(/^Paused by WTM on /)).toBeInTheDocument();
+  cleanup();
+
+  renderView({ ...summary, entry: { ...summary.entry, definition: null }, state: null });
+  expect(screen.getByRole("button", { name: "Test run" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Enable" })).toBeDisabled();
 });

@@ -36,6 +36,12 @@ automation get <name>
 automation runs <name> [--before <run_id>] [--limit <n>]   Newest first, 20 per
                                      page (max 200); pass next_before as --before.
 automation status <name> <run_id>
+automation run <name> [--payload <json>]
+                                     Starts a run now and prints its run_id without
+                                     waiting; the payload is a JSON object (≤ 64 KiB).
+automation pause <name> [--reason <text>]
+automation resume <name> [--reason <text>]
+                                     Resuming skips the slots missed while paused.
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
 lease run --pool <name> [--holder <key>] -- <command> [args]
@@ -129,6 +135,15 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
             "--limit" if !params.contains_key("limit") => {
                 params.insert("limit".into(), json!(page_limit(args.next())?));
             }
+            "--payload" if !params.contains_key("payload") => {
+                params.insert("payload".into(), payload(args.next())?);
+            }
+            "--reason" if !params.contains_key("reason") => {
+                params.insert(
+                    "reason".into(),
+                    json!(args.next().ok_or("--reason requires a text")?),
+                );
+            }
             "--git" if !params.contains_key("git") => {
                 params.insert("git".into(), json!(true));
             }
@@ -170,6 +185,8 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.get" => (&["name"], false, &[]),
         "automation.runs" => (&["name"], false, &["before", "limit"]),
         "automation.status" => (&["name", "runId"], false, &[]),
+        "automation.run" => (&["name"], false, &["payload"]),
+        "automation.pause" | "automation.resume" => (&["name"], false, &["reason"]),
         _ => return Err("Unknown operation; see --help".into()),
     };
     if words.len() != 2 + positional.len()
@@ -211,6 +228,13 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         params,
         input,
     })
+}
+
+fn payload(value: Option<&String>) -> Result<Value, String> {
+    value
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .filter(Value::is_object)
+        .ok_or_else(|| "--payload requires a JSON object".into())
 }
 
 fn page_limit(value: Option<&String>) -> Result<u64, String> {
@@ -909,11 +933,50 @@ mod tests {
             "automation status babysitter",
             "automation status babysitter r1 extra",
             "automation status babysitter r1 --before r0",
-            "automation run babysitter",
+            "automation run",
+            "automation run babysitter --payload",
+            "automation run babysitter --payload [1]",
+            "automation run babysitter --payload {",
+            "automation run babysitter --reason x",
+            "automation pause babysitter --payload {}",
+            "automation resume babysitter --reason",
+            "automation resume",
             "automation list --input -",
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn parses_automation_actions() {
+        let run = parse(&args(r#"automation run babysitter --payload {"pr":7}"#)).unwrap();
+        assert_eq!(run.method, "automation.run");
+        assert_eq!(
+            run.params,
+            *json!({ "name": "babysitter", "payload": { "pr": 7 } })
+                .as_object()
+                .unwrap()
+        );
+        assert_eq!(
+            parse(&args("automation run babysitter")).unwrap().params,
+            *json!({ "name": "babysitter" }).as_object().unwrap()
+        );
+        let reasoned = [
+            "automation",
+            "pause",
+            "babysitter",
+            "--reason",
+            "on vacation",
+        ];
+        let pause = parse(&reasoned.map(String::from)).unwrap();
+        assert_eq!(pause.method, "automation.pause");
+        assert_eq!(pause.params["reason"], "on vacation");
+        let resume = parse(&args("automation resume babysitter")).unwrap();
+        assert_eq!(resume.method, "automation.resume");
+        assert_eq!(
+            resume.params,
+            *json!({ "name": "babysitter" }).as_object().unwrap()
+        );
     }
 
     #[test]

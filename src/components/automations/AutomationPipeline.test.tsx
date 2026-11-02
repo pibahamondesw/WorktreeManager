@@ -93,6 +93,34 @@ afterEach(() => {
 });
 beforeEach(() => vi.mocked(invoke).mockReset());
 
+it("lists the permission requests the selected run captured", async () => {
+  vi.mocked(invoke).mockResolvedValue(
+    page(
+      run("1761800000002-bbbbbbbb", {
+        items: [item("routine", { steps: [attempt("implement")] })],
+        permission_requests: [
+          {
+            step: "implement",
+            attempt: 1,
+            tool: "Bash",
+            input: { command: "gh pr list" },
+            resolution: "denied",
+          },
+          { step: "implement", attempt: 1, tool: "Allow?", input: "fetch", resolution: "allowed" },
+          { step: "implement", attempt: 1, tool: "Ask", input: null, resolution: "denied" },
+        ],
+      })
+    )
+  );
+  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+
+  const section = await screen.findByRole("region", { name: "Permission requests" });
+  expect(within(section).getByText('{"command":"gh pr list"}')).toHaveClass("font-mono");
+  expect(within(section).getByText("fetch")).toBeInTheDocument();
+  expect(within(section).getByText("—")).toBeInTheDocument();
+  expect(within(section).getByText("allowed")).toBeInTheDocument();
+});
+
 it("shows the definition graph when there are no runs", async () => {
   vi.mocked(invoke).mockResolvedValue(page());
   const { container } = render(<AutomationPipeline name="babysitter" steps={STEPS} />);
@@ -265,13 +293,13 @@ const summary = (definition: boolean): AutomationSummary => ({
 
 it("is a tab of the automation detail", async () => {
   vi.mocked(invoke).mockResolvedValue(page());
-  render(<AutomationDetail summary={summary(true)} editorApp="cursor" />);
+  render(<AutomationDetail summary={summary(true)} editorApp="cursor" onChanged={() => {}} />);
   fireEvent.click(screen.getByRole("tab", { name: "Pipeline" }));
   expect(await screen.findByText("No runs yet: showing the definition")).toBeInTheDocument();
   expect(node("Implement")).toBeInTheDocument();
 
   cleanup();
-  render(<AutomationDetail summary={summary(false)} editorApp="cursor" />);
+  render(<AutomationDetail summary={summary(false)} editorApp="cursor" onChanged={() => {}} />);
   fireEvent.click(screen.getByRole("tab", { name: "Pipeline" }));
   expect(screen.getByText("Unavailable until the definition is valid")).toBeInTheDocument();
 });

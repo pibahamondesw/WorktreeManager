@@ -1,17 +1,14 @@
 //! Runs a routine. The run resolves its task, drives its implicit item through the steps, with
 //! every agent step a turn of a headless session in that task, and records each move in the run
 //! log; how the run ended feeds the automation's failure count.
-#![cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the scheduler (WOR-253) starts the executor")
-)]
 
 mod app;
 mod prompt;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -24,10 +21,11 @@ use super::pipeline::{
 };
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::store::events::{
-    FailureReason, ItemStatus, LoggedEvent, ProcessEnd, RunEvent, RunOutcome, StepOutcome,
+    FailureReason, ItemStatus, LoggedEvent, PermissionResolution, ProcessEnd, RunEvent, RunOutcome,
+    StepOutcome,
 };
 use super::store::RunStore;
-use crate::commands::chat::TurnEnd;
+use crate::commands::chat::{SettledRequest, TurnEnd};
 
 const ROUTINE_ITEM: &str = "routine";
 const NOOP_REPLY: &str = "NOOP";
@@ -76,6 +74,8 @@ pub trait Sessions: Send + Sync {
     fn start(&self, task: &ResolvedTask, agent: &AgentSettings) -> Result<String, String>;
     fn run_turn(&self, session_id: &str, prompt: &str, timeout: Duration) -> TurnEnd;
     fn close(&self, session_id: &str);
+    /// Requests the session settled without anyone so far, oldest first.
+    fn settled_requests(&self, session_id: &str) -> Vec<SettledRequest>;
 }
 
 /// Runs a frontend operation as the CLI does and returns its response.
@@ -94,12 +94,23 @@ pub struct RoutineExecutor {
     definitions: Arc<dyn Definitions>,
     tasks: Arc<dyn Tasks>,
     sessions: Arc<dyn Sessions>,
+    /// Runs this process is executing.
+    in_flight: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Executor for RoutineExecutor {
-    fn execute(&self, request: RunRequest) {
+    fn execute(&self, request: RunRequest, payload: Option<Value>) {
         let executor = self.clone();
-        thread::spawn(move || executor.run(&request, None));
+        let run_id = request.run_id.clone();
+        self.in_flight.lock().unwrap().insert(run_id.clone());
+        thread::spawn(move || {
+            executor.run(&request, payload.as_ref());
+            executor.in_flight.lock().unwrap().remove(&run_id);
+        });
+    }
+
+    fn owns(&self, run_id: &str) -> bool {
+        self.in_flight.lock().unwrap().contains(run_id)
     }
 }
 
@@ -121,6 +132,7 @@ impl RoutineExecutor {
             definitions,
             tasks,
             sessions,
+            in_flight: Arc::default(),
         }
     }
 
@@ -161,6 +173,9 @@ impl RoutineExecutor {
             task_id: task.id.clone(),
             created: definition.target.task == TaskMode::PerRun,
         })?;
+        if !is_active(self.store.run(&request.automation, &request.run_id)?.status) {
+            return Ok(());
+        }
         log.append(RunEvent::Started)?;
         log.append(RunEvent::ItemCreated {
             item: ROUTINE_ITEM.into(),
@@ -180,6 +195,7 @@ impl RoutineExecutor {
             opened: Vec::new(),
             last_outcome: None,
             deadline_passed: false,
+            settled: Vec::new(),
         };
         let pipeline = Pipeline {
             steps: &definition.steps,
@@ -273,6 +289,8 @@ struct AgentSteps<'a> {
     opened: Vec<String>,
     last_outcome: Option<StepOutcome>,
     deadline_passed: bool,
+    /// Requests already recorded in the run log, once each for the whole run.
+    settled: Vec<SettledRequest>,
 }
 
 impl StepExecutor for AgentSteps<'_> {
@@ -323,11 +341,38 @@ impl AgentSteps<'_> {
         let prompt =
             prompt::agent_prompt(self.definition, step, self.request, self.task, self.payload);
         let end = self.sessions.run_turn(&session_id, &prompt, timeout);
+        self.record_settled_requests(request, &session_id);
         if end == TurnEnd::TimedOut && bounded_by_deadline {
             self.deadline_passed = true;
             return failed(ProcessEnd::TimedOut, "deadline");
         }
         turn_report(end, step)
+    }
+
+    /// Logs what the agent asked for and its policy settled, for the owner to allowlist.
+    fn record_settled_requests(&mut self, request: &StepRequest, session_id: &str) {
+        for settled in self.sessions.settled_requests(session_id) {
+            if self.settled.contains(&settled) {
+                continue;
+            }
+            let resolution = if settled.allowed {
+                PermissionResolution::Allowed
+            } else {
+                PermissionResolution::Denied
+            };
+            let event = RunEvent::PermissionRequested {
+                item: request.item.to_string(),
+                step: request.step.id.clone(),
+                attempt: request.attempt,
+                tool: settled.tool.clone(),
+                input: settled.input.clone(),
+                resolution,
+            };
+            if let Err(error) = self.log.append(event) {
+                log::warn!("Could not record a permission request of {session_id}: {error}");
+            }
+            self.settled.push(settled);
+        }
     }
 
     fn session_for(&mut self, step: &AgentStep) -> Result<String, String> {

@@ -14,7 +14,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -315,20 +315,12 @@ fn deliver(shared: &Shared, request: Request) -> Result<(String, mpsc::Receiver<
     Ok((token, receiver))
 }
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the routine executor (WOR-249) waits for WOR-253")
-)]
 const IN_PROCESS_POLL: Duration = if cfg!(test) {
     Duration::from_millis(20)
 } else {
     Duration::from_secs(5)
 };
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the routine executor (WOR-249) waits for WOR-253")
-)]
 impl CliBridge {
     /// Runs an operation through the frontend as a CLI request would, blocking until it answers.
     pub fn call(&self, method: &str, params: Value) -> Value {
@@ -356,18 +348,35 @@ impl CliBridge {
     }
 }
 
+/// How long the engine waits for the interface to load, at launch or after a reload.
+const FRONTEND_WAIT: Duration = if cfg!(test) {
+    Duration::from_millis(100)
+} else {
+    Duration::from_secs(120)
+};
+
 /// The app's bridge as the automation engine calls it.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the routine executor (WOR-249) waits for WOR-253")
-)]
 pub struct AppOperations<R: Runtime>(pub AppHandle<R>);
 
-impl<R: Runtime> OperationsBridge for AppOperations<R> {
-    fn call(&self, method: &str, params: Value) -> Value {
+impl<R: Runtime> AppOperations<R> {
+    fn call_once(&self, method: &str, params: Value) -> Value {
         match self.0.try_state::<CliBridge>() {
             Some(bridge) => bridge.call(method, params),
             None => failure("app_not_ready", "The CLI bridge is not running."),
+        }
+    }
+}
+
+impl<R: Runtime> OperationsBridge for AppOperations<R> {
+    /// An undelivered request is retried until the interface is ready.
+    fn call(&self, method: &str, params: Value) -> Value {
+        let deadline = Instant::now() + FRONTEND_WAIT;
+        loop {
+            let response = self.call_once(method, params.clone());
+            if response["error"]["code"] != "app_not_ready" || Instant::now() >= deadline {
+                return response;
+            }
+            std::thread::sleep(IN_PROCESS_POLL);
         }
     }
 }
@@ -720,7 +729,11 @@ mod tests {
     }
 
     fn answer_with(server: &Server, answer: impl Fn(&Pending) + Send + Sync + 'static) {
-        let shared = server.cli_bridge().shared.clone();
+        answer_on(server.cli_bridge().shared.clone(), answer);
+    }
+
+    fn answer_on(shared: Arc<Shared>, answer: impl Fn(&Pending) + Send + Sync + 'static) {
+        let frontend = shared.clone();
         let channel = Channel::new(move |body| {
             let delivery: Delivery = body.deserialize().unwrap();
             assert_eq!(delivery.request.method, "task.create");
@@ -729,7 +742,7 @@ mod tests {
             answer(pending.get(&delivery.token).unwrap());
             Ok(())
         });
-        *server.cli_bridge().shared.frontend.lock().unwrap() = Some(Frontend {
+        *frontend.frontend.lock().unwrap() = Some(Frontend {
             session: "main".into(),
             channel,
         });
@@ -819,5 +832,28 @@ mod tests {
             .unwrap();
         let response = AppOperations(app.handle().clone()).call("task.get", json!({}));
         assert_eq!(response["error"]["code"], "app_not_ready");
+    }
+
+    #[test]
+    fn app_operations_wait_for_the_interface_to_load() {
+        use tauri::test::{mock_builder, mock_context, noop_assets};
+        let mut server = Server::new();
+        let shared = server.cli_bridge().shared.clone();
+        let app = mock_builder()
+            .manage(server.cli_bridge.take().unwrap())
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let loading = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            answer_on(shared, |pending| {
+                let _ = pending
+                    .sender
+                    .send(json!({ "ok": true, "data": { "id": "t1" } }));
+            });
+        });
+        let params = json!({ "input": { "branchName": "wtm/demo" } });
+        let response = AppOperations(app.handle().clone()).call("task.create", params);
+        loading.join().unwrap();
+        assert_eq!(response["data"]["id"], "t1");
     }
 }

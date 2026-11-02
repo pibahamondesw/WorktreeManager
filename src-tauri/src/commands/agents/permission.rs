@@ -61,13 +61,6 @@ impl Default for UnattendedPolicy {
 pub enum PermissionPolicy {
     #[default]
     Interactive,
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the automation engine (WOR-249) wraps definition policies"
-        )
-    )]
     Unattended(UnattendedPolicy),
 }
 

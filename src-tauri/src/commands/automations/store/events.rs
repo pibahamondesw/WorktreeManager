@@ -106,6 +106,17 @@ pub enum RunEvent {
         attempt: u32,
         session_id: String,
     },
+    /// A tool request the agent made that its unattended policy did not allow, or that no one
+    /// answered in time.
+    PermissionRequested {
+        item: String,
+        step: String,
+        attempt: u32,
+        tool: String,
+        #[serde(default)]
+        input: Option<serde_json::Value>,
+        resolution: PermissionResolution,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -173,6 +184,24 @@ pub enum FailureReason {
     StartTimeout,
     Deadline,
     DefinitionChanged,
+    /// The app quit while the run was active; runs are not resumed yet.
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionResolution {
+    Denied,
+    Allowed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PermissionRequest {
+    pub step: String,
+    pub attempt: u32,
+    pub tool: String,
+    pub input: Option<serde_json::Value>,
+    pub resolution: PermissionResolution,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +284,7 @@ pub struct RunState {
     pub items: Vec<ItemState>,
     pub task_id: Option<String>,
     pub task_error: Option<TaskError>,
+    pub permission_requests: Vec<PermissionRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -342,6 +372,7 @@ pub fn reduce(id: &str, events: impl IntoIterator<Item = LoggedEvent>) -> RunSta
         items: Vec::new(),
         task_id: None,
         task_error: None,
+        permission_requests: Vec::new(),
     };
     for logged in events {
         run.apply(logged);
@@ -451,6 +482,20 @@ impl RunState {
                     attempt.session_id = Some(session_id);
                 }
             }
+            RunEvent::PermissionRequested {
+                step,
+                attempt,
+                tool,
+                input,
+                resolution,
+                ..
+            } => self.permission_requests.push(PermissionRequest {
+                step,
+                attempt,
+                tool,
+                input,
+                resolution,
+            }),
             RunEvent::CandidateSkipped { .. }
             | RunEvent::StepReceipt { .. }
             | RunEvent::Unknown => {}

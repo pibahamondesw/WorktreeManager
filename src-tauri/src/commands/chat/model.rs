@@ -178,6 +178,14 @@ pub struct UnansweredRequest {
     pub resolution: PendingDefault,
 }
 
+/// A tool call the agent's permission rules denied without asking anyone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PermissionDenial {
+    pub tool_use_id: String,
+    pub tool: String,
+    pub input: serde_json::Value,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DetailFormat {
@@ -422,6 +430,8 @@ pub struct ChatSnapshot {
     pub pending: Vec<PendingRequest>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unanswered: Vec<UnansweredRequest>,
+    #[serde(skip)]
+    pub denied: Vec<PermissionDenial>,
     pub controls: ChatControls,
     #[serde(skip)]
     pub background_agents: bool,
@@ -435,6 +445,7 @@ impl ChatSnapshot {
             items: Vec::new(),
             pending: Vec::new(),
             unanswered: Vec::new(),
+            denied: Vec::new(),
             controls: ChatControls::default(),
             background_agents: false,
         }
@@ -517,6 +528,7 @@ pub struct ProviderOutput {
     pub completes_turn: bool,
     /// Whether background subagents keep the session working after its turn ends.
     pub background_agents: Option<bool>,
+    pub denials: Vec<PermissionDenial>,
 }
 
 impl ProviderOutput {

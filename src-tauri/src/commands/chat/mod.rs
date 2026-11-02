@@ -28,7 +28,7 @@ mod sessions;
 mod turns;
 
 pub(crate) use conversations::ConversationFork;
-pub(crate) use headless::{HeadlessRequest, TurnEnd};
+pub(crate) use headless::{HeadlessRequest, SettledRequest, TurnEnd};
 pub use interrupted::record_interrupted_sessions;
 pub(crate) use model::{ChatItem, ItemKind, PlanUsage, UsageWindow};
 pub(crate) use sessions::{exchange, truncate, SessionList, SessionSummary, LIST_LIMIT};
@@ -79,7 +79,6 @@ pub struct ChatInfo {
 #[serde(rename_all = "camelCase")]
 pub enum ChatOrigin {
     User,
-    #[allow(dead_code)]
     Automation,
 }
 
@@ -220,6 +219,15 @@ impl Shared {
                 .map(|stdin| writeln!(stdin, "{line}").and_then(|_| stdin.flush()));
             if let Some(Err(error)) = written {
                 log::warn!("chat stdin write failed: {error}");
+            }
+        }
+        for denial in std::mem::take(&mut out.denials) {
+            let denied = &mut self.snapshot.denied;
+            if !denied
+                .iter()
+                .any(|known| known.tool_use_id == denial.tool_use_id)
+            {
+                denied.push(denial);
             }
         }
         let fork_source = out.conversation.and_then(|id| {
@@ -1637,6 +1645,18 @@ pub(crate) mod tests {
         let json = serde_json::to_value(&shared.snapshot).unwrap();
         assert_eq!(json["unanswered"][0]["resolution"], "deny");
         assert_eq!(json["unanswered"][0]["request"]["kind"], "approval");
+    }
+
+    #[test]
+    fn denied_tool_calls_are_kept_once_and_stay_out_of_the_webview() {
+        let mut shared = claude_shared(None);
+        let result = r#"{"type":"result","permission_denials":[{"tool_name":"Bash","tool_use_id":"tu1","tool_input":{"command":"gh pr list"}}]}"#;
+        receive_line(&mut shared, result);
+        receive_line(&mut shared, result);
+        assert_eq!(shared.snapshot.denied.len(), 1);
+        assert_eq!(shared.snapshot.denied[0].tool, "Bash");
+        let json = serde_json::to_value(&shared.snapshot).unwrap();
+        assert!(json.get("denied").is_none());
     }
 
     #[test]

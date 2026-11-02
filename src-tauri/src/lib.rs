@@ -1,6 +1,9 @@
 use tauri::Manager;
 
 #[cfg(unix)]
+use std::sync::Arc;
+
+#[cfg(unix)]
 pub mod cli;
 #[cfg(unix)]
 mod cli_bridge;
@@ -29,6 +32,10 @@ pub fn run() {
                 cli_bridge::CliBridge::start(cli_bridge::socket_path(&app.config().identifier))
                     .map_err(std::io::Error::other)?,
             );
+            #[cfg(unix)]
+            if let Err(error) = start_automations(app.handle()) {
+                log::warn!("Automations are off for this session: {error}");
+            }
             menu::setup(app)?;
             #[cfg(desktop)]
             app.handle()
@@ -85,6 +92,9 @@ pub fn run() {
                 commands::automations::store::automation_runs_list,
                 commands::automations::store::automation_run_get,
                 commands::automations::store::automation_state,
+                commands::automations::actions::automation_run,
+                commands::automations::actions::automation_pause,
+                commands::automations::actions::automation_resume,
                 commands::agent_alerts::agent_hooks_status,
                 commands::agent_alerts::agent_hooks_install,
                 commands::agent_alerts::agent_hooks_remove,
@@ -156,4 +166,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(lifecycle::on_run_event);
+}
+
+/// Runs started by the scheduler and by the owner share one executor.
+#[cfg(unix)]
+fn start_automations(app: &tauri::AppHandle) -> Result<(), String> {
+    use commands::automations::{actions, routine, scheduler};
+    let operations = Arc::new(cli_bridge::AppOperations(app.clone()));
+    let executor: Arc<dyn scheduler::Executor> =
+        Arc::new(routine::RoutineExecutor::of(app, operations)?);
+    app.manage(actions::AutomationEngine(executor.clone()));
+    scheduler::start_scheduler(app.clone(), executor)
 }

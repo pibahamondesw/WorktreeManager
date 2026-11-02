@@ -495,6 +495,9 @@ fn an_empty_selector_completes_the_campaign_once_no_item_is_left() {
     let state = store.state(NAME).unwrap();
     assert!(!state.enabled);
     assert_eq!(state.pause_reason, Some(PauseReason::Completed));
+    let toggle = state.last_toggle.unwrap();
+    assert_eq!(toggle.by, Actor::Auto);
+    assert_eq!(toggle.reason.as_deref(), Some("completed its runs"));
 }
 
 #[test]
