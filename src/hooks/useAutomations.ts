@@ -102,6 +102,7 @@ export function useAutomationRuns(name: string) {
     runs: current.runs,
     error: current.error,
     loading: current.loading,
+    reload,
     loadMore: current.nextBefore ? () => load(current.nextBefore) : null,
   };
 }

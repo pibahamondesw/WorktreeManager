@@ -14,6 +14,40 @@ interface AutomationDefinition {
     manual: boolean;
     schedule: { cron: string; tz: string; catchUp: "latest" | "skip" } | null;
   };
+  steps: PipelineStep[];
+}
+
+type GotoLimit = { count: number } | { budget: string };
+
+export type Transition =
+  | "fail"
+  | "block"
+  | "defer"
+  | "continue"
+  | { goto: { step: string; max: GotoLimit | null } };
+
+export type WaitCondition = { duration_secs: number } | { until: string } | { signal: string };
+
+export type StepKind =
+  | {
+      agent: {
+        agent: { id: string; model: string; effort: string | null };
+        skill: string | null;
+        prompt: string | null;
+        onReject: Transition | null;
+      };
+    }
+  | { command: { command: string[]; repo: string } }
+  | { wait: WaitCondition }
+  | { approval: { title: string; detail: string | null; onReject: Transition | null } };
+
+export interface PipelineStep {
+  id: string;
+  label: string;
+  /** Null goes to the following step. */
+  next: string | null;
+  onFail: Transition;
+  kind: StepKind;
 }
 
 export interface AutomationEntry {
@@ -35,6 +69,38 @@ export interface AutomationState {
   consecutive_failures: number;
 }
 
+export type StepStatus =
+  | "pending"
+  | "running"
+  | "waiting"
+  | "succeeded"
+  | "failed"
+  | "rejected"
+  | "canceled"
+  | "skipped";
+
+export interface StepAttempt {
+  step: string;
+  attempt: number;
+  status: StepStatus;
+  process_end: string | null;
+  exit_code: number | null;
+  outcome: string | null;
+  stage: string | null;
+  verdict: string | null;
+  cause: string | null;
+  head: string | null;
+}
+
+export interface AutomationItem {
+  id: string;
+  title: string | null;
+  status: string;
+  /** The step the item is on while it runs. */
+  phase: string | null;
+  steps: StepAttempt[];
+}
+
 type RunStatus =
   | "skipped"
   | "starting"
@@ -53,6 +119,7 @@ export interface AutomationRun {
   outcome: string | null;
   claimed_at_ms: number | null;
   ended_at_ms: number | null;
+  items: AutomationItem[];
 }
 
 export interface AutomationRunPage {
@@ -92,9 +159,11 @@ async function summarize(entry: AutomationEntry): Promise<AutomationSummary> {
 
 const ACTIVE_RUN_STATUSES: RunStatus[] = ["starting", "running", "interrupted"];
 
+export const isRunActive = (run: AutomationRun) => ACTIVE_RUN_STATUSES.includes(run.status);
+
 export function automationStatus({ entry, state, latestRun }: AutomationSummary): AutomationStatus {
   if (entry.errors.length > 0) return "invalid";
-  if (latestRun && ACTIVE_RUN_STATUSES.includes(latestRun.status)) return "running";
+  if (latestRun && isRunActive(latestRun)) return "running";
   if (!state || !state.enabled) return "paused";
   return state.consecutive_failures > 0 ? "degraded" : "active";
 }
@@ -161,7 +230,7 @@ export function runDuration(run: AutomationRun): string | null {
   return formatDuration(run.ended_at_ms - run.claimed_at_ms);
 }
 
-function formatDuration(ms: number): string {
+export function formatDuration(ms: number): string {
   const seconds = Math.round(ms / 1000);
   if (seconds < 1) return "<1s";
   if (seconds < 60) return `${seconds}s`;

@@ -15,7 +15,7 @@ const summary = (name: string): AutomationSummary => ({
   entry: {
     name,
     path: `/automations/${name}/AUTOMATION.md`,
-    definition: { name, description: null, trigger: { manual: true, schedule: null } },
+    definition: { name, description: null, trigger: { manual: true, schedule: null }, steps: [] },
     errors: [],
     warnings: [],
   },
