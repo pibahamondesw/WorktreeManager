@@ -892,6 +892,7 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         fork: None,
         handoff: None,
         permission: Default::default(),
+        output_schema: None,
     };
     let missing = Codex::new("/missing-test-agent", None, None);
     assert!(missing.chat_launch(request(None)).is_err());
@@ -1627,6 +1628,7 @@ fn start_headless(
         HeadlessRequest {
             folders,
             resume: None,
+            output_schema: None,
         },
         policy,
     )
@@ -1725,6 +1727,8 @@ fn headless_sessions_run_unattended_until_a_pane_attaches_and_close_with_their_t
         let argv = argv.to_string();
         argv.contains("dontAsk") && argv.contains("Bash(git status)")
     }));
+    assert!(registry.conversation(&session_id).is_some());
+    assert_eq!(registry.conversation("missing"), None);
     registry.interrupt(&session_id).unwrap();
     assert!(registry.send("missing", "hello", &[]).is_err());
     assert!(registry.interrupt("missing").is_err());

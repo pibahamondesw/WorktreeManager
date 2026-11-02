@@ -105,6 +105,19 @@ pub enum RunEvent {
         step: String,
         attempt: u32,
         session_id: String,
+        /// The agent's id for the conversation, which the task's chat can resume.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation_id: Option<String>,
+    },
+    /// What an agent attempt replied, and the structured result read from it. The reply is the
+    /// evidence of a result that could not be read.
+    StepOutput {
+        item: String,
+        step: String,
+        attempt: u32,
+        reply: Option<String>,
+        #[serde(default)]
+        result: Option<serde_json::Value>,
     },
     /// A tool request the agent made that its unattended policy did not allow, or that no one
     /// answered in time.
@@ -321,6 +334,9 @@ pub struct StepAttemptState {
     pub cause: Option<String>,
     pub head: Option<String>,
     pub session_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub reply: Option<String>,
+    pub result: Option<serde_json::Value>,
 }
 
 impl RunStatus {
@@ -474,12 +490,29 @@ impl RunState {
                 step,
                 attempt,
                 session_id,
+                conversation_id,
             } => {
                 if let Some(attempt) = self
                     .open_item(&item)
                     .and_then(|item| item.open_attempt(step, attempt))
                 {
                     attempt.session_id = Some(session_id);
+                    attempt.conversation_id = conversation_id;
+                }
+            }
+            RunEvent::StepOutput {
+                item,
+                step,
+                attempt,
+                reply,
+                result,
+            } => {
+                if let Some(attempt) = self
+                    .open_item(&item)
+                    .and_then(|item| item.open_attempt(step, attempt))
+                {
+                    attempt.reply = reply;
+                    attempt.result = result;
                 }
             }
             RunEvent::PermissionRequested {
@@ -570,6 +603,9 @@ impl ItemState {
                     cause: None,
                     head: None,
                     session_id: None,
+                    conversation_id: None,
+                    reply: None,
+                    result: None,
                 });
                 self.steps.len() - 1
             }

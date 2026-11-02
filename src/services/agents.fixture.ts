@@ -14,6 +14,8 @@ const capabilities: AgentDescriptor["capabilities"] = {
   images: true,
   headless: true,
   toolRules: true,
+  readOnly: true,
+  structuredOutput: true,
 };
 
 /** The catalog `agents_catalog` returns for the built-in agents, both installed. */

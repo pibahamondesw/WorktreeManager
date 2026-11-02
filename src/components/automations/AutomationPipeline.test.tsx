@@ -58,6 +58,8 @@ const attempt = (step: string, overrides: Partial<StepAttempt> = {}): StepAttemp
   verdict: null,
   cause: null,
   head: null,
+  session_id: null,
+  conversation_id: null,
   ...overrides,
 });
 
@@ -180,7 +182,10 @@ it("moves between steps with the keyboard and opens what each kind has", async (
       run("1761800000001-aaaaaaaa", {
         items: [
           item("only", {
-            steps: [attempt("verify", { status: "failed", exit_code: 2, cause: "timeout" })],
+            steps: [
+              attempt("implement", { session_id: "s-1", conversation_id: "c-1" }),
+              attempt("verify", { status: "failed", exit_code: 2, cause: "timeout" }),
+            ],
           }),
         ],
       })
@@ -195,8 +200,8 @@ it("moves between steps with the keyboard and opens what each kind has", async (
   fireEvent.click(first);
   let detail = screen.getByRole("region", { name: "Step Implement" });
   expect(within(detail).getByText("claude · opus · high")).toBeInTheDocument();
-  expect(within(detail).getByText("Session")).toBeInTheDocument();
-  expect(within(detail).getByText("Not started")).toBeInTheDocument();
+  expect(within(detail).getByText("s-1")).toBeInTheDocument();
+  expect(within(detail).getByText("c-1")).toBeInTheDocument();
   fireEvent.click(first);
   expect(screen.queryByRole("region")).not.toBeInTheDocument();
 

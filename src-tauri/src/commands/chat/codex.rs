@@ -103,6 +103,10 @@ pub struct CodexProvider {
     config_sandbox: Option<Value>,
     /// Approval policy every turn uses inside the workspace sandbox, whatever the composer mode.
     fixed_approval: Option<String>,
+    /// Every turn runs in the read-only sandbox instead of the workspace one.
+    read_only: bool,
+    /// JSON schema every turn's final message follows.
+    output_schema: Option<Value>,
     usage: PlanUsage,
     image_dir: PathBuf,
     pinned: bool,
@@ -168,6 +172,8 @@ impl CodexProvider {
             config_reviewer: None,
             config_sandbox: None,
             fixed_approval: None,
+            read_only: false,
+            output_schema: None,
             usage: PlanUsage::default(),
         }
     }
@@ -192,7 +198,11 @@ impl CodexProvider {
         if let Some(effort) = &controls.effort {
             params.insert("effort".into(), json!(effort));
         }
-        let workspace = json!({ "type": "workspaceWrite", "writableRoots": self.extra_dirs });
+        let workspace = if self.read_only {
+            json!({ "type": "readOnly" })
+        } else {
+            json!({ "type": "workspaceWrite", "writableRoots": self.extra_dirs })
+        };
         let (approval, reviewer, sandbox) = match controls.mode.as_deref() {
             _ if self.fixed_approval.is_some() => {
                 (json!(self.fixed_approval), json!("user"), workspace)
@@ -213,6 +223,9 @@ impl CodexProvider {
         params.insert("approvalPolicy".into(), approval);
         params.insert("approvalsReviewer".into(), reviewer);
         params.insert("sandboxPolicy".into(), sandbox);
+        if let Some(schema) = &self.output_schema {
+            params.insert("outputSchema".into(), schema.clone());
+        }
         params
     }
 
@@ -378,6 +391,16 @@ impl CodexProvider {
 
     pub fn fixed_approval(mut self, approval: &str) -> Self {
         self.fixed_approval = Some(approval.to_string());
+        self
+    }
+
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
+    pub fn output_schema(mut self, schema: Value) -> Self {
+        self.output_schema = Some(schema);
         self
     }
 
@@ -2353,6 +2376,21 @@ mod tests {
             turn["collaborationMode"]["settings"]["reasoning_effort"],
             "low"
         );
+    }
+
+    #[test]
+    fn read_only_sessions_send_their_sandbox_and_schema_with_every_turn() {
+        let (provider, _) = resumed();
+        let schema = json!({ "type": "object" });
+        let mut provider = provider
+            .fixed_approval("never")
+            .read_only()
+            .output_schema(schema.clone());
+        let mut out = ProviderOutput::default();
+        provider.send("review", &[], &mut out).unwrap();
+        let params = &request(&out, "turn/start")["params"];
+        assert_eq!(params["sandboxPolicy"], json!({ "type": "readOnly" }));
+        assert_eq!(params["outputSchema"], schema);
     }
 
     #[test]

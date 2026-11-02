@@ -641,6 +641,9 @@ impl ChatProvider for ClaudeProvider {
                 out.denials.extend(permission_denials(&message));
                 out.background_agents = Some(self.background_agents);
                 self.turns = self.turns.saturating_sub(1);
+                if let Some(item) = structured_reply(&message) {
+                    out.upsert(item);
+                }
                 if message["is_error"] == true {
                     let text = message["result"]
                         .as_str()
@@ -1594,6 +1597,16 @@ fn user_content(text: &str, images: &[ChatImage]) -> Value {
     Value::Array(blocks)
 }
 
+/// A session held to a JSON schema ends its turn with a structured result instead of a message;
+/// it becomes the turn's final reply so readers find it where they find any other.
+fn structured_reply(result: &Value) -> Option<ChatItem> {
+    let output = result
+        .get("structured_output")
+        .filter(|output| !output.is_null())?;
+    let id = format!("structured-{}", uuid::Uuid::new_v4());
+    Some(ChatItem::new(id, ItemKind::Assistant, output.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1776,6 +1789,21 @@ mod tests {
             feed(&mut provider, &mut snapshot, result).background_agents,
             Some(false)
         );
+    }
+
+    #[test]
+    fn a_structured_result_becomes_the_final_reply() {
+        let (mut provider, mut snapshot) = started();
+        let verdict = json!({ "verdict": "pass", "summary": "ok" });
+        let result = json!({ "type": "result", "is_error": false, "structured_output": verdict });
+        feed(&mut provider, &mut snapshot, result);
+        let reply = snapshot.items.last().unwrap();
+        assert_eq!(reply.kind, ItemKind::Assistant);
+        assert_eq!(serde_json::from_str::<Value>(&reply.text).unwrap(), verdict);
+        let plain = json!({ "type": "result", "is_error": false, "structured_output": null });
+        let before = snapshot.items.len();
+        feed(&mut provider, &mut snapshot, plain);
+        assert_eq!(snapshot.items.len(), before);
     }
 
     #[test]

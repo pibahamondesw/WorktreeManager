@@ -40,6 +40,8 @@ pub(crate) struct ChatRequest {
     pub fork: Option<ConversationFork>,
     pub handoff: Option<String>,
     pub permission: PermissionPolicy,
+    /// JSON schema every final reply of the session must follow.
+    pub output_schema: Option<Value>,
 }
 
 /// A new conversation `fork_id` holding `source` up to (excluding) the user message `item_id`.
@@ -94,6 +96,10 @@ pub struct AgentCapabilities {
     pub headless: bool,
     /// Unattended sessions enforce per-session allow and deny tool rules.
     pub tool_rules: bool,
+    /// Unattended sessions can run unable to edit files or run mutating tools.
+    pub read_only: bool,
+    /// A session can be held to a JSON schema; its final reply is then the JSON it produced.
+    pub structured_output: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -330,6 +336,8 @@ mod tests {
                 images: true,
                 headless: true,
                 tool_rules: true,
+                read_only: true,
+                structured_output: true,
             }
         );
     }
@@ -352,6 +360,8 @@ mod tests {
                 images: true,
                 headless: true,
                 tool_rules: false,
+                read_only: true,
+                structured_output: true,
             }
         );
     }

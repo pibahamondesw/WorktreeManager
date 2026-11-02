@@ -51,6 +51,8 @@ const attempt = (stepId: string, number: number, status: StepAttempt["status"]):
   verdict: null,
   cause: null,
   head: null,
+  session_id: null,
+  conversation_id: null,
 });
 
 const item = (overrides: Partial<AutomationItem> = {}): AutomationItem => ({

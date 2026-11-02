@@ -260,6 +260,9 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 cause: Some("timeout".into()),
                 head: Some("abc".into()),
                 session_id: None,
+                conversation_id: None,
+                reply: None,
+                result: None,
             },
             StepAttemptState {
                 step: "fix".into(),
@@ -273,6 +276,9 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 cause: None,
                 head: None,
                 session_id: None,
+                conversation_id: None,
+                reply: None,
+                result: None,
             },
         ]
     );
@@ -293,6 +299,14 @@ fn runs_record_their_task_and_the_session_of_each_agent_attempt() {
         step: step.into(),
         attempt: 1,
         session_id: format!("{step}-session"),
+        conversation_id: Some(format!("{step}-conversation")),
+    };
+    let output = RunEvent::StepOutput {
+        item: "routine".into(),
+        step: "fix".into(),
+        attempt: 1,
+        reply: Some(r#"{"verdict":"pass"}"#.into()),
+        result: Some(serde_json::json!({ "verdict": "pass" })),
     };
     let run = reduce(
         "r1",
@@ -308,6 +322,7 @@ fn runs_record_their_task_and_the_session_of_each_agent_attempt() {
             at(3, created("routine")),
             at(4, step("routine", 1, StepStatus::Running)),
             at(5, session("fix")),
+            at(6, output),
             at(6, step("routine", 1, StepStatus::Succeeded)),
             at(7, session("fix")),
         ],
@@ -317,6 +332,13 @@ fn runs_record_their_task_and_the_session_of_each_agent_attempt() {
     assert_eq!(
         run.items[0].steps[0].session_id.as_deref(),
         Some("fix-session")
+    );
+    let attempt = &run.items[0].steps[0];
+    assert_eq!(attempt.conversation_id.as_deref(), Some("fix-conversation"));
+    assert_eq!(attempt.reply.as_deref(), Some(r#"{"verdict":"pass"}"#));
+    assert_eq!(
+        attempt.result,
+        Some(serde_json::json!({ "verdict": "pass" }))
     );
 
     let failed = reduce(

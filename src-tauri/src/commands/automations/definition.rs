@@ -87,6 +87,9 @@ pub struct AutomationDefinition {
     pub instructions: String,
     /// SHA-256 of the file, pinned by every run.
     pub hash: String,
+    /// The automation folder, which `scripts/…` and `schemas/…` paths are relative to.
+    #[serde(skip)]
+    pub folder: PathBuf,
 }
 
 #[derive(Debug, Serialize)]

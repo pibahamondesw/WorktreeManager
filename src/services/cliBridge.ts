@@ -122,6 +122,12 @@ async function workspaceInput(value: unknown, existing?: Workspace): Promise<Wor
   };
 }
 
+function baseRefs(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new OperationError("invalid_params", "baseRefs must map repository ids to refs.");
+  return Object.fromEntries(Object.entries(value).map(([repoId, ref]) => [repoId, text(ref)]));
+}
+
 function taskInput(value: unknown): CreateTaskInput {
   const input = object(value, [
     "workspaceId",
@@ -129,12 +135,14 @@ function taskInput(value: unknown): CreateTaskInput {
     "repoIds",
     "linearIssue",
     "automationId",
+    "baseRefs",
   ]);
   const result: CreateTaskInput = {
     workspaceId: text(input.workspaceId),
     branchName: text(input.branchName),
   };
   if (input.automationId !== undefined) result.automationId = text(input.automationId);
+  if (input.baseRefs !== undefined) result.baseRefs = baseRefs(input.baseRefs);
   if (input.repoIds !== undefined) {
     if (!Array.isArray(input.repoIds))
       throw new OperationError("invalid_params", "repoIds must be an array.");

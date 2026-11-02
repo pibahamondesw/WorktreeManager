@@ -7,13 +7,13 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Runtime};
 
-use super::super::definition::{self, AgentSettings, AutomationDefinition};
+use super::super::definition::{self, AutomationDefinition};
 use super::super::store::RunStore;
 use super::{
-    Definitions, NewTask, OperationsBridge, ResolvedTask, RoutineExecutor, Sessions, TaskFailure,
-    Tasks,
+    Definitions, NewTask, OperationsBridge, ResolvedTask, RoutineExecutor, SessionLaunch, Sessions,
+    TaskFailure, Tasks,
 };
-use crate::commands::agents::permission::PermissionPolicy;
+use crate::commands::agents::permission::{PermissionPolicy, UnattendedPolicy};
 use crate::commands::agents::Agents;
 use crate::commands::chat::{ChatRegistry, HeadlessRequest, SettledRequest, TurnEnd};
 
@@ -50,12 +50,15 @@ struct BridgeTasks(Arc<dyn OperationsBridge>);
 
 impl Tasks for BridgeTasks {
     fn create(&self, task: &NewTask) -> Result<ResolvedTask, TaskFailure> {
-        let input = json!({
+        let mut input = json!({
             "workspaceId": task.workspace_id,
             "branchName": task.branch,
             "repoIds": task.repo_ids,
             "automationId": task.automation,
         });
+        if !task.bases.is_empty() {
+            input["baseRefs"] = json!(task.bases);
+        }
         resolved(self.0.call("task.create", json!({ "input": input })))
     }
 
@@ -85,11 +88,16 @@ fn resolved(response: Value) -> Result<ResolvedTask, TaskFailure> {
 }
 
 fn task_of(task: &Value) -> Option<ResolvedTask> {
-    let folders = paths(task["members"].as_array()?);
+    let members = task["members"].as_array()?;
+    let repo_ids = members
+        .iter()
+        .map(|member| member["repoId"].as_str().map(String::from))
+        .collect::<Option<_>>()?;
     Some(ResolvedTask {
         id: task["id"].as_str()?.to_string(),
         branch: task["branchName"].as_str()?.to_string(),
-        folders: Some(folders).filter(|folders| !folders.is_empty())?,
+        folders: Some(paths(members)).filter(|folders| !folders.is_empty())?,
+        repo_ids,
     })
 }
 
@@ -109,13 +117,19 @@ impl<R: Runtime> Sessions for ChatSessions<R> {
             .is_ok_and(|adapter| adapter.installed())
     }
 
-    fn start(&self, task: &ResolvedTask, agent: &AgentSettings) -> Result<String, String> {
+    fn start(&self, task: &ResolvedTask, launch: &SessionLaunch) -> Result<String, String> {
         let registry = self.0.state::<ChatRegistry>();
+        let agent = &launch.agent;
         let request = HeadlessRequest {
             folders: task.folders.clone(),
-            resume: None,
+            resume: launch.resume.clone(),
+            output_schema: launch.output_schema.clone(),
         };
-        let policy = PermissionPolicy::Unattended(agent.permission.clone());
+        let policy = PermissionPolicy::Unattended(UnattendedPolicy {
+            grants: launch.grants.clone(),
+            read_only: launch.read_only,
+            ..agent.permission.clone()
+        });
         let session_id = registry.start_headless(&self.0, &task.id, &agent.id, request, policy)?;
         let model = Some(agent.model.as_str()).filter(|model| *model != DEFAULT_MODEL);
         registry
@@ -134,6 +148,10 @@ impl<R: Runtime> Sessions for ChatSessions<R> {
                 message: Some(message),
             },
         }
+    }
+
+    fn conversation(&self, session_id: &str) -> Option<String> {
+        self.0.state::<ChatRegistry>().conversation(session_id)
     }
 
     fn close(&self, session_id: &str) {

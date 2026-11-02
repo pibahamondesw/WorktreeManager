@@ -52,7 +52,6 @@ function kindFacts({ kind }: PipelineStep): Fact[] {
     return [
       ["Agent", [agent.id, agent.model, agent.effort].filter(Boolean).join(" · ")],
       ...(skill ? [["Skill", skill] as Fact] : []),
-      ["Session", NOT_RECORDED],
     ];
   }
   if ("command" in kind) {
@@ -81,6 +80,8 @@ const ATTEMPT_FIELDS: [label: string, field: keyof StepAttempt][] = [
   ["Stage", "stage"],
   ["Cause", "cause"],
   ["HEAD", "head"],
+  ["Session", "session_id"],
+  ["Conversation", "conversation_id"],
 ];
 
 function attemptFacts(progress: StepProgress | undefined): Fact[] {
@@ -89,7 +90,7 @@ function attemptFacts(progress: StepProgress | undefined): Fact[] {
   return [
     ["Status", `${latest.status.replace(/_/g, " ")} · attempt ${latest.attempt}`],
     ...ATTEMPT_FIELDS.flatMap(([label, field]): Fact[] =>
-      latest[field] === null ? [] : [[label, String(latest[field])]]
+      latest[field] == null ? [] : [[label, String(latest[field])]]
     ),
   ];
 }

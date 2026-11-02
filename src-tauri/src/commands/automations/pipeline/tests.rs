@@ -176,6 +176,7 @@ struct FakeExecutor {
     clock: Rc<Cell<u64>>,
     scripts: HashMap<String, VecDeque<(u64, Execution)>>,
     calls: Vec<String>,
+    active_time_left: Vec<Duration>,
 }
 
 impl StepExecutor for FakeExecutor {
@@ -185,6 +186,7 @@ impl StepExecutor for FakeExecutor {
             .map_or(String::new(), |stage| format!("@{stage}"));
         self.calls
             .push(format!("{}#{}{stage}", request.step.id, request.attempt));
+        self.active_time_left.push(request.active_time_left);
         let (millis, execution) = self
             .scripts
             .get_mut(&request.step.id)
@@ -232,6 +234,7 @@ impl Harness {
                 clock,
                 scripts: HashMap::new(),
                 calls: Vec::new(),
+                active_time_left: Vec::new(),
             },
         }
     }
@@ -322,6 +325,13 @@ fn name(value: &impl serde::Serialize) -> String {
         .as_str()
         .unwrap()
         .to_string()
+}
+
+#[test]
+fn only_finished_or_skipped_attempts_have_a_report() {
+    assert!(Execution::Parked.report().is_none());
+    let skipped = Execution::Skipped(report(StepOutcome::Success));
+    assert_eq!(skipped.report().unwrap().outcome, StepOutcome::Success);
 }
 
 #[test]
@@ -694,6 +704,35 @@ fn active_time_excludes_waits_and_blocks_before_the_next_step() {
     assert_eq!(
         harness.moves().last().unwrap(),
         "blocked:review (budget:active_time)"
+    );
+}
+
+#[test]
+fn an_attempt_that_spends_the_last_active_time_blocks_instead_of_retrying() {
+    let mut harness = Harness::new(vec![
+        agent("implement", None),
+        on_fail(
+            command("verify"),
+            goto("implement", Some(GotoLimit::Count(5))),
+        ),
+    ])
+    .script(
+        "implement",
+        vec![finished(20_000, report(StepOutcome::Success))],
+    )
+    .script("verify", vec![(45_000, failed("timeout").1)]);
+    harness.budgets.active_time_secs = 60;
+
+    assert_eq!(harness.drive(), ItemStatus::Blocked);
+
+    assert_eq!(harness.executor.calls, ["implement#1", "verify#1"]);
+    assert_eq!(
+        harness.executor.active_time_left,
+        [Duration::from_secs(60), Duration::from_secs(40)]
+    );
+    assert_eq!(
+        harness.moves().last().unwrap(),
+        "blocked:verify (budget:active_time)"
     );
 }
 

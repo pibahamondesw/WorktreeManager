@@ -1091,6 +1091,7 @@ pub async fn chat_open<R: Runtime>(
                 fork,
                 handoff: handoff.as_ref().map(|handoff| handoff.digest.clone()),
                 permission,
+                output_schema: None,
             };
             adapter.chat_launch(request).map(|launch| (handoff, launch))
         })

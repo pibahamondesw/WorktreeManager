@@ -226,18 +226,21 @@ pub async fn git_worktree_add(
     repo_path: String,
     worktree_path: String,
     branch_name: String,
+    base: Option<String>,
 ) -> Result<WorktreeAddResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        worktree_add_blocking(repo_path, worktree_path, branch_name)
+        worktree_add_blocking(repo_path, worktree_path, branch_name, base)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
+/// A new branch starts from `base` when given, or else from the freshest default branch.
 fn worktree_add_blocking(
     repo_path: String,
     worktree_path: String,
     branch_name: String,
+    base: Option<String>,
 ) -> Result<WorktreeAddResult, String> {
     let lock = worktree_lock(&repo_path)?;
     let _guard = lock.lock().map_err(|_| "Worktree lock unavailable")?;
@@ -275,12 +278,18 @@ fn worktree_add_blocking(
 
     // 2. Detect default branch (main/master/etc.)
     let default_branch = detect_default_branch(&repo_path);
-    let remote_start = format!("origin/{}", default_branch);
+    let remote_start = base
+        .clone()
+        .unwrap_or_else(|| format!("origin/{}", default_branch));
 
     // 3. Resolve the start point, degrading to local refs when the remote one is unavailable
-    let start_point = pick_start_point(&default_branch, |candidate| {
-        ref_resolves(&repo_path, candidate)
-    })
+    let start_point = match base {
+        Some(base) if ref_resolves(&repo_path, &base) => Some(base),
+        Some(base) => return Err(format!("The base {base} does not exist in {repo_path}")),
+        None => pick_start_point(&default_branch, |candidate| {
+            ref_resolves(&repo_path, candidate)
+        }),
+    }
     .ok_or_else(|| match &fetch_error {
         Some(err) => format!(
             "Failed to fetch from origin and found no local {} to branch from: {}",
@@ -883,7 +892,7 @@ mod tests {
             resolve_manual_worktree_blocking(root.clone(), base.clone(), "feature".into(), vec![])
                 .unwrap();
         assert_eq!(reused.path, first.path);
-        worktree_add_blocking(root.clone(), reused.path, reused.branch_name).unwrap();
+        worktree_add_blocking(root.clone(), reused.path, reused.branch_name, None).unwrap();
         assert_eq!(std::fs::read_to_string(local).unwrap(), "keep");
         let owned =
             resolve_manual_worktree_blocking(root, base, "feature".into(), vec![first.path])
@@ -900,10 +909,13 @@ mod tests {
             resolve_manual_worktree_blocking(root.clone(), base.clone(), "feature".into(), vec![])
                 .unwrap();
         repo.git(&["worktree", "add", "-b", "unrelated", &first.path]);
-        assert!(
-            worktree_add_blocking(root.clone(), first.path.clone(), first.branch_name.clone())
-                .is_err()
-        );
+        assert!(worktree_add_blocking(
+            root.clone(),
+            first.path.clone(),
+            first.branch_name.clone(),
+            None
+        )
+        .is_err());
         let next = resolve_manual_worktree_blocking(root, base, "feature".into(), vec![]).unwrap();
         assert_eq!(next.branch_name, format!("{}-2", first.branch_name));
     }
@@ -996,7 +1008,7 @@ mod tests {
         let worktree = repo.0.join("linked");
         let root = repo.0.to_string_lossy().into_owned();
         let path = worktree.to_string_lossy().into_owned();
-        worktree_add_blocking(root.clone(), path.clone(), "feature".into()).unwrap();
+        worktree_add_blocking(root.clone(), path.clone(), "feature".into(), None).unwrap();
         std::fs::write(worktree.join("uncommitted"), "keep me").unwrap();
         assert!(remove_worktree(&root, &path, None).is_err());
         assert!(worktree.join("uncommitted").exists());
@@ -1004,6 +1016,52 @@ mod tests {
         assert!(!worktree.exists());
         assert!(ref_resolves(&root, "refs/heads/feature"));
         remove_worktree(&root, &path, None).unwrap();
+    }
+
+    #[test]
+    fn new_branches_start_from_the_requested_base() {
+        let repo = TestRepo::new();
+        let root = repo.0.to_string_lossy().into_owned();
+        repo.git(&["branch", "develop"]);
+        repo.git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "ahead of develop",
+        ]);
+        let path = repo.0.join("based").to_string_lossy().into_owned();
+        worktree_add_blocking(
+            root.clone(),
+            path.clone(),
+            "based".into(),
+            Some("develop".into()),
+        )
+        .unwrap();
+        let head = |reference: &str| {
+            let output = git_command()
+                .args(["-C", &root, "rev-parse", reference])
+                .output()
+                .unwrap();
+            String::from_utf8(output.stdout).unwrap()
+        };
+        assert_eq!(head("based"), head("develop"));
+        let missing = repo.0.join("missing").to_string_lossy().into_owned();
+        let added = tauri::async_runtime::block_on(git_worktree_add(
+            root.clone(),
+            missing,
+            "other".into(),
+            Some("gone".into()),
+        ));
+        assert_eq!(
+            added.err(),
+            Some(format!("The base gone does not exist in {root}"))
+        );
     }
 
     #[test]
@@ -1033,6 +1091,7 @@ mod tests {
                 repo.0.to_str().unwrap().into(),
                 path.into(),
                 "feature".into(),
+                None,
             )
             .unwrap();
             assert!(worktree.join(".git").is_file());
@@ -1068,11 +1127,11 @@ mod tests {
         let exclude = repo.0.join(".git/info/exclude");
         let original = "# user rules\n/local-only\n/.vscode/tasks.json";
         std::fs::write(&exclude, original).unwrap();
-        worktree_add_blocking(path.into(), path.into(), "main".into()).unwrap();
+        worktree_add_blocking(path.into(), path.into(), "main".into(), None).unwrap();
         let contents = std::fs::read_to_string(&exclude).unwrap();
         assert!(contents.starts_with(&format!("{original}\n")));
         assert_eq!(contents.matches("/.vscode/tasks.json").count(), 1);
-        worktree_add_blocking(path.into(), path.into(), "main".into()).unwrap();
+        worktree_add_blocking(path.into(), path.into(), "main".into(), None).unwrap();
         assert_eq!(std::fs::read_to_string(&exclude).unwrap(), contents);
         std::fs::remove_dir_all(exclude.parent().unwrap()).unwrap();
         exclude_generated_files(path).unwrap();

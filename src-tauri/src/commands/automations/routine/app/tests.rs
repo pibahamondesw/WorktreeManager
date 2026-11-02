@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -7,17 +8,21 @@ use tauri::App;
 
 use super::*;
 use crate::commands::agents::claude::Claude;
-use crate::commands::agents::permission::UnattendedPolicy;
+use crate::commands::agents::permission::{Grant, UnattendedPolicy};
+use crate::commands::automations::definition::AgentSettings;
 use crate::commands::login_shell::remember_availability;
 
 /// Answers every user message like Claude Code's stream-json mode, except messages asking it to
 /// hang, and logs every line it receives.
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 log="$(dirname "$0")/received.log"
+printf '%s\n' "$*" >> "$(dirname "$0")/argv.log"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     *hang*) ;;
+    *verdict*)
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"verdict":"pass"}}' ;;
     *'"type":"user"'*)
       printf '%s\n' '{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"All green"}]},"parent_tool_use_id":null}'
       printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"All green","permission_denials":[{"tool_name":"Bash","tool_use_id":"tu1","tool_input":{"command":"gh pr list"}}]}' ;;
@@ -60,6 +65,10 @@ impl Scratch {
     fn received(&self) -> String {
         fs::read_to_string(self.0.join("received.log")).unwrap_or_default()
     }
+
+    fn argv(&self) -> String {
+        fs::read_to_string(self.0.join("argv.log")).unwrap_or_default()
+    }
 }
 
 impl Drop for Scratch {
@@ -73,6 +82,7 @@ fn worktree_task(scratch: &Scratch) -> ResolvedTask {
         id: "t1".into(),
         branch: "wtm/demo/1a2b3c4d".into(),
         folders: vec![scratch.0.join("worktree").to_string_lossy().into_owned()],
+        repo_ids: vec!["r1".into()],
     }
 }
 
@@ -90,8 +100,16 @@ fn chat_sessions_run_turns_of_a_headless_agent_with_the_step_settings() {
         permission: UnattendedPolicy::default(),
     };
     let task = worktree_task(&scratch);
+    let launch = SessionLaunch {
+        agent: settings.clone(),
+        grants: vec![Grant::Commit],
+        read_only: false,
+        output_schema: None,
+        resume: None,
+    };
 
-    let session_id = sessions.start(&task, &settings).unwrap();
+    let session_id = sessions.start(&task, &launch).unwrap();
+    assert!(sessions.conversation(&session_id).is_some());
     let end = sessions.run_turn(&session_id, "Check my PRs", Duration::from_secs(20));
     assert_eq!(
         end,
@@ -121,14 +139,57 @@ fn chat_sessions_run_turns_of_a_headless_agent_with_the_step_settings() {
         sessions.run_turn(&session_id, "again", Duration::from_secs(1)),
         TurnEnd::Ended { code: None, .. }
     ));
-    let codex = AgentSettings {
-        id: "codex".into(),
-        ..settings
+    assert!(scratch.argv().contains("Bash(git commit *)"));
+    let codex = SessionLaunch {
+        agent: AgentSettings {
+            id: "codex".into(),
+            ..settings
+        },
+        ..launch
     };
     assert_eq!(
         sessions.start(&task, &codex),
         Err("Unknown agent: codex".into())
     );
+}
+
+#[test]
+fn chat_sessions_hold_result_steps_to_their_schema_and_resume_conversations() {
+    let scratch = Scratch::new();
+    let app = scratch.app();
+    let sessions = ChatSessions(app.handle().clone());
+    let launch = SessionLaunch {
+        agent: AgentSettings {
+            id: "claude".into(),
+            model: "default".into(),
+            effort: None,
+            permission: UnattendedPolicy::default(),
+        },
+        grants: Vec::new(),
+        read_only: true,
+        output_schema: Some(json!({ "type": "object" })),
+        resume: Some("c1".into()),
+    };
+    let task = worktree_task(&scratch);
+    let transcripts = scratch.0.join(".claude/projects/elsewhere");
+    fs::create_dir_all(&transcripts).unwrap();
+    fs::write(transcripts.join("c1.jsonl"), "").unwrap();
+
+    let session_id = sessions.start(&task, &launch).unwrap();
+    let end = sessions.run_turn(&session_id, "Give a verdict", Duration::from_secs(20));
+    sessions.close(&session_id);
+
+    assert_eq!(
+        end,
+        TurnEnd::Completed {
+            reply: Some(r#"{"verdict":"pass"}"#.into()),
+            error: false
+        }
+    );
+    let argv = scratch.argv();
+    assert!(argv.contains(r#"--json-schema {"type":"object"}"#));
+    assert!(argv.contains("NotebookEdit"));
+    assert!(argv.contains("--resume c1"));
 }
 
 struct FakeBridge(fn(&str) -> Value);
@@ -141,6 +202,7 @@ impl OperationsBridge for FakeBridge {
                 "branchName": "wtm/demo/1a2b3c4d",
                 "repoIds": ["r1", "r2"],
                 "automationId": "demo",
+                "baseRefs": { "r2": "origin/develop" },
             } }),
             _ => json!({ "id": "t1" }),
         };
@@ -154,6 +216,7 @@ fn new_task() -> NewTask {
         workspace_id: "w1".into(),
         branch: "wtm/demo/1a2b3c4d".into(),
         repo_ids: vec!["r1".into(), "r2".into()],
+        bases: BTreeMap::from([("r2".into(), "origin/develop".into())]),
         automation: "demo".into(),
     }
 }
@@ -164,7 +227,10 @@ fn bridge_tasks_go_through_the_frontend_operations() {
         "task.create" => json!({ "ok": true, "data": {
             "id": "t1",
             "branchName": "wtm/demo/1a2b3c4d",
-            "members": [{ "path": "/w/rails" }, { "path": "/w/api" }],
+            "members": [
+                { "repoId": "r1", "path": "/w/rails" },
+                { "repoId": "r2", "path": "/w/api" },
+            ],
         } }),
         _ => json!({ "ok": false, "error": {
             "code": "persist_failed",
@@ -179,6 +245,7 @@ fn bridge_tasks_go_through_the_frontend_operations() {
             id: "t1".into(),
             branch: "wtm/demo/1a2b3c4d".into(),
             folders: vec!["/w/rails".into(), "/w/api".into()],
+            repo_ids: vec!["r1".into(), "r2".into()],
         })
     );
     assert_eq!(
