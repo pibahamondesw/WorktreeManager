@@ -258,3 +258,11 @@ fn env_name(repo: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repository_names_become_env_names() {
+        assert_eq!(super::env_name("fintoc-rails.v2"), "FINTOC_RAILS_V2");
+    }
+}
