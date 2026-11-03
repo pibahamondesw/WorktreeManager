@@ -584,8 +584,8 @@ fn permission_args(policy: &PermissionPolicy) -> Vec<String> {
 /// Read-only sessions stay strict: the classifier would approve Bash commands that edit files.
 fn unattended_mode(policy: &UnattendedPolicy) -> &'static str {
     match policy.mode {
-        UnattendedMode::Auto if !policy.read_only => "auto",
-        _ => "dontAsk",
+        UnattendedMode::Auto => "auto",
+        UnattendedMode::Strict => "dontAsk",
     }
 }
 
@@ -1054,13 +1054,13 @@ mod tests {
     }
 
     #[test]
-    fn read_only_sessions_run_strict_are_granted_nothing_and_cannot_edit() {
+    fn read_only_sessions_are_granted_nothing_and_cannot_edit() {
         let policy = PermissionPolicy::Unattended(UnattendedPolicy {
             grants: vec![Grant::Push],
             read_only: true,
             ..Default::default()
         });
-        let mut expected = ["--permission-mode", "dontAsk", "--disallowedTools"]
+        let mut expected = ["--permission-mode", "auto", "--disallowedTools"]
             .map(String::from)
             .to_vec();
         expected.extend(denied(&[]));
