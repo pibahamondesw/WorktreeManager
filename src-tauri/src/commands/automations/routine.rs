@@ -28,8 +28,8 @@ use super::pipeline::{
 };
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::store::events::{
-    FailureReason, ItemStatus, LoggedEvent, PermissionResolution, ProcessEnd, RunEvent, RunOutcome,
-    StepOutcome,
+    FailureReason, ItemStatus, LoggedEvent, PermissionResolution, ProcessEnd, RequestKind,
+    RunEvent, RunOutcome, StepOutcome,
 };
 use super::store::RunStore;
 use crate::commands::agents::permission::Grant;
@@ -126,6 +126,9 @@ pub trait Definitions: Send + Sync {
     fn current(&self, name: &str) -> Option<AutomationDefinition>;
 }
 
+/// Told the name of an automation whose runs gained something the Inbox shows.
+pub type RunsChanged = Arc<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct RoutineExecutor {
     store: Arc<RunStore>,
@@ -134,6 +137,7 @@ pub struct RoutineExecutor {
     sessions: Arc<dyn Sessions>,
     /// Runs this process is executing.
     in_flight: Arc<Mutex<HashSet<String>>>,
+    runs_changed: RunsChanged,
 }
 
 impl Executor for RoutineExecutor {
@@ -171,6 +175,14 @@ impl RoutineExecutor {
             tasks,
             sessions,
             in_flight: Arc::default(),
+            runs_changed: Arc::new(|_| {}),
+        }
+    }
+
+    pub fn on_runs_changed(self, runs_changed: RunsChanged) -> Self {
+        Self {
+            runs_changed,
+            ..self
         }
     }
 
@@ -235,6 +247,7 @@ impl RoutineExecutor {
             task: &task,
             item: &item,
             sessions: self.sessions.as_ref(),
+            runs_changed: self.runs_changed.as_ref(),
             log: WriterLog::of(&self.store, request),
             payload,
             deadline: run_deadline(&definition, request),
@@ -301,6 +314,7 @@ impl RoutineExecutor {
             Ending::Failed(reason) => RunEvent::Failed { reason },
         };
         writer.append(&request.run_id, &event)?;
+        (self.runs_changed)(name);
         if run.trigger.is_some_and(|trigger| trigger.test) {
             return Ok(());
         }
@@ -339,6 +353,7 @@ struct ItemSteps<'a> {
     task: &'a ResolvedTask,
     item: &'a Item,
     sessions: &'a dyn Sessions,
+    runs_changed: &'a (dyn Fn(&str) + Send + Sync),
     log: WriterLog<'a>,
     payload: Option<&'a Value>,
     deadline: Instant,
@@ -463,6 +478,7 @@ impl ItemSteps<'_> {
 
     /// Logs what the agent asked for and its policy settled, for the owner to allowlist.
     fn record_settled_requests(&mut self, request: &StepRequest, session_id: &str) {
+        let recorded = self.settled.len();
         for settled in self.sessions.settled_requests(session_id) {
             if self.settled.contains(&settled) {
                 continue;
@@ -472,6 +488,11 @@ impl ItemSteps<'_> {
             } else {
                 PermissionResolution::Denied
             };
+            let kind = if settled.question {
+                RequestKind::Question
+            } else {
+                RequestKind::Permission
+            };
             let event = RunEvent::PermissionRequested {
                 item: request.item.to_string(),
                 step: request.step.id.clone(),
@@ -479,11 +500,17 @@ impl ItemSteps<'_> {
                 tool: settled.tool.clone(),
                 input: settled.input.clone(),
                 resolution,
+                request_id: Some(settled.id.clone()),
+                session_id: Some(session_id.to_string()),
+                kind,
             };
             if let Err(error) = self.log.append(event) {
                 log::warn!("Could not record a permission request of {session_id}: {error}");
             }
             self.settled.push(settled);
+        }
+        if self.settled.len() > recorded {
+            (self.runs_changed)(&self.request.automation);
         }
     }
 

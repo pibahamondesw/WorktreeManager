@@ -32,6 +32,8 @@ interface UseAgentActivityArgs {
   sessions: Record<string, TerminalStatus>;
   openedTaskId: string | null;
   onOpenTarget: (task: Task, target: NotificationTarget) => void;
+  /** Unread automation Inbox entries, added to the Dock badge. */
+  inboxBadge?: number;
 }
 
 /**
@@ -43,6 +45,7 @@ export function useAgentActivity({
   sessions,
   openedTaskId,
   onOpenTarget,
+  inboxBadge = 0,
 }: UseAgentActivityArgs) {
   const [activities, setActivities] = useState<AgentActivities>({});
   const activitiesRef = useRef(activities);
@@ -160,7 +163,7 @@ export function useAgentActivity({
       void invoke("agent_dismiss_notifications", { taskIds: settled }).catch(() => undefined);
   }, [activities]);
 
-  const unread = pendingInputCount(activities);
+  const unread = pendingInputCount(activities) + inboxBadge;
   useEffect(() => {
     void invoke("agent_badge", { count: unread }).catch(() => undefined);
   }, [unread]);
@@ -172,6 +175,7 @@ export function useAgentActivity({
 
   useEffect(() => {
     const unlisten = listen<NotificationTarget>(NOTIFICATION_OPEN_EVENT, ({ payload }) => {
+      if (payload.inboxEntry) return;
       const task = latest.current.tasks.find((t) => t.id === payload.taskId);
       if (task) latest.current.onOpenTarget(task, payload);
     });

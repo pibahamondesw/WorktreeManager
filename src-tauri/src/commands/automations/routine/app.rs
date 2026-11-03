@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::super::definition::{self, AutomationDefinition};
 use super::super::store::RunStore;
@@ -18,6 +18,8 @@ use crate::commands::agents::Agents;
 use crate::commands::chat::{ChatRegistry, HeadlessRequest, SettledRequest, TurnEnd};
 
 const DEFAULT_MODEL: &str = "default";
+/// Tells the main window, with the automation's name, to reload its runs and Inbox.
+pub(crate) const RUNS_CHANGED_EVENT: &str = "automation-runs-changed";
 
 impl RoutineExecutor {
     /// Tasks go through `bridge`, the frontend Operations the CLI also uses.
@@ -25,12 +27,16 @@ impl RoutineExecutor {
         app: &AppHandle<R>,
         bridge: Arc<dyn OperationsBridge>,
     ) -> Result<Self, String> {
+        let handle = app.clone();
         Ok(Self::new(
             RunStore::of(app)?,
             Arc::new(AppDefinitions(app.clone())),
             Arc::new(BridgeTasks(bridge)),
             Arc::new(ChatSessions(app.clone())),
-        ))
+        )
+        .on_runs_changed(Arc::new(move |name| {
+            let _ = handle.emit_to("main", RUNS_CHANGED_EVENT, name);
+        })))
     }
 }
 

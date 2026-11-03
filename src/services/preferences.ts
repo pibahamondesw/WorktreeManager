@@ -21,6 +21,7 @@ import { saveSecrets } from "./keychain";
 import { normalizeOverrides, ShortcutOverrides } from "../shortcuts/catalog";
 import { NavigationEntry, isNavigationEntry } from "../navigation/history";
 import { AgentAlertSettings, normalizeAgentAlerts } from "./agentActivity";
+import type { InboxMarks } from "./automationInbox";
 import { SYSTEM_THEME_ID, CUSTOM_THEME_ID, themes } from "../themes";
 
 export interface Preferences {
@@ -37,6 +38,8 @@ export interface Preferences {
   navigationHistory: NavigationEntry[];
   /** Absolute folder of automation definitions; `null` uses `~/.worktreemanager/automations`. */
   automationsDir: string | null;
+  /** Read and archived automation Inbox entries, by key. */
+  automationInbox: InboxMarks;
 }
 
 export type PersistedValues = Omit<AppState, "shortcutOverrides"> &
@@ -111,6 +114,12 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
   agentAlerts: normalizeAgentAlerts,
   navigationHistory: (raw) => (Array.isArray(raw) ? raw.filter(isNavigationEntry) : []),
   automationsDir: (raw) => (typeof raw === "string" && raw.startsWith("/") ? raw : null),
+  automationInbox: (raw) => {
+    const value = record(raw);
+    const keys = (list: unknown) =>
+      Array.isArray(list) ? list.filter((key): key is string => typeof key === "string") : [];
+    return { read: keys(value.read), archived: keys(value.archived) };
+  },
 };
 
 export async function loadPreference<K extends keyof PersistedValues>(

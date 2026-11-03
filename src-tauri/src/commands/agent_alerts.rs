@@ -330,6 +330,9 @@ pub struct NotificationTarget {
     pub(crate) task_id: String,
     surface: String,
     agent: String,
+    /// The automation Inbox entry the notification announces, opened instead of the surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) inbox_entry: Option<String>,
 }
 
 #[derive(Deserialize)]

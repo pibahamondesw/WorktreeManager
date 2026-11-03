@@ -17,7 +17,9 @@ import {
   stepProgress,
   stepSummary,
 } from "../../services/automationPipeline";
+import { conversationTarget } from "../../services/automationInbox";
 import { Badge } from "../ui/Badge";
+import { useOpenConversation } from "./openConversation";
 import { AutomationStepDetail } from "./AutomationStepDetail";
 import { AutomationPermissions } from "./AutomationPermissions";
 
@@ -100,7 +102,7 @@ export function AutomationPipeline({ name, steps }: { name: string; steps: Pipel
         )}
         {live && <span className="text-success">Live</span>}
       </div>
-      <PipelineGraph steps={steps} progress={progress} />
+      <PipelineGraph steps={steps} progress={progress} run={run} />
       {run?.permission_requests?.length ? (
         <AutomationPermissions requests={run.permission_requests} />
       ) : null}
@@ -134,9 +136,11 @@ function RunPicker({ runs, run, onSelect }: RunPickerProps) {
 interface PipelineGraphProps {
   steps: PipelineStep[];
   progress: Map<string, StepProgress>;
+  run: AutomationRun | null;
 }
 
-function PipelineGraph({ steps, progress }: PipelineGraphProps) {
+function PipelineGraph({ steps, progress, run }: PipelineGraphProps) {
+  const openConversation = useOpenConversation();
   const layout = useMemo(() => pipelineLayout(steps), [steps]);
   const [focusIndex, setFocusIndex] = useState(0);
   const [openStepId, setOpenStepId] = useState<string | null>(null);
@@ -196,9 +200,31 @@ function PipelineGraph({ steps, progress }: PipelineGraphProps) {
         </ol>
         <PipelineJumps edges={layout.edges} steps={steps} lanes={layout.lanes} />
       </div>
-      {openStep && <AutomationStepDetail step={openStep} progress={progress.get(openStep.id)} />}
+      {openStep && (
+        <AutomationStepDetail
+          step={openStep}
+          progress={progress.get(openStep.id)}
+          onOpenConversation={conversationOpener(
+            openConversation,
+            steps,
+            run,
+            progress.get(openStep.id)
+          )}
+        />
+      )}
     </div>
   );
+}
+
+function conversationOpener(
+  openConversation: ReturnType<typeof useOpenConversation>,
+  steps: PipelineStep[],
+  run: AutomationRun | null,
+  progress: StepProgress | undefined
+) {
+  const attempt = progress?.latest;
+  const target = run && attempt?.session_id ? conversationTarget(steps, run, attempt) : null;
+  return openConversation && target ? () => openConversation(target) : undefined;
 }
 
 interface StepNodeProps {

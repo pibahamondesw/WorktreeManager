@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   AutomationRun,
   AutomationSummary,
@@ -7,6 +8,10 @@ import {
 } from "../services/automations";
 
 const RUNS_PAGE_SIZE = 50;
+/** Emitted by the engine when a run ends or records a request the Inbox shows. */
+const RUNS_CHANGED_EVENT = "automation-runs-changed";
+/** A burst of changes reloads once. */
+const RUNS_CHANGED_DEBOUNCE_MS = 250;
 
 /** Loads now and again whenever the window regains focus, so edits made elsewhere show up. */
 function useLoadOnFocus(load: () => void) {
@@ -14,6 +19,20 @@ function useLoadOnFocus(load: () => void) {
     load();
     window.addEventListener("focus", load);
     return () => window.removeEventListener("focus", load);
+  }, [load]);
+}
+
+function useReloadOnRunsChanged(load: () => void) {
+  useEffect(() => {
+    let timer: number | undefined;
+    const unlisten = listen<string>(RUNS_CHANGED_EVENT, () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(load, RUNS_CHANGED_DEBOUNCE_MS);
+    });
+    return () => {
+      window.clearTimeout(timer);
+      void unlisten.then((stop) => stop());
+    };
   }, [load]);
 }
 
@@ -45,6 +64,7 @@ export function useAutomations() {
   }, [startRequest]);
 
   useLoadOnFocus(reload);
+  useReloadOnRunsChanged(reload);
   return { automations, error, reload };
 }
 

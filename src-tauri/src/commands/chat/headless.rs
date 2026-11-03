@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use tauri::{AppHandle, Runtime};
 
-use super::model::{ChatImage, ChatSetting, ChatSnapshot, ChatStatus, ItemKind};
+use super::model::{ChatImage, ChatSetting, ChatSnapshot, ChatStatus, ItemKind, PendingKind};
 use super::{
     session_setup, start_session, ChatOrigin, ChatOwner, ChatRegistry, ChatSession, SessionTarget,
 };
@@ -36,9 +36,13 @@ pub(crate) enum TurnEnd {
 /// with its default because no one answered in time.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SettledRequest {
+    /// The agent's id for the request: its tool use, or the pending request.
+    pub id: String,
     pub tool: String,
     pub input: Option<Value>,
     pub allowed: bool,
+    /// A question to the user rather than a tool permission; `input` holds the questions.
+    pub question: bool,
 }
 
 /// Where a headless session runs, the conversation it continues if it is not a new one, and the
@@ -203,14 +207,25 @@ fn turn_end(snapshot: &ChatSnapshot) -> Option<TurnEnd> {
 
 fn settled_requests(snapshot: &ChatSnapshot) -> Vec<SettledRequest> {
     let denied = snapshot.denied.iter().map(|denial| SettledRequest {
+        id: denial.tool_use_id.clone(),
         tool: denial.tool.clone(),
         input: Some(denial.input.clone()),
         allowed: false,
+        question: false,
     });
-    let unanswered = snapshot.unanswered.iter().map(|unanswered| SettledRequest {
-        tool: unanswered.request.title.clone(),
-        input: unanswered.request.detail.clone().map(Value::String),
-        allowed: unanswered.resolution == PendingDefault::Allow,
+    let unanswered = snapshot.unanswered.iter().map(|unanswered| {
+        let request = &unanswered.request;
+        let questions = match &request.kind {
+            PendingKind::Question { questions } => serde_json::to_value(questions).ok(),
+            _ => None,
+        };
+        SettledRequest {
+            id: request.id.clone(),
+            tool: request.title.clone(),
+            question: questions.is_some(),
+            input: questions.or_else(|| request.detail.clone().map(Value::String)),
+            allowed: unanswered.resolution == PendingDefault::Allow,
+        }
     });
     denied.chain(unanswered).collect()
 }
@@ -227,7 +242,8 @@ fn last_reply(snapshot: &ChatSnapshot) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::super::model::{
-        ChatItem, DetailFormat, PendingKind, PendingRequest, PermissionDenial, UnansweredRequest,
+        ChatItem, DetailFormat, PendingKind, PendingRequest, PermissionDenial, Question,
+        UnansweredRequest,
     };
     use super::super::tests::{insert_live_session, set_turn};
     use super::*;
@@ -327,6 +343,26 @@ mod tests {
                     },
                     resolution: PendingDefault::Allow,
                 });
+                snapshot.unanswered.push(UnansweredRequest {
+                    request: PendingRequest {
+                        id: "r2".into(),
+                        title: "Question".into(),
+                        detail: None,
+                        format: DetailFormat::Text,
+                        kind: PendingKind::Question {
+                            questions: vec![Question {
+                                id: "q1".into(),
+                                header: "Base".into(),
+                                question: "Which base branch?".into(),
+                                options: Vec::new(),
+                                allow_other: true,
+                                multi_select: false,
+                                secret: false,
+                            }],
+                        },
+                    },
+                    resolution: PendingDefault::Deny,
+                });
                 Ok(())
             })
             .unwrap();
@@ -334,14 +370,33 @@ mod tests {
             registry.settled_requests(SESSION),
             [
                 SettledRequest {
+                    id: "tu1".into(),
                     tool: "Bash".into(),
                     input: Some(serde_json::json!({ "command": "gh pr list" })),
                     allowed: false,
+                    question: false,
                 },
                 SettledRequest {
+                    id: "r1".into(),
                     tool: "Allow WebFetch?".into(),
                     input: Some(Value::String("https://example.com".into())),
                     allowed: true,
+                    question: false,
+                },
+                SettledRequest {
+                    id: "r2".into(),
+                    tool: "Question".into(),
+                    input: Some(serde_json::json!([{
+                        "id": "q1",
+                        "header": "Base",
+                        "question": "Which base branch?",
+                        "options": [],
+                        "allowOther": true,
+                        "multiSelect": false,
+                        "secret": false,
+                    }])),
+                    allowed: false,
+                    question: true,
                 },
             ]
         );

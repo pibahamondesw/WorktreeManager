@@ -5,6 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { AutomationPipeline } from "./AutomationPipeline";
 import { AutomationDetail } from "./AutomationDetail";
+import { OpenConversationContext } from "./openConversation";
 import {
   AutomationItem,
   AutomationRun,
@@ -121,6 +122,42 @@ it("lists the permission requests the selected run captured", async () => {
   expect(within(section).getByText("fetch")).toBeInTheDocument();
   expect(within(section).getByText("—")).toBeInTheDocument();
   expect(within(section).getByText("allowed")).toBeInTheDocument();
+});
+
+it("opens the conversation of a step's latest agent attempt in the run's task", async () => {
+  vi.mocked(invoke).mockResolvedValue(
+    page(
+      run("1761800000002-bbbbbbbb", {
+        task_id: "t1",
+        items: [
+          item("routine", {
+            steps: [attempt("implement", { session_id: "s1", conversation_id: "c1" })],
+          }),
+        ],
+      })
+    )
+  );
+  const openConversation = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+  render(
+    <OpenConversationContext.Provider value={openConversation}>
+      <AutomationPipeline name="babysitter" steps={STEPS} />
+    </OpenConversationContext.Provider>
+  );
+  fireEvent.click(await screen.findByRole("button", { name: /^Implement/ }));
+  const open = screen.getByRole("button", { name: "Open conversation" });
+
+  fireEvent.click(open);
+  expect(openConversation).toHaveBeenCalledWith({
+    taskId: "t1",
+    agent: "claude",
+    conversationId: "c1",
+  });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent.click(open);
+  expect(screen.getByRole("alert")).toHaveTextContent("The task of this run no longer exists");
+
+  fireEvent.click(node("verify"));
+  expect(screen.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
 });
 
 it("shows the definition graph when there are no runs", async () => {

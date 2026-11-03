@@ -1,4 +1,5 @@
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
+import { Button } from "../ui/Button";
 import { PipelineStep, StepAttempt } from "../../services/automations";
 import {
   StepProgress,
@@ -15,9 +16,16 @@ type Fact = [label: string, value: ReactNode];
 interface AutomationStepDetailProps {
   step: PipelineStep;
   progress: StepProgress | undefined;
+  /** Opens the latest attempt's conversation in its task; false when the task is gone. */
+  onOpenConversation?: () => boolean;
 }
 
-export function AutomationStepDetail({ step, progress }: AutomationStepDetailProps) {
+export function AutomationStepDetail({
+  step,
+  progress,
+  onOpenConversation,
+}: AutomationStepDetailProps) {
+  const [openError, setOpenError] = useState<string | null>(null);
   const rejectTransition = onReject(step);
   const facts: Fact[] = [
     ...kindFacts(step),
@@ -31,9 +39,27 @@ export function AutomationStepDetail({ step, progress }: AutomationStepDetailPro
       aria-label={`Step ${step.label}`}
       className="rounded-lg border border-border bg-bg-tertiary/30 p-4 space-y-3"
     >
-      <h4 className="text-xs font-semibold text-text-primary">
-        {step.label} <span className="font-normal text-text-muted">{stepKindName(step)}</span>
-      </h4>
+      <div className="flex items-center gap-3">
+        <h4 className="text-xs font-semibold text-text-primary">
+          {step.label} <span className="font-normal text-text-muted">{stepKindName(step)}</span>
+        </h4>
+        {onOpenConversation && (
+          <Button
+            variant="secondary"
+            className="ml-auto h-7 px-2 text-xs"
+            onClick={() =>
+              setOpenError(onOpenConversation() ? null : "The task of this run no longer exists")
+            }
+          >
+            Open conversation
+          </Button>
+        )}
+      </div>
+      {openError && (
+        <p role="alert" className="text-xs text-danger select-text">
+          {openError}
+        </p>
+      )}
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs select-text">
         {facts.map(([label, value]) => (
           <div key={label} className="contents">

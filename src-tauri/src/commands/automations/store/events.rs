@@ -129,6 +129,13 @@ pub enum RunEvent {
         #[serde(default)]
         input: Option<serde_json::Value>,
         resolution: PermissionResolution,
+        /// The agent's id for the request, unique within its session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        #[serde(default)]
+        kind: RequestKind,
     },
     #[serde(other)]
     Unknown,
@@ -208,13 +215,26 @@ pub enum PermissionResolution {
     Allowed,
 }
 
+/// A tool permission, or a question the agent asked the user.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestKind {
+    #[default]
+    Permission,
+    Question,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PermissionRequest {
+    pub item: String,
     pub step: String,
     pub attempt: u32,
     pub tool: String,
     pub input: Option<serde_json::Value>,
     pub resolution: PermissionResolution,
+    pub request_id: Option<String>,
+    pub session_id: Option<String>,
+    pub kind: RequestKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,18 +536,25 @@ impl RunState {
                 }
             }
             RunEvent::PermissionRequested {
+                item,
                 step,
                 attempt,
                 tool,
                 input,
                 resolution,
-                ..
+                request_id,
+                session_id,
+                kind,
             } => self.permission_requests.push(PermissionRequest {
+                item,
                 step,
                 attempt,
                 tool,
                 input,
                 resolution,
+                request_id,
+                session_id,
+                kind,
             }),
             RunEvent::CandidateSkipped { .. }
             | RunEvent::StepReceipt { .. }

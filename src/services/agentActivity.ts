@@ -315,6 +315,8 @@ export interface NotificationTarget {
   taskId: string;
   surface: AgentSurfaceKind;
   agent: ActivityAgent;
+  /** The automation Inbox entry the notification announces; the Inbox opens it. */
+  inboxEntry?: string;
 }
 
 export function embeddedSurface(

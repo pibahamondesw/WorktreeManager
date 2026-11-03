@@ -37,6 +37,7 @@ const values: Preferences = {
   },
   navigationHistory: [{ kind: "task", taskId: "t1", workspaceId: "w1", at: "2026-10-28" }],
   automationsDir: "/skills/automations",
+  automationInbox: { read: ["run:demo:1"], archived: ["question:demo:routine:triage:abc"] },
 };
 
 beforeEach(() => {
@@ -133,6 +134,15 @@ describe("normalization", () => {
     expect(normalizers.automationsDir("skills")).toBeNull();
     expect(normalizers.automationsDir(42)).toBeNull();
     expect(normalizers.automationsDir("/skills")).toBe("/skills");
+  });
+
+  it("keeps only string keys of the automation Inbox marks", async () => {
+    const { normalizers } = await import("./preferences");
+    expect(normalizers.automationInbox(undefined)).toEqual({ read: [], archived: [] });
+    expect(normalizers.automationInbox({ read: ["a", 1, null], archived: "b" })).toEqual({
+      read: ["a"],
+      archived: [],
+    });
   });
 
   it("keeps running in the background unless explicitly turned off", async () => {

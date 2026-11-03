@@ -34,6 +34,9 @@ import { loadAgentCatalog } from "./services/agents";
 import { useAutomations } from "./hooks/useAutomations";
 import { needsAttention } from "./services/automations";
 import { AutomationsModal } from "./components/automations/AutomationsModal";
+import { useAutomationInbox } from "./hooks/useAutomationInbox";
+import { ConversationTarget, InboxItem } from "./services/automationInbox";
+import { requestChatIntent } from "./embedded/chatIntents";
 
 function App() {
   const {
@@ -104,6 +107,11 @@ function App() {
   const automations = useAutomations();
   const [automationsOpen, setAutomationsOpen] = useState(false);
   const [selectedAutomationName, setSelectedAutomationName] = useState<string | null>(null);
+  const [automationInboxSelected, setAutomationInboxSelected] = useState(true);
+  const selectAutomation = useCallback((name: string) => {
+    setSelectedAutomationName(name);
+    setAutomationInboxSelected(false);
+  }, []);
 
   useEffect(() => {
     editorPresentation.reset();
@@ -244,11 +252,41 @@ function App() {
     },
     [openTask, openTaskSurface]
   );
+  const openAutomationConversation = useCallback(
+    (target: ConversationTarget) => {
+      const task = state.tasks.find((t) => t.id === target.taskId);
+      if (!task) return false;
+      setAutomationsOpen(false);
+      if (!target.agent) {
+        void openTask(task);
+        return true;
+      }
+      if (target.conversationId)
+        requestChatIntent(task.id, {
+          agent: target.agent,
+          mode: "restart",
+          conversation: target.conversationId,
+        });
+      openTaskSurface(task, { kind: "chat", agent: target.agent });
+      return true;
+    },
+    [state.tasks, openTask, openTaskSurface]
+  );
+  const openInboxEntry = useCallback(
+    (item: InboxItem) => {
+      if (item.target && openAutomationConversation(item.target)) return;
+      setAutomationInboxSelected(true);
+      setAutomationsOpen(true);
+    },
+    [openAutomationConversation]
+  );
+  const automationInbox = useAutomationInbox(automations.automations, openInboxEntry);
   const agentActivity = useAgentActivity({
     tasks: state.tasks,
     sessions: agentSessions,
     openedTaskId: openedTask?.taskId ?? null,
     onOpenTarget: openNotificationTarget,
+    inboxBadge: automationInbox.badge,
   });
   useCliBridge(operations, !loading, agentActivity.handleAgentEvent);
 
@@ -500,7 +538,9 @@ function App() {
               doctorSeverity={doctorSeverity}
               onOpenSettings={() => setSettingsSection("theme")}
               onOpenAutomations={() => setAutomationsOpen(true)}
-              automationsNeedAttention={automations.automations.some(needsAttention)}
+              automationsNeedAttention={
+                automationInbox.unread > 0 || automations.automations.some(needsAttention)
+              }
               workspaceAction={workspaceAction}
               onWorkspaceActionHandled={() => setWorkspaceAction(null)}
             />
@@ -565,8 +605,12 @@ function App() {
         error={automations.error}
         onChanged={automations.reload}
         selectedName={selectedAutomationName}
-        onSelect={setSelectedAutomationName}
+        onSelect={selectAutomation}
         editorApp={editorApp}
+        inbox={automationInbox}
+        inboxSelected={automationInboxSelected}
+        onSelectInbox={() => setAutomationInboxSelected(true)}
+        onOpenConversation={openAutomationConversation}
       />
       <SettingsModal
         shortcutOperations={operations}

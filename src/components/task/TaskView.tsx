@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SetupControls, TaskSetupProgress } from "./TaskSetupProgress";
 import { TaskHeader } from "./TaskHeader";
 import { TerminalPane } from "../terminal/TerminalPane";
@@ -12,6 +12,7 @@ import { SessionStatus } from "../../hooks/useTerminalSession";
 import { GitStatus, IssueLinearInfo, Task, TaskSurface } from "../../types";
 import { AgentActivity } from "../../services/agentActivity";
 import { ChatOpenIntent } from "../../services/chat";
+import { onChatIntentRequest, takeRequestedChatIntent } from "../../embedded/chatIntents";
 
 interface TaskViewProps {
   task: Task;
@@ -51,11 +52,21 @@ export function TaskView({
   const [closing, setClosing] = useState(false);
 
   const chatIntent = useRef<ChatOpenIntent | null>(null);
+  const chatAgent = surface.kind === "chat" ? surface.agent : null;
   const takeChatIntent = useCallback(() => {
-    const intent = chatIntent.current;
+    const intent =
+      chatIntent.current ?? (chatAgent ? takeRequestedChatIntent(task.id, chatAgent) : null);
     chatIntent.current = null;
     return intent;
-  }, []);
+  }, [task.id, chatAgent]);
+  const [chatRevision, setChatRevision] = useState(0);
+  useEffect(
+    () =>
+      onChatIntentRequest(task.id, (intent) => {
+        if (intent.agent === chatAgent) setChatRevision((revision) => revision + 1);
+      }),
+    [task.id, chatAgent]
+  );
 
   const stopSurface = () => sessionRegistry.stop(task.id, surface);
 
@@ -138,6 +149,7 @@ export function TaskView({
         onStatusChange={setSessionStatus}
         onSwitchChatAgent={switchChatAgent}
         takeChatIntent={takeChatIntent}
+        chatRevision={chatRevision}
       />
     </div>
   );
@@ -150,6 +162,7 @@ function TaskSurfaceView({
   onStatusChange,
   onSwitchChatAgent,
   takeChatIntent,
+  chatRevision,
 }: {
   task: Task;
   surface: TaskSurface;
@@ -157,6 +170,8 @@ function TaskSurfaceView({
   onStatusChange: (status: SessionStatus) => void;
   onSwitchChatAgent: (intent: ChatOpenIntent) => void;
   takeChatIntent: () => ChatOpenIntent | null;
+  /** Bumped when the chat is asked to reopen, which remounts its pane. */
+  chatRevision: number;
 }) {
   switch (surface.kind) {
     case "editor":
@@ -185,7 +200,7 @@ function TaskSurfaceView({
     case "chat":
       return (
         <ChatPane
-          key={surface.agent}
+          key={`${surface.agent}:${chatRevision}`}
           taskId={task.id}
           agent={surface.agent}
           folders={task.members.map((m) => m.path)}
