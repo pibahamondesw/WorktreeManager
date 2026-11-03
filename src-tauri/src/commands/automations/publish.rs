@@ -34,8 +34,12 @@ const REPOSITORY_TEMPLATES: [&str; 5] = [
     "pull_request_template.md",
     "PULL_REQUEST_TEMPLATE.md",
 ];
-/// Variables only effects give a value; a Test run shows them as written.
-const EFFECT_VARIABLES: [&str; 3] = ["tracker.issue", "pr.number", "pr.url"];
+/// Values only an effect learns, and what a Test run shows in their place.
+const EFFECT_VARIABLES: [(&str, &str); 3] = [
+    ("tracker.issue", "<issue id>"),
+    ("pr.number", "<PR number>"),
+    ("pr.url", "<PR URL>"),
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PullRequest {
@@ -95,6 +99,8 @@ pub struct PublishScope<'a> {
     /// The automation folder, which `body_template` paths are relative to.
     pub folder: &'a Path,
     pub task: &'a ResolvedTask,
+    /// Repository names by id, for what a Test run shows.
+    pub repo_names: &'a BTreeMap<String, String>,
     /// Ref each repository's branch starts from, for a task the effect creates.
     pub bases: &'a BTreeMap<String, String>,
     pub tracker: Option<&'a LinearTracker>,
@@ -266,7 +272,10 @@ impl Publisher {
                 .transpose()
         };
         Ok(match effect {
-            Effect::GitPush { repo } => format!("Push {branch} of {repo} to origin"),
+            Effect::GitPush { repo } => {
+                let repo = scope.repo_names.get(repo).unwrap_or(repo);
+                format!("Push {branch} of {repo} to origin")
+            }
             Effect::PrCreate(pr) => format!(
                 "Open a {} PR for {branch}: {}",
                 if pr.draft.unwrap_or(true) {
@@ -348,10 +357,10 @@ impl Publisher {
 
     fn render(&self, scope: &PublishScope, template: &str) -> Result<String, String> {
         let mut variables = scope.variables.to_vec();
-        for name in EFFECT_VARIABLES {
+        for (name, pending) in EFFECT_VARIABLES {
             let value = match (self.values.get(name), scope.staged) {
                 (Some(value), _) => value.clone(),
-                (None, true) => format!("{{{name}}}"),
+                (None, true) => pending.to_string(),
                 (None, false) => continue,
             };
             variables.push((name.to_string(), value));

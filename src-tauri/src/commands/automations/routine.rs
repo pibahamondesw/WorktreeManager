@@ -481,12 +481,19 @@ impl ItemSteps<'_> {
             .collect();
         let stale_receipts = |repo: &str| stale[repo].clone();
         let definition = self.definition;
+        let repo_names: BTreeMap<_, _> = definition
+            .target
+            .repos
+            .iter()
+            .map(|repo| (repo.id.clone(), repo.name.clone()))
+            .collect();
         let scope = PublishScope {
             automation: &self.request.automation,
             run_id: &self.request.run_id,
             workspace_id: &definition.target.workspace_id,
             folder: &definition.folder,
             task: self.task,
+            repo_names: &repo_names,
             bases: &self.bases,
             tracker: definition.tracker.as_ref().map(|tracker| &tracker.linear),
             authorization: &definition.authorization,

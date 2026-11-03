@@ -283,12 +283,14 @@ impl Run {
             "broken" => Err("receipts unreadable".to_string()),
             _ => Ok(self.stale.clone()),
         };
+        let repo_names = BTreeMap::from([("r1".to_string(), "api".to_string())]);
         let scope = PublishScope {
             automation: "demo",
             run_id: "20261103-1",
             workspace_id: "w1",
             folder: &self.folder.0,
             task: &task,
+            repo_names: &repo_names,
             bases: &self.bases,
             tracker: self.tracker.as_ref(),
             authorization: &self.authorization,
@@ -440,16 +442,16 @@ fn test_runs_stage_every_effect_without_running_any() {
     assert_eq!(
         details,
         [
-            "Push wtm/demo/1 of r1 to origin",
+            "Push wtm/demo/1 of api to origin",
             "Open a draft PR for wtm/demo/1: the last commit's subject",
-            "Open a ready PR for wtm/demo/1: Ready {pr.url}",
-            "Update the PR for wtm/demo/1: title [{tracker.issue}] Lint, body from templates/pr.md, draft false",
-            "Comment on the PR for wtm/demo/1: See {pr.url}",
+            "Open a ready PR for wtm/demo/1: Ready <PR URL>",
+            "Update the PR for wtm/demo/1: title [<issue id>] Lint, body from templates/pr.md, draft false",
+            "Comment on the PR for wtm/demo/1: See <PR URL>",
             "Mark the PR for wtm/demo/1 ready for review",
             "Create or update the DX issue marked lint:routine: Lint: routine",
             "Move the issue marked lint:routine to In Review",
             "Create or reuse the task on wtm/demo/1",
-            "Append to the task log: Opened {pr.url}",
+            "Append to the task log: Opened <PR URL>",
             "Delete task t1 and its worktrees if they are clean",
         ]
     );
