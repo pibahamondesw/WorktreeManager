@@ -654,3 +654,58 @@ mod cli {
         assert_eq!(run_if_requested(&args("lease status"), connect), Some(1));
     }
 }
+
+fn held(leases: &Leases) -> usize {
+    leases.status().unwrap()["pools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|pool| pool["leases"].as_array().unwrap().len())
+        .sum()
+}
+
+#[test]
+fn automation_steps_share_the_pool_queues_and_release_on_drop() {
+    let scratch = Scratch::new(POOLS);
+    let leases = scratch.leases();
+    let pools: &dyn LeasePools = &leases;
+
+    let step = pools
+        .acquire("test_slot", "automation:demo/r1/a/check", &mut || true)
+        .unwrap();
+    assert_eq!(
+        step.env,
+        [
+            ("SLOT_LABEL".to_string(), "slot-13".to_string()),
+            ("TEST_ENV_NUMBER".to_string(), "13".to_string()),
+        ]
+    );
+    let manual = leases
+        .acquire(request("test_slot", "/w"), |_| true)
+        .unwrap();
+    assert_eq!(manual.lease().value, "14");
+    assert_eq!(held(&leases), 2);
+    drop(step);
+    assert_eq!(held(&leases), 1);
+
+    let error = pools.acquire("missing", "h", &mut || true).err();
+    assert_eq!(error.as_deref(), Some("Unknown pool `missing`"));
+    let _heavy = pools.acquire("heavy_checks", "h1", &mut || true).unwrap();
+    let error = pools.acquire("heavy_checks", "h2", &mut || false).err();
+    assert_eq!(error.as_deref(), Some("stopped waiting"));
+}
+
+#[test]
+fn leases_live_in_memory_so_a_restart_releases_them() {
+    let scratch = Scratch::new(POOLS);
+    let before_quit = scratch.leases();
+    let kept = LeasePools::acquire(&before_quit, "heavy_checks", "h1", &mut || true).unwrap();
+    std::mem::forget(kept);
+    assert_eq!(held(&before_quit), 1);
+
+    let after_restart = scratch.leases();
+
+    assert_eq!(held(&after_restart), 0);
+    let lease = LeasePools::acquire(&after_restart, "heavy_checks", "h1", &mut || false);
+    assert!(lease.is_ok());
+}

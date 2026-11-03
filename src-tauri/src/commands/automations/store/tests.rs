@@ -317,6 +317,7 @@ fn runs_record_their_task_and_the_session_of_each_agent_attempt() {
             at(
                 2,
                 RunEvent::TaskResolved {
+                    item: None,
                     task_id: "t1".into(),
                     created: true,
                 },
@@ -348,6 +349,7 @@ fn runs_record_their_task_and_the_session_of_each_agent_attempt() {
         [at(
             1,
             RunEvent::TaskFailed {
+                item: None,
                 message: "Worktrees exist".into(),
                 worktrees: vec!["/w/rails".into()],
             },
@@ -874,4 +876,52 @@ fn the_state_command_reads_from_app_data() {
 fn run_ids_strictly_increase_within_the_process() {
     let ids: Vec<String> = (0..1000).map(|_| new_run_id()).collect();
     assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+}
+
+#[test]
+fn campaign_items_keep_their_own_task_and_the_run_its_selector_failure() {
+    let run = reduce(
+        "r1",
+        [
+            at(
+                1,
+                RunEvent::ItemCreated {
+                    item: "a".into(),
+                    version: "1".into(),
+                    title: None,
+                    data: Default::default(),
+                },
+            ),
+            at(
+                2,
+                RunEvent::TaskResolved {
+                    task_id: "t-a".into(),
+                    created: false,
+                    item: Some("a".into()),
+                },
+            ),
+            at(
+                3,
+                RunEvent::TaskFailed {
+                    message: "Worktrees exist".into(),
+                    worktrees: Vec::new(),
+                    item: Some("a".into()),
+                },
+            ),
+            at(
+                4,
+                RunEvent::SelectorFailed {
+                    message: "selector exited with 3".into(),
+                },
+            ),
+        ],
+    );
+
+    assert_eq!(run.items[0].task_id.as_deref(), Some("t-a"));
+    assert_eq!(run.task_id, None);
+    assert_eq!(run.task_error, None);
+    assert_eq!(
+        run.selector_error.as_deref(),
+        Some("selector exited with 3")
+    );
 }

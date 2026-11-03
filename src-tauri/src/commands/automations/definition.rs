@@ -77,6 +77,8 @@ pub struct AutomationDefinition {
     pub concurrency: Concurrency,
     pub target: Target,
     pub steps: Vec<Step>,
+    /// Present in campaigns.
+    pub selector: Option<SelectorSettings>,
     pub tracker: Option<Tracker>,
     pub pools: Pools,
     pub budgets: Budgets,
@@ -90,6 +92,17 @@ pub struct AutomationDefinition {
     /// The automation folder, which `scripts/…` and `schemas/…` paths are relative to.
     #[serde(skip)]
     pub folder: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectorSettings {
+    /// argv templates, run in the automation folder.
+    pub run: Vec<String>,
+    pub timeout_secs: u64,
+    /// `None` is up to `pools.active`.
+    pub max_new_items: Option<u64>,
+    pub exclusive_on: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,12 +152,16 @@ pub struct TargetRepo {
     pub name: String,
     /// `None` starts from `origin/<default branch>`.
     pub base: Option<String>,
+    /// The repository's main checkout, which selectors read as `WTM_BASE_<REPO>`.
+    #[serde(skip)]
+    pub local_path: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskMode {
     PerRun,
+    PerItem,
     Existing,
 }
 
@@ -158,6 +175,8 @@ pub struct Step {
     pub on_fail: Transition,
     pub timeout_secs: Option<u64>,
     pub capacity: Capacity,
+    /// Lease pools held for each attempt.
+    pub uses: Vec<String>,
     pub kind: StepKind,
 }
 
@@ -380,6 +399,8 @@ pub struct LinearTracker {
 pub struct Pools {
     pub active: u64,
     pub open_prs: u64,
+    /// Global lease pools: the most leases of each this automation holds at once.
+    pub leases: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -495,6 +516,8 @@ pub struct WorkspaceRef {
 pub struct RepoRef {
     pub id: String,
     pub name: String,
+    #[serde(default, rename = "localPath")]
+    pub local_path: Option<String>,
 }
 
 /// What a definition is validated against besides its own folder.

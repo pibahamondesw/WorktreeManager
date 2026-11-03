@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use super::super::selector::{OpenPullRequest, OpenPullRequests};
 use super::{Forge, NewPullRequest, PullRequest};
 use crate::commands::git::git_command;
 use crate::commands::login_shell::LoginShell;
@@ -204,6 +205,28 @@ impl Forge for CliForge {
         let number = number.to_string();
         let args = ["pr", "comment", number.as_str(), "--body", body];
         self.gh(worktree, &args).map(|_| ())
+    }
+}
+
+impl OpenPullRequests for CliForge {
+    fn open(&self, urls: &[String]) -> Result<Vec<OpenPullRequest>, String> {
+        let mut open = Vec::new();
+        for url in urls {
+            let args = ["pr", "view", url.as_str(), "--json", "state,files"];
+            let viewed: Value = serde_json::from_str(&self.gh(&std::env::temp_dir(), &args)?)
+                .map_err(|e| format!("gh pr view: {e}"))?;
+            if viewed["state"] != "OPEN" {
+                continue;
+            }
+            let files = viewed["files"].as_array().into_iter().flatten();
+            open.push(OpenPullRequest {
+                url: url.clone(),
+                files: files
+                    .filter_map(|file| file["path"].as_str().map(String::from))
+                    .collect(),
+            });
+        }
+        Ok(open)
     }
 }
 

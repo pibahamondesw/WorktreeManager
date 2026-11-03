@@ -89,16 +89,26 @@ pub enum RunEvent {
         #[serde(default)]
         reused: bool,
     },
-    /// The task the run works in, created for it or named by the definition.
+    /// The task the run works in, created for it or named by the definition; in campaigns, the
+    /// task of `item`.
     TaskResolved {
         task_id: String,
         created: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
     },
-    /// The run's task could not be resolved; `worktrees` are those a failed creation left on disk.
+    /// The run's or `item`'s task could not be resolved; `worktrees` are those a failed creation
+    /// left on disk.
     TaskFailed {
         message: String,
         #[serde(default)]
         worktrees: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
+    },
+    /// Why the selector failed the run.
+    SelectorFailed {
+        message: String,
     },
     SessionStarted {
         item: String,
@@ -358,6 +368,7 @@ pub struct RunState {
     pub items: Vec<ItemState>,
     pub task_id: Option<String>,
     pub task_error: Option<TaskError>,
+    pub selector_error: Option<String>,
     pub permission_requests: Vec<PermissionRequest>,
 }
 
@@ -380,6 +391,8 @@ pub struct ItemState {
     pub cause: Option<String>,
     pub counters: BTreeMap<String, u64>,
     pub steps: Vec<StepAttemptState>,
+    /// The item's own task, in campaigns.
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -451,6 +464,7 @@ pub fn reduce(id: &str, events: impl IntoIterator<Item = LoggedEvent>) -> RunSta
         items: Vec::new(),
         task_id: None,
         task_error: None,
+        selector_error: None,
         permission_requests: Vec::new(),
     };
     for logged in events {
@@ -544,10 +558,26 @@ impl RunState {
                     attempt.head = head;
                 }
             }
-            RunEvent::TaskResolved { task_id, .. } => self.task_id = Some(task_id),
-            RunEvent::TaskFailed { message, worktrees } => {
-                self.task_error = Some(TaskError { message, worktrees })
+            RunEvent::TaskResolved {
+                task_id,
+                item: None,
+                ..
+            } => self.task_id = Some(task_id),
+            RunEvent::TaskResolved {
+                task_id,
+                item: Some(item),
+                ..
+            } => {
+                if let Some(item) = self.open_item(&item) {
+                    item.task_id = Some(task_id);
+                }
             }
+            RunEvent::TaskFailed {
+                message,
+                worktrees,
+                item: None,
+            } => self.task_error = Some(TaskError { message, worktrees }),
+            RunEvent::SelectorFailed { message } => self.selector_error = Some(message),
             RunEvent::SessionStarted {
                 item,
                 step,
@@ -623,6 +653,7 @@ impl RunState {
                 }
             }
             RunEvent::CandidateSkipped { .. }
+            | RunEvent::TaskFailed { item: Some(_), .. }
             | RunEvent::StepReceipt { .. }
             | RunEvent::Unknown => {}
         }
@@ -664,6 +695,7 @@ impl RunState {
             cause: None,
             counters: BTreeMap::new(),
             steps: Vec::new(),
+            task_id: None,
         });
     }
 

@@ -189,7 +189,8 @@ fn minimal_routine_fills_every_default() {
         definition.pools,
         Pools {
             active: 1,
-            open_prs: 3
+            open_prs: 3,
+            leases: BTreeMap::new(),
         }
     );
     assert_eq!(
@@ -636,11 +637,7 @@ fn task_modes_other_than_per_run_have_their_own_rules() {
         "target.existing_task",
         IssueKind::Missing,
     );
-    assert_issue(
-        &with_task("per-item"),
-        "target.task",
-        IssueKind::Unsupported,
-    );
+    assert_issue(&with_task("per-item"), "target.task", IssueKind::Invalid);
     assert_issue(&with_task("forever"), "target.task", IssueKind::Invalid);
 }
 
@@ -1017,9 +1014,13 @@ fn steps_have_exactly_one_supported_kind() {
     );
     assert_issue(
         &routine("steps:\n  - id: run\n    command: [/bin/echo]\n    uses: [heavy_checks]\n"),
-        "steps[0].uses",
-        IssueKind::Unsupported,
+        "steps[0].uses[0]",
+        IssueKind::Invalid,
     );
+    let leased = valid(&routine(
+        "pools: { heavy_checks: 1 }\nsteps:\n  - id: run\n    command: [/bin/echo]\n    uses: [heavy_checks]\n",
+    ));
+    assert_eq!(leased.steps[0].uses, ["heavy_checks"]);
     valid(&routine(
         "steps:\n  - id: run\n    command: [/bin/echo]\n    uses: []\n",
     ));
@@ -1142,13 +1143,24 @@ fn pools_set_built_in_limits_and_defer_global_pools() {
         definition.pools,
         Pools {
             active: 5,
-            open_prs: 2
+            open_prs: 2,
+            leases: BTreeMap::new(),
         }
     );
+    let leased = valid(&routine("pools: { heavy_checks: 2 }\n"));
+    assert_eq!(
+        leased.pools.leases,
+        BTreeMap::from([("heavy_checks".into(), 2)])
+    );
     assert_issue(
-        &routine("pools: { heavy_checks: 1 }\n"),
-        "pools.heavy_checks",
+        &routine("pools: { test_slot: { values: [13, 14], hold: active } }\n"),
+        "pools.test_slot",
         IssueKind::Unsupported,
+    );
+    assert_issue(
+        &routine("pools: { heavy_checks: 0 }\n"),
+        "pools.heavy_checks",
+        IssueKind::Invalid,
     );
     assert_issue(
         &routine("pools: { active: 0 }\n"),
@@ -1316,13 +1328,82 @@ fn completion_stops_after_an_instant_a_duration_or_a_run_count() {
     );
 }
 
-#[test]
-fn campaigns_are_not_supported_yet() {
-    assert_issue(
-        &routine("selector: { run: [scripts/queue.sh] }\n"),
-        "selector",
-        IssueKind::Unsupported,
+fn campaign(extra: &str) -> String {
+    let target = TARGET.replace(
+        "repos: [fintoc-rails]",
+        "repos: [fintoc-rails]\n  task: per-item",
     );
+    format!("schema: 1\nname: demo\n{target}{AGENT}{extra}")
+}
+
+fn load_campaign(frontmatter: &str) -> AutomationEntry {
+    load_with(frontmatter, BODY, |folder| {
+        fs::create_dir_all(folder.join("scripts")).unwrap();
+        fs::write(folder.join("scripts/queue.sh"), "").unwrap();
+    })
+}
+
+#[test]
+fn campaigns_read_their_selector_and_work_in_per_item_tasks() {
+    let entry = load_campaign(&campaign(
+        "selector:\n  run: [scripts/queue.sh, \"{automation}\"]\n  timeout: 2m\n  max_new_items: 3\n  exclusive_on: [files]\n",
+    ));
+    assert_eq!(entry.errors, Vec::new());
+    let definition = entry.definition.unwrap();
+
+    let selector = definition.selector.unwrap();
+    assert_eq!(selector.run, ["scripts/queue.sh", "{automation}"]);
+    assert_eq!(selector.timeout_secs, 120);
+    assert_eq!(selector.max_new_items, Some(3));
+    assert_eq!(selector.exclusive_on, ["files"]);
+    assert_eq!(definition.target.task, TaskMode::PerItem);
+    assert_eq!(
+        definition.target.branch.as_deref(),
+        Some("wtm/{automation}/{item.id}")
+    );
+    assert_eq!(
+        definition.target.repos[0].local_path.as_deref(),
+        Some("/repos/rails")
+    );
+    assert_eq!(definition.concurrency.key, "{automation}");
+
+    let defaults = load_campaign(&campaign("selector: { run: [scripts/queue.sh] }\n"));
+    let selector = defaults.definition.unwrap().selector.unwrap();
+    assert_eq!((selector.timeout_secs, selector.max_new_items), (300, None));
+}
+
+#[test]
+fn campaigns_check_their_selector_and_task_mode() {
+    let issues_of = |frontmatter: &str| {
+        let entry = load_campaign(frontmatter);
+        assert!(entry.definition.is_none(), "{frontmatter}");
+        entry
+            .errors
+            .iter()
+            .map(|issue| (issue.field.clone(), issue.kind))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        issues_of(&campaign("selector: { run: [scripts/missing.sh] }\n"))
+            .contains(&("selector.run[0]".into(), IssueKind::Invalid))
+    );
+    assert!(issues_of(&campaign(
+        "selector: { run: [scripts/queue.sh], max_new_items: 0 }\n"
+    ))
+    .contains(&("selector.max_new_items".into(), IssueKind::Invalid)));
+    assert!(issues_of(&campaign("selector: {}\n"))
+        .contains(&("selector.run".into(), IssueKind::Missing)));
+    assert!(
+        issues_of(&routine("selector: { run: [scripts/queue.sh] }\n"))
+            .contains(&("target.task".into(), IssueKind::Invalid))
+    );
+    let tracked = "selector: { run: [scripts/queue.sh] }\ntracker: { linear: { team: DX } }\n";
+    assert!(
+        issues_of(&campaign(tracked)).contains(&("target.branch".into(), IssueKind::Unsupported))
+    );
+    let branched =
+        campaign(tracked).replace("task: per-item", "task: per-item\n  branch: lint/{item.id}");
+    assert_eq!(load_campaign(&branched).errors, Vec::new());
 }
 
 #[test]

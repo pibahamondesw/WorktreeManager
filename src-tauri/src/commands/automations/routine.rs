@@ -1,10 +1,13 @@
-//! Runs a routine. The run resolves its task, drives its implicit item through the steps, with
-//! every agent step a turn of a headless session in that task and every command step a process in
-//! one of its worktrees, and records each move in the run log; how the run ended feeds the
-//! automation's failure count.
+//! Runs a routine or a campaign. A routine run resolves its task and drives its implicit item
+//! through the steps; a campaign run selects items and drives each in its own task. Every agent
+//! step is a turn of a headless session in the item's task and every command step a process in
+//! one of its worktrees; each move is recorded in the run log, and how runs and campaign items end
+//! feeds the automation's failure count.
 
 mod app;
+mod campaign;
 mod commands;
+mod leases;
 mod prompt;
 mod result;
 #[cfg(test)]
@@ -19,7 +22,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use serde_json::Value;
 
-use super::command::CommandExecutor;
+use super::command::{CommandContext, CommandExecutor};
 use super::definition::{
     AgentSettings, AgentStep, Authorization, AutomationDefinition, Effect, StepKind, Target,
     TaskMode, Verb,
@@ -27,8 +30,9 @@ use super::definition::{
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
-use super::publish::{Forge, PublishScope, Publisher};
+use super::publish::{CliForge, Forge, PublishScope, Publisher};
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
+use super::selector::OpenPullRequests;
 use super::store::events::{
     FailureReason, ItemStatus, LoggedEvent, PermissionResolution, ProcessEnd, RequestKind,
     RunEvent, RunOutcome, StepOutcome,
@@ -37,6 +41,8 @@ use super::store::RunStore;
 use crate::commands::agents::permission::Grant;
 use crate::commands::chat::{SettledRequest, TurnEnd};
 use commands::{Item, TaskCommands};
+pub use leases::LeasePools;
+use leases::{NoLeasePools, Quotas, StepLeases};
 use prompt::{PriorStep, PromptInput};
 
 const ROUTINE_ITEM: &str = "routine";
@@ -104,6 +110,8 @@ pub struct SessionLaunch {
 pub trait Tasks: Send + Sync {
     fn create(&self, task: &NewTask) -> Result<ResolvedTask, TaskFailure>;
     fn get(&self, task_id: &str) -> Result<ResolvedTask, TaskFailure>;
+    /// The workspace's task on `branch`, if there is one.
+    fn find(&self, workspace_id: &str, branch: &str) -> Result<Option<ResolvedTask>, TaskFailure>;
 }
 
 /// Headless agent sessions.
@@ -139,6 +147,9 @@ pub struct RoutineExecutor {
     sessions: Arc<dyn Sessions>,
     forge: Arc<dyn Forge>,
     bridge: Arc<dyn OperationsBridge>,
+    pull_requests: Arc<dyn OpenPullRequests>,
+    lease_pools: Arc<dyn LeasePools>,
+    quotas: Arc<Quotas>,
     /// Runs this process is executing.
     in_flight: Arc<Mutex<HashSet<String>>>,
     runs_changed: RunsChanged,
@@ -182,8 +193,18 @@ impl RoutineExecutor {
             sessions,
             forge,
             bridge,
+            pull_requests: Arc::new(CliForge::default()),
+            lease_pools: Arc::new(NoLeasePools),
+            quotas: Arc::default(),
             in_flight: Arc::default(),
             runs_changed: Arc::new(|_| {}),
+        }
+    }
+
+    pub fn with_lease_pools(self, lease_pools: Arc<dyn LeasePools>) -> Self {
+        Self {
+            lease_pools,
+            ..self
         }
     }
 
@@ -216,6 +237,9 @@ impl RoutineExecutor {
         if agent_steps(&definition).any(|step| !self.sessions.available(&step.agent.id)) {
             return self.finish(request, Ending::Failed(FailureReason::AgentUnavailable));
         }
+        if definition.selector.is_some() {
+            return self.run_campaign(&definition, request, payload);
+        }
         let mut log = WriterLog::of(&self.store, request);
         let task = match self.resolve_task(&definition, request) {
             Ok(task) => task,
@@ -223,6 +247,7 @@ impl RoutineExecutor {
                 log.append(RunEvent::TaskFailed {
                     message: failure.message,
                     worktrees: failure.worktrees,
+                    item: None,
                 })?;
                 return self.finish(request, Ending::Failed(FailureReason::TaskCreateFailed));
             }
@@ -230,6 +255,7 @@ impl RoutineExecutor {
         log.append(RunEvent::TaskResolved {
             task_id: task.id.clone(),
             created: definition.target.task == TaskMode::PerRun,
+            item: None,
         })?;
         if !is_active(self.store.run(&request.automation, &request.run_id)?.status) {
             return Ok(());
@@ -247,18 +273,48 @@ impl RoutineExecutor {
             title: item.title.clone(),
             data: item.data.clone(),
         })?;
-        let run_dir = self.store.run_dir(&request.automation, &request.run_id)?;
-        let context = TaskCommands::new(&run_dir, run_variables(request), &task, &item)?;
-        let mut steps = ItemSteps {
+        let drive = ItemDrive {
             definition: &definition,
             request,
+            payload,
             task: &task,
             item: &item,
+            deadline: run_deadline(&definition, request),
+        };
+        let ending = self.drive_item(&drive)?.1;
+        self.finish(request, ending)
+    }
+
+    /// Drives the item through the steps until it rests or ends.
+    fn drive_item(&self, item_drive: &ItemDrive) -> Result<(ItemStatus, Ending), String> {
+        let ItemDrive {
+            definition,
+            request,
+            payload,
+            task,
+            item,
+            deadline,
+        } = *item_drive;
+        let run_dir = self.store.run_dir(&request.automation, &request.run_id)?;
+        let leases = StepLeases {
+            pools: self.lease_pools.clone(),
+            quotas: self.quotas.clone(),
+            automation: request.automation.clone(),
+            run_id: request.run_id.clone(),
+            limits: Arc::new(definition.pools.leases.clone()),
+            deadline,
+        };
+        let context = TaskCommands::new(&run_dir, run_variables(request), task, item, leases)?;
+        let mut steps = ItemSteps {
+            definition,
+            request,
+            task,
+            item,
             sessions: self.sessions.as_ref(),
             runs_changed: self.runs_changed.as_ref(),
             log: WriterLog::of(&self.store, request),
             payload,
-            deadline: run_deadline(&definition, request),
+            deadline,
             grants: granted(&definition.authorization),
             commands: CommandExecutor::new(definition.folder.clone(), run_dir.clone(), context),
             publisher: Publisher::new(self.forge.clone(), self.bridge.clone()),
@@ -277,10 +333,12 @@ impl RoutineExecutor {
             budgets: &definition.budgets,
             stages: &[],
         };
-        let mut machine = ItemMachine::from_log(pipeline, ROUTINE_ITEM, &[]);
+        let mut machine = ItemMachine::from_log(pipeline, &item.id, &[]);
+        let mut log = WriterLog::of(&self.store, request);
         let status = drive(&mut machine, &mut steps, &mut log);
         steps.close_sessions();
-        self.finish(request, steps.ending(status?))
+        let status = status?;
+        Ok((status, steps.ending(status)))
     }
 
     fn resolve_task(
@@ -301,7 +359,7 @@ impl RoutineExecutor {
                     automation: definition.name.clone(),
                 })
             }
-            TaskMode::Existing => self
+            TaskMode::PerItem | TaskMode::Existing => self
                 .tasks
                 .get(target.existing_task.as_deref().unwrap_or_default()),
         }
@@ -331,6 +389,17 @@ impl RoutineExecutor {
         }
         writer.save_state(&state)
     }
+}
+
+/// One item to drive and what it runs with.
+#[derive(Clone, Copy)]
+struct ItemDrive<'a> {
+    definition: &'a AutomationDefinition,
+    request: &'a RunRequest,
+    payload: Option<&'a Value>,
+    task: &'a ResolvedTask,
+    item: &'a Item,
+    deadline: Instant,
 }
 
 /// Appends to the run log, holding the automation's lock only while it writes.
@@ -389,13 +458,20 @@ impl StepExecutor for ItemSteps<'_> {
             return Execution::Parked;
         };
         let execution = match &request.step.kind {
-            StepKind::Agent(step) => Execution::Finished(self.agent_turn(request, step, remaining)),
             StepKind::Command(_) => self.command(request),
-            StepKind::Publish(effects) => self.publish(request, effects),
-            _ => Execution::Finished(failed(
-                ProcessEnd::Exited,
-                format!("unsupported_step:{}", request.step.id),
-            )),
+            kind => match self.commands.context().hold_leases(request) {
+                Err(error) => Execution::Finished(failed(ProcessEnd::Crashed, error)),
+                Ok(_leases) => match kind {
+                    StepKind::Agent(step) => {
+                        Execution::Finished(self.agent_turn(request, step, remaining))
+                    }
+                    StepKind::Publish(effects) => self.publish(request, effects),
+                    _ => Execution::Finished(failed(
+                        ProcessEnd::Exited,
+                        format!("unsupported_step:{}", request.step.id),
+                    )),
+                },
+            },
         };
         if let Some(report) = execution.report() {
             self.last_outcome = Some(report.outcome);

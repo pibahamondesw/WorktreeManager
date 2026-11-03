@@ -13,6 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::commands::automations::command::HeldLeases;
+use crate::commands::automations::routine::LeasePools;
 use config::Pool;
 
 const WAIT_TICK: Duration = Duration::from_millis(200);
@@ -272,6 +274,31 @@ impl Leases {
             })
             .collect();
         Ok(json!({ "pools": entries }))
+    }
+}
+
+/// Automation steps hold their leases for one attempt, in the same queues as `wtm lease`.
+impl LeasePools for Leases {
+    fn acquire(
+        &self,
+        pool: &str,
+        holder: &str,
+        keep_waiting: &mut dyn FnMut() -> bool,
+    ) -> Result<HeldLeases, String> {
+        let request = LeaseRequest {
+            pool: pool.to_string(),
+            holder: holder.to_string(),
+            pid: None,
+        };
+        let guard =
+            Leases::acquire(self, request, |_| keep_waiting()).map_err(|error| match error {
+                LeaseError::Config(message) => message,
+                LeaseError::Cancelled => "stopped waiting".into(),
+            })?;
+        Ok(HeldLeases {
+            env: guard.lease().env.clone().into_iter().collect(),
+            release: Some(Box::new(move || drop(guard))),
+        })
     }
 }
 

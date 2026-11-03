@@ -4,13 +4,13 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
-use super::super::command::CommandContext;
+use super::super::command::{CommandContext, HeldLeases};
 use super::super::pipeline::StepRequest;
 use super::super::store::write_atomically;
+use super::leases::StepLeases;
 use super::{render, ResolvedTask};
-
-const ITEM_DATA_FILE: &str = "item-data.json";
 
 /// The item a run drives. Its title and data are untrusted.
 pub(super) struct Item {
@@ -24,6 +24,7 @@ pub(super) struct TaskCommands {
     task: ResolvedTask,
     variables: Vec<(String, String)>,
     env: Vec<(String, String)>,
+    leases: StepLeases,
 }
 
 impl TaskCommands {
@@ -33,10 +34,11 @@ impl TaskCommands {
         run_variables: Vec<(&'static str, String)>,
         task: &ResolvedTask,
         item: &Item,
+        leases: StepLeases,
     ) -> Result<Self, String> {
-        let data_file = run_dir.join(ITEM_DATA_FILE);
+        let data_file = run_dir.join(item_data_file(&item.id));
         let data = serde_json::to_vec(&item.data).map_err(|e| e.to_string())?;
-        write_atomically(&data_file, &data).map_err(|e| format!("{ITEM_DATA_FILE}: {e}"))?;
+        write_atomically(&data_file, &data).map_err(|e| format!("{}: {e}", data_file.display()))?;
         let value = |name: &str| {
             run_variables
                 .iter()
@@ -75,6 +77,7 @@ impl TaskCommands {
             task: task.clone(),
             variables,
             env,
+            leases,
         })
     }
 
@@ -100,4 +103,13 @@ impl CommandContext for TaskCommands {
     fn env(&self, _: &StepRequest) -> Vec<(String, String)> {
         self.env.clone()
     }
+
+    fn hold_leases(&self, request: &StepRequest) -> Result<HeldLeases, String> {
+        self.leases.hold(request)
+    }
+}
+
+/// Item ids are free text, so each item's data file is named by a digest.
+fn item_data_file(item_id: &str) -> String {
+    format!("item-data-{:x}.json", Sha256::digest(item_id.as_bytes()))
 }

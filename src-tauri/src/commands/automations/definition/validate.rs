@@ -17,8 +17,8 @@ use super::{
     AgentSettings, AgentStep, ApprovalDefault, ApprovalStep, Authorization, AutomationDefinition,
     Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency, Effect, Environment,
     GotoLimit, InboxPolicy, IssueKind, LinearOverrides, LinearTracker, Pools, PullRequestEffect,
-    RepoRef, ReportPolicy, ResultSchema, Schedule, Step, StepKind, StopAfter, Target, TargetRepo,
-    TaskMode, Tracker, Transition, Trigger, Verb, WaitStep, WorkspaceRef,
+    RepoRef, ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step, StepKind, StopAfter,
+    Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, Verb, WaitStep, WorkspaceRef,
 };
 use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
@@ -39,6 +39,7 @@ const SCHEMAS_DIR: &str = "schemas/";
 const AGENT_STEP_TIMEOUT_SECS: u64 = 60 * 60;
 const COMMAND_STEP_TIMEOUT_SECS: u64 = 30 * 60;
 const PUBLISH_STEP_TIMEOUT_SECS: u64 = 30 * 60;
+const SELECTOR_TIMEOUT_SECS: u64 = 5 * 60;
 const EFFECTS: [&str; 10] = [
     "git.push",
     "github.pr_create",
@@ -152,15 +153,19 @@ pub(super) fn definition(
     );
     let report_policy = fields.or(report, "report", default_report_policy(), report_policy);
     let completion = fields.or(report, "completion", Completion::default(), completion);
-    if fields.get("selector").is_some() {
-        report.error(
-            IssueKind::Unsupported,
-            "selector",
-            "campaigns are not supported yet (WOR-263)",
-        );
-    }
+    let selector = fields.optional(report, "selector", |report, value, field| {
+        selector(report, context.folder, value, field)
+    });
     fields.finish(report);
     check_instructions(report, instructions, steps.as_deref());
+    if let (Some(target), Some(selector)) = (&target, &selector) {
+        let explicit_branch = frontmatter["target"].get("branch").is_some();
+        let tracked = matches!(tracker, Some(Some(_)));
+        check_task_mode(report, target, selector.is_some(), tracked, explicit_branch);
+    }
+    if let (Some(steps), Some(pools)) = (&steps, &pools) {
+        check_uses(report, steps, pools);
+    }
     if let (Some(steps), Some(authorization)) = (&steps, &authorization) {
         check_enforceable_grants(report, context.env, steps, authorization);
         let tracked = !matches!(tracker, Some(None));
@@ -177,6 +182,7 @@ pub(super) fn definition(
         concurrency: concurrency?,
         target: target?,
         steps: steps?,
+        selector: selector?,
         tracker: tracker?,
         pools: pools?,
         budgets: budgets?,
@@ -407,7 +413,7 @@ fn slot_problem(expression: &Cron, zone: Tz, now: DateTime<Utc>) -> Option<Strin
 
 fn default_concurrency(task: TaskMode) -> Concurrency {
     let key = match task {
-        TaskMode::PerRun => "{automation}",
+        TaskMode::PerRun | TaskMode::PerItem => "{automation}",
         TaskMode::Existing => "task:{task.id}",
     };
     Concurrency {
@@ -468,8 +474,11 @@ fn target(report: &mut Report, env: &Environment, value: &Value, field: &str) ->
     for repo in &mut repos {
         repo.base = bases.get(&repo.id).cloned();
     }
-    let default_branch =
-        (task == TaskMode::PerRun).then(|| "wtm/{automation}/{run.short_id}".into());
+    let default_branch = match task {
+        TaskMode::PerRun => Some("wtm/{automation}/{run.short_id}".into()),
+        TaskMode::PerItem => Some("wtm/{automation}/{item.id}".into()),
+        TaskMode::Existing => None,
+    };
     Some(Target {
         workspace_id: workspace?.id.clone(),
         repos,
@@ -553,6 +562,7 @@ fn target_repos(
                 id: repo.id.clone(),
                 name: repo.name.clone(),
                 base: None,
+                local_path: repo.local_path.clone(),
             }),
         }
     }
@@ -602,20 +612,13 @@ fn bases(
 }
 
 fn task_mode(report: &mut Report, value: &Value, field: &str) -> Option<TaskMode> {
-    if value.as_str() == Some("per-item") {
-        report.error(
-            IssueKind::Unsupported,
-            field,
-            "per-item tasks belong to campaigns, which are not supported yet (WOR-263)",
-        );
-        return None;
-    }
     choice(
         report,
         value,
         field,
         &[
             ("per-run", TaskMode::PerRun),
+            ("per-item", TaskMode::PerItem),
             ("existing", TaskMode::Existing),
         ],
     )
@@ -863,6 +866,7 @@ fn implicit_steps(report: &mut Report, scope: &Scope) -> Option<Vec<Step>> {
         on_fail: Transition::Fail,
         timeout_secs: Some(AGENT_STEP_TIMEOUT_SECS),
         capacity: Capacity::Hold,
+        uses: Vec::new(),
         kind: StepKind::Agent(AgentStep {
             agent,
             skill: None,
@@ -902,16 +906,7 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
             &[("hold", Capacity::Hold), ("release", Capacity::Release)],
         )
     });
-    if fields
-        .get("uses")
-        .is_some_and(|uses| uses.as_array().map_or(true, |pools| !pools.is_empty()))
-    {
-        report.error(
-            IssueKind::Unsupported,
-            &fields.path("uses"),
-            "pool leases are not supported yet (WOR-255)",
-        );
-    }
+    let uses = fields.or(report, "uses", Vec::new(), string_list);
     let kinds = [
         ("agent", fields.get("agent")),
         ("command", fields.get("command")),
@@ -953,6 +948,7 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         on_fail: on_fail?,
         timeout_secs,
         capacity,
+        uses: uses?,
         kind,
     })
 }
@@ -1709,6 +1705,7 @@ fn default_pools() -> Pools {
     Pools {
         active: 1,
         open_prs: 3,
+        leases: BTreeMap::new(),
     }
 }
 
@@ -1719,17 +1716,96 @@ fn pools(report: &mut Report, value: &Value, field: &str) -> Option<Pools> {
         |report: &mut Report, value: &Value, field: &str| integer(report, value, field, 1);
     let active = fields.or(report, "active", defaults.active, at_least_one);
     let open_prs = fields.or(report, "open_prs", defaults.open_prs, at_least_one);
-    for pool in fields.unread() {
-        report.error(
-            IssueKind::Unsupported,
-            &pool,
-            "global lease pools are not supported yet (WOR-255)",
-        );
-    }
+    let leases = each_entry(report, value, field, |report, name, item, field| {
+        if ["active", "open_prs"].contains(&name) || name.starts_with("x-") {
+            return Some(None);
+        }
+        if item.is_object() {
+            report.error(
+                IssueKind::Unsupported,
+                field,
+                "valued pools held per item are not supported yet",
+            );
+            return None;
+        }
+        Some(Some((name.to_string(), at_least_one(report, item, field)?)))
+    });
     Some(Pools {
         active: active?,
         open_prs: open_prs?,
+        leases: leases?.into_iter().flatten().collect(),
     })
+}
+
+fn selector(
+    report: &mut Report,
+    folder: &Path,
+    value: &Value,
+    field: &str,
+) -> Option<SelectorSettings> {
+    let mut fields = Fields::of(report, value, field)?;
+    let run_field = fields.path("run");
+    let run = fields.require(report, "run", argv);
+    let runnable = run
+        .as_ref()
+        .and_then(|run| executable(report, folder, &run[0], &index(&run_field, 0)));
+    let timeout = fields.or(report, "timeout", SELECTOR_TIMEOUT_SECS, duration);
+    let max_new_items = fields.optional(report, "max_new_items", |report, value, field| {
+        integer(report, value, field, 1)
+    });
+    let exclusive_on = fields.or(report, "exclusive_on", Vec::new(), string_list);
+    fields.finish(report);
+    runnable?;
+    Some(SelectorSettings {
+        run: run?,
+        timeout_secs: timeout?,
+        max_new_items: max_new_items?,
+        exclusive_on: exclusive_on?,
+    })
+}
+
+/// `per-item` tasks belong to campaigns and `per-run` tasks to routines.
+fn check_task_mode(
+    report: &mut Report,
+    target: &Target,
+    campaign: bool,
+    tracked: bool,
+    explicit_branch: bool,
+) {
+    match (target.task, campaign) {
+        (TaskMode::PerItem, false) => report.error(
+            IssueKind::Invalid,
+            "target.task",
+            "per-item tasks need a selector",
+        ),
+        (TaskMode::PerRun, true) => report.error(
+            IssueKind::Invalid,
+            "target.task",
+            "campaigns work in per-item or existing tasks",
+        ),
+        (TaskMode::PerItem, true) if tracked && !explicit_branch => report.error(
+            IssueKind::Unsupported,
+            "target.branch",
+            "per-item tasks on the tracker issue's branch are not supported yet: set target.branch",
+        ),
+        _ => {}
+    }
+}
+
+/// A step may only use the lease pools `pools` gives the automation a limit for.
+fn check_uses(report: &mut Report, steps: &[Step], pools: &Pools) {
+    for (position, step) in steps.iter().enumerate() {
+        for (pool_position, pool) in step.uses.iter().enumerate() {
+            if !pools.leases.contains_key(pool) {
+                let field = index(&format!("{}.uses", index("steps", position)), pool_position);
+                report.error(
+                    IssueKind::Invalid,
+                    &field,
+                    format!("{pool} needs a limit in pools"),
+                );
+            }
+        }
+    }
 }
 
 fn default_budgets() -> Budgets {

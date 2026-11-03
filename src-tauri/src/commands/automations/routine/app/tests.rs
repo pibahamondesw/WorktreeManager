@@ -325,3 +325,47 @@ fn the_app_executor_tells_the_main_window_which_automation_changed() {
     (executor.runs_changed)("demo");
     assert_eq!(*changed.lock().unwrap(), [r#""demo""#]);
 }
+
+struct ScriptedBridge(fn(&str, &Value) -> Value);
+
+impl OperationsBridge for ScriptedBridge {
+    fn call(&self, method: &str, params: Value) -> Value {
+        (self.0)(method, &params)
+    }
+}
+
+#[test]
+fn bridge_tasks_find_the_workspace_task_on_a_branch() {
+    let tasks = BridgeTasks(Arc::new(ScriptedBridge(|method, params| {
+        match (method, params["workspaceId"].as_str()) {
+            ("task.list", Some("w1")) => json!({ "ok": true, "data": [
+                { "id": "t0", "branchName": "other" },
+                { "id": "t2", "branchName": "wtm/demo/a" },
+            ] }),
+            ("task.list", _) => json!({ "ok": false, "error": { "message": "No workspace" } }),
+            _ => {
+                assert_eq!(params, &json!({ "id": "t2" }));
+                json!({ "ok": true, "data": {
+                    "id": "t2",
+                    "branchName": "wtm/demo/a",
+                    "members": [{ "repoId": "r1", "path": "/w/a" }],
+                } })
+            }
+        }
+    })));
+
+    assert_eq!(
+        tasks.find("w1", "wtm/demo/a"),
+        Ok(Some(ResolvedTask {
+            id: "t2".into(),
+            branch: "wtm/demo/a".into(),
+            folders: vec!["/w/a".into()],
+            repo_ids: vec!["r1".into()],
+        }))
+    );
+    assert_eq!(tasks.find("w1", "wtm/demo/b"), Ok(None));
+    assert_eq!(
+        tasks.find("w9", "wtm/demo/a"),
+        Err(TaskFailure::new("No workspace"))
+    );
+}
