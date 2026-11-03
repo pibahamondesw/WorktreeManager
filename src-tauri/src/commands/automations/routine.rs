@@ -21,11 +21,13 @@ use serde_json::Value;
 
 use super::command::CommandExecutor;
 use super::definition::{
-    AgentSettings, AgentStep, Authorization, AutomationDefinition, StepKind, TaskMode, Verb,
+    AgentSettings, AgentStep, Authorization, AutomationDefinition, Effect, StepKind, Target,
+    TaskMode, Verb,
 };
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
+use super::publish::{Forge, PublishScope, Publisher};
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::store::events::{
     FailureReason, ItemStatus, LoggedEvent, PermissionResolution, ProcessEnd, RequestKind,
@@ -53,7 +55,7 @@ pub struct ResolvedTask {
 }
 
 impl ResolvedTask {
-    fn worktree(&self, repo_id: &str) -> Option<&str> {
+    pub(super) fn worktree(&self, repo_id: &str) -> Option<&str> {
         let index = self.repo_ids.iter().position(|id| id == repo_id)?;
         self.folders.get(index).map(String::as_str)
     }
@@ -135,6 +137,8 @@ pub struct RoutineExecutor {
     definitions: Arc<dyn Definitions>,
     tasks: Arc<dyn Tasks>,
     sessions: Arc<dyn Sessions>,
+    forge: Arc<dyn Forge>,
+    bridge: Arc<dyn OperationsBridge>,
     /// Runs this process is executing.
     in_flight: Arc<Mutex<HashSet<String>>>,
     runs_changed: RunsChanged,
@@ -168,12 +172,16 @@ impl RoutineExecutor {
         definitions: Arc<dyn Definitions>,
         tasks: Arc<dyn Tasks>,
         sessions: Arc<dyn Sessions>,
+        forge: Arc<dyn Forge>,
+        bridge: Arc<dyn OperationsBridge>,
     ) -> Self {
         Self {
             store: Arc::new(store),
             definitions,
             tasks,
             sessions,
+            forge,
+            bridge,
             in_flight: Arc::default(),
             runs_changed: Arc::new(|_| {}),
         }
@@ -253,6 +261,8 @@ impl RoutineExecutor {
             deadline: run_deadline(&definition, request),
             grants: granted(&definition.authorization),
             commands: CommandExecutor::new(definition.folder.clone(), run_dir.clone(), context),
+            publisher: Publisher::new(self.forge.clone(), self.bridge.clone()),
+            bases: bases(&definition.target),
             run_dir,
             shared_session: None,
             opened: Vec::new(),
@@ -287,11 +297,7 @@ impl RoutineExecutor {
                     workspace_id: target.workspace_id.clone(),
                     branch,
                     repo_ids: target.repos.iter().map(|repo| repo.id.clone()).collect(),
-                    bases: target
-                        .repos
-                        .iter()
-                        .filter_map(|repo| Some((repo.id.clone(), repo.base.clone()?)))
-                        .collect(),
+                    bases: bases(target),
                     automation: definition.name.clone(),
                 })
             }
@@ -359,6 +365,9 @@ struct ItemSteps<'a> {
     deadline: Instant,
     grants: Vec<Grant>,
     commands: CommandExecutor<TaskCommands>,
+    publisher: Publisher,
+    /// Ref each repository's branch starts from, by repository id.
+    bases: BTreeMap<String, String>,
     run_dir: PathBuf,
     /// The session steps without `fresh_session` continue, with what it was launched with.
     shared_session: Option<(SessionLaunch, String)>,
@@ -382,6 +391,7 @@ impl StepExecutor for ItemSteps<'_> {
         let execution = match &request.step.kind {
             StepKind::Agent(step) => Execution::Finished(self.agent_turn(request, step, remaining)),
             StepKind::Command(_) => self.command(request),
+            StepKind::Publish(effects) => self.publish(request, effects),
             _ => Execution::Finished(failed(
                 ProcessEnd::Exited,
                 format!("unsupported_step:{}", request.step.id),
@@ -458,6 +468,64 @@ impl ItemSteps<'_> {
         let execution = self.commands.execute(request);
         self.evidence.extend(self.commands.drain_events());
         execution
+    }
+
+    fn publish(&mut self, request: &StepRequest, effects: &[Effect]) -> Execution {
+        let stale: BTreeMap<&str, Result<Vec<String>, String>> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::GitPush { repo } => Some(repo.as_str()),
+                _ => None,
+            })
+            .map(|repo| (repo, self.stale_receipts(request, repo)))
+            .collect();
+        let stale_receipts = |repo: &str| stale[repo].clone();
+        let definition = self.definition;
+        let repo_names: BTreeMap<_, _> = definition
+            .target
+            .repos
+            .iter()
+            .map(|repo| (repo.id.clone(), repo.name.clone()))
+            .collect();
+        let scope = PublishScope {
+            automation: &self.request.automation,
+            run_id: &self.request.run_id,
+            workspace_id: &definition.target.workspace_id,
+            folder: &definition.folder,
+            task: self.task,
+            repo_names: &repo_names,
+            bases: &self.bases,
+            tracker: definition.tracker.as_ref().map(|tracker| &tracker.linear),
+            authorization: &definition.authorization,
+            staged: self.request.test,
+            variables: self.commands.context().variables(),
+            stale_receipts: &stale_receipts,
+        };
+        let report = self.publisher.publish(request, effects, &scope);
+        self.evidence.extend(self.publisher.drain_events());
+        Execution::Finished(report)
+    }
+
+    /// Bound command steps of `repo` whose latest receipt no longer matches its worktree.
+    fn stale_receipts(&self, request: &StepRequest, repo: &str) -> Result<Vec<String>, String> {
+        let mut stale = Vec::new();
+        for step in &self.definition.steps {
+            let StepKind::Command(command) = &step.kind else {
+                continue;
+            };
+            if command.repo != repo || command.bind.is_none() {
+                continue;
+            }
+            let bound = StepRequest {
+                step,
+                attempt: 0,
+                ..*request
+            };
+            if self.commands.stale(&bound, command)? {
+                stale.push(step.id.clone());
+            }
+        }
+        Ok(stale)
     }
 
     /// Records the session and the conversation it holds so far.
@@ -748,8 +816,19 @@ fn run_variables(request: &RunRequest) -> Vec<(&'static str, String)> {
     ]
 }
 
+fn bases(target: &Target) -> BTreeMap<String, String> {
+    target
+        .repos
+        .iter()
+        .filter_map(|repo| Some((repo.id.clone(), repo.base.clone()?)))
+        .collect()
+}
+
 /// Fills a validated template; a variable without a value here is an error.
-fn render<S: AsRef<str>>(template: &str, variables: &[(S, String)]) -> Result<String, String> {
+pub(super) fn render<S: AsRef<str>>(
+    template: &str,
+    variables: &[(S, String)],
+) -> Result<String, String> {
     let mut rendered = String::new();
     let mut rest = template;
     while let Some(position) = rest.find(['{', '}']) {

@@ -42,6 +42,10 @@ pub struct Request {
 pub struct Delivery {
     token: String,
     request: Request,
+    /// Sent by the automation engine in this process rather than over the socket; only such
+    /// requests may run engine-only operations.
+    #[serde(default)]
+    engine: bool,
 }
 
 struct Frontend {
@@ -251,7 +255,7 @@ fn handle_connection(mut stream: UnixStream, shared: Arc<Shared>) {
         );
         return;
     }
-    let (token, receiver) = match deliver(&shared, request) {
+    let (token, receiver) = match deliver(&shared, request, false) {
         Ok(delivered) => delivered,
         Err(response) => {
             let _ = respond(response);
@@ -284,7 +288,11 @@ fn handle_connection(mut stream: UnixStream, shared: Arc<Shared>) {
 }
 
 /// Hands the request to the frontend; the receiver gets its progress and its response.
-fn deliver(shared: &Shared, request: Request) -> Result<(String, mpsc::Receiver<Value>), Value> {
+fn deliver(
+    shared: &Shared,
+    request: Request,
+    engine: bool,
+) -> Result<(String, mpsc::Receiver<Value>), Value> {
     let token = shared.next_id.fetch_add(1, Ordering::Relaxed).to_string();
     let (sender, receiver) = mpsc::channel();
     let frontend = shared.frontend.lock().unwrap();
@@ -304,6 +312,7 @@ fn deliver(shared: &Shared, request: Request) -> Result<(String, mpsc::Receiver<
     let delivery = Delivery {
         token: token.clone(),
         request,
+        engine,
     };
     if frontend.channel.send(delivery).is_err() {
         shared.pending.lock().unwrap().remove(&token);
@@ -330,7 +339,7 @@ impl CliBridge {
             method: method.into(),
             params,
         };
-        let (token, receiver) = match deliver(&self.shared, request) {
+        let (token, receiver) = match deliver(&self.shared, request, true) {
             Ok(delivered) => delivered,
             Err(response) => return response,
         };
@@ -554,6 +563,7 @@ mod tests {
         let channel = Channel::new(move |body| {
             let delivery: Delivery = body.deserialize().unwrap();
             assert_eq!(delivery.request.method, "workspace.list");
+            assert!(!delivery.engine);
             let pending = shared
                 .pending
                 .lock()
@@ -738,6 +748,7 @@ mod tests {
             let delivery: Delivery = body.deserialize().unwrap();
             assert_eq!(delivery.request.method, "task.create");
             assert_eq!(delivery.request.params["input"]["branchName"], "wtm/demo");
+            assert!(delivery.engine);
             let pending = shared.pending.lock().unwrap();
             answer(pending.get(&delivery.token).unwrap());
             Ok(())

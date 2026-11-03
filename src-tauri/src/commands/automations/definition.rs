@@ -195,6 +195,8 @@ pub enum StepKind {
     Command(CommandStep),
     Wait(WaitStep),
     Approval(ApprovalStep),
+    /// Side effects the engine runs in order on the owner's behalf.
+    Publish(Vec<Effect>),
 }
 
 #[derive(Debug, Serialize)]
@@ -273,13 +275,95 @@ pub enum ApprovalDefault {
     Reject,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "effect")]
+pub enum Effect {
+    #[serde(rename = "git.push")]
+    GitPush { repo: String },
+    #[serde(rename = "github.pr_create")]
+    PrCreate(PullRequestEffect),
+    #[serde(rename = "github.pr_update")]
+    PrUpdate(PullRequestEffect),
+    #[serde(rename = "github.pr_comment")]
+    PrComment { repo: String, body: String },
+    #[serde(rename = "github.pr_ready")]
+    PrReady { repo: String },
+    #[serde(rename = "linear.upsert")]
+    LinearUpsert(LinearOverrides),
+    #[serde(rename = "linear.state")]
+    LinearState { state: String },
+    #[serde(rename = "wtm.task_create")]
+    TaskCreate,
+    #[serde(rename = "wtm.task_log")]
+    TaskLog { entry: String },
+    #[serde(rename = "wtm.task_delete_clean")]
+    TaskDeleteClean,
+}
+
+impl Effect {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::GitPush { .. } => "git.push",
+            Self::PrCreate(_) => "github.pr_create",
+            Self::PrUpdate(_) => "github.pr_update",
+            Self::PrComment { .. } => "github.pr_comment",
+            Self::PrReady { .. } => "github.pr_ready",
+            Self::LinearUpsert(_) => "linear.upsert",
+            Self::LinearState { .. } => "linear.state",
+            Self::TaskCreate => "wtm.task_create",
+            Self::TaskLog { .. } => "wtm.task_log",
+            Self::TaskDeleteClean => "wtm.task_delete_clean",
+        }
+    }
+
+    pub fn verb(&self) -> Verb {
+        match self {
+            Self::GitPush { .. } => Verb::Push,
+            Self::PrCreate(_) => Verb::PrCreate,
+            Self::PrUpdate(_) => Verb::PrUpdate,
+            Self::PrComment { .. } => Verb::PrComment,
+            Self::PrReady { .. } => Verb::PrReady,
+            Self::LinearUpsert(_) | Self::LinearState { .. } => Verb::LinearWrite,
+            Self::TaskCreate => Verb::TaskCreate,
+            Self::TaskLog { .. } => Verb::TaskLog,
+            Self::TaskDeleteClean => Verb::TaskDelete,
+        }
+    }
+}
+
+/// `github.pr_create` and `github.pr_update`; `None` keeps what the PR has, or the default.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestEffect {
+    /// Id of the target repository whose worktree's branch the PR is for.
+    pub repo: String,
+    pub title: Option<String>,
+    /// Path relative to the automation folder; `None` uses the repository's template.
+    pub body_template: Option<String>,
+    pub lang: Option<String>,
+    pub draft: Option<bool>,
+    pub assignee: Option<String>,
+}
+
+/// `linear.upsert` overrides of the `tracker.linear` fields.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinearOverrides {
+    pub team: Option<String>,
+    pub project: Option<String>,
+    pub assignee: Option<String>,
+    pub labels: Option<Vec<String>>,
+    pub title: Option<String>,
+    pub marker: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tracker {
     pub linear: LinearTracker,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinearTracker {
     pub team: String,
@@ -321,6 +405,39 @@ pub enum Verb {
     TaskCreate,
     TaskDelete,
     TaskLog,
+}
+
+impl Verb {
+    pub const ALL: [Verb; 11] = [
+        Self::Commit,
+        Self::Push,
+        Self::PrCreate,
+        Self::PrUpdate,
+        Self::PrComment,
+        Self::PrReply,
+        Self::PrReady,
+        Self::LinearWrite,
+        Self::TaskCreate,
+        Self::TaskDelete,
+        Self::TaskLog,
+    ];
+
+    /// The name definitions use.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Commit => "commit",
+            Self::Push => "push",
+            Self::PrCreate => "pr_create",
+            Self::PrUpdate => "pr_update",
+            Self::PrComment => "pr_comment",
+            Self::PrReply => "pr_reply",
+            Self::PrReady => "pr_ready",
+            Self::LinearWrite => "linear_write",
+            Self::TaskCreate => "task_create",
+            Self::TaskDelete => "task_delete",
+            Self::TaskLog => "task_log",
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]

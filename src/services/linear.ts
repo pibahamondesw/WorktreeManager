@@ -93,7 +93,85 @@ interface IssuesBatchResponse {
   };
 }
 
+/** A Linear issue an automation keeps through the marker in its description. */
+export interface MarkedIssueInput {
+  marker: string;
+  /** Team key, id or name. */
+  team: string;
+  title: string;
+  /** Project name, slug id or id. */
+  project?: string | null;
+  /** `me`, or a user's email or display name. */
+  assignee: string;
+  labels: string[];
+}
+
+export interface MarkedIssue {
+  id: string;
+  identifier: string;
+  url: string;
+  created: boolean;
+  updated: boolean;
+}
+
+interface MarkedIssueNode {
+  id: string;
+  identifier: string;
+  url: string;
+  title: string;
+  state: { id: string; name: string } | null;
+  team: { states: { nodes: { id: string; name: string }[] } };
+}
+
+interface MarkedIssuesResponse {
+  issues: { nodes: MarkedIssueNode[] };
+}
+
+interface UpsertContextResponse {
+  viewer: { id: string };
+  teams: { nodes: { id: string; key: string; name: string }[] };
+  issueLabels: { nodes: { id: string; name: string; team: { id: string } | null }[] };
+}
+
+type NodesResponse = Record<string, { nodes: { id: string }[] }>;
+
 // ---- GraphQL queries ----
+
+const MARKED_ISSUE_QUERY = `
+  query MarkedIssue($marker: String!) {
+    issues(filter: { description: { contains: $marker } }, first: 1) {
+      nodes {
+        id identifier url title
+        state { id name }
+        team { states(first: 250) { nodes { id name } } }
+      }
+    }
+  }
+`;
+
+const UPSERT_CONTEXT_QUERY = `
+  query UpsertContext($labels: [String!]) {
+    viewer { id }
+    teams(first: 250) { nodes { id key name } }
+    issueLabels(filter: { name: { in: $labels } }, first: 250) { nodes { id name team { id } } }
+  }
+`;
+
+const PROJECT_QUERY = `
+  query Project($project: String!) {
+    projects(filter: { or: [{ name: { eqIgnoreCase: $project } }, { slugId: { eq: $project } }] }, first: 1) {
+      nodes { id }
+    }
+  }
+`;
+
+const USER_QUERY = `
+  query User($user: String!) {
+    users(filter: { or: [{ email: { eq: $user } }, { displayName: { eqIgnoreCase: $user } }] }, first: 1) {
+      nodes { id }
+    }
+  }
+`;
 
 const ISSUE_SUGGESTIONS_QUERY = `
   query IssueSuggestions($filter: IssueFilter, $first: Int, $after: String) {
@@ -380,6 +458,120 @@ export class LinearService {
     const payload = result.data?.issueCreate;
     if (!payload?.success || !payload.issue) throw new Error("Linear rejected the issue creation");
     return mapIssueNode(payload.issue);
+  }
+
+  private async markedIssue(marker: string): Promise<MarkedIssueNode | null> {
+    const res = await this.gql.rawRequest<MarkedIssuesResponse, Record<string, unknown>>(
+      MARKED_ISSUE_QUERY,
+      { marker }
+    );
+    return res.data!.issues.nodes[0] ?? null;
+  }
+
+  private async updateMarkedIssue(id: string, input: Record<string, unknown>): Promise<void> {
+    const res = await this.gql.rawRequest<
+      { issueUpdate: { success: boolean } },
+      Record<string, unknown>
+    >(
+      `mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`,
+      {
+        id,
+        input,
+      }
+    );
+    if (!res.data?.issueUpdate.success) throw new Error("Linear rejected the issue update");
+  }
+
+  /** The id of the only node a lookup query returns, or an error naming what is missing. */
+  private async lookup(query: string, variables: Record<string, string>, missing: string) {
+    const res = await this.gql.rawRequest<NodesResponse, Record<string, unknown>>(query, variables);
+    const id = Object.values(res.data!)[0].nodes[0]?.id;
+    if (!id) throw new Error(missing);
+    return id;
+  }
+
+  /** Reuses the issue whose description carries the marker, retitling it, or creates one. */
+  async upsertMarkedIssue(input: MarkedIssueInput): Promise<MarkedIssue> {
+    const existing = await this.markedIssue(input.marker);
+    if (existing) {
+      const updated = existing.title !== input.title;
+      if (updated) await this.updateMarkedIssue(existing.id, { title: input.title });
+      const { id, identifier, url } = existing;
+      return { id, identifier, url, created: false, updated };
+    }
+    const context = await this.gql.rawRequest<UpsertContextResponse, Record<string, unknown>>(
+      UPSERT_CONTEXT_QUERY,
+      { labels: input.labels }
+    );
+    const { viewer, teams, issueLabels } = context.data!;
+    const wanted = input.team.toLowerCase();
+    const team = teams.nodes.find((candidate) =>
+      [candidate.id, candidate.key.toLowerCase(), candidate.name.toLowerCase()].includes(wanted)
+    );
+    if (!team) throw new Error(`Linear team ${input.team} not found`);
+    const labelIds = input.labels.map((name) => {
+      const label = issueLabels.nodes.find(
+        (candidate) => candidate.name === name && (!candidate.team || candidate.team.id === team.id)
+      );
+      if (!label) throw new Error(`Linear label ${name} not found in team ${team.key}`);
+      return label.id;
+    });
+    const [projectId, assigneeId] = await Promise.all([
+      input.project
+        ? this.lookup(
+            PROJECT_QUERY,
+            { project: input.project },
+            `Linear project ${input.project} not found`
+          )
+        : undefined,
+      input.assignee === "me"
+        ? viewer.id
+        : this.lookup(
+            USER_QUERY,
+            { user: input.assignee },
+            `Linear user ${input.assignee} not found`
+          ),
+    ]);
+    const res = await this.gql.rawRequest<
+      {
+        issueCreate: {
+          success: boolean;
+          issue: { id: string; identifier: string; url: string } | null;
+        };
+      },
+      Record<string, unknown>
+    >(
+      `mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }`,
+      {
+        input: {
+          teamId: team.id,
+          title: input.title,
+          description: input.marker,
+          assigneeId,
+          labelIds,
+          ...(projectId ? { projectId } : {}),
+        },
+      }
+    );
+    const created = res.data?.issueCreate;
+    if (!created?.success || !created.issue) throw new Error("Linear rejected the issue creation");
+    return { ...created.issue, created: true, updated: false };
+  }
+
+  /** Moves the issue whose description carries the marker to the team's state named `state`. */
+  async moveMarkedIssue(
+    marker: string,
+    state: string
+  ): Promise<{ identifier: string; changed: boolean }> {
+    const issue = await this.markedIssue(marker);
+    if (!issue) throw new Error(`No Linear issue carries the marker ${marker}`);
+    const named = (candidate: { name: string } | null) =>
+      candidate?.name.toLowerCase() === state.toLowerCase();
+    if (named(issue.state)) return { identifier: issue.identifier, changed: false };
+    const target = issue.team.states.nodes.find(named);
+    if (!target) throw new Error(`Linear state ${state} not found in the issue's team`);
+    await this.updateMarkedIssue(issue.id, { stateId: target.id });
+    return { identifier: issue.identifier, changed: true };
   }
 
   async updateIssueTitle(issueId: string, title: string): Promise<void> {

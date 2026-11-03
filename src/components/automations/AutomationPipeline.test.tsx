@@ -46,6 +46,13 @@ const STEPS: PipelineStep[] = [
     onFail: "fail",
     kind: { approval: { title: "Ship it?", detail: "Check the diff", onReject: "defer" } },
   },
+  {
+    id: "ship",
+    label: "ship",
+    next: null,
+    onFail: "fail",
+    kind: { publish: [{ effect: "git.push", repo: "app" }, { effect: "github.pr_create" }] },
+  },
 ];
 
 const attempt = (step: string, overrides: Partial<StepAttempt> = {}): StepAttempt => ({
@@ -222,6 +229,24 @@ it("moves between steps with the keyboard and opens what each kind has", async (
             steps: [
               attempt("implement", { session_id: "s-1", conversation_id: "c-1" }),
               attempt("verify", { status: "failed", exit_code: 2, cause: "timeout" }),
+              attempt("ship", {
+                effects: [
+                  {
+                    effect: "git.push",
+                    status: "staged",
+                    detail: "Push wtm/x of app to origin",
+                    reference: null,
+                    warnings: [],
+                  },
+                  {
+                    effect: "github.pr_create",
+                    status: "executed",
+                    detail: "Opened #7",
+                    reference: "https://github.com/o/r/pull/7",
+                    warnings: ["archive_note did not complete"],
+                  },
+                ],
+              }),
             ],
           }),
         ],
@@ -258,6 +283,20 @@ it("moves between steps with the keyboard and opens what each kind has", async (
   expect(within(detail).getByText("goto implement (max 3)")).toBeInTheDocument();
 
   fireEvent.keyDown(node("verify"), { key: "End" });
+  expect(node("ship")).toHaveFocus();
+  fireEvent.click(node("ship"));
+  detail = screen.getByRole("region", { name: "Step ship" });
+  expect(within(detail).getByText("git.push, github.pr_create")).toBeInTheDocument();
+  expect(within(detail).getByText("1. git.push")).toBeInTheDocument();
+  expect(within(detail).getByText("staged · Push wtm/x of app to origin")).toBeInTheDocument();
+  expect(
+    within(detail).getByText(
+      "executed · Opened #7 · https://github.com/o/r/pull/7 · warning: archive_note did not complete"
+    )
+  ).toBeInTheDocument();
+  fireEvent.keyDown(node("ship"), { key: "ArrowDown" });
+  expect(node("ship")).toHaveFocus();
+  fireEvent.keyDown(node("ship"), { key: "ArrowUp" });
   expect(node("approve")).toHaveFocus();
   fireEvent.click(node("approve"));
   detail = screen.getByRole("region", { name: "Step approve" });
@@ -265,8 +304,6 @@ it("moves between steps with the keyboard and opens what each kind has", async (
   expect(within(detail).getByText("Inbox entry")).toBeInTheDocument();
   expect(within(detail).getByText("defer")).toBeInTheDocument();
 
-  fireEvent.keyDown(node("approve"), { key: "ArrowDown" });
-  expect(node("approve")).toHaveFocus();
   fireEvent.keyDown(node("approve"), { key: "ArrowUp" });
   fireEvent.click(node("checks"));
   detail = screen.getByRole("region", { name: "Step checks" });

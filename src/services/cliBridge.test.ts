@@ -3,6 +3,7 @@ import { DEFAULT_STATE, AppState } from "../types";
 import { Operations } from "./operations";
 import { dispatchCliBridge } from "./cliBridge";
 import { invokeWithAgentCatalog } from "./agents.fixture";
+import { LinearService } from "./linear";
 
 const { invokeCommand } = vi.hoisted(() => ({
   invokeCommand: vi.fn<(command: string, args?: unknown) => Promise<unknown>>(() =>
@@ -16,8 +17,9 @@ vi.mock("@tauri-apps/api/path", () => ({ homeDir: vi.fn().mockResolvedValue("/ho
 vi.mock("./store", () => ({ persist: vi.fn().mockResolvedValue(undefined) }));
 
 let operations: Operations;
+let state: AppState;
 beforeEach(() => {
-  let state: AppState = {
+  state = {
     ...DEFAULT_STATE,
     setup: { linearApiKey: "global-secret", isComplete: true },
     workspaces: [
@@ -317,4 +319,113 @@ it("starts, pauses and resumes automations for the CLI", async () => {
       error: { code: "invalid_params" },
     });
   expect(invokeCommand).toHaveBeenCalledTimes(calls);
+});
+
+describe("engine-only operations", () => {
+  const engineCall = (method: string, params: Record<string, unknown>) =>
+    dispatchCliBridge(
+      operations,
+      { id: "request1", version: 1, method, params },
+      undefined,
+      undefined,
+      true
+    );
+  const upsert = {
+    workspaceId: "w1",
+    marker: "m:1",
+    team: "DX",
+    title: " Lint ",
+    project: null,
+    labels: ["Lint"],
+  };
+
+  it("are unknown to socket clients", async () => {
+    for (const method of ["linear.issue-upsert", "linear.issue-state", "task.log-append"])
+      expect(await call(method, {})).toMatchObject({
+        ok: false,
+        error: { code: "method_not_found" },
+      });
+  });
+
+  it("upsert and move marked Linear issues with the workspace credential", async () => {
+    const upsertIssue = vi
+      .spyOn(LinearService.prototype, "upsertMarkedIssue")
+      .mockResolvedValue({ id: "i", identifier: "DX-1", url: "u", created: true, updated: false });
+    const moveIssue = vi
+      .spyOn(LinearService.prototype, "moveMarkedIssue")
+      .mockRejectedValueOnce(new Error("Linear state Shipped not found in the issue's team"))
+      .mockRejectedValueOnce("offline");
+
+    expect(await engineCall("linear.issue-upsert", upsert)).toMatchObject({
+      ok: true,
+      data: { identifier: "DX-1", created: true },
+    });
+    expect(upsertIssue).toHaveBeenCalledWith({
+      marker: "m:1",
+      team: "DX",
+      title: "Lint",
+      project: null,
+      assignee: "me",
+      labels: ["Lint"],
+    });
+    await engineCall("linear.issue-upsert", {
+      ...upsert,
+      project: "P",
+      assignee: "ana",
+      labels: undefined,
+    });
+    expect(upsertIssue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ project: "P", assignee: "ana", labels: [] })
+    );
+    expect(await engineCall("linear.issue-upsert", { ...upsert, labels: "Lint" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+
+    const state = { workspaceId: "w1", marker: "m:1", state: "Shipped" };
+    expect(await engineCall("linear.issue-state", state)).toEqual({
+      ok: false,
+      error: {
+        code: "linear_failed",
+        message: "Linear state Shipped not found in the issue's team",
+      },
+    });
+    expect(await engineCall("linear.issue-state", state)).toMatchObject({
+      ok: false,
+      error: { code: "linear_failed", message: "The Linear request failed." },
+    });
+    expect(JSON.stringify(upsertIssue.mock.calls)).not.toContain("secret");
+    upsertIssue.mockRestore();
+    moveIssue.mockRestore();
+  });
+
+  it("need Linear configured in the workspace", async () => {
+    state.workspaces[0].linearApiKey = undefined;
+    expect(await engineCall("linear.issue-upsert", upsert)).toMatchObject({
+      ok: false,
+      error: { code: "linear_not_configured" },
+    });
+  });
+
+  it("append to the task log of an existing task", async () => {
+    state.tasks = [
+      {
+        id: "t1",
+        workspaceId: "w1",
+        branchName: "wtm/demo/1",
+        members: [],
+        createdAt: "2026-11-03T00:00:00.000Z",
+      },
+    ];
+    const entry = { id: "t1", entry: "Integrated", key: "wtm:k" };
+    expect(await engineCall("task.log-append", entry)).toEqual({
+      ok: true,
+      data: { status: "vault_disabled", path: null },
+      warnings: [],
+    });
+    expect(await engineCall("task.log-append", { ...entry, id: "t2" })).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+  });
 });

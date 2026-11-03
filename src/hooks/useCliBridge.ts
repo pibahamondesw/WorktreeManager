@@ -18,8 +18,8 @@ export function useCliBridge(
     if (!operations || !ready) return;
     let disposed = false;
     const session = crypto.randomUUID();
-    const channel = new Channel<{ token: string; request: CliBridgeRequest }>();
-    channel.onmessage = ({ token, request }) => {
+    const channel = new Channel<{ token: string; request: CliBridgeRequest; engine?: boolean }>();
+    channel.onmessage = ({ token, request, engine }) => {
       if (disposed) return;
       void dispatchCliBridge(
         operations,
@@ -27,7 +27,8 @@ export function useCliBridge(
         (message) => {
           void invoke("cli_bridge_progress", { session, token, message }).catch(() => {});
         },
-        onAgentEventRef.current && ((event) => onAgentEventRef.current!(event))
+        onAgentEventRef.current && ((event) => onAgentEventRef.current!(event)),
+        engine === true
       )
         .then((response) => invoke("cli_bridge_complete", { session, token, response }))
         .catch(() => {});

@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::super::definition::{self, AutomationDefinition};
+use super::super::publish::CliForge;
 use super::super::store::RunStore;
 use super::{
     Definitions, NewTask, OperationsBridge, ResolvedTask, RoutineExecutor, SessionLaunch, Sessions,
@@ -22,7 +23,8 @@ const DEFAULT_MODEL: &str = "default";
 pub(crate) const RUNS_CHANGED_EVENT: &str = "automation-runs-changed";
 
 impl RoutineExecutor {
-    /// Tasks go through `bridge`, the frontend Operations the CLI also uses.
+    /// Tasks, Linear and task log effects go through `bridge`, the frontend Operations the CLI
+    /// also uses.
     pub fn of<R: Runtime>(
         app: &AppHandle<R>,
         bridge: Arc<dyn OperationsBridge>,
@@ -31,8 +33,10 @@ impl RoutineExecutor {
         Ok(Self::new(
             RunStore::of(app)?,
             Arc::new(AppDefinitions(app.clone())),
-            Arc::new(BridgeTasks(bridge)),
+            Arc::new(BridgeTasks(bridge.clone())),
             Arc::new(ChatSessions(app.clone())),
+            Arc::new(CliForge::default()),
+            bridge,
         )
         .on_runs_changed(Arc::new(move |name| {
             let _ = handle.emit_to("main", RUNS_CHANGED_EVENT, name);

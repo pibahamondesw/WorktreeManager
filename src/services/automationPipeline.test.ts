@@ -171,8 +171,10 @@ describe("labels", () => {
       "claude",
       "Ship it?",
     ]);
-    const publish = { ...CAMPAIGN[0], kind: { publish: ["git.push"] } as unknown as StepKind };
-    expect(stepSummary(publish)).toBe("publish");
+    const publish = step("ship", {
+      publish: [{ effect: "git.push", repo: "r1" }, { effect: "github.pr_create" }],
+    });
+    expect(stepSummary(publish)).toBe("git.push · github.pr_create");
     expect(onReject(CAMPAIGN[6])).toBe("block");
     expect(onReject(CAMPAIGN[1])).toBeNull();
   });

@@ -135,5 +135,5 @@ export function stepSummary(step: PipelineStep): string {
   if ("command" in kind) return kind.command.command.join(" ");
   if ("wait" in kind) return waitConditionLabel(kind.wait);
   if ("approval" in kind) return kind.approval.title;
-  return stepKindName(step);
+  return kind.publish.map((effect) => effect.effect).join(" · ");
 }

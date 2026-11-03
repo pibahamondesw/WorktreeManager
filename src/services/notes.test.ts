@@ -6,6 +6,7 @@ import {
   taskNoteUri,
   ensureTaskNote,
   archiveTaskNote,
+  appendTaskNoteEntry,
 } from "./notes";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -183,5 +184,42 @@ describe("task note storage", () => {
     expect(await ensureTaskNote(disabled, workspace, task())).toBeNull();
     await archiveTaskNote(disabled, task());
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("appendTaskNoteEntry", () => {
+  beforeEach(() => vi.mocked(invoke).mockReset());
+
+  it("ensures the note and appends a dated entry once per key", async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce("/vault/task-logs/WOR-39.md")
+      .mockResolvedValueOnce(true);
+    await expect(
+      appendTaskNoteEntry(vault, workspace, task(), "Integrated PR 7", "wtm:k")
+    ).resolves.toEqual({ status: "appended", path: "/vault/task-logs/WOR-39.md" });
+    const [command, args] = vi.mocked(invoke).mock.lastCall!;
+    expect(command).toBe("append_task_note");
+    expect(args).toMatchObject({
+      notesPath: "/vault/task-logs",
+      fileName: "WOR-39-evaluar-obsidian.md",
+      noteFolder: null,
+      key: "wtm:k",
+    });
+    expect((args as { entry: string }).entry).toMatch(/^\d{4}-\d{2}-\d{2} Integrated PR 7$/);
+
+    vi.mocked(invoke).mockResolvedValueOnce("/vault/x.md").mockResolvedValueOnce(false);
+    await expect(
+      appendTaskNoteEntry(vault, workspace, task({ noteFolder: "t1" }), "Again", "wtm:k")
+    ).resolves.toEqual({ status: "present", path: "/vault/x.md" });
+  });
+
+  it("does nothing with the vault disabled and reports write failures", async () => {
+    await expect(
+      appendTaskNoteEntry({ enabled: false, path: "/vault" }, workspace, task(), "x", "k")
+    ).resolves.toEqual({ status: "vault_disabled", path: null });
+    expect(invoke).not.toHaveBeenCalled();
+
+    vi.mocked(invoke).mockResolvedValueOnce("/vault/x.md").mockRejectedValueOnce("read-only");
+    await expect(appendTaskNoteEntry(vault, workspace, task(), "x", "k")).rejects.toBe("read-only");
   });
 });

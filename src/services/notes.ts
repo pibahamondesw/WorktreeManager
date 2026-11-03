@@ -145,3 +145,32 @@ export async function archiveTaskNote(
     /* note archiving is best-effort */
   }
 }
+
+export type TaskLogAppend = {
+  status: "appended" | "present" | "vault_disabled";
+  path: string | null;
+};
+
+/**
+ * Append a dated entry to the task's note, once per `key`. Unlike the other entry points it
+ * throws when the note cannot be written: the entry is what the caller asked for.
+ */
+export async function appendTaskNoteEntry(
+  vault: VaultConfig,
+  workspace: Workspace,
+  task: Task,
+  entry: string,
+  key: string
+): Promise<TaskLogAppend> {
+  const notesPath = taskLogsPath(vault);
+  if (!notesPath) return { status: "vault_disabled", path: null };
+  const path = await ensureTaskNote(vault, workspace, task);
+  const appended = await invoke<boolean>("append_task_note", {
+    notesPath,
+    fileName: taskNoteFileName(task),
+    noteFolder: task.noteFolder ?? null,
+    entry: `${today()} ${entry}`,
+    key,
+  });
+  return { status: appended ? "appended" : "present", path };
+}

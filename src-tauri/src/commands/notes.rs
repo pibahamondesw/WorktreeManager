@@ -141,6 +141,36 @@ pub fn archive_task_note(
     Ok(Some(dest.to_string_lossy().to_string()))
 }
 
+/// Append `- <entry> <!-- <key> -->` to the active note unless an entry with `key` is already
+/// there. Returns whether it appended. Nothing else in the note changes.
+#[tauri::command]
+pub fn append_task_note(
+    notes_path: String,
+    file_name: String,
+    note_folder: Option<String>,
+    entry: String,
+    key: String,
+) -> Result<bool, String> {
+    validate_file_name(&file_name)?;
+    let (dir, _) = note_dirs(&notes_path, note_folder.as_deref())?;
+    let path = dir.join(file_name.trim());
+    let contents = fs::read_to_string(&path).map_err(|e| format!("Failed to read note: {e}"))?;
+    let marker = format!("<!-- {key} -->");
+    if contents.contains(&marker) {
+        return Ok(false);
+    }
+    let separator = if contents.is_empty() || contents.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let line = entry.lines().collect::<Vec<_>>().join(" ");
+    UserFile::new(&path)
+        .unchanged_from(&contents)
+        .replace(format!("{contents}{separator}- {line} {marker}\n"))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,6 +406,70 @@ mod tests {
             fs::read_to_string(dir.join("_archive/task-1/note.md")).unwrap(),
             "previous archive"
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn append_adds_each_keyed_entry_once_and_keeps_the_note() {
+        let dir = std::env::temp_dir().join(format!("wm-append-{}", uuid::Uuid::new_v4()));
+        let notes = dir.to_string_lossy().to_string();
+        fs::create_dir_all(dir.join("t1")).unwrap();
+        fs::write(dir.join("t1/WOR-1.md"), "## Log\n\n- mine").unwrap();
+        let append = |entry: &str, key: &str| {
+            append_task_note(
+                notes.clone(),
+                "WOR-1.md".into(),
+                Some("t1".into()),
+                entry.into(),
+                key.into(),
+            )
+        };
+
+        assert_eq!(append("Integrated\nPR 7", "wtm:a:1"), Ok(true));
+        assert_eq!(append("Integrated again", "wtm:a:1"), Ok(false));
+        assert_eq!(append("Next", "wtm:a:2"), Ok(true));
+
+        assert_eq!(
+            fs::read_to_string(dir.join("t1/WOR-1.md")).unwrap(),
+            "## Log\n\n- mine\n- Integrated PR 7 <!-- wtm:a:1 -->\n- Next <!-- wtm:a:2 -->\n"
+        );
+        fs::write(dir.join("t1/empty.md"), "").unwrap();
+        let empty = append_task_note(
+            notes.clone(),
+            "empty.md".into(),
+            Some("t1".into()),
+            "x".into(),
+            "k".into(),
+        );
+        assert_eq!(empty, Ok(true));
+        assert_eq!(
+            fs::read_to_string(dir.join("t1/empty.md")).unwrap(),
+            "- x <!-- k -->\n"
+        );
+        assert!(append_task_note(
+            notes.clone(),
+            "gone.md".into(),
+            None,
+            "x".into(),
+            "k".into()
+        )
+        .is_err());
+        assert!(append_task_note(
+            notes.clone(),
+            "../x.md".into(),
+            None,
+            "x".into(),
+            "k".into()
+        )
+        .is_err());
+        assert!(append_task_note(
+            notes,
+            "x.md".into(),
+            Some("..".into()),
+            "x".into(),
+            "k".into()
+        )
+        .is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 }

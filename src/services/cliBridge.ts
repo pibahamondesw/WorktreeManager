@@ -4,6 +4,7 @@ import { v4 as uuid } from "uuid";
 import { Workspace, WorkspaceRepo, GitStatus } from "../types";
 import { normalizeRepoScripts } from "../utils";
 import { isCatalogAgent } from "./agents";
+import { MarkedIssueInput } from "./linear";
 import {
   Operations,
   OperationError,
@@ -196,6 +197,26 @@ async function agentEvent(params: Record<string, unknown>): Promise<AgentEvent> 
   return event;
 }
 
+/** Operations only the automation engine in this process may run, never a socket client. */
+const ENGINE_METHODS = ["linear.issue-upsert", "linear.issue-state", "task.log-append"];
+
+function labelList(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new OperationError("invalid_params", "labels must be a list.");
+  return value.map(text);
+}
+
+function markedIssueInput(params: Record<string, unknown>): MarkedIssueInput {
+  return {
+    marker: text(params.marker),
+    team: text(params.team),
+    title: text(params.title),
+    project: params.project == null ? null : text(params.project),
+    assignee: params.assignee === undefined ? "me" : text(params.assignee),
+    labels: labelList(params.labels),
+  };
+}
+
 const DEFAULT_RUNS_PAGE = 20;
 
 function pageLimit(value: unknown): number {
@@ -251,7 +272,8 @@ export async function dispatchCliBridge(
   operations: Operations,
   request: CliBridgeRequest,
   progress?: (message: string) => void,
-  onAgentEvent?: (event: AgentEvent) => { taskId: string | null }
+  onAgentEvent?: (event: AgentEvent) => { taskId: string | null },
+  engine = false
 ) {
   try {
     if (request.version !== 1)
@@ -284,8 +306,22 @@ export async function dispatchCliBridge(
       "automation.run": ["name", "payload"],
       "automation.pause": ["name", "reason"],
       "automation.resume": ["name", "reason"],
+      "linear.issue-upsert": [
+        "workspaceId",
+        "marker",
+        "team",
+        "title",
+        "project",
+        "assignee",
+        "labels",
+      ],
+      "linear.issue-state": ["workspaceId", "marker", "state"],
+      "task.log-append": ["id", "entry", "key"],
     };
-    if (!Object.hasOwn(allowed, request.method))
+    if (
+      !Object.hasOwn(allowed, request.method) ||
+      (ENGINE_METHODS.includes(request.method) && !engine)
+    )
       throw new OperationError("method_not_found", "Unknown operation. See wtm --help.");
     const params = object(request.params, allowed[request.method]);
     let result: unknown;
@@ -401,6 +437,26 @@ export async function dispatchCliBridge(
             by: "cli",
             reason: params.reason === undefined ? null : text(params.reason),
           }
+        );
+        break;
+      case "linear.issue-upsert":
+        result = await operations.upsertMarkedIssue(
+          text(params.workspaceId),
+          markedIssueInput(params)
+        );
+        break;
+      case "linear.issue-state":
+        result = await operations.moveMarkedIssue(
+          text(params.workspaceId),
+          text(params.marker),
+          text(params.state)
+        );
+        break;
+      case "task.log-append":
+        result = await operations.appendTaskLog(
+          text(params.id),
+          text(params.entry),
+          text(params.key)
         );
         break;
     }

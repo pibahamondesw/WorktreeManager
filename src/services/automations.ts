@@ -49,7 +49,32 @@ export type StepKind =
     }
   | { command: { command: string[]; repo: string } }
   | { wait: WaitCondition }
-  | { approval: { title: string; detail: string | null; onReject: Transition | null } };
+  | { approval: { title: string; detail: string | null; onReject: Transition | null } }
+  | { publish: PublishEffect[] };
+
+/** One effect of a publish step, named as in the definition, with its params. */
+interface PublishEffect {
+  effect: string;
+  [param: string]: unknown;
+}
+
+type EffectStatus =
+  | "executed"
+  | "staged"
+  | "reconciled"
+  | "skipped"
+  | "denied"
+  | "capped"
+  | "failed";
+
+/** What one effect of a publish attempt did, would do in a Test run, or why not. */
+export interface StepEffect {
+  effect: string;
+  status: EffectStatus;
+  detail: string | null;
+  reference: string | null;
+  warnings: string[];
+}
 
 export interface PipelineStep {
   id: string;
@@ -118,6 +143,8 @@ export interface StepAttempt {
   /** The agent's final reply, and the structured result read from it. */
   reply?: string | null;
   result?: unknown;
+  /** The effects of a publish attempt, in order. */
+  effects?: StepEffect[];
 }
 
 export interface AutomationItem {

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
@@ -14,10 +15,10 @@ use super::fields::{
 };
 use super::{
     AgentSettings, AgentStep, ApprovalDefault, ApprovalStep, Authorization, AutomationDefinition,
-    Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency, Environment, GotoLimit,
-    InboxPolicy, IssueKind, LinearTracker, Pools, RepoRef, ReportPolicy, ResultSchema, Schedule,
-    Step, StepKind, StopAfter, Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, Verb,
-    WaitStep, WorkspaceRef,
+    Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency, Effect, Environment,
+    GotoLimit, InboxPolicy, IssueKind, LinearOverrides, LinearTracker, Pools, PullRequestEffect,
+    RepoRef, ReportPolicy, ResultSchema, Schedule, Step, StepKind, StopAfter, Target, TargetRepo,
+    TaskMode, Tracker, Transition, Trigger, Verb, WaitStep, WorkspaceRef,
 };
 use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
@@ -37,20 +38,20 @@ const SCRIPTS_DIR: &str = "scripts/";
 const SCHEMAS_DIR: &str = "schemas/";
 const AGENT_STEP_TIMEOUT_SECS: u64 = 60 * 60;
 const COMMAND_STEP_TIMEOUT_SECS: u64 = 30 * 60;
-const FORBIDDEN_VERBS: [&str; 2] = ["merge", "no_verify"];
-const VERBS: [(&str, Verb); 11] = [
-    ("commit", Verb::Commit),
-    ("push", Verb::Push),
-    ("pr_create", Verb::PrCreate),
-    ("pr_update", Verb::PrUpdate),
-    ("pr_comment", Verb::PrComment),
-    ("pr_reply", Verb::PrReply),
-    ("pr_ready", Verb::PrReady),
-    ("linear_write", Verb::LinearWrite),
-    ("task_create", Verb::TaskCreate),
-    ("task_delete", Verb::TaskDelete),
-    ("task_log", Verb::TaskLog),
+const PUBLISH_STEP_TIMEOUT_SECS: u64 = 30 * 60;
+const EFFECTS: [&str; 10] = [
+    "git.push",
+    "github.pr_create",
+    "github.pr_update",
+    "github.pr_comment",
+    "github.pr_ready",
+    "linear.upsert",
+    "linear.state",
+    "wtm.task_create",
+    "wtm.task_log",
+    "wtm.task_delete_clean",
 ];
+const FORBIDDEN_VERBS: [&str; 2] = ["merge", "no_verify"];
 
 pub(super) struct Context<'a> {
     pub env: &'a Environment,
@@ -162,6 +163,8 @@ pub(super) fn definition(
     check_instructions(report, instructions, steps.as_deref());
     if let (Some(steps), Some(authorization)) = (&steps, &authorization) {
         check_enforceable_grants(report, context.env, steps, authorization);
+        let tracked = !matches!(tracker, Some(None));
+        check_effects(report, steps, authorization, tracked);
     }
     if !report.errors.is_empty() {
         return None;
@@ -936,11 +939,12 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
     let timeout_secs = timeout?.or(match kind {
         StepKind::Agent(_) => Some(AGENT_STEP_TIMEOUT_SECS),
         StepKind::Command(_) => Some(COMMAND_STEP_TIMEOUT_SECS),
+        StepKind::Publish(_) => Some(PUBLISH_STEP_TIMEOUT_SECS),
         StepKind::Wait(_) | StepKind::Approval(_) => None,
     });
     let capacity = capacity?.unwrap_or(match kind {
         StepKind::Wait(_) | StepKind::Approval(_) => Capacity::Release,
-        StepKind::Agent(_) | StepKind::Command(_) => Capacity::Hold,
+        StepKind::Agent(_) | StepKind::Command(_) | StepKind::Publish(_) => Capacity::Hold,
     });
     Some(Step {
         label: label?.unwrap_or_else(|| id.clone()),
@@ -980,14 +984,7 @@ fn step_kind(
         "command" => command_step(report, scope, fields, value).map(StepKind::Command),
         "wait" => wait_step(report, value, &field).map(StepKind::Wait),
         "approval" => approval_step(report, value, &field, timeout).map(StepKind::Approval),
-        _ => {
-            report.error(
-                IssueKind::Unsupported,
-                &field,
-                "publish steps are not supported yet (WOR-258)",
-            );
-            None
-        }
+        _ => publish_step(report, scope, value, &field).map(StepKind::Publish),
     }
 }
 
@@ -1405,7 +1402,7 @@ fn transitions<'a>(step: &'a Step, field: &str) -> Vec<(&'a Transition, String)>
     let on_reject = match &step.kind {
         StepKind::Agent(agent) => agent.on_reject.as_ref().map(|t| (t, "agent")),
         StepKind::Approval(approval) => approval.on_reject.as_ref().map(|t| (t, "approval")),
-        StepKind::Command(_) | StepKind::Wait(_) => None,
+        StepKind::Command(_) | StepKind::Wait(_) | StepKind::Publish(_) => None,
     };
     if let Some((transition, kind)) = on_reject {
         transitions.push((transition, join(&join(field, kind), "on_reject")));
@@ -1447,6 +1444,212 @@ fn find_cycle(edges: &[Vec<usize>]) -> Option<Vec<usize>> {
             None
         }
     })
+}
+
+fn publish_step(
+    report: &mut Report,
+    scope: &Scope,
+    value: &Value,
+    field: &str,
+) -> Option<Vec<Effect>> {
+    let parse =
+        |report: &mut Report, value: &Value, field: &str| effect(report, scope, value, field);
+    let effects = match value {
+        Value::Array(_) => each(report, value, field, parse)?,
+        _ => vec![parse(report, value, field)?],
+    };
+    if effects.is_empty() {
+        report.error(IssueKind::Invalid, field, "must list at least one effect");
+        return None;
+    }
+    Some(effects)
+}
+
+fn effect(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Option<Effect> {
+    let (name, params, params_field) = match value {
+        Value::String(name) => (name.as_str(), None, field.to_string()),
+        Value::Object(map) if map.len() == 1 => {
+            let (name, params) = map.iter().next()?;
+            (name.as_str(), Some(params), join(field, name))
+        }
+        _ => {
+            report.error(
+                IssueKind::Invalid,
+                field,
+                "must be an effect name or a map from one effect name to its params",
+            );
+            return None;
+        }
+    };
+    if !EFFECTS.contains(&name) {
+        report.error(
+            IssueKind::Invalid,
+            field,
+            format!("unknown effect {name}; use one of {}", EFFECTS.join(", ")),
+        );
+        return None;
+    }
+    let no_params = Value::Object(Map::new());
+    let params = params
+        .filter(|params| !params.is_null())
+        .unwrap_or(&no_params);
+    let mut fields = Fields::of(report, params, &params_field)?;
+    let effect = match name {
+        "git.push" => effect_repo(report, scope, &mut fields).map(|repo| Effect::GitPush { repo }),
+        "github.pr_create" => {
+            pull_request_effect(report, scope, &mut fields, true).map(Effect::PrCreate)
+        }
+        "github.pr_update" => {
+            pull_request_effect(report, scope, &mut fields, false).map(Effect::PrUpdate)
+        }
+        "github.pr_comment" => {
+            let repo = effect_repo(report, scope, &mut fields);
+            let body = fields.require(report, "body", template);
+            Some(Effect::PrComment {
+                repo: repo?,
+                body: body?,
+            })
+        }
+        "github.pr_ready" => {
+            effect_repo(report, scope, &mut fields).map(|repo| Effect::PrReady { repo })
+        }
+        "linear.upsert" => linear_overrides(report, &mut fields).map(Effect::LinearUpsert),
+        "linear.state" => fields
+            .require(report, "state", string)
+            .map(|state| Effect::LinearState { state }),
+        "wtm.task_log" => fields
+            .require(report, "entry", template)
+            .map(|entry| Effect::TaskLog { entry }),
+        "wtm.task_create" => Some(Effect::TaskCreate),
+        _ => Some(Effect::TaskDeleteClean),
+    };
+    fields.finish(report);
+    effect
+}
+
+fn effect_repo(report: &mut Report, scope: &Scope, fields: &mut Fields) -> Option<String> {
+    let field = fields.path("repo");
+    command_repo(report, fields.get("repo"), scope.repos, &field)
+}
+
+fn pull_request_effect(
+    report: &mut Report,
+    scope: &Scope,
+    fields: &mut Fields,
+    create: bool,
+) -> Option<PullRequestEffect> {
+    let repo = effect_repo(report, scope, fields);
+    let title = fields.optional(report, "title", template);
+    let body_template = fields.optional(report, "body_template", |report, value, field| {
+        body_template(report, scope.context.folder, value, field)
+    });
+    let lang = fields.optional(report, "lang", lang);
+    let draft = fields.optional(report, "draft", boolean);
+    let assignee = if create {
+        fields.optional(report, "assignee", string)
+    } else {
+        Some(None)
+    };
+    Some(PullRequestEffect {
+        repo: repo?,
+        title: title?,
+        body_template: body_template?,
+        lang: lang?,
+        draft: draft?,
+        assignee: assignee?,
+    })
+}
+
+/// A file of the automation folder whose contents are a template.
+fn body_template(report: &mut Report, folder: &Path, value: &Value, field: &str) -> Option<String> {
+    let relative = string(report, value, field)?;
+    folder_file(report, folder, &relative, field)?;
+    let Ok(contents) = fs::read_to_string(folder.join(&relative)) else {
+        report.error(
+            IssueKind::Invalid,
+            field,
+            format!("{relative} is not UTF-8 text"),
+        );
+        return None;
+    };
+    template(report, &Value::String(contents), field)?;
+    Some(relative)
+}
+
+/// A language tag such as `es` or `pt-BR`, which picks a template variant like `pr.es.md`.
+fn lang(report: &mut Report, value: &Value, field: &str) -> Option<String> {
+    let tag = string(report, value, field)?;
+    let valid = !tag.is_empty()
+        && tag.len() <= 16
+        && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if !valid {
+        report.error(
+            IssueKind::Invalid,
+            field,
+            "must be a language tag such as es or pt-BR",
+        );
+        return None;
+    }
+    Some(tag)
+}
+
+fn linear_overrides(report: &mut Report, fields: &mut Fields) -> Option<LinearOverrides> {
+    let team = fields.optional(report, "team", string);
+    let project = fields.optional(report, "project", string);
+    let assignee = fields.optional(report, "assignee", string);
+    let labels = fields.optional(report, "labels", string_list);
+    let title = fields.optional(report, "title", template);
+    let marker = fields.optional(report, "marker", template);
+    Some(LinearOverrides {
+        team: team?,
+        project: project?,
+        assignee: assignee?,
+        labels: labels?,
+        title: title?,
+        marker: marker?,
+    })
+}
+
+/// Every effect needs its verb allowed and not denied, and Linear effects need a tracker.
+fn check_effects(
+    report: &mut Report,
+    steps: &[Step],
+    authorization: &Authorization,
+    tracked: bool,
+) {
+    for (position, step) in steps.iter().enumerate() {
+        let StepKind::Publish(effects) = &step.kind else {
+            continue;
+        };
+        let field = format!("{}.publish", index("steps", position));
+        for effect in effects {
+            let verb = effect.verb();
+            let name = verb.name();
+            if authorization.deny.contains(&verb) {
+                report.error(
+                    IssueKind::Invalid,
+                    &field,
+                    format!(
+                        "{} needs {name}, which authorization.deny lists",
+                        effect.name()
+                    ),
+                );
+            } else if !authorization.allow.contains(&verb) {
+                report.error(
+                    IssueKind::Invalid,
+                    &field,
+                    format!("{} needs {name} in authorization.allow", effect.name()),
+                );
+            }
+            if verb == Verb::LinearWrite && !tracked {
+                report.error(
+                    IssueKind::Missing,
+                    &field,
+                    format!("{} needs tracker.linear", effect.name()),
+                );
+            }
+        }
+    }
 }
 
 fn tracker(report: &mut Report, value: &Value, field: &str) -> Option<Tracker> {
@@ -1580,7 +1783,12 @@ fn verb(report: &mut Report, value: &Value, field: &str) -> Option<Verb> {
         report.error(IssueKind::Invalid, field, "is never allowed in v1");
         return None;
     }
-    choice(report, value, field, &VERBS)
+    choice(
+        report,
+        value,
+        field,
+        &Verb::ALL.map(|verb| (verb.name(), verb)),
+    )
 }
 
 fn authorization(report: &mut Report, value: &Value, field: &str) -> Option<Authorization> {

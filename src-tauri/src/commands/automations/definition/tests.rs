@@ -1006,11 +1006,6 @@ fn approval_steps_need_a_default_when_they_time_out() {
 #[test]
 fn steps_have_exactly_one_supported_kind() {
     assert_issue(
-        &routine("steps:\n  - id: push\n    publish: [git.push]\n"),
-        "steps[0].publish",
-        IssueKind::Unsupported,
-    );
-    assert_issue(
         &routine("steps:\n  - id: nothing\n"),
         "steps[0]",
         IssueKind::Invalid,
@@ -1477,4 +1472,210 @@ mod commands {
         assert_eq!(json["errors"][0]["kind"], "unknown_field");
         assert_eq!(json["definition"], Value::Null);
     }
+}
+
+const ALL_VERBS: &str = "authorization:
+  allow: [push, pr_create, pr_update, pr_comment, pr_ready, linear_write, task_create, task_log, task_delete]
+tracker: { linear: { team: DX } }
+";
+
+#[test]
+fn publish_steps_list_effects_with_their_params() {
+    let frontmatter = routine(&format!(
+        "{ALL_VERBS}steps:
+  - id: ship
+    publish:
+      - git.push
+      - github.pr_create: {{ draft: false, lang: pt-BR, title: \"[{{tracker.issue}}] Lint\", body_template: templates/pr.md, assignee: octocat }}
+      - github.pr_update: {{ draft: true }}
+      - github.pr_comment: {{ body: fin review }}
+      - github.pr_ready
+      - linear.upsert: {{ team: API, labels: [Lint], title: \"Lint {{item.id}}\", marker: \"m:{{item.id}}\", project: P, assignee: me }}
+      - linear.state: {{ state: review }}
+      - wtm.task_create: null
+      - wtm.task_log: {{ entry: \"Opened {{pr.url}}\" }}
+      - wtm.task_delete_clean: {{}}
+"
+    ));
+    let entry = load_with(&frontmatter, BODY, |folder| {
+        fs::create_dir_all(folder.join("templates")).unwrap();
+        fs::write(folder.join("templates/pr.md"), "## Context {{item.id}}").unwrap();
+    });
+    assert_eq!(entry.errors, Vec::new());
+    let definition = entry.definition.unwrap();
+    let step = only_step(&definition);
+    assert_eq!(
+        (step.timeout_secs, step.capacity),
+        (Some(1_800), Capacity::Hold)
+    );
+    assert_eq!(
+        kind(step),
+        json!({ "publish": [
+            { "effect": "git.push", "repo": "r1" },
+            { "effect": "github.pr_create", "repo": "r1", "title": "[{tracker.issue}] Lint",
+              "bodyTemplate": "templates/pr.md", "lang": "pt-BR", "draft": false, "assignee": "octocat" },
+            { "effect": "github.pr_update", "repo": "r1", "title": null, "bodyTemplate": null,
+              "lang": null, "draft": true, "assignee": null },
+            { "effect": "github.pr_comment", "repo": "r1", "body": "fin review" },
+            { "effect": "github.pr_ready", "repo": "r1" },
+            { "effect": "linear.upsert", "team": "API", "project": "P", "assignee": "me",
+              "labels": ["Lint"], "title": "Lint {item.id}", "marker": "m:{item.id}" },
+            { "effect": "linear.state", "state": "review" },
+            { "effect": "wtm.task_create" },
+            { "effect": "wtm.task_log", "entry": "Opened {pr.url}" },
+            { "effect": "wtm.task_delete_clean" },
+        ] })
+    );
+    assert_issue(
+        &frontmatter,
+        "steps[0].publish[1].github.pr_create.body_template",
+        IssueKind::Invalid,
+    );
+}
+
+#[test]
+fn publish_effects_need_their_verb_allowed_and_not_denied() {
+    let entry = load(&routine(
+        "authorization: { allow: [push, pr_ready], deny: [pr_ready] }
+steps:
+  - id: ship
+    publish: [git.push, github.pr_ready, wtm.task_create]
+",
+    ));
+    let messages: Vec<_> = entry
+        .errors
+        .iter()
+        .map(|issue| (issue.field.as_str(), issue.message.as_str()))
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            (
+                "steps[0].publish",
+                "github.pr_ready needs pr_ready, which authorization.deny lists"
+            ),
+            (
+                "steps[0].publish",
+                "wtm.task_create needs task_create in authorization.allow"
+            ),
+        ]
+    );
+}
+
+#[test]
+fn linear_effects_need_a_tracker() {
+    let frontmatter = routine(
+        "authorization: { allow: [linear_write] }
+steps:
+  - id: ship
+    publish: { linear.state: { state: done } }
+",
+    );
+    assert_eq!(
+        message(&frontmatter, "steps[0].publish"),
+        "linear.state needs tracker.linear"
+    );
+    let invalid_tracker = routine(
+        "authorization: { allow: [linear_write] }
+tracker: { linear: {} }
+steps:
+  - id: ship
+    publish: { linear.state: { state: done } }
+",
+    );
+    assert_eq!(
+        issues(&load(&invalid_tracker)),
+        [("tracker.linear.team", IssueKind::Missing)]
+    );
+}
+
+#[test]
+fn publish_steps_report_malformed_effects() {
+    let step = |publish: &str| {
+        routine(&format!(
+            "{ALL_VERBS}steps:\n  - id: ship\n    publish: {publish}\n"
+        ))
+    };
+    assert_issue(&step("[]"), "steps[0].publish", IssueKind::Invalid);
+    assert_issue(
+        &step("[git.merge]"),
+        "steps[0].publish[0]",
+        IssueKind::Invalid,
+    );
+    assert_issue(&step("[42]"), "steps[0].publish[0]", IssueKind::Invalid);
+    assert_issue(
+        &step("{ git.push: {}, github.pr_ready: {} }"),
+        "steps[0].publish",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &step("{ git.push: { force: true } }"),
+        "steps[0].publish.git.push.force",
+        IssueKind::UnknownField,
+    );
+    assert_issue(
+        &step("{ git.push: { repo: web } }"),
+        "steps[0].publish.git.push.repo",
+        IssueKind::UnknownRepo,
+    );
+    assert_issue(
+        &step("{ github.pr_comment: {} }"),
+        "steps[0].publish.github.pr_comment.body",
+        IssueKind::Missing,
+    );
+    assert_issue(
+        &step("{ github.pr_comment: { body: \"{pr.title}\" } }"),
+        "steps[0].publish.github.pr_comment.body",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &step("{ github.pr_create: { lang: \"../es\" } }"),
+        "steps[0].publish.github.pr_create.lang",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &step("{ github.pr_create: { body_template: ../pr.md } }"),
+        "steps[0].publish.github.pr_create.body_template",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &step("{ github.pr_update: { assignee: me } }"),
+        "steps[0].publish.github.pr_update.assignee",
+        IssueKind::UnknownField,
+    );
+    assert_issue(
+        &step("{ linear.upsert: { labels: Lint } }"),
+        "steps[0].publish.linear.upsert.labels",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &step("{ linear.state: {} }"),
+        "steps[0].publish.linear.state.state",
+        IssueKind::Missing,
+    );
+    assert_issue(
+        &step("{ wtm.task_log: {} }"),
+        "steps[0].publish.wtm.task_log.entry",
+        IssueKind::Missing,
+    );
+    let two_repos = format!(
+        "schema: 1\nname: demo\ntarget: {{ workspace: Fintoc, repos: [fintoc-rails, api] }}\n{AGENT}{ALL_VERBS}steps:\n  - id: ship\n    publish: git.push\n"
+    );
+    assert_issue(&two_repos, "steps[0].publish.repo", IssueKind::Missing);
+}
+
+#[test]
+fn pr_body_templates_must_be_text_templates() {
+    let frontmatter = routine(&format!(
+        "{ALL_VERBS}steps:\n  - id: ship\n    publish: {{ github.pr_create: {{ body_template: pr.md }} }}\n"
+    ));
+    let field = "steps[0].publish.github.pr_create.body_template";
+    let binary = load_with(&frontmatter, BODY, |folder| {
+        fs::write(folder.join("pr.md"), [0xff, 0xfe]).unwrap();
+    });
+    assert_eq!(issues(&binary), [(field, IssueKind::Invalid)]);
+    let unbalanced = load_with(&frontmatter, BODY, |folder| {
+        fs::write(folder.join("pr.md"), "{ not a variable").unwrap();
+    });
+    assert_eq!(issues(&unbalanced), [(field, IssueKind::Invalid)]);
 }
