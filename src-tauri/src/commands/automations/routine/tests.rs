@@ -77,6 +77,7 @@ fn environment() -> Environment {
                 images: true,
                 headless: true,
                 tool_rules: true,
+                classifier_approval: true,
                 read_only: true,
                 structured_output: true,
             },

@@ -1725,7 +1725,7 @@ fn headless_sessions_run_unattended_until_a_pane_attaches_and_close_with_their_t
     });
     assert!(fixture.logged("argv.jsonl").iter().any(|argv| {
         let argv = argv.to_string();
-        argv.contains("dontAsk") && argv.contains("Bash(git status)")
+        argv.contains(r#""--permission-mode","auto""#) && argv.contains("Bash(git status)")
     }));
     assert!(registry.conversation(&session_id).is_some());
     assert_eq!(registry.conversation("missing"), None);

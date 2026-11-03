@@ -473,7 +473,7 @@ pub(super) fn is_active(status: RunStatus) -> bool {
 }
 
 /// Spreads automations sharing a slot over the first minutes after it, the same for every tick.
-fn stagger(name: &str) -> TimeDelta {
+pub(super) fn stagger(name: &str) -> TimeDelta {
     let digest = Sha256::digest(name.as_bytes());
     let seed = u64::from_be_bytes(digest[..8].try_into().unwrap_or_default());
     TimeDelta::seconds((seed % (MAX_STAGGER_SECS + 1)) as i64)

@@ -14,6 +14,7 @@ const capabilities: AgentDescriptor["capabilities"] = {
   images: true,
   headless: true,
   toolRules: true,
+  classifierApproval: true,
   readOnly: true,
   structuredOutput: true,
 };
@@ -32,6 +33,7 @@ export const AGENT_CATALOG: AgentDescriptor[] = [
       archive: true,
       steer: true,
       toolRules: false,
+      classifierApproval: false,
     },
   },
 ];
