@@ -13,10 +13,13 @@ use crate::commands::automations::command::CommandContext;
 use crate::commands::automations::definition::{
     load_named, Capacity, Environment, Step, Transition, WaitStep,
 };
+use crate::commands::automations::publish::CliForge;
+use crate::commands::automations::store::events::EffectStatus;
 use crate::commands::automations::store::events::{
     PermissionRequest, RunSource, RunState, RunStatus, RunTrigger, StepStatus, Verdict,
 };
 use crate::commands::automations::store::{AutomationState, Claim, PauseReason};
+use crate::commands::git::git_command;
 
 const TARGET: &str = "target: { workspace: Fintoc, repos: [rails] }\nagent: { id: claude }\n";
 const INSTRUCTIONS: &str = "List my open PRs.";
@@ -240,6 +243,14 @@ impl Harness {
             Arc::new(DirectoryDefinitions(scratch.0.join("automations"))),
             tasks.clone(),
             sessions.clone(),
+            Arc::new(CliForge::with(
+                "gh",
+                vec![
+                    ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+                    ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+                ],
+            )),
+            Arc::new(LoggingBridge),
         );
         Self {
             scratch,
@@ -1124,4 +1135,140 @@ fn the_inbox_hears_of_newly_settled_requests_and_of_the_run_end() {
 
     assert_eq!(run.permission_requests.len(), 1);
     assert_eq!(*changed.lock().unwrap(), ["demo", "demo"]);
+}
+
+/// Answers every Operations call as a task log append.
+struct LoggingBridge;
+
+impl OperationsBridge for LoggingBridge {
+    fn call(&self, method: &str, params: Value) -> Value {
+        assert_eq!(method, "task.log-append");
+        json!({ "ok": true, "data": { "status": "appended", "path": params["id"] } })
+    }
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = git_command()
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// A repository with one commit whose `origin` is an empty bare repository.
+fn pushable() -> (Scratch, Scratch) {
+    let (remote, worktree) = (Scratch::new(), Scratch::new());
+    git(&remote.0, &["init", "-q", "--bare", "-b", "main"]);
+    git(&worktree.0, &["init", "-q", "-b", "main"]);
+    git(&worktree.0, &["config", "user.email", "wtm@example.com"]);
+    git(&worktree.0, &["config", "user.name", "WTM"]);
+    git(
+        &worktree.0,
+        &["remote", "add", "origin", &remote.0.to_string_lossy()],
+    );
+    fs::write(worktree.0.join("a.txt"), "one").unwrap();
+    git(&worktree.0, &["add", "a.txt"]);
+    git(&worktree.0, &["commit", "-q", "-m", "First change"]);
+    (remote, worktree)
+}
+
+const VERIFIED_PUSH: &str = "authorization: { allow: [push, task_log] }
+steps:
+  - id: verify
+    command: [/bin/sh, -c, 'exit 0']
+    bind: git_fingerprint
+  - id: ship
+    publish:
+      - git.push
+      - wtm.task_log: { entry: 'Pushed {task.branch}' }
+";
+
+fn publishing(steps: &str, worktree: &Scratch) -> Harness {
+    let tasks = FakeTasks {
+        worktree: Some(worktree.0.clone()),
+        ..FakeTasks::default()
+    };
+    Harness::new(&format!("{TARGET}{steps}"), tasks, FakeSessions::default())
+}
+
+fn effects(run: &RunState, step: &str) -> Vec<EffectStatus> {
+    let attempt = run.items[0]
+        .steps
+        .iter()
+        .find(|attempt| attempt.step == step);
+    attempt
+        .unwrap()
+        .effects
+        .iter()
+        .map(|effect| effect.status)
+        .collect()
+}
+
+#[test]
+fn publish_steps_push_the_verified_branch_and_log_it() {
+    let (remote, worktree) = pushable();
+    let harness = publishing(VERIFIED_PUSH, &worktree);
+
+    let run = harness.run();
+
+    assert_eq!(run.outcome, Some(RunOutcome::Reported));
+    assert_eq!(effects(&run, "ship"), [EffectStatus::Executed; 2]);
+    assert_eq!(
+        git(&remote.0, &["rev-parse", "wtm/demo/branch"]),
+        git(&worktree.0, &["rev-parse", "HEAD"])
+    );
+}
+
+#[test]
+fn test_runs_stage_publish_effects_without_pushing() {
+    let (remote, worktree) = pushable();
+    let harness = publishing(VERIFIED_PUSH, &worktree);
+
+    let run = harness.run_with(true, None);
+
+    assert_eq!(effects(&run, "ship"), [EffectStatus::Staged; 2]);
+    assert_eq!(git(&remote.0, &["branch", "--list"]), "");
+}
+
+#[test]
+fn a_change_after_verification_holds_back_the_push() {
+    let (remote, worktree) = pushable();
+    let steps = "authorization: { allow: [push] }
+steps:
+  - id: verify
+    command: [/bin/sh, -c, 'exit 0']
+    bind: git_fingerprint
+  - id: edit
+    command: [/bin/sh, -c, 'echo two > a.txt']
+  - id: ship
+    publish: git.push
+";
+    let harness = publishing(steps, &worktree);
+
+    let run = harness.run();
+
+    assert_eq!(run.failure_reason, Some(FailureReason::StepFailed));
+    assert_eq!(causes(&run)[2], Some("stale_receipt:verify"));
+    assert_eq!(git(&remote.0, &["branch", "--list"]), "");
+}
+
+#[test]
+fn a_bound_step_that_has_not_run_does_not_hold_back_the_push() {
+    let (_remote, worktree) = pushable();
+    let steps = "authorization: { allow: [push] }
+steps:
+  - id: ship
+    publish: [git.push]
+  - id: verify
+    command: [/bin/sh, -c, 'exit 0']
+    bind: git_fingerprint
+";
+    let harness = publishing(steps, &worktree);
+
+    let run = harness.run();
+
+    assert_eq!(effects(&run, "ship"), [EffectStatus::Executed]);
 }

@@ -77,6 +77,10 @@ impl TaskCommands {
             env,
         })
     }
+
+    pub fn variables(&self) -> &[(String, String)] {
+        &self.variables
+    }
 }
 
 impl CommandContext for TaskCommands {

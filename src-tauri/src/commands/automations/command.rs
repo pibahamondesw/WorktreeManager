@@ -127,6 +127,22 @@ impl<C: CommandContext> CommandExecutor<C> {
         Ok(Execution::Finished(receipt.report()))
     }
 
+    pub fn context(&self) -> &C {
+        &self.context
+    }
+
+    /// Whether the bound step ran and its latest receipt no longer vouches for its worktree.
+    pub fn stale(&self, request: &StepRequest, step: &CommandStep) -> Result<bool, String> {
+        let latest = self
+            .receipts
+            .latest(request.item, request.stage, &request.step.id)?;
+        if latest.is_none() {
+            return Ok(false);
+        }
+        let prepared = self.prepare(request, step)?;
+        Ok(self.reusable_receipt(request, step, &prepared)?.is_none())
+    }
+
     fn reusable_receipt(
         &self,
         request: &StepRequest,

@@ -17,7 +17,7 @@ const REPAIR_ROUNDS: &str = "budget:repair_rounds";
 fn step(id: &str, kind: StepKind) -> Step {
     let capacity = match kind {
         StepKind::Wait(_) | StepKind::Approval(_) => Capacity::Release,
-        StepKind::Agent(_) | StepKind::Command(_) => Capacity::Hold,
+        _ => Capacity::Hold,
     };
     Step {
         id: id.into(),

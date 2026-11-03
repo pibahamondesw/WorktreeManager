@@ -137,8 +137,49 @@ pub enum RunEvent {
         #[serde(default)]
         kind: RequestKind,
     },
+    /// One effect of a `publish` attempt: what it did, would do in a Test run, or why not.
+    EffectRecorded {
+        item: String,
+        step: String,
+        attempt: u32,
+        effect: String,
+        status: EffectStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        /// What the effect produced or reused: a PR URL, an issue identifier, a task id or a
+        /// pushed commit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+        /// Auxiliary cleanup that did not complete; it never fails the effect.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        warnings: Vec<String>,
+    },
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectStatus {
+    Executed,
+    /// A Test run recorded the effect without executing it.
+    Staged,
+    /// What the effect asks for already holds, such as a PR for the branch.
+    Reconciled,
+    /// Nothing to do, such as a task log with the vault disabled.
+    Skipped,
+    Denied,
+    Capped,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StepEffect {
+    pub effect: String,
+    pub status: EffectStatus,
+    pub detail: Option<String>,
+    pub reference: Option<String>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -357,6 +398,8 @@ pub struct StepAttemptState {
     pub conversation_id: Option<String>,
     pub reply: Option<String>,
     pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<StepEffect>,
 }
 
 impl RunStatus {
@@ -556,6 +599,29 @@ impl RunState {
                 session_id,
                 kind,
             }),
+            RunEvent::EffectRecorded {
+                item,
+                step,
+                attempt,
+                effect,
+                status,
+                detail,
+                reference,
+                warnings,
+            } => {
+                if let Some(attempt) = self
+                    .open_item(&item)
+                    .and_then(|item| item.open_attempt(step, attempt))
+                {
+                    attempt.effects.push(StepEffect {
+                        effect,
+                        status,
+                        detail,
+                        reference,
+                        warnings,
+                    });
+                }
+            }
             RunEvent::CandidateSkipped { .. }
             | RunEvent::StepReceipt { .. }
             | RunEvent::Unknown => {}
@@ -633,6 +699,7 @@ impl ItemState {
                     conversation_id: None,
                     reply: None,
                     result: None,
+                    effects: Vec::new(),
                 });
                 self.steps.len() - 1
             }

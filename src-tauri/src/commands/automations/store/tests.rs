@@ -263,6 +263,7 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 conversation_id: None,
                 reply: None,
                 result: None,
+                effects: Vec::new(),
             },
             StepAttemptState {
                 step: "fix".into(),
@@ -279,6 +280,7 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 conversation_id: None,
                 reply: None,
                 result: None,
+                effects: Vec::new(),
             },
         ]
     );

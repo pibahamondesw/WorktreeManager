@@ -1,6 +1,6 @@
 import { ReactNode, useState } from "react";
 import { Button } from "../ui/Button";
-import { PipelineStep, StepAttempt } from "../../services/automations";
+import { PipelineStep, StepAttempt, StepEffect } from "../../services/automations";
 import {
   StepProgress,
   onReject,
@@ -30,6 +30,7 @@ export function AutomationStepDetail({
   const facts: Fact[] = [
     ...kindFacts(step),
     ...attemptFacts(progress),
+    ...effectFacts(progress?.latest?.effects ?? []),
     ["Next", step.next ?? "Following step"],
     ["On fail", transitionLabel(step.onFail)],
     ...(rejectTransition ? [["On reject", transitionLabel(rejectTransition)] as Fact] : []),
@@ -95,7 +96,19 @@ function kindFacts({ kind }: PipelineStep): Fact[] {
       ["Inbox entry", NOT_RECORDED],
     ];
   }
-  return [["Details", NOT_RECORDED]];
+  return [["Effects", kind.publish.map((effect) => effect.effect).join(", ")]];
+}
+
+/** What each effect of the latest publish attempt did, or recorded in a Test run. */
+function effectFacts(effects: StepEffect[]): Fact[] {
+  return effects.map(
+    ({ effect, status, detail, reference, warnings }, index): Fact => [
+      `${index + 1}. ${effect}`,
+      [status, detail, reference, ...warnings.map((warning) => `warning: ${warning}`)]
+        .filter(Boolean)
+        .join(" · "),
+    ]
+  );
 }
 
 const ATTEMPT_FIELDS: [label: string, field: keyof StepAttempt][] = [

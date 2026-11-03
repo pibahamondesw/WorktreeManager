@@ -22,11 +22,11 @@ import {
   VaultConfig,
 } from "../types";
 import { compareTaskPins } from "../utils";
-import { LinearService } from "./linear";
+import { LinearService, MarkedIssueInput } from "./linear";
 import { taskLinearStore } from "./taskLinear";
 import { persist } from "./store";
 import { persistedEntries } from "./preferences";
-import { archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
+import { appendTaskNoteEntry, archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
 import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
 import {
@@ -161,6 +161,16 @@ export function operationError(error: unknown): OperationError {
         "operation_failed",
         "The operation failed. Inspect the app and retry explicitly."
       );
+}
+
+/** Linear's own messages say what failed; they never carry the credential. */
+function linearFailure<T>(request: Promise<T>): Promise<T> {
+  return request.catch((error: unknown) => {
+    throw new OperationError(
+      "linear_failed",
+      error instanceof Error ? error.message : "The Linear request failed."
+    );
+  });
 }
 
 export class Operations {
@@ -985,6 +995,37 @@ export class Operations {
       });
       return updated;
     });
+  }
+
+  private linear(workspaceId: string) {
+    const workspace = this.workspace(workspaceId);
+    if (!workspace.linearApiKey)
+      throw new OperationError(
+        "linear_not_configured",
+        "Configure Linear in this workspace first."
+      );
+    return new LinearService(workspace.linearApiKey);
+  }
+
+  /** Automation effects: the issue marked in its description, created or retitled. */
+  upsertMarkedIssue(workspaceId: string, input: MarkedIssueInput) {
+    return linearFailure(this.linear(workspaceId).upsertMarkedIssue(input));
+  }
+
+  moveMarkedIssue(workspaceId: string, marker: string, state: string) {
+    return linearFailure(this.linear(workspaceId).moveMarkedIssue(marker, state));
+  }
+
+  /** Appends an automation's entry to the task log once per key. */
+  appendTaskLog(id: string, entry: string, key: string) {
+    const task = this.task(id);
+    return appendTaskNoteEntry(
+      this.getState().vault,
+      this.workspace(task.workspaceId),
+      task,
+      entry,
+      key
+    );
   }
 
   renameTask(id: string, title: string) {

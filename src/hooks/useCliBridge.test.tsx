@@ -9,7 +9,9 @@ import { DEFAULT_STATE } from "../types";
 
 const { invoke, dispatch, channels } = vi.hoisted(() => ({
   invoke: vi.fn<typeof tauriInvoke>().mockResolvedValue(undefined),
-  channels: [] as { onmessage: (event: { token: string; request: CliBridgeRequest }) => void }[],
+  channels: [] as {
+    onmessage: (event: { token: string; request: CliBridgeRequest; engine?: boolean }) => void;
+  }[],
   dispatch: vi.fn().mockResolvedValue({ ok: true, data: [] }),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -48,7 +50,21 @@ describe("frontend cli bridge", () => {
     if (!("session" in registration)) throw new Error("CLI bridge registration is missing");
     const request = { id: "r1", version: 1, method: "workspace.list", params: {} };
     await act(async () => channels[0].onmessage({ token: "token1", request }));
-    expect(dispatch).toHaveBeenCalledWith(operations, request, expect.any(Function), undefined);
+    expect(dispatch).toHaveBeenCalledWith(
+      operations,
+      request,
+      expect.any(Function),
+      undefined,
+      false
+    );
+    await act(async () => channels[0].onmessage({ token: "token2", request, engine: true }));
+    expect(dispatch).toHaveBeenLastCalledWith(
+      operations,
+      request,
+      expect.any(Function),
+      undefined,
+      true
+    );
     expect(invoke).toHaveBeenCalledWith("cli_bridge_complete", {
       session: registration.session,
       token: "token1",

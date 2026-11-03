@@ -83,6 +83,7 @@ pub fn run() {
                 commands::workspace::remove_task_workspace,
                 commands::notes::ensure_task_note,
                 commands::notes::archive_task_note,
+                commands::notes::append_task_note,
                 commands::vault::scaffold_vault,
                 commands::vault::ensure_vault,
                 commands::claude_config::cleanup_claude_json_stale,

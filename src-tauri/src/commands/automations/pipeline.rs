@@ -434,7 +434,7 @@ pub fn drive(
 fn start_event(request: &StepRequest) -> RunEvent {
     let status = match request.step.kind {
         StepKind::Wait(_) | StepKind::Approval(_) => StepStatus::Waiting,
-        StepKind::Agent(_) | StepKind::Command(_) => StepStatus::Running,
+        StepKind::Agent(_) | StepKind::Command(_) | StepKind::Publish(_) => StepStatus::Running,
     };
     step_event(request, status, None)
 }
@@ -479,7 +479,7 @@ fn reject_transition(step: &Step) -> &Transition {
     let on_reject = match &step.kind {
         StepKind::Agent(agent) => agent.on_reject.as_ref(),
         StepKind::Approval(approval) => approval.on_reject.as_ref(),
-        StepKind::Command(_) | StepKind::Wait(_) => None,
+        StepKind::Command(_) | StepKind::Wait(_) | StepKind::Publish(_) => None,
     };
     on_reject.unwrap_or(&step.on_fail)
 }
