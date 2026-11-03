@@ -14,7 +14,9 @@ use std::time::UNIX_EPOCH;
 
 use serde_json::{json, Value};
 
-use super::permission::{Grant, PermissionMode, PermissionPolicy};
+use super::permission::{
+    Grant, PermissionMode, PermissionPolicy, UnattendedMode, UnattendedPolicy,
+};
 use super::{
     AgentAdapter, AgentCapabilities, ChatRequest, ConversationFork, ForkLaunch, ForkMethod,
     ForkRequest, LaunchContext, LaunchSpec,
@@ -216,6 +218,7 @@ impl AgentAdapter for Claude {
             images: true,
             headless: true,
             tool_rules: true,
+            classifier_approval: true,
             read_only: true,
             structured_output: true,
         }
@@ -520,9 +523,11 @@ fn session_args(policy: &PermissionPolicy, output_schema: Option<&Value>) -> Vec
 }
 
 /// Interactive sessions let Claude's classifier approve what it can and ask about the rest.
-/// Unattended ones never prompt: only the allowed tools run without asking, and every other
-/// request is denied. Granted operations become allow rules; the rest are denied outright so no
-/// user-wide rule can allow them.
+/// Unattended `auto` sessions keep the classifier; what it refuses is denied, and once it refuses
+/// too often Claude asks again, which the pending timeout resolves. `strict` and read-only ones
+/// never prompt: only the allowed tools run, every other request is denied. Granted operations
+/// become allow rules; the rest are denied outright so no user-wide rule can allow them, and deny
+/// rules always precede the classifier.
 fn permission_args(policy: &PermissionPolicy) -> Vec<String> {
     let PermissionPolicy::Unattended(policy) = policy else {
         return [
@@ -552,6 +557,7 @@ fn permission_args(policy: &PermissionPolicy) -> Vec<String> {
                 .map(|rule| rule.to_string()),
         )
         .chain(ALWAYS_DENIED.map(String::from))
+        .flat_map(with_prefixed_form)
         .chain(
             policy
                 .read_only
@@ -559,7 +565,10 @@ fn permission_args(policy: &PermissionPolicy) -> Vec<String> {
                 .into_iter()
                 .flatten(),
         );
-    let mut args = vec!["--permission-mode".to_string(), "dontAsk".to_string()];
+    let mut args = vec![
+        "--permission-mode".to_string(),
+        unattended_mode(policy).to_string(),
+    ];
     for (flag, rules) in [
         ("--allowedTools", allow.collect::<Vec<_>>()),
         ("--disallowedTools", deny.collect()),
@@ -570,6 +579,24 @@ fn permission_args(policy: &PermissionPolicy) -> Vec<String> {
         }
     }
     args
+}
+
+/// Read-only sessions stay strict: the classifier would approve Bash commands that edit files.
+fn unattended_mode(policy: &UnattendedPolicy) -> &'static str {
+    match policy.mode {
+        UnattendedMode::Auto if !policy.read_only => "auto",
+        _ => "dontAsk",
+    }
+}
+
+/// Rules match the command a hook rewrote, so a hook prefixing commands (`rtk git push …`)
+/// would escape a Bash deny rule; deny the prefixed form too.
+fn with_prefixed_form(rule: String) -> impl Iterator<Item = String> {
+    let prefixed = rule
+        .strip_prefix("Bash(")
+        .filter(|pattern| !pattern.starts_with('*'))
+        .map(|pattern| format!("Bash(* {pattern}"));
+    std::iter::once(rule).chain(prefixed)
 }
 
 fn grant_rules(grant: Grant) -> &'static [&'static str] {
@@ -644,7 +671,6 @@ fn cli_version(version_output: &str) -> Option<(u32, u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::agents::permission::UnattendedPolicy;
     use std::os::unix::fs::PermissionsExt;
 
     fn temp_store(tag: &str) -> PathBuf {
@@ -930,11 +956,22 @@ mod tests {
     ];
 
     fn unattended(allow: &[&str], deny: &[&str], grants: &[Grant]) -> PermissionPolicy {
-        PermissionPolicy::Unattended(UnattendedPolicy {
+        PermissionPolicy::Unattended(policy(allow, deny, grants))
+    }
+
+    fn policy(allow: &[&str], deny: &[&str], grants: &[Grant]) -> UnattendedPolicy {
+        UnattendedPolicy {
             allow: allow.iter().map(|rule| rule.to_string()).collect(),
             deny: deny.iter().map(|rule| rule.to_string()).collect(),
             grants: grants.to_vec(),
             ..Default::default()
+        }
+    }
+
+    fn strict(allow: &[&str], deny: &[&str]) -> PermissionPolicy {
+        PermissionPolicy::Unattended(UnattendedPolicy {
+            mode: UnattendedMode::Strict,
+            ..policy(allow, deny, &[])
         })
     }
 
@@ -942,17 +979,39 @@ mod tests {
         first
             .iter()
             .chain(&REFUSED)
-            .map(|rule| rule.to_string())
+            .flat_map(|rule| with_prefixed_form(rule.to_string()))
             .collect()
     }
 
     #[test]
-    fn unattended_sessions_never_prompt_and_pass_their_tool_rules() {
-        let mut expected = ["--permission-mode", "dontAsk", "--disallowedTools"]
+    fn bash_deny_rules_also_deny_the_command_behind_a_prefix() {
+        let forms = |rule: &str| with_prefixed_form(rule.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            forms("Bash(git push *)"),
+            ["Bash(git push *)", "Bash(* git push *)"]
+        );
+        assert_eq!(forms("Bash(*)"), ["Bash(*)"]);
+        assert_eq!(forms("WebFetch"), ["WebFetch"]);
+    }
+
+    #[test]
+    fn auto_sessions_keep_the_classifier_behind_their_deny_rules() {
+        let mut expected = ["--permission-mode", "auto", "--disallowedTools"]
             .map(String::from)
             .to_vec();
         expected.extend(denied(&[]));
         assert_eq!(permission_args(&unattended(&[], &[], &[])), expected);
+        assert!(expected.contains(&"Bash(* gh pr merge *)".to_string()));
+        assert!(expected.contains(&"Bash(* git * --no-verify*)".to_string()));
+    }
+
+    #[test]
+    fn strict_sessions_never_prompt_and_pass_their_tool_rules() {
+        let mut expected = ["--permission-mode", "dontAsk", "--disallowedTools"]
+            .map(String::from)
+            .to_vec();
+        expected.extend(denied(&[]));
+        assert_eq!(permission_args(&strict(&[], &[])), expected);
         let mut expected = [
             "--permission-mode",
             "dontAsk",
@@ -965,11 +1024,7 @@ mod tests {
         .to_vec();
         expected.extend(denied(&["WebFetch"]));
         assert_eq!(
-            permission_args(&unattended(
-                &["Bash(git commit *)", "Edit"],
-                &["WebFetch"],
-                &[]
-            )),
+            permission_args(&strict(&["Bash(git commit *)", "Edit"], &["WebFetch"])),
             expected
         );
     }
@@ -985,7 +1040,7 @@ mod tests {
             args[..split],
             [
                 "--permission-mode",
-                "dontAsk",
+                "auto",
                 "--allowedTools",
                 "Bash(git add *)",
                 "Bash(git commit *)",
@@ -999,7 +1054,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_sessions_are_granted_nothing_and_cannot_edit() {
+    fn read_only_sessions_run_strict_are_granted_nothing_and_cannot_edit() {
         let policy = PermissionPolicy::Unattended(UnattendedPolicy {
             grants: vec![Grant::Push],
             read_only: true,

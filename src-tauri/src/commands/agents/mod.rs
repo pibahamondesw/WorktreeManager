@@ -96,6 +96,8 @@ pub struct AgentCapabilities {
     pub headless: bool,
     /// Unattended sessions enforce per-session allow and deny tool rules.
     pub tool_rules: bool,
+    /// Unattended sessions can let the agent's classifier approve calls no tool rule covers.
+    pub classifier_approval: bool,
     /// Unattended sessions can run unable to edit files or run mutating tools.
     pub read_only: bool,
     /// A session can be held to a JSON schema; its final reply is then the JSON it produced.
@@ -336,6 +338,7 @@ mod tests {
                 images: true,
                 headless: true,
                 tool_rules: true,
+                classifier_approval: true,
                 read_only: true,
                 structured_output: true,
             }
@@ -360,6 +363,7 @@ mod tests {
                 images: true,
                 headless: true,
                 tool_rules: false,
+                classifier_approval: false,
                 read_only: true,
                 structured_output: true,
             }

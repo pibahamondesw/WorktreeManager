@@ -146,6 +146,7 @@ impl AgentAdapter for Codex {
             images: true,
             headless: true,
             tool_rules: false,
+            classifier_approval: false,
             read_only: true,
             structured_output: true,
         }

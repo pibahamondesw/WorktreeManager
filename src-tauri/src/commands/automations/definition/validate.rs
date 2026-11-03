@@ -19,7 +19,9 @@ use super::{
     Step, StepKind, StopAfter, Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, Verb,
     WaitStep, WorkspaceRef,
 };
-use crate::commands::agents::permission::{PendingDefault, PermissionMode, UnattendedPolicy};
+use crate::commands::agents::permission::{
+    PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
+};
 use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
 
 const SUPPORTED_SCHEMA: u64 = 1;
@@ -672,12 +674,15 @@ fn agent_id(report: &mut Report, env: &Environment, value: &Value, field: &str) 
 
 fn permission(report: &mut Report, value: &Value, field: &str) -> Option<UnattendedPolicy> {
     if value.is_string() {
-        permission_mode(report, value, field)?;
-        return Some(UnattendedPolicy::default());
+        let mode = permission_mode(report, value, field)?;
+        return Some(UnattendedPolicy {
+            mode,
+            ..UnattendedPolicy::default()
+        });
     }
     let mut fields = Fields::of(report, value, field)?;
     let defaults = UnattendedPolicy::default();
-    let mode = fields.or(report, "mode", PermissionMode::Unattended, permission_mode);
+    let mode = fields.or(report, "mode", defaults.mode, permission_mode);
     let allow = fields.or(report, "allow", defaults.allow, string_list);
     let deny = fields.or(report, "deny", defaults.deny, string_list);
     let pending_timeout = fields.or(
@@ -703,8 +708,8 @@ fn permission(report: &mut Report, value: &Value, field: &str) -> Option<Unatten
         },
     );
     fields.finish(report);
-    mode?;
     Some(UnattendedPolicy {
+        mode: mode?,
         allow: allow?,
         deny: deny?,
         pending_timeout: pending_timeout?,
@@ -713,7 +718,8 @@ fn permission(report: &mut Report, value: &Value, field: &str) -> Option<Unatten
     })
 }
 
-fn permission_mode(report: &mut Report, value: &Value, field: &str) -> Option<PermissionMode> {
+/// `unattended`, the only mode before `strict` existed, keeps its meaning as `auto`.
+fn permission_mode(report: &mut Report, value: &Value, field: &str) -> Option<UnattendedMode> {
     if value.as_str() == Some("interactive") {
         report.error(
             IssueKind::Unsupported,
@@ -726,7 +732,11 @@ fn permission_mode(report: &mut Report, value: &Value, field: &str) -> Option<Pe
         report,
         value,
         field,
-        &[("unattended", PermissionMode::Unattended)],
+        &[
+            ("auto", UnattendedMode::Auto),
+            ("strict", UnattendedMode::Strict),
+            ("unattended", UnattendedMode::Auto),
+        ],
     )
 }
 
@@ -745,7 +755,7 @@ fn resolve_agent(
         );
         return None;
     };
-    let settings = AgentSettings {
+    let mut settings = AgentSettings {
         id,
         model: step
             .model
@@ -758,6 +768,9 @@ fn resolve_agent(
             .unwrap_or_default(),
     };
     let agent = env.agents.iter().find(|agent| agent.id == settings.id)?;
+    if !agent.capabilities.classifier_approval {
+        settings.permission.mode = UnattendedMode::Strict;
+    }
     let missing = missing_capabilities(agent, &settings);
     for capability in &missing {
         report.error(

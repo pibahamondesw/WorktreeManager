@@ -56,10 +56,22 @@ impl Grant {
     ];
 }
 
+/// What an unattended session does with a tool call no rule allows or denies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnattendedMode {
+    /// The agent's classifier approves what it judges safe; the rest is refused or pending.
+    #[default]
+    Auto,
+    /// Refused.
+    Strict,
+}
+
 /// Agent-native tool rules: `allow` runs without asking, `deny` never runs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnattendedPolicy {
+    pub mode: UnattendedMode,
     pub allow: Vec<String>,
     pub deny: Vec<String>,
     #[serde(rename = "pendingTimeoutSecs", serialize_with = "whole_seconds")]
@@ -80,6 +92,7 @@ fn whole_seconds<S: Serializer>(duration: &Duration, serializer: S) -> Result<S:
 impl Default for UnattendedPolicy {
     fn default() -> Self {
         Self {
+            mode: UnattendedMode::default(),
             allow: Vec::new(),
             deny: Vec::new(),
             pending_timeout: DEFAULT_PENDING_TIMEOUT,
@@ -149,6 +162,10 @@ mod tests {
             serde_json::to_value(PermissionMode::Unattended).unwrap(),
             "unattended"
         );
+        assert_eq!(
+            serde_json::to_value([UnattendedMode::Auto, UnattendedMode::Strict]).unwrap(),
+            serde_json::json!(["auto", "strict"])
+        );
     }
 
     #[test]
@@ -156,6 +173,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(UnattendedPolicy::default()).unwrap(),
             serde_json::json!({
+                "mode": "auto",
                 "allow": [],
                 "deny": [],
                 "pendingTimeoutSecs": 600,

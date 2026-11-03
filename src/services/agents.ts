@@ -20,6 +20,8 @@ interface AgentCapabilities {
   headless: boolean;
   /** Unattended sessions enforce per-session allow and deny tool rules. */
   toolRules: boolean;
+  /** Unattended sessions can let the agent's classifier approve calls no tool rule covers. */
+  classifierApproval: boolean;
   /** Unattended sessions can run unable to edit files or run mutating tools. */
   readOnly: boolean;
   /** A session can be held to a JSON schema. */
@@ -90,6 +92,7 @@ const NO_CAPABILITIES: AgentCapabilities = {
   images: false,
   headless: false,
   toolRules: false,
+  classifierApproval: false,
   readOnly: false,
   structuredOutput: false,
 };

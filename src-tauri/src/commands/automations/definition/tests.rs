@@ -46,6 +46,7 @@ fn capabilities(enabled: bool) -> AgentCapabilities {
         images: enabled,
         headless: enabled,
         tool_rules: enabled,
+        classifier_approval: enabled,
         read_only: enabled,
         structured_output: enabled,
     }
@@ -83,6 +84,7 @@ fn env() -> Environment {
             AgentDescriptor {
                 capabilities: AgentCapabilities {
                     tool_rules: false,
+                    classifier_approval: false,
                     ..capabilities(true)
                 },
                 ..descriptor("sandboxed", true, true)
@@ -217,6 +219,7 @@ fn minimal_routine_fills_every_default() {
             "model": "default",
             "effort": null,
             "permission": {
+                "mode": "auto",
                 "allow": [],
                 "deny": [],
                 "pendingTimeoutSecs": 600,
@@ -726,7 +729,7 @@ fn step_agents_override_the_top_level_agent() {
         pending_default: allow
       on_reject: block
   - id: review
-    agent: { id: codex, permission: unattended, effort: high }
+    agent: { id: codex, permission: strict, effort: high }
 ",
     ));
     let work = &kind(&definition.steps[0])["agent"];
@@ -737,6 +740,7 @@ fn step_agents_override_the_top_level_agent() {
             "model": "opus",
             "effort": null,
             "permission": {
+                "mode": "auto",
                 "allow": ["Bash(make:*)"],
                 "deny": ["WebFetch"],
                 "pendingTimeoutSecs": 300,
@@ -747,8 +751,12 @@ fn step_agents_override_the_top_level_agent() {
     assert_eq!(work["onReject"], "block");
     let review = &kind(&definition.steps[1])["agent"]["agent"];
     assert_eq!(
-        (&review["id"], &review["effort"]),
-        (&json!("codex"), &json!("high"))
+        (
+            &review["id"],
+            &review["effort"],
+            &review["permission"]["mode"]
+        ),
+        (&json!("codex"), &json!("high"), &json!("strict"))
     );
 }
 
@@ -761,7 +769,7 @@ fn permissions_are_unattended_only() {
         IssueKind::Unsupported,
     );
     assert_issue(
-        &with_agent("{ id: claude, permission: { mode: auto } }"),
+        &with_agent("{ id: claude, permission: { mode: classifier } }"),
         "agent.permission.mode",
         IssueKind::Invalid,
     );
@@ -770,6 +778,20 @@ fn permissions_are_unattended_only() {
         "agent.permission.pending_default",
         IssueKind::Invalid,
     );
+}
+
+#[test]
+fn unattended_steps_default_to_auto_and_agents_without_a_classifier_run_strict() {
+    let mode = |agent: &str| {
+        let definition = valid(&routine("").replace("{ id: claude }", agent));
+        kind(only_step(&definition))["agent"]["agent"]["permission"]["mode"].clone()
+    };
+    assert_eq!(mode("{ id: claude }"), "auto");
+    assert_eq!(
+        mode("{ id: claude, permission: { mode: strict } }"),
+        "strict"
+    );
+    assert_eq!(mode("{ id: sandboxed, permission: auto }"), "strict");
 }
 
 #[test]
