@@ -75,6 +75,20 @@ impl Tasks for BridgeTasks {
     fn get(&self, task_id: &str) -> Result<ResolvedTask, TaskFailure> {
         resolved(self.0.call("task.get", json!({ "id": task_id })))
     }
+
+    fn find(&self, workspace_id: &str, branch: &str) -> Result<Option<ResolvedTask>, TaskFailure> {
+        let listed = self
+            .0
+            .call("task.list", json!({ "workspaceId": workspace_id }));
+        if listed["ok"] != true {
+            return Err(failure_of(&listed));
+        }
+        let tasks = listed["data"].as_array().into_iter().flatten();
+        let found = tasks
+            .filter(|task| task["branchName"] == branch)
+            .find_map(|task| task["id"].as_str());
+        found.map(|task_id| self.get(task_id)).transpose()
+    }
 }
 
 /// Reads an Operations response; a failed creation lists the worktrees it left on disk.
@@ -83,18 +97,22 @@ fn resolved(response: Value) -> Result<ResolvedTask, TaskFailure> {
         return task_of(&response["data"])
             .ok_or_else(|| TaskFailure::new("The app answered without a task"));
     }
+    Err(failure_of(&response))
+}
+
+fn failure_of(response: &Value) -> TaskFailure {
     let error = &response["error"];
     let details = &error["details"];
     let members = details["completedMembers"]
         .as_array()
         .or_else(|| details["task"]["members"].as_array());
-    Err(TaskFailure {
+    TaskFailure {
         message: error["message"]
             .as_str()
             .unwrap_or("The task could not be resolved")
             .to_string(),
         worktrees: members.map(|members| paths(members)).unwrap_or_default(),
-    })
+    }
 }
 
 fn task_of(task: &Value) -> Option<ResolvedTask> {

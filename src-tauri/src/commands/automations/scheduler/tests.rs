@@ -614,8 +614,31 @@ fn runs_an_earlier_process_left_active_end_interrupted_without_counting() {
     let done = manual(&store, "quit", "manual:done", false);
     let writer = store.writer("quit").unwrap();
     writer.append(&running, &RunEvent::Started).unwrap();
+    for (item, status) in [
+        ("queued", ItemStatus::Queued),
+        ("active", ItemStatus::Active),
+        ("waiting", ItemStatus::Waiting),
+        ("completed", ItemStatus::Completed),
+    ] {
+        let created = RunEvent::ItemCreated {
+            item: item.into(),
+            version: "1".into(),
+            title: None,
+            data: Default::default(),
+        };
+        writer.append(&done, &created).unwrap();
+        let moved = RunEvent::ItemStatus {
+            item: item.into(),
+            status,
+            phase: Some("fix".into()),
+            stage: None,
+            cause: None,
+            counter: None,
+        };
+        writer.append(&done, &moved).unwrap();
+    }
     let completed = RunEvent::Completed {
-        outcome: RunOutcome::Noop,
+        outcome: RunOutcome::Dispatched,
     };
     writer.append(&done, &completed).unwrap();
     drop(writer);
@@ -629,6 +652,41 @@ fn runs_an_earlier_process_left_active_end_interrupted_without_counting() {
         assert_eq!(run.failure_reason, Some(FailureReason::Interrupted));
     }
     assert_eq!(status(&done), RunStatus::Completed);
+    let items: Vec<_> = store
+        .run("quit", &done)
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|item| (item.id, item.status, item.cause, item.phase))
+        .collect();
+    let interrupted = |id: &str| {
+        (
+            id.to_string(),
+            ItemStatus::Failed,
+            Some("interrupted".to_string()),
+            Some("fix".to_string()),
+        )
+    };
+    assert_eq!(
+        items,
+        [
+            interrupted("queued"),
+            interrupted("active"),
+            (
+                "waiting".into(),
+                ItemStatus::Waiting,
+                None,
+                Some("fix".into())
+            ),
+            (
+                "completed".into(),
+                ItemStatus::Completed,
+                None,
+                Some("fix".into())
+            ),
+        ]
+    );
+    assert!(!scratch.0.join("automations").join("never-ran").exists());
     assert_eq!(store.state("quit").unwrap().consecutive_failures, 0);
 
     let current = manual(&store, "quit", "manual:current", false);

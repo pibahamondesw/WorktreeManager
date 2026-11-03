@@ -1,11 +1,6 @@
 //! The selection pass of a campaign run: asks the selector what to work on, keeps the candidates
 //! that are new work and fit, and records them as queued items of the run. The caller starts the
 //! items, then completes or fails the run; the cursor is stored only when the run completes.
-#![cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the run executor (WOR-249) is the first caller")
-)]
-
 pub mod script;
 #[cfg(test)]
 mod tests;
@@ -17,8 +12,8 @@ use serde_json::{Map, Value};
 
 use super::scheduler::record_failure;
 use super::store::events::{
-    FailureReason, ItemState, ItemStatus, RunEvent, RunOutcome, RunSource, RunState, RunStatus,
-    SkipReason,
+    EffectStatus, FailureReason, ItemState, ItemStatus, RunEvent, RunOutcome, RunSource, RunState,
+    RunStatus, SkipReason,
 };
 use super::store::{Actor, PauseReason, RunStore, Toggle};
 
@@ -73,14 +68,23 @@ pub trait Selector {
     fn select(&self, input: &SelectorInput) -> Result<SelectorOutput, String>;
 }
 
-/// Files touched by the automation's open PRs.
-pub trait BusyFiles {
-    fn busy_files(&self, automation: &str) -> Result<Vec<String>, String>;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenPullRequest {
+    pub url: String,
+    pub files: Vec<String>,
+}
+
+/// GitHub, asked which of the automation's PRs are still open.
+pub trait OpenPullRequests: Send + Sync {
+    /// The PRs among `urls` that are open, with the files each touches.
+    fn open(&self, urls: &[String]) -> Result<Vec<OpenPullRequest>, String>;
 }
 
 pub struct SelectionPolicy {
     /// `pools.active`: items holding capacity (queued or active) across the automation.
     pub active_pool: u64,
+    /// `pools.open_prs`: open PRs the automation's items created.
+    pub open_prs: u64,
     pub max_new_items: Option<u64>,
     pub exclusive_on: Vec<String>,
     /// `completion.selector_empty`.
@@ -113,16 +117,21 @@ pub struct Dispatch {
 pub fn select(
     pass: &SelectionPass,
     selector: &dyn Selector,
-    busy_files: &dyn BusyFiles,
+    pull_requests: &dyn OpenPullRequests,
 ) -> Result<Selection, String> {
     let runs = history(pass.store, pass.automation)?;
     let run = pass.store.run(pass.automation, pass.run_id)?;
     let cursor = pass.store.state(pass.automation)?.cursor;
-    let output = busy_files
-        .busy_files(pass.automation)
-        .and_then(|busy_files| {
+    let mut free = free_slots(&runs, pass.policy.active_pool);
+    let output = pull_requests
+        .open(&created_pull_requests(&runs))
+        .and_then(|open| {
+            free = free.min(pass.policy.open_prs.saturating_sub(open.len() as u64));
+            let mut busy_files: Vec<String> = open.into_iter().flat_map(|pr| pr.files).collect();
+            busy_files.sort_unstable();
+            busy_files.dedup();
             let input = SelectorInput {
-                free: free_slots(&runs, pass.policy.active_pool),
+                free,
                 active: active_items(&runs)
                     .map(|item| ActiveItem {
                         id: item.id.clone(),
@@ -139,13 +148,19 @@ pub fn select(
     let (candidates, cursor) = match output {
         Err(error) => {
             log::warn!("Selector of {} failed: {error}", pass.automation);
+            let failed = RunEvent::SelectorFailed {
+                message: error.clone(),
+            };
+            pass.store
+                .writer(pass.automation)?
+                .append(pass.run_id, &failed)?;
             fail(pass, FailureReason::SelectorFailed)?;
             return Ok(Selection::Failed(error));
         }
         Ok(SelectorOutput::Nothing { .. }) => (Vec::new(), None),
         Ok(SelectorOutput::Items { items, cursor }) => (items, cursor),
     };
-    let (items, skipped) = choose(candidates, &runs, pass.policy);
+    let (items, skipped) = choose(candidates, &runs, pass.policy, free);
     record_selection(pass, &items, skipped)?;
     let dispatch = Dispatch { items, cursor };
     if dispatch.items.is_empty() {
@@ -236,8 +251,9 @@ fn choose(
     candidates: Vec<Candidate>,
     runs: &[RunState],
     policy: &SelectionPolicy,
+    free: u64,
 ) -> (Vec<Candidate>, Vec<(Candidate, SkipReason)>) {
-    let limit = free_slots(runs, policy.active_pool).min(policy.max_new_items.unwrap_or(u64::MAX));
+    let limit = free.min(policy.max_new_items.unwrap_or(u64::MAX));
     let mut handled: HashSet<(String, String)> = released_items(runs)
         .filter(|item| item.status != ItemStatus::Failed)
         .map(|item| (item.id.clone(), item.version.clone()))
@@ -306,6 +322,29 @@ fn active_items(runs: &[RunState]) -> impl Iterator<Item = &ItemState> {
     released_items(runs).filter(|item| !item.status.is_terminal())
 }
 
+/// PRs a `github.pr_create` effect opened or reused, oldest first.
+fn created_pull_requests(runs: &[RunState]) -> Vec<String> {
+    let mut urls: Vec<String> = Vec::new();
+    let effects = runs
+        .iter()
+        .flat_map(|run| &run.items)
+        .flat_map(|item| &item.steps)
+        .flat_map(|attempt| &attempt.effects);
+    for effect in effects {
+        let opened = effect.effect == "github.pr_create"
+            && matches!(
+                effect.status,
+                EffectStatus::Executed | EffectStatus::Reconciled
+            );
+        match &effect.reference {
+            Some(url) if opened && !urls.contains(url) => urls.push(url.clone()),
+            _ => {}
+        }
+    }
+    urls
+}
+
+/// Items in `queued` or `active` hold a slot; waiting and resting items free theirs.
 fn free_slots(runs: &[RunState], active_pool: u64) -> u64 {
     let holding = active_items(runs)
         .filter(|item| matches!(item.status, ItemStatus::Queued | ItemStatus::Active))

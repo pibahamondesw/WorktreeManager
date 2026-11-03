@@ -132,7 +132,7 @@ At least one of `manual: true`, `schedule`, `event` or `cli: true` must be prese
 | `branch`        | template                              | see below                 | Branch name for created tasks.                                                                                                                         |
 
 - `per-run`: each run creates a task named after the automation and run. Default branch `wtm/{automation}/{run.short_id}`. Routines only.
-- `per-item`: each item gets its own task. The engine first reuses a task of the workspace whose branch equals the item's branch, then creates one. Default branch: the tracker issue's branch name when `tracker` is set, otherwise `wtm/{automation}/{item.id}`. Campaigns only.
+- `per-item`: each item gets its own task. The engine first reuses a task of the workspace whose branch equals the item's branch, then creates one. Default branch: the tracker issue's branch name when `tracker` is set (**Deferred**: until then a tracked campaign sets `branch`), otherwise `wtm/{automation}/{item.id}`. Campaigns only.
 - `existing`: work in an existing task's worktrees. Runs sharing that task serialize through `concurrency.key` (default for this mode: `task:{task.id}`).
 - Tasks created by automations carry `automationId`, are badged and hidden from the main task list by default. They follow the usual task invariants: persisted before optional setup, partial creation recorded in the run, never deleted except by the clean-only `wtm.task_delete_clean` effect.
 
@@ -279,14 +279,14 @@ A verdict `blocked` blocks the item, `defer` defers it and `noop` counts as succ
 
 ### Selector
 
-Present only in campaigns. A deterministic script decides what to work on. The selection pass (dedupe, caps, `exclusive_on`, cursor, completion) is implemented; parsing `selector` in definitions and running campaigns from the scheduler are **Deferred (WOR-249/WOR-265).**
+Present only in campaigns. A deterministic script decides what to work on. Its argv templates get the run variables, and it also sees `WTM_AUTOMATION` and `WTM_RUN_ID`.
 
-| Field           | Type              | Default        | Rule                                                                                                                                                 |
-| --------------- | ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run`           | list of templates | required       | argv, as in `command`. Runs in the automation folder with the base checkout available as `WTM_BASE_<REPO>`; it never runs in an item worktree.       |
-| `timeout`       | duration          | `5m`           |                                                                                                                                                      |
-| `max_new_items` | integer ≥ 1       | `pools.active` | New items per run.                                                                                                                                   |
-| `exclusive_on`  | list of keys      | `[]`           | `item.data` keys whose values may not overlap between active items (for example `files`, `cops`). An overlapping candidate is skipped with `capped`. |
+| Field           | Type              | Default        | Rule                                                                                                                                                                                              |
+| --------------- | ----------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run`           | list of templates | required       | argv, as in `command`. Runs in the automation folder with each repository's main checkout as `WTM_BASE_<REPO>` (the name uppercased, other characters as `_`); it never runs in an item worktree. |
+| `timeout`       | duration          | `5m`           |                                                                                                                                                                                                   |
+| `max_new_items` | integer ≥ 1       | `pools.active` | New items per run.                                                                                                                                                                                |
+| `exclusive_on`  | list of keys      | `[]`           | `item.data` keys whose values may not overlap between active items (for example `files`, `cops`). An overlapping candidate is skipped with `capped`.                                              |
 
 Input on stdin: `{free, active: [{id, version, data}], busy_files: [path], cursor, run: {id, source, scheduled_for}}`. `busy_files` are files touched by open PRs of this automation.
 
@@ -324,8 +324,8 @@ The tracker uses the app's Linear credential; when it is missing, firings are sk
 
 A map from pool name to this automation's limit.
 
-- Built-in, per automation: `active` (items whose current step holds capacity; default `1`) and `open_prs` (open PRs created by this automation, checked against GitHub; default `3`). When either is full, selection stops and candidates are skipped with `capped`.
-- Global lease pools, **`uses` deferred (WOR-265)**: names defined in the app's pool registry (below), shared by all automations and manual `wtm lease` use. The value is an integer (max leases this automation holds at once) or `{values: [..], hold: step | active | item}` (the subset of a valued pool, such as test slots, this automation may use). `hold: step` leases for each attempt of a step that `uses` it; `active` for as long as the item holds capacity; `item` until the item ends. Leases are released when their holder ends, fails or is interrupted. The registry's environment (for example `TEST_ENV_NUMBER`) is exported to agents and commands.
+- Built-in, per automation: `active` (items whose current step holds capacity; default `1`) and `open_prs` (open PRs created by this automation, checked against GitHub; default `3`). When either is full, selection stops and candidates are skipped with `capped`. The PRs checked are those the automation's `github.pr_create` effects opened or reused; the files they touch are the selector's `busy_files`.
+- Global lease pools: names defined in the app's pool registry (below), shared by all automations and manual `wtm lease` use. The value is an integer (max leases this automation holds at once across its runs and items); a step may only `use` a pool listed here. Each attempt of a step that `uses` a pool waits for a lease in the pool's queue and releases it when the attempt ends, fails or is interrupted; quitting the app releases every lease. The registry's environment (for example `TEST_ENV_NUMBER`) is exported to `command` steps. **Deferred:** `{values: [..], hold: step | active | item}` (the subset of a valued pool, such as test slots, this automation may use, held for the attempt, while the item holds capacity or until the item ends) and exporting the lease environment to agent sessions.
 
 #### Lease pool registry
 
@@ -426,7 +426,7 @@ All states are derived from the run log. "Process end" (how a process or the eng
 
 Active runs are `starting`, `running` and `interrupted`.
 
-A routine run lasts until its implicit item reaches a terminal or resting status. A campaign run is a **selection pass**: it runs the selector, creates and starts the new items, and completes; items then progress under the automation and outlive the run that created them.
+A routine run lasts until its implicit item reaches a terminal or resting status. A campaign run is a **selection pass**: it runs the selector, creates and starts the new items, and completes; items then progress under the automation and outlive the run that created them. Until items resume on start, the next launch fails the `queued` and `active` items an earlier process left with cause `interrupted`, without counting toward the auto-pause.
 
 Outcome of a completed run: routines `noop`, `reported` (has findings) or `needs_attention` (item blocked or deferred); campaigns `dispatched` (with the number of new items) or `noop`.
 
@@ -647,7 +647,7 @@ Flow: the selector proposes units; each gets a Linear issue (marker) and a task 
 | `publish` effects                                         | WOR-258                   |
 | `wait` and `approval`                                     | WOR-259                   |
 | Selector, `per-item`, `exclusive_on`, cursor              | WOR-263                   |
-| Global lease pools, `uses`                                | WOR-255, WOR-265          |
+| Valued pools held per item, lease env for agents          | not yet planned           |
 | Watchers `pr_checks`, `pr_integrated`                     | WOR-264                   |
 | Decisions                                                 | WOR-262                   |
 | Take over, hand back, retry from step                     | WOR-261                   |

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::json;
@@ -71,22 +72,42 @@ impl Selector for FakeSelector {
     }
 }
 
-struct FakeBusyFiles(Result<Vec<String>, String>);
+struct FakePullRequests {
+    open: Result<Vec<OpenPullRequest>, String>,
+    asked: Mutex<Vec<String>>,
+}
 
-impl BusyFiles for FakeBusyFiles {
-    fn busy_files(&self, automation: &str) -> Result<Vec<String>, String> {
-        assert_eq!(automation, NAME);
-        self.0.clone()
+impl FakePullRequests {
+    fn answering(open: Result<Vec<OpenPullRequest>, String>) -> Self {
+        Self {
+            open,
+            asked: Mutex::default(),
+        }
     }
 }
 
-fn no_busy_files() -> FakeBusyFiles {
-    FakeBusyFiles(Ok(Vec::new()))
+impl OpenPullRequests for FakePullRequests {
+    fn open(&self, urls: &[String]) -> Result<Vec<OpenPullRequest>, String> {
+        *self.asked.lock().unwrap() = urls.to_vec();
+        self.open.clone()
+    }
+}
+
+fn no_busy_files() -> FakePullRequests {
+    FakePullRequests::answering(Ok(Vec::new()))
+}
+
+fn open_pr(url: &str, files: &[&str]) -> OpenPullRequest {
+    OpenPullRequest {
+        url: url.into(),
+        files: files.iter().map(|file| file.to_string()).collect(),
+    }
 }
 
 fn policy() -> SelectionPolicy {
     SelectionPolicy {
         active_pool: 5,
+        open_prs: 3,
         max_new_items: None,
         exclusive_on: Vec::new(),
         complete_when_empty: false,
@@ -328,7 +349,10 @@ fn the_selector_receives_capacity_active_items_busy_files_cursor_and_run() {
     let selector = FakeSelector::returning(SelectorOutput::Nothing {
         reason: Some("all done".into()),
     });
-    let busy_files = FakeBusyFiles(Ok(vec!["b.rb".into()]));
+    let busy_files = FakePullRequests::answering(Ok(vec![
+        open_pr("https://github.com/o/r/pull/2", &["b.rb", "c.rb"]),
+        open_pr("https://github.com/o/r/pull/3", &["b.rb"]),
+    ]));
 
     let selection = select(&pass(&store, &run_id, &policy), &selector, &busy_files).unwrap();
 
@@ -336,13 +360,13 @@ fn the_selector_receives_capacity_active_items_busy_files_cursor_and_run() {
     assert_eq!(
         selector.input(),
         SelectorInput {
-            free: 2,
+            free: 1,
             active: vec![ActiveItem {
                 id: "a".into(),
                 version: "1".into(),
                 data: json!({"files": ["a.rb"]}).as_object().unwrap().clone(),
             }],
-            busy_files: vec!["b.rb".into()],
+            busy_files: vec!["b.rb".into(), "c.rb".into()],
             cursor: Some(json!({"page": 2})),
             run: RunContext {
                 id: run_id.clone(),
@@ -414,13 +438,14 @@ fn a_selector_or_busy_files_error_fails_the_run_and_keeps_the_cursor() {
     let run = store.run(NAME, &run_id).unwrap();
     assert_eq!(run.status, RunStatus::Failed);
     assert_eq!(run.failure_reason, Some(FailureReason::SelectorFailed));
+    assert_eq!(run.selector_error.as_deref(), Some("exit 1"));
 
     let run_id = claim(&store, false);
     let selector = FakeSelector::items(vec![candidate("a", "1")]);
     let selection = select(
         &pass(&store, &run_id, &policy),
         &selector,
-        &FakeBusyFiles(Err("gh failed".into())),
+        &FakePullRequests::answering(Err("gh failed".into())),
     )
     .unwrap();
     assert_eq!(selection, Selection::Failed("gh failed".into()));
@@ -428,6 +453,94 @@ fn a_selector_or_busy_files_error_fails_the_run_and_keeps_the_cursor() {
 
     state.consecutive_failures = 2;
     assert_eq!(store.state(NAME).unwrap(), state);
+}
+
+fn record_pr_effect(store: &RunStore, run_id: &str, item: &str, url: &str, status: EffectStatus) {
+    let event = RunEvent::EffectRecorded {
+        item: item.into(),
+        step: "publish".into(),
+        attempt: 1,
+        effect: "github.pr_create".into(),
+        status,
+        detail: None,
+        reference: Some(url.into()),
+        warnings: Vec::new(),
+    };
+    store.writer(NAME).unwrap().append(run_id, &event).unwrap();
+}
+
+#[test]
+fn open_prs_the_campaign_created_stop_the_selection_at_its_limit() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let policy = SelectionPolicy {
+        open_prs: 2,
+        ..policy()
+    };
+    let first = run_pass(
+        &store,
+        &policy,
+        &FakeSelector::items(vec![candidate("a", "1"), candidate("b", "1")]),
+    );
+    record_pr_effect(
+        &store,
+        &first,
+        "a",
+        "https://github.com/o/r/pull/1",
+        EffectStatus::Executed,
+    );
+    record_pr_effect(
+        &store,
+        &first,
+        "a",
+        "https://github.com/o/r/pull/1",
+        EffectStatus::Reconciled,
+    );
+    record_pr_effect(
+        &store,
+        &first,
+        "b",
+        "https://github.com/o/r/pull/2",
+        EffectStatus::Reconciled,
+    );
+    record_pr_effect(
+        &store,
+        &first,
+        "b",
+        "https://github.com/o/r/pull/9",
+        EffectStatus::Staged,
+    );
+    set_item_status(&store, &first, "a", ItemStatus::Waiting);
+    set_item_status(&store, &first, "b", ItemStatus::Blocked);
+    let both_open = FakePullRequests::answering(Ok(vec![
+        open_pr("https://github.com/o/r/pull/1", &[]),
+        open_pr("https://github.com/o/r/pull/2", &[]),
+    ]));
+    let run_id = claim(&store, false);
+    let selector = FakeSelector::items(vec![candidate("c", "1")]);
+
+    let selection = select(&pass(&store, &run_id, &policy), &selector, &both_open).unwrap();
+
+    assert_eq!(selection, Selection::Completed);
+    assert_eq!(
+        *both_open.asked.lock().unwrap(),
+        [
+            "https://github.com/o/r/pull/1",
+            "https://github.com/o/r/pull/2"
+        ]
+    );
+    assert_eq!(selector.input().free, 0);
+    assert_eq!(
+        skipped_candidates(&scratch, &run_id),
+        [("c@1".to_string(), SkipReason::Capped)]
+    );
+
+    let one_open =
+        FakePullRequests::answering(Ok(vec![open_pr("https://github.com/o/r/pull/2", &[])]));
+    let run_id = claim(&store, false);
+    let selection = select(&pass(&store, &run_id, &policy), &selector, &one_open).unwrap();
+    assert!(matches!(selection, Selection::Dispatch(_)));
+    assert_eq!(item_ids(&store, &run_id), ["c@1"]);
 }
 
 #[test]

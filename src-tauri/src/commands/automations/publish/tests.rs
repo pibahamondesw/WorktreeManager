@@ -188,6 +188,7 @@ fn step(effects: Vec<Effect>) -> Step {
         on_fail: Transition::Fail,
         timeout_secs: Some(90),
         capacity: Capacity::Hold,
+        uses: Vec::new(),
         kind: StepKind::Publish(effects),
     }
 }
@@ -1286,4 +1287,35 @@ fn failure_output_keeps_its_tail_on_a_character_boundary() {
     let output = format!("{}a", "é".repeat(3000));
     let kept = tail(&output);
     assert!(kept.len() < 4 * 1024 && kept.ends_with("éa"));
+}
+
+#[test]
+fn cli_forge_tells_which_pull_requests_are_still_open() {
+    use crate::commands::automations::selector::{OpenPullRequest, OpenPullRequests};
+    let gh = FakeGh::new(false);
+    let urls = ["https://github.com/o/r/pull/1".to_string()];
+    assert_eq!(gh.forge.open(&[]), Ok(Vec::new()));
+    gh.write(
+        "view.json",
+        r#"{"state":"OPEN","files":[{"path":"a.rb"},{"path":"b.rb"}]}"#,
+    );
+    assert_eq!(
+        gh.forge.open(&urls),
+        Ok(vec![OpenPullRequest {
+            url: urls[0].clone(),
+            files: vec!["a.rb".into(), "b.rb".into()],
+        }])
+    );
+    gh.write("view.json", r#"{"state":"MERGED","files":[]}"#);
+    assert_eq!(gh.forge.open(&urls), Ok(Vec::new()));
+    gh.write("view.json", "not json");
+    assert!(gh.forge.open(&urls).unwrap_err().starts_with("gh pr view"));
+    assert_eq!(
+        gh.calls()[0],
+        "pr view https://github.com/o/r/pull/1 --json state,files"
+    );
+
+    let failing = FakeGh::new(true);
+    let error = failing.forge.open(&urls).unwrap_err();
+    assert!(error.contains("not logged in"), "{error}");
 }

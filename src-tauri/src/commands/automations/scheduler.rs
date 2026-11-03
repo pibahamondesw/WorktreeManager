@@ -34,6 +34,7 @@ const ON_TIME_GRACE: TimeDelta = TimeDelta::minutes(5);
 const CATCH_UP_WINDOW: TimeDelta = TimeDelta::days(7);
 const START_TIMEOUT: TimeDelta = TimeDelta::minutes(5);
 const AUTO_PAUSE_FAILURES: u32 = 3;
+const INTERRUPTED_CAUSE: &str = "interrupted";
 
 pub trait Clock: Send {
     fn now(&self) -> DateTime<Utc>;
@@ -247,17 +248,57 @@ impl<C: Clock> Scheduler<C> {
         Ok(())
     }
 
-    /// Ends the runs an earlier app process left active; they are not resumed yet.
+    /// Ends the runs, and the campaign items, an earlier app process left active; they are not
+    /// resumed yet.
     pub fn recover_interrupted(&mut self, automations: &[Automation]) {
         let boot_ms = self.clock.now().timestamp_millis() as u64;
         for automation in automations {
-            if let Err(error) = self.end_interrupted(&automation.name, boot_ms) {
+            let ended = self
+                .end_interrupted(&automation.name, boot_ms)
+                .and_then(|()| self.end_interrupted_items(&automation.name, boot_ms));
+            if let Err(error) = ended {
                 log::warn!(
                     "Automation {} kept its interrupted runs: {error}",
                     automation.name
                 );
             }
         }
+    }
+
+    /// Fails the queued and active items of completed campaign runs, which release their slot,
+    /// their `id` + `version` and their `exclusive_on` values for the next selection.
+    fn end_interrupted_items(&self, name: &str, boot_ms: u64) -> Result<(), String> {
+        let mut interrupted = Vec::new();
+        for id in self.store.run_ids(name)? {
+            let run = self.store.run(name, &id)?;
+            let before_boot = run.claimed_at_ms.is_some_and(|claimed| claimed < boot_ms);
+            if run.status != RunStatus::Completed || !before_boot {
+                continue;
+            }
+            let open = run
+                .items
+                .iter()
+                .filter(|item| matches!(item.status, ItemStatus::Queued | ItemStatus::Active));
+            for item in open {
+                let failed = RunEvent::ItemStatus {
+                    item: item.id.clone(),
+                    status: ItemStatus::Failed,
+                    phase: item.phase.clone(),
+                    stage: item.stage.clone(),
+                    cause: Some(INTERRUPTED_CAUSE.into()),
+                    counter: None,
+                };
+                interrupted.push((id.clone(), failed));
+            }
+        }
+        if interrupted.is_empty() {
+            return Ok(());
+        }
+        let writer = self.store.writer(name)?;
+        for (id, failed) in interrupted {
+            writer.append(&id, &failed)?;
+        }
+        Ok(())
     }
 
     fn end_interrupted(&mut self, name: &str, boot_ms: u64) -> Result<(), String> {

@@ -174,8 +174,9 @@ pub fn run() {
 fn start_automations(app: &tauri::AppHandle) -> Result<(), String> {
     use commands::automations::{actions, routine, scheduler};
     let operations = Arc::new(cli_bridge::AppOperations(app.clone()));
+    let leases = app.state::<cli_bridge::CliBridge>().leases();
     let executor: Arc<dyn scheduler::Executor> =
-        Arc::new(routine::RoutineExecutor::of(app, operations)?);
+        Arc::new(routine::RoutineExecutor::of(app, operations)?.with_lease_pools(Arc::new(leases)));
     app.manage(actions::AutomationEngine(executor.clone()));
     scheduler::start_scheduler(app.clone(), executor)
 }

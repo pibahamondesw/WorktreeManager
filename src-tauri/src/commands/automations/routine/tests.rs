@@ -86,7 +86,7 @@ fn environment() -> Environment {
             },
         }],
         workspaces: serde_json::from_value(json!([
-            { "id": "w1", "name": "Fintoc", "repos": [{ "id": "r1", "name": "rails" }] }
+            { "id": "w1", "name": "Fintoc", "repos": [{ "id": "r1", "name": "rails", "localPath": "/repos/rails" }] }
         ]))
         .unwrap(),
         now: now(),
@@ -108,6 +108,10 @@ struct FakeTasks {
     worktree: Option<PathBuf>,
     created: Mutex<Vec<NewTask>>,
     fetched: Mutex<Vec<String>>,
+    /// Tasks `find` answers, by branch.
+    existing: Vec<ResolvedTask>,
+    /// Created tasks are named after their branch, for runs that create several.
+    by_branch: bool,
 }
 
 fn task(id: &str) -> ResolvedTask {
@@ -123,6 +127,10 @@ impl Tasks for FakeTasks {
     fn create(&self, new_task: &NewTask) -> Result<ResolvedTask, TaskFailure> {
         self.created.lock().unwrap().push(new_task.clone());
         let mut created = task("t1");
+        if self.by_branch {
+            created.id = format!("t-{}", new_task.branch);
+            created.branch = new_task.branch.clone();
+        }
         if let Some(worktree) = &self.worktree {
             created.folders = vec![worktree.to_string_lossy().into_owned()];
         }
@@ -132,6 +140,12 @@ impl Tasks for FakeTasks {
     fn get(&self, task_id: &str) -> Result<ResolvedTask, TaskFailure> {
         self.fetched.lock().unwrap().push(task_id.into());
         Ok(task(task_id))
+    }
+
+    fn find(&self, workspace_id: &str, branch: &str) -> Result<Option<ResolvedTask>, TaskFailure> {
+        assert_eq!(workspace_id, "w1");
+        let found = self.existing.iter().find(|task| task.branch == branch);
+        Ok(found.cloned())
     }
 }
 
@@ -891,6 +905,14 @@ fn commands_fail_for_repositories_without_a_worktree_in_the_task() {
             title: Some("Fix".into()),
             data: serde_json::Map::from_iter([("files".to_string(), json!(["a.rb"]))]),
         },
+        StepLeases {
+            pools: Arc::new(NoLeasePools),
+            quotas: Arc::default(),
+            automation: "demo".into(),
+            run_id: "r1".into(),
+            limits: Arc::default(),
+            deadline: Instant::now(),
+        },
     )
     .unwrap();
     let step = Step {
@@ -900,6 +922,7 @@ fn commands_fail_for_repositories_without_a_worktree_in_the_task() {
         on_fail: Transition::Fail,
         timeout_secs: None,
         capacity: Capacity::Hold,
+        uses: Vec::new(),
         kind: StepKind::Wait(WaitStep::Signal("go".into())),
     };
     let request = StepRequest {
@@ -1272,3 +1295,5 @@ steps:
 
     assert_eq!(effects(&run, "ship"), [EffectStatus::Executed]);
 }
+
+mod campaign;

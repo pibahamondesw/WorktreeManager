@@ -26,6 +26,7 @@ fn step(id: &str, kind: StepKind) -> Step {
         on_fail: Transition::Fail,
         timeout_secs: None,
         capacity,
+        uses: Vec::new(),
         kind,
     }
 }
