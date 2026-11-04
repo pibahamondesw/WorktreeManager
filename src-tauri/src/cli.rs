@@ -36,9 +36,13 @@ automation get <name>
 automation runs <name> [--before <run_id>] [--limit <n>]   Newest first, 20 per
                                      page (max 200); pass next_before as --before.
 automation status <name> <run_id>
-automation run <name> [--payload <json>]
+automation run <name> [--payload <json|@file>]
                                      Starts a run now and prints its run_id without
                                      waiting; the payload is a JSON object (≤ 64 KiB).
+automation fire <name> --key <trigger_key> [--payload <json|@file>]
+                                     For external callers of automations with
+                                     trigger.cli. Fires once per key: firing it again
+                                     prints the existing run with deduped: true.
 automation pause <name> [--reason <text>]
 automation resume <name> [--reason <text>]
                                      Resuming skips the slots missed while paused.
@@ -143,6 +147,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
             "--limit" if !params.contains_key("limit") => {
                 params.insert("limit".into(), json!(page_limit(args.next())?));
             }
+            "--key" if !params.contains_key("key") => {
+                params.insert(
+                    "key".into(),
+                    json!(args.next().ok_or("--key requires a trigger key")?),
+                );
+            }
             "--payload" if !params.contains_key("payload") => {
                 params.insert("payload".into(), payload(args.next())?);
             }
@@ -194,6 +204,7 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.runs" => (&["name"], false, &["before", "limit"]),
         "automation.status" => (&["name", "runId"], false, &[]),
         "automation.run" => (&["name"], false, &["payload"]),
+        "automation.fire" => (&["name"], false, &["key", "payload"]),
         "automation.pause" | "automation.resume" => (&["name"], false, &["reason"]),
         "automation.items" | "automation.next" | "automation.continuous" => (&["name"], false, &[]),
         "automation.limit" => (&["name", "limit", "value"], false, &[]),
@@ -225,6 +236,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         let value = limit_value(&params["limit"], &params["value"])?;
         params.insert("value".into(), value);
     }
+    if method == "automation.fire" && !params.contains_key("key") {
+        return Err("Provide --key with the trigger key".into());
+    }
     if method == "task.link-issue" && !params.contains_key("issue") {
         return Err("Provide --issue with a Linear issue identifier".into());
     }
@@ -245,8 +259,13 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
 }
 
 fn payload(value: Option<&String>) -> Result<Value, String> {
-    value
-        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+    let value = value.ok_or("--payload requires a JSON object or @file")?;
+    let text = match value.strip_prefix('@') {
+        Some(path) => payload_file(path)?,
+        None => value.clone(),
+    };
+    serde_json::from_str::<Value>(&text)
+        .ok()
         .filter(Value::is_object)
         .ok_or_else(|| "--payload requires a JSON object".into())
 }
@@ -265,6 +284,14 @@ fn limit_value(limit: &Value, value: &Value) -> Result<Value, String> {
             .map(|number| json!(number))
             .ok_or_else(|| "A limit is a positive number or default".into()),
     }
+}
+
+fn payload_file(path: &str) -> Result<String, String> {
+    let mut text = String::new();
+    fs::File::open(path)
+        .and_then(|file| file.take(MAX_MESSAGE + 1).read_to_string(&mut text))
+        .map_err(|_| "Cannot read the payload file")?;
+    Ok(text)
 }
 
 fn page_limit(value: Option<&String>) -> Result<u64, String> {
@@ -968,6 +995,12 @@ mod tests {
             "automation run babysitter --payload [1]",
             "automation run babysitter --payload {",
             "automation run babysitter --reason x",
+            "automation run babysitter --payload @/missing-wtm-payload.json",
+            "automation fire babysitter",
+            "automation fire babysitter --key",
+            "automation fire babysitter --key a --key b",
+            "automation fire --key a",
+            "automation fire babysitter --key a --reason x",
             "automation pause babysitter --payload {}",
             "automation resume babysitter --reason",
             "automation resume",
@@ -1001,6 +1034,17 @@ mod tests {
         let pause = parse(&reasoned.map(String::from)).unwrap();
         assert_eq!(pause.method, "automation.pause");
         assert_eq!(pause.params["reason"], "on vacation");
+        let fire = parse(&args(
+            r#"automation fire babysitter --key pr:7 --payload {"pr":7}"#,
+        ))
+        .unwrap();
+        assert_eq!(fire.method, "automation.fire");
+        assert_eq!(
+            fire.params,
+            *json!({ "name": "babysitter", "key": "pr:7", "payload": { "pr": 7 } })
+                .as_object()
+                .unwrap()
+        );
         let resume = parse(&args("automation resume babysitter")).unwrap();
         assert_eq!(resume.method, "automation.resume");
         assert_eq!(
@@ -1052,5 +1096,33 @@ mod tests {
         assert!(parse(&args("workspace list --input -")).is_err());
         assert!(parse(&args("task get t1 --git")).is_ok());
         assert!(parse(&args("workspace update w1 --input -")).is_ok());
+    }
+
+    #[test]
+    fn reads_payloads_from_files_named_with_at() {
+        let path = std::env::temp_dir().join(format!("wtm-payload-{}.json", std::process::id()));
+        fs::write(&path, r#"{"pr":7}"#).unwrap();
+        let at_path = format!("@{}", path.display());
+        let fire = [
+            "automation",
+            "fire",
+            "babysitter",
+            "--key",
+            "k",
+            "--payload",
+            at_path.as_str(),
+        ];
+        let parsed = parse(&fire.map(String::from)).unwrap();
+        assert_eq!(parsed.params["payload"], json!({ "pr": 7 }));
+        fs::write(&path, "[7]").unwrap();
+        assert_eq!(
+            parse(&fire.map(String::from)).err().as_deref(),
+            Some("--payload requires a JSON object")
+        );
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            parse(&fire.map(String::from)).err().as_deref(),
+            Some("Cannot read the payload file")
+        );
     }
 }

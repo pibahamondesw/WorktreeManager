@@ -312,6 +312,7 @@ export async function dispatchCliBridge(
       "automation.runs": ["name", "before", "limit"],
       "automation.status": ["name", "runId"],
       "automation.run": ["name", "payload"],
+      "automation.fire": ["name", "key", "payload"],
       "automation.pause": ["name", "reason"],
       "automation.resume": ["name", "reason"],
       "automation.items": ["name"],
@@ -437,6 +438,13 @@ export async function dispatchCliBridge(
         result = await invokeAutomations("automation_run", {
           name: text(params.name),
           test: false,
+          payload: payloadObject(params.payload),
+        });
+        break;
+      case "automation.fire":
+        result = await invokeAutomations("automation_fire", {
+          name: text(params.name),
+          key: text(params.key),
           payload: payloadObject(params.payload),
         });
         break;

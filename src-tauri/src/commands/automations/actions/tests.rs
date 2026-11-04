@@ -294,3 +294,124 @@ fn only_the_engine_pauses_automatically() {
     assert_eq!(harness.resume("demo", Actor::Auto, None), refused);
     assert_eq!(harness.state(), AutomationState::default());
 }
+
+fn fireable(extra: &str) -> String {
+    format!("{TARGET}trigger: {{ manual: false, cli: true }}\n{extra}")
+}
+
+impl Harness {
+    fn fire(&self, key: &str, payload: Option<Value>) -> Result<fire::FiredRun, String> {
+        let engine = self.app.state::<AutomationEngine>();
+        tauri::async_runtime::block_on(fire::automation_fire(
+            self.app.handle().clone(),
+            engine,
+            "demo".into(),
+            key.into(),
+            payload,
+        ))
+    }
+
+    fn enabled(frontmatter: &str) -> Self {
+        let harness = Self::new(frontmatter);
+        harness.resume("demo", Actor::User, None).unwrap();
+        harness
+    }
+}
+
+#[test]
+fn fire_starts_a_cli_run_once_per_trigger_key() {
+    let harness = Harness::enabled(&fireable("concurrency: { max_runs: 3 }\n"));
+
+    let fired = harness.fire("pr:7@abc", Some(json!({ "pr": 7 }))).unwrap();
+
+    assert_eq!(
+        (fired.run.status, fired.run.skip_reason, fired.deduped),
+        (RunStatus::Starting, None, false)
+    );
+    let executed = harness.executed();
+    let (request, payload) = &executed[0];
+    assert_eq!(
+        (request.run_id.as_str(), request.test, payload.clone()),
+        (fired.run.run_id.as_str(), false, Some(json!({ "pr": 7 })))
+    );
+    let store = harness.scratch.store();
+    let trigger = store
+        .run("demo", &fired.run.run_id)
+        .unwrap()
+        .trigger
+        .unwrap();
+    assert_eq!(
+        (trigger.source, trigger.trigger_key.as_str()),
+        (RunSource::Cli, "cli:pr:7@abc")
+    );
+    assert_eq!(
+        store.latest_payload("demo").unwrap(),
+        Some(json!({ "pr": 7 }))
+    );
+
+    let again = harness.fire("pr:7@abc", Some(json!({ "pr": 8 }))).unwrap();
+    assert_eq!(
+        again,
+        fire::FiredRun {
+            deduped: true,
+            ..fired
+        }
+    );
+    assert!(harness.executed().is_empty());
+    assert_eq!(
+        store.latest_payload("demo").unwrap(),
+        Some(json!({ "pr": 7 }))
+    );
+
+    let other = harness.fire("pr:8", None).unwrap();
+    assert_ne!(other.run.run_id, again.run.run_id);
+    assert_eq!(harness.executed()[0].1, None);
+}
+
+#[test]
+fn fire_records_skipped_runs_while_paused_or_at_capacity() {
+    let paused = Harness::new(&fireable(""));
+    let skipped = paused.fire("push:1", None).unwrap();
+    assert_eq!(
+        (skipped.run.status, skipped.run.skip_reason, skipped.deduped),
+        (RunStatus::Skipped, Some(SkipReason::Paused), false)
+    );
+    let again = paused.fire("push:1", None).unwrap();
+    assert_eq!(
+        (again.run.status, again.run.skip_reason, again.deduped),
+        (RunStatus::Skipped, Some(SkipReason::Paused), true)
+    );
+    assert!(paused.executed().is_empty());
+
+    let busy = Harness::enabled(&fireable(""));
+    busy.fire("push:1", None).unwrap();
+    let over = busy.fire("push:2", None).unwrap();
+    assert_eq!(
+        (over.run.status, over.run.skip_reason),
+        (RunStatus::Skipped, Some(SkipReason::AlreadyRunning))
+    );
+    assert_eq!(busy.executed().len(), 1);
+}
+
+#[test]
+fn fire_needs_the_cli_trigger_a_valid_key_and_a_small_object_payload() {
+    let manual = Harness::enabled(&hourly(""));
+    assert_eq!(
+        manual.fire("pr:7", None),
+        Err("demo does not accept wtm automation fire; declare trigger.cli: true".into())
+    );
+
+    let harness = Harness::enabled(&fireable("concurrency: { max_runs: 3 }\n"));
+    let refused = Err(
+        "The trigger key must be 1 to 200 characters from A-Z, a-z, 0-9 and . _ : / @ -".into(),
+    );
+    for key in ["", "pr 7", "pr;7", "ñ", &"k".repeat(201)] {
+        assert_eq!(harness.fire(key, None), refused, "{key}");
+    }
+    assert_eq!(
+        harness.fire("pr:7", Some(json!([1]))),
+        Err("The payload must be a JSON object".into())
+    );
+    assert!(harness.executed().is_empty());
+    assert!(!harness.fire(&"k".repeat(200), None).unwrap().deduped);
+}

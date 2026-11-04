@@ -1,6 +1,7 @@
 //! What the owner does to an automation from the app or the CLI: run it now, test it, pause it
 //! and resume it. Runs are claimed here and handed to the executor the scheduler also uses.
 
+pub mod fire;
 #[cfg(test)]
 mod tests;
 
@@ -15,7 +16,9 @@ use tauri::{AppHandle, Runtime, State};
 use super::definition::{self, AutomationDefinition};
 use super::scheduler::{capacity_skip, is_active, reschedule, Automation, Executor, RunRequest};
 use super::store::events::{RunEvent, RunSource, RunState, RunStatus, RunTrigger, SkipReason};
-use super::store::{Actor, AutomationState, Claim, PauseReason, RunStore, Toggle};
+use super::store::{
+    Actor, AutomationState, AutomationWriter, Claim, PauseReason, RunStore, Toggle,
+};
 
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 
@@ -62,7 +65,37 @@ pub fn start_run(
         test,
     };
     let (Claim::Created(run_id) | Claim::Existing(run_id)) = writer.claim(trigger)?;
-    if let Some(reason) = capacity_skip(&Automation::of(definition), &active) {
+    let skip = capacity_skip(&Automation::of(definition), &active);
+    let request = run_request(definition, run_id, test, now);
+    launch(writer, executor, request, skip, payload)
+}
+
+fn run_request(
+    definition: &AutomationDefinition,
+    run_id: String,
+    test: bool,
+    now: DateTime<Utc>,
+) -> RunRequest {
+    RunRequest {
+        automation: definition.name.clone(),
+        run_id,
+        definition_hash: definition.hash.clone(),
+        scheduled_for: now,
+        fired_at: now,
+        test,
+    }
+}
+
+/// Records the claimed run as skipped for `skip`, or saves its payload and hands it to `executor`.
+fn launch(
+    writer: AutomationWriter,
+    executor: &dyn Executor,
+    request: RunRequest,
+    skip: Option<SkipReason>,
+    payload: Option<Value>,
+) -> Result<StartedRun, String> {
+    let run_id = request.run_id.clone();
+    if let Some(reason) = skip {
         let skipped = RunEvent::Skipped {
             reason,
             missed: None,
@@ -78,14 +111,6 @@ pub fn start_run(
         writer.save_payload(&run_id, payload)?;
     }
     drop(writer);
-    let request = RunRequest {
-        automation: name.clone(),
-        run_id: run_id.clone(),
-        definition_hash: definition.hash.clone(),
-        scheduled_for: now,
-        fired_at: now,
-        test,
-    };
     executor.execute(request, payload);
     Ok(StartedRun {
         run_id,

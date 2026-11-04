@@ -276,6 +276,7 @@ fn manual_trigger() -> Trigger {
     Trigger {
         manual: true,
         schedule: None,
+        cli: false,
     }
 }
 
@@ -294,19 +295,13 @@ fn trigger(report: &mut Report, now: DateTime<Utc>, value: &Value, field: &str) 
         );
     }
     let cli = fields.or(report, "cli", false, boolean);
-    if cli == Some(true) {
-        report.error(
-            IssueKind::Unsupported,
-            &fields.path("cli"),
-            "the cli trigger is not supported yet (WOR-269)",
-        );
-    }
     fields.finish(report);
     let trigger = Trigger {
         manual: manual?,
         schedule: schedule?,
+        cli: cli?,
     };
-    if !trigger.manual && trigger.schedule.is_none() && !event && !cli? {
+    if !trigger.manual && trigger.schedule.is_none() && !event && !trigger.cli {
         report.error(
             IssueKind::Invalid,
             field,

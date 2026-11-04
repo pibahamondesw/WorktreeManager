@@ -110,6 +110,7 @@ pub struct SelectorSettings {
 pub struct Trigger {
     pub manual: bool,
     pub schedule: Option<Schedule>,
+    pub cli: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -511,10 +511,18 @@ fn triggers_need_one_enabled_source_and_reject_deferred_ones() {
         IssueKind::Unsupported,
     );
     assert_issue(
-        &routine("trigger:\n  cli: true\n"),
+        &routine("trigger:\n  cli: \"yes\"\n"),
         "trigger.cli",
-        IssueKind::Unsupported,
+        IssueKind::Invalid,
     );
+}
+
+#[test]
+fn the_cli_trigger_alone_enables_a_definition() {
+    let definition = valid(&routine("trigger:\n  manual: false\n  cli: true\n"));
+    assert!(definition.trigger.cli);
+    assert!(!definition.trigger.manual);
+    assert!(!valid(&routine("")).trigger.cli);
 }
 
 #[test]
