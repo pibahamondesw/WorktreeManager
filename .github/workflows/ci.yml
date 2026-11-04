@@ -25,10 +25,13 @@ jobs:
       workflow_lint: ${{ steps.filter.outputs.workflow_lint }}
       frontend: ${{ steps.filter.outputs.frontend }}
       rust: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.vault_kit == 'true' || steps.filter.outputs.workflow == 'true' }}
+      # macOS runners are slow to schedule; PRs use them only for macOS-specific changes.
+      macos: ${{ (steps.filter.outputs.rust == 'true' || steps.filter.outputs.vault_kit == 'true' || steps.filter.outputs.workflow == 'true') && steps.macos.outputs.changed == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
@@ -48,11 +51,25 @@ jobs:
             workflow_lint:
               - '{.github/workflows/**,.actionlint/**}'
             rust:
-              - '{src-tauri/**,deny.toml,scripts/rust-coverage.sh,scripts/rust-coverage-report.py,scripts/coverage-requirements.txt}'
+              - '{src-tauri/**,deny.toml,scripts/rust-coverage.sh,scripts/rust-coverage-report.py,scripts/coverage-requirements.txt,scripts/macos-changes.py}'
             vault_kit:
               - 'vault-kit/**'
             workflow:
               - '.github/workflows/ci.yml'
+
+      - name: Detect macOS-specific changes
+        id: macos
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" != pull_request ]; then
+            changed=true
+          else
+            files=$(python3 scripts/macos-changes.py "$BASE_SHA")
+            if [ -n "$files" ]; then changed=true; else changed=false; fi
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
   frontend:
     name: Frontend (lint, typecheck, test)
@@ -194,7 +211,7 @@ jobs:
   rust-macos:
     name: Rust (macOS, clippy, native tests)
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -255,10 +272,85 @@ jobs:
             fi
           done
 
+  rust-coverage-linux:
+    name: Rust coverage (Linux, new lines)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+      RUSTFLAGS: --remap-path-prefix=tests/../src=src
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev \
+            libssl-dev \
+            python3-venv \
+            build-essential \
+            zsh
+
+      - name: Install pinned Rust and LLVM tools
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.93.1
+          components: llvm-tools-preview
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Install diff-cover
+        run: pip install -r scripts/coverage-requirements.txt
+
+      - name: Install cargo-llvm-cov
+        run: |
+          archive="$RUNNER_TEMP/cargo-llvm-cov.tar.gz"
+          curl -fsSL https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz -o "$archive"
+          echo "b3f68e625481fed9b16444174f3fa5ebcdbde4a1878803a35eabe2dcefcdc41a  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/coverage-tools"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/coverage-tools" cargo-llvm-cov
+          echo "$RUNNER_TEMP/coverage-tools" >> "$GITHUB_PATH"
+
+      - name: Cache Rust coverage build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri -> target/llvm-cov-pilot
+          key: coverage-linux-llvm-cov-0.9.1
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # Files flagged by scripts/macos-changes.py are excluded here and gated by the macOS job.
+      - name: Measure focused Rust coverage
+        env:
+          COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: sh scripts/rust-coverage.sh
+
+      - name: Upload coverage and timing reports
+        if: ${{ !cancelled() && hashFiles('coverage/rust/linux/toolchain.txt') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-coverage-linux
+          path: coverage/rust/linux/
+          if-no-files-found: error
+          retention-days: 7
+
   rust-coverage:
     name: Rust coverage (macOS, new lines)
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-15
     timeout-minutes: 30
     env:
