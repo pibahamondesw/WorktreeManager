@@ -176,3 +176,46 @@ fn quitting_marks_what_it_can_and_logs_the_rest() {
 
     assert!(harness.executor.halted());
 }
+
+#[test]
+fn a_session_of_a_step_that_is_no_agent_step_is_not_resumed() {
+    let harness = Harness::routine("", FakeSessions::default());
+    let request = harness.claim(false, now());
+    let writer = harness.scratch.store().writer("demo").unwrap();
+    for event in [
+        RunEvent::Started,
+        RunEvent::TaskResolved {
+            task_id: "t1".into(),
+            created: true,
+            item: None,
+        },
+        RunEvent::ItemCreated {
+            item: "routine".into(),
+            version: "1".into(),
+            title: None,
+            data: Default::default(),
+        },
+        RunEvent::SessionStarted {
+            item: "routine".into(),
+            step: "removed".into(),
+            attempt: 1,
+            session_id: "s0".into(),
+            conversation_id: Some("c-old".into()),
+        },
+        RunEvent::ItemInterrupted {
+            item: "routine".into(),
+        },
+        RunEvent::Interrupted,
+    ] {
+        writer.append(&request.run_id, &event).unwrap();
+    }
+    drop(writer);
+
+    assert!(harness
+        .executor
+        .resume(request.clone(), vec!["routine".into()]));
+    wait_until(|| !harness.executor.owns(&request.run_id));
+
+    assert_eq!(harness.state_of(&request).status, RunStatus::Completed);
+    assert_eq!(harness.sessions.started.lock().unwrap()[0].resume, None);
+}

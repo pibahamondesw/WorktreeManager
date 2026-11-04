@@ -374,12 +374,10 @@ impl<R: Runtime> AppOperations<R> {
             None => failure("app_not_ready", "The CLI bridge is not running."),
         }
     }
-}
 
-impl<R: Runtime> OperationsBridge for AppOperations<R> {
-    /// An undelivered request is retried until the interface is ready.
-    fn call(&self, method: &str, params: Value) -> Value {
-        let deadline = Instant::now() + FRONTEND_WAIT;
+    /// Retries an undelivered request until the interface is ready or `wait` passes.
+    fn call_within(&self, method: &str, params: Value, wait: Duration) -> Value {
+        let deadline = Instant::now() + wait;
         loop {
             let response = self.call_once(method, params.clone());
             if response["error"]["code"] != "app_not_ready" || Instant::now() >= deadline {
@@ -387,6 +385,12 @@ impl<R: Runtime> OperationsBridge for AppOperations<R> {
             }
             std::thread::sleep(IN_PROCESS_POLL);
         }
+    }
+}
+
+impl<R: Runtime> OperationsBridge for AppOperations<R> {
+    fn call(&self, method: &str, params: Value) -> Value {
+        self.call_within(method, params, FRONTEND_WAIT)
     }
 }
 
@@ -863,7 +867,8 @@ mod tests {
             });
         });
         let params = json!({ "input": { "branchName": "wtm/demo" } });
-        let response = AppOperations(app.handle().clone()).call("task.create", params);
+        let operations = AppOperations(app.handle().clone());
+        let response = operations.call_within("task.create", params, Duration::from_secs(30));
         loading.join().unwrap();
         assert_eq!(response["data"]["id"], "t1");
     }
