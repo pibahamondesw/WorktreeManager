@@ -141,7 +141,8 @@ pub struct Target {
     pub repos: Vec<TargetRepo>,
     pub task: TaskMode,
     pub existing_task: Option<String>,
-    /// `None` for `existing`, whose task keeps its branch.
+    /// `None` for `existing`, whose task keeps its branch, and for `per-item` tasks of a tracked
+    /// campaign, which work on the tracker issue's branch.
     pub branch: Option<String>,
 }
 
@@ -401,6 +402,28 @@ pub struct Pools {
     pub open_prs: u64,
     /// Global lease pools: the most leases of each this automation holds at once.
     pub leases: BTreeMap<String, u64>,
+    /// Valued lease pools: the values this automation may lease and how long a lease is held.
+    pub valued: BTreeMap<String, ValuedPool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValuedPool {
+    pub values: Vec<String>,
+    pub hold: LeaseHold,
+}
+
+/// How long an item keeps a lease it took for a step that `uses` the pool.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaseHold {
+    /// For the attempt.
+    #[default]
+    Step,
+    /// Until the item reaches a step that releases capacity, or rests.
+    Active,
+    /// Until the item rests or ends.
+    Item,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]

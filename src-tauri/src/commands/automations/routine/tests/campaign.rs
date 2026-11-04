@@ -11,7 +11,7 @@ const CAMPAIGN: &str = "target: { workspace: Fintoc, repos: [rails], task: per-i
 const ITEMS_AB: &str = r#"{"items":[{"id":"a","version":"1"},{"id":"b","version":"1"}]}"#;
 
 impl Harness {
-    fn campaign(extra: &str, tasks: FakeTasks, sessions: FakeSessions) -> Self {
+    pub(super) fn campaign(extra: &str, tasks: FakeTasks, sessions: FakeSessions) -> Self {
         Self::new(&format!("{CAMPAIGN}{extra}"), tasks, sessions)
     }
 
@@ -20,7 +20,7 @@ impl Harness {
     }
 
     /// The selector saves its input next to itself and prints `output`.
-    fn selector_printing(&self, output: &str) {
+    pub(super) fn selector_printing(&self, output: &str) {
         self.selector_script(&format!(
             "cat > \"$(dirname \"$0\")/input.json\"\nprintf '%s' '{output}'\n"
         ));
@@ -45,7 +45,7 @@ impl Harness {
     }
 }
 
-fn item<'a>(run: &'a RunState, id: &str) -> &'a ItemState {
+pub(super) fn item<'a>(run: &'a RunState, id: &str) -> &'a ItemState {
     run.items.iter().find(|item| item.id == id).unwrap()
 }
 
@@ -56,7 +56,7 @@ fn statuses(run: &RunState) -> Vec<(&str, ItemStatus)> {
         .collect()
 }
 
-fn by_branch(worktree: Option<PathBuf>) -> FakeTasks {
+pub(super) fn by_branch(worktree: Option<PathBuf>) -> FakeTasks {
     FakeTasks {
         by_branch: true,
         worktree,
@@ -64,7 +64,7 @@ fn by_branch(worktree: Option<PathBuf>) -> FakeTasks {
     }
 }
 
-fn wait_until(mut done: impl FnMut() -> bool) {
+pub(super) fn wait_until(mut done: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
     while !done() {
         assert!(Instant::now() < deadline, "timed out waiting");
@@ -89,17 +89,18 @@ impl LeasePools for FakeLeasePools {
         &self,
         pool: &str,
         holder: &str,
+        values: Option<&[String]>,
         keep_waiting: &mut dyn FnMut() -> bool,
     ) -> Result<HeldLeases, String> {
-        assert_eq!(pool, "heavy_checks");
         let mut log = self.0.lock().unwrap();
         log.could_wait = keep_waiting();
-        log.holders.push(holder.into());
+        log.holders.push(format!("{pool}:{holder}"));
+        let slot = values.map_or("7", |values| values[log.held as usize].as_str());
         log.held += 1;
         log.most_held = log.most_held.max(log.held);
         let shared = self.0.clone();
         Ok(HeldLeases {
-            env: vec![("SLOT".into(), "7".into())],
+            env: vec![("SLOT".into(), slot.into())],
             release: Some(Box::new(move || {
                 let mut log = shared.lock().unwrap();
                 log.held -= 1;
@@ -295,7 +296,7 @@ steps:
     let log = pools.0.lock().unwrap();
     assert_eq!((log.most_held, log.held, log.released), (1, 0, 4));
     assert!(log.could_wait);
-    let holder = format!("automation:demo/{}/a/check", run.id);
+    let holder = format!("heavy_checks:automation:demo/{}/a/check", run.id);
     assert!(log.holders.contains(&holder), "{:?}", log.holders);
 }
 
@@ -378,4 +379,149 @@ fn campaign_items_can_share_an_existing_task() {
     assert_eq!(item(&run, "a").task_id.as_deref(), Some("t9"));
     assert_eq!(*harness.tasks.fetched.lock().unwrap(), ["t9"]);
     assert!(harness.tasks.created.lock().unwrap().is_empty());
+}
+
+fn leased_routine(steps: &str, worktree: &Scratch) -> (Harness, Arc<FakeLeasePools>) {
+    let tasks = FakeTasks {
+        worktree: Some(worktree.0.clone()),
+        ..FakeTasks::default()
+    };
+    let pools = Arc::new(FakeLeasePools::default());
+    let harness = Harness::new(&format!("{TARGET}{steps}"), tasks, FakeSessions::default())
+        .leasing(pools.clone());
+    (harness, pools)
+}
+
+fn slot_env(slot: &str) -> Vec<(String, String)> {
+    vec![("SLOT".into(), slot.into())]
+}
+
+#[test]
+fn an_item_keeps_a_valued_lease_for_every_step_until_it_ends() {
+    let worktree = Scratch::new();
+    let steps = r#"pools: { test_slot: { values: [13, 14], hold: item } }
+steps:
+  - id: implement
+    agent: {}
+    uses: [test_slot]
+  - id: check
+    command: [/bin/sh, -c, 'echo "$SLOT" >> slots.txt']
+    uses: [test_slot]
+  - id: review
+    agent: {}
+"#;
+    let (harness, pools) = leased_routine(steps, &worktree);
+
+    let run = harness.run();
+
+    assert_eq!(run.status, RunStatus::Completed);
+    assert_eq!(
+        fs::read_to_string(worktree.0.join("slots.txt")).unwrap(),
+        "13\n"
+    );
+    let started = harness.sessions.started.lock().unwrap();
+    assert_eq!(started.len(), 1);
+    assert_eq!(started[0].env, slot_env("13"));
+    let log = pools.0.lock().unwrap();
+    let holder = format!("test_slot:automation:demo/{}/routine", run.id);
+    assert_eq!(log.holders, [holder]);
+    assert_eq!((log.held, log.released), (0, 1));
+}
+
+#[test]
+fn a_lease_held_while_active_is_released_on_a_step_that_releases_capacity() {
+    let worktree = Scratch::new();
+    let steps = r#"pools: { test_slot: { values: [13, 14], hold: active } }
+steps:
+  - id: first
+    command: [/bin/sh, -c, 'echo "$SLOT" >> slots.txt']
+    uses: [test_slot]
+  - id: idle
+    command: [/bin/sh, -c, 'printenv SLOT >> slots.txt || echo none >> slots.txt']
+    capacity: release
+  - id: again
+    agent: {}
+    uses: [test_slot]
+"#;
+    let (harness, pools) = leased_routine(steps, &worktree);
+
+    harness.run();
+
+    assert_eq!(
+        fs::read_to_string(worktree.0.join("slots.txt")).unwrap(),
+        "13\nnone\n"
+    );
+    assert_eq!(
+        harness.sessions.started.lock().unwrap()[0].env,
+        slot_env("13")
+    );
+    let log = pools.0.lock().unwrap();
+    assert_eq!((log.holders.len(), log.held, log.released), (2, 0, 2));
+}
+
+#[test]
+fn a_shared_session_relaunches_when_the_lease_environment_changes() {
+    let worktree = Scratch::new();
+    let steps = r#"pools: { test_slot: { values: [13, 14] } }
+steps:
+  - id: implement
+    agent: {}
+    uses: [test_slot]
+  - id: polish
+    agent: {}
+"#;
+    let (harness, pools) = leased_routine(steps, &worktree);
+
+    let run = harness.run();
+
+    let started = harness.sessions.started.lock().unwrap();
+    let launches: Vec<_> = started
+        .iter()
+        .map(|launch| (launch.env.clone(), launch.resume.as_deref()))
+        .collect();
+    assert_eq!(
+        launches,
+        [(slot_env("13"), None), (Vec::new(), Some("c-s1"))]
+    );
+    let log = pools.0.lock().unwrap();
+    let holder = format!("test_slot:automation:demo/{}/routine/implement", run.id);
+    assert_eq!(log.holders, [holder]);
+    assert_eq!(log.released, 1);
+}
+
+#[test]
+fn tracked_items_work_on_their_issue_branch_and_fail_without_one() {
+    let tracked = "pools: { active: 4, open_prs: 4 }\ntracker: { linear: { team: DX } }\n";
+    let harness = Harness::campaign(tracked, by_branch(None), FakeSessions::default());
+    harness.selector_printing(concat!(
+        r#"{"items":[{"id":"a","version":"1","title":"A"},{"id":"b","version":"1"},"#,
+        r#"{"id":"c","version":"1","title":"Offline"},{"id":"d","version":"1","title":"Unbranched"}]}"#
+    ));
+
+    let run = harness.run();
+
+    assert_eq!(run.items.len(), 4, "{run:?}");
+    assert_eq!(item(&run, "a").status, ItemStatus::Completed);
+    assert_eq!(item(&run, "a").task_id.as_deref(), Some("t-me/wtm-demo-a"));
+    let cause = |id: &str| item(&run, id).cause.clone().unwrap();
+    assert_eq!(
+        cause("b"),
+        "task_create_failed: tracker issue: {item.title} has no value for this run"
+    );
+    assert_eq!(
+        cause("c"),
+        "task_create_failed: tracker issue: Linear is offline"
+    );
+    assert_eq!(
+        cause("d"),
+        "task_create_failed: tracker issue: Linear answered without a branch"
+    );
+
+    let staged = Harness::campaign(tracked, by_branch(None), FakeSessions::default());
+    staged.selector_printing(r#"{"items":[{"id":"a","version":"1","title":"A"}]}"#);
+    let test_run = staged.run_with(true, None);
+    assert_eq!(
+        item(&test_run, "a").task_id.as_deref(),
+        Some("t-wtm/demo/a")
+    );
 }

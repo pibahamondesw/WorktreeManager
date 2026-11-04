@@ -44,17 +44,18 @@ automation resume <name> [--reason <text>]
                                      Resuming skips the slots missed while paused.
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
-lease run --pool <name> [--holder <key>] -- <command> [args]
+lease run --pool <name> [--holder <key>] [--values <v,…>] -- <command> [args]
                                      Waits its turn (FIFO), runs the command with the
                                      pool's environment and exits with its code. The
                                      lease is released when the command ends or wtm dies.
-lease acquire --pool <name> [--holder <key>] [--pid <pid>]
+lease acquire --pool <name> [--holder <key>] [--pid <pid>] [--values <v,…>]
                                      Long-lived lease, kept until released or until
                                      --pid exits. Repeating it returns the same lease.
 lease release <lease_id> | --pool <name> [--holder <key>]
 lease status                         Pools, held leases and waiters.
-                                     --holder defaults to the current directory. Pools
-                                     live in ~/.worktreemanager/pools.toml.
+                                     --holder defaults to the current directory;
+                                     --values limits the lease to those pool values.
+                                     Pools live in ~/.worktreemanager/pools.toml.
 
 Workspace input: {"name":"Payments","repos":[{"localPath":"/repos/api"}]}
 Repo fields: id (existing members only), name, localPath, worktreeBasePath.

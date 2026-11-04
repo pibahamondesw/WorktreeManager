@@ -190,6 +190,25 @@ impl RunStore {
         Ok(AutomationWriter { dir, _lock: lock })
     }
 
+    /// The run's log as recorded, oldest first.
+    pub fn events(&self, name: &str, run_id: &str) -> Result<Vec<LoggedEvent>, String> {
+        self.run(name, run_id)?;
+        let path = self.run_dir(name, run_id)?.join(EVENTS_FILE);
+        parse_log(&fs::read_to_string(path).map_err(|e| e.to_string())?)
+    }
+
+    /// The trigger payload the run carried, if any.
+    pub fn payload(&self, name: &str, run_id: &str) -> Result<Option<serde_json::Value>, String> {
+        let path = self.run_dir(name, run_id)?.join(PAYLOAD_FILE);
+        match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|e| format!("{PAYLOAD_FILE}: {e}")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("{PAYLOAD_FILE}: {error}")),
+        }
+    }
+
     /// The trigger payload of the newest run that carried one.
     pub fn latest_payload(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
         let runs_dir = self.automation_dir(name)?.join("runs");

@@ -7,15 +7,17 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::super::definition::{AutomationDefinition, SelectorSettings, Target, TaskMode};
+use super::super::definition::{
+    AutomationDefinition, LinearOverrides, SelectorSettings, Target, TaskMode,
+};
 use super::super::pipeline::RunLog;
+use super::super::publish::{marked_issue, operation};
 use super::super::scheduler::{is_active, record_failure, RunRequest};
 use super::super::selector::script::ScriptSelector;
 use super::super::selector::{
-    self, Candidate, Selection, SelectionPass, SelectionPolicy, Selector, SelectorInput,
-    SelectorOutput,
+    self, Selection, SelectionPass, SelectionPolicy, Selector, SelectorInput, SelectorOutput,
 };
-use super::super::store::events::{ItemStatus, RunEvent};
+use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent};
 use super::commands::Item;
 use super::{
     bases, render, run_variables, ItemDrive, NewTask, ResolvedTask, RoutineExecutor, TaskFailure,
@@ -23,6 +25,8 @@ use super::{
 };
 
 const SCRIPTS_DIR: &str = "scripts/";
+/// The branch of a `per-item` task whose issue a Test run does not create.
+const UNTRACKED_BRANCH: &str = "wtm/{automation}/{item.id}";
 /// Campaign items have no run deadline: their steps' timeouts and budgets bound them.
 const ITEM_DEADLINE: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
@@ -74,34 +78,40 @@ impl RoutineExecutor {
         (self.runs_changed)(name);
         thread::scope(|scope| {
             for candidate in items {
-                scope.spawn(move || self.run_item(definition, request, payload, candidate));
+                scope.spawn(move || {
+                    let item = Item {
+                        id: candidate.id,
+                        version: candidate.version,
+                        title: candidate.title,
+                        data: candidate.data,
+                    };
+                    self.run_item(definition, request, payload, &item, None);
+                });
             }
         });
         Ok(())
     }
 
-    fn run_item(
+    /// Drives one item in its task. A resumed item brings the run's log and the task it had.
+    pub(super) fn run_item(
         &self,
         definition: &AutomationDefinition,
         request: &RunRequest,
         payload: Option<&Value>,
-        candidate: Candidate,
+        item: &Item,
+        resumed: Option<(&[LoggedEvent], Option<&str>)>,
     ) {
-        let item = Item {
-            id: candidate.id,
-            version: candidate.version,
-            title: candidate.title,
-            data: candidate.data,
-        };
+        let (history, task_id) = resumed.unwrap_or_default();
         let result = self
-            .item_task(definition, request, &item)
+            .item_task(definition, request, item, task_id)
             .and_then(|task| {
                 let drive = ItemDrive {
                     definition,
                     request,
                     payload,
                     task: &task,
-                    item: &item,
+                    item,
+                    history,
                     deadline: Instant::now() + ITEM_DEADLINE,
                 };
                 Ok(self.drive_item(&drive)?.0)
@@ -118,15 +128,21 @@ impl RoutineExecutor {
         (self.runs_changed)(&request.automation);
     }
 
-    /// Resolves the item's task and records it; an item without one fails.
+    /// Resolves the item's task, or reattaches to the one it had, and records it; an item without
+    /// one fails.
     fn item_task(
         &self,
         definition: &AutomationDefinition,
         request: &RunRequest,
         item: &Item,
+        task_id: Option<&str>,
     ) -> Result<ResolvedTask, String> {
         let mut log = WriterLog::of(&self.store, request);
-        match self.resolve_item_task(definition, request, item) {
+        let resolved = match task_id {
+            Some(task_id) => self.tasks.get(task_id).map(|task| (task, false)),
+            None => self.resolve_item_task(definition, request, item),
+        };
+        match resolved {
             Ok((task, created)) => {
                 log.append(RunEvent::TaskResolved {
                     task_id: task.id.clone(),
@@ -168,8 +184,11 @@ impl RoutineExecutor {
             let task_id = target.existing_task.as_deref().unwrap_or_default();
             return Ok((self.tasks.get(task_id)?, false));
         }
-        let template = target.branch.as_deref().unwrap_or_default();
-        let branch = render(template, &item_variables(request, item)).map_err(TaskFailure::new)?;
+        let variables = item_variables(request, item);
+        let branch = match target.branch.as_deref() {
+            Some(template) => render(template, &variables).map_err(TaskFailure::new)?,
+            None => self.tracker_branch(definition, request, &variables)?,
+        };
         if let Some(task) = self.tasks.find(&target.workspace_id, &branch)? {
             return Ok((task, false));
         }
@@ -181,6 +200,33 @@ impl RoutineExecutor {
             automation: definition.name.clone(),
         })?;
         Ok((task, true))
+    }
+
+    /// The branch of the item's tracker issue, which the marker makes the same issue on every
+    /// try. A Test run stages Linear writes, so its item works on the default branch instead.
+    fn tracker_branch(
+        &self,
+        definition: &AutomationDefinition,
+        request: &RunRequest,
+        variables: &[(&'static str, String)],
+    ) -> Result<String, TaskFailure> {
+        let render = |template: &str| render(template, variables);
+        let Some(tracker) = definition.tracker.as_ref().filter(|_| !request.test) else {
+            return render(UNTRACKED_BRANCH).map_err(TaskFailure::new);
+        };
+        let issue = marked_issue(
+            &definition.target.workspace_id,
+            &tracker.linear,
+            &LinearOverrides::default(),
+            &render,
+        )
+        .and_then(|params| operation(self.bridge.call("linear.issue-upsert", params)))
+        .map_err(|error| TaskFailure::new(format!("tracker issue: {error}")))?;
+        issue["branchName"]
+            .as_str()
+            .filter(|branch| !branch.is_empty())
+            .map(String::from)
+            .ok_or_else(|| TaskFailure::new("tracker issue: Linear answered without a branch"))
     }
 
     /// A completed item resets the failure count and a failed one counts, as runs do.

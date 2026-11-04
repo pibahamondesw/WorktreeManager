@@ -416,6 +416,7 @@ describe("marked issues", () => {
           id: "issue",
           identifier: "DX-9",
           url: "https://linear.app/x/DX-9",
+          branchName: "me/dx-9-lint-unit-1",
           title,
           state: { id: "s-todo", name: state },
           team: {
@@ -454,6 +455,7 @@ describe("marked issues", () => {
       id: "issue",
       identifier: "DX-9",
       url: "https://linear.app/x/DX-9",
+      branchName: "me/dx-9-lint-unit-1",
       created: false,
       updated: false,
     });
@@ -475,7 +477,12 @@ describe("marked issues", () => {
   });
 
   it("creates the issue with the marker as its description", async () => {
-    const created = { id: "new", identifier: "DX-10", url: "https://linear.app/x/DX-10" };
+    const created = {
+      id: "new",
+      identifier: "DX-10",
+      url: "https://linear.app/x/DX-10",
+      branchName: "me/dx-10-lint-unit-1",
+    };
     const { linear, request } = service(
       { issues: { nodes: [] } },
       context,

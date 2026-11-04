@@ -45,12 +45,13 @@ pub(crate) struct SettledRequest {
     pub question: bool,
 }
 
-/// Where a headless session runs, the conversation it continues if it is not a new one, and the
-/// schema its final replies follow.
+/// Where a headless session runs, the conversation it continues if it is not a new one, the
+/// schema its final replies follow and the environment its agent process starts with.
 pub(crate) struct HeadlessRequest {
     pub folders: Vec<String>,
     pub resume: Option<String>,
     pub output_schema: Option<Value>,
+    pub env: Vec<(String, String)>,
 }
 
 impl ChatRegistry {
@@ -72,7 +73,7 @@ impl ChatRegistry {
         let session_id = uuid::Uuid::new_v4().to_string();
         let target = SessionTarget::new(session_id.clone(), owner, &request.folders)?;
         let pending_resolution = policy.pending_resolution();
-        let launch = adapter.chat_launch(ChatRequest {
+        let mut launch = adapter.chat_launch(ChatRequest {
             cwd: target.cwd().to_string(),
             extra_dirs: target.extra_dirs().to_vec(),
             pinned: request.resume.is_some(),
@@ -82,6 +83,7 @@ impl ChatRegistry {
             permission: policy,
             output_schema: request.output_schema,
         })?;
+        launch.command.envs(request.env);
         let setup = session_setup(app, self, &target, pending_resolution, None, request.resume)?;
         let session = start_session(task_id, launch, None, setup)?;
         self.sessions

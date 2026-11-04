@@ -240,6 +240,27 @@ fn replied(reply: &str) -> TurnEnd {
     }
 }
 
+fn executor_of(
+    scratch: &Scratch,
+    tasks: Arc<FakeTasks>,
+    sessions: Arc<FakeSessions>,
+) -> RoutineExecutor {
+    RoutineExecutor::new(
+        scratch.store(),
+        Arc::new(DirectoryDefinitions(scratch.0.join("automations"))),
+        tasks,
+        sessions,
+        Arc::new(CliForge::with(
+            "gh",
+            vec![
+                ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
+                ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+            ],
+        )),
+        Arc::new(LoggingBridge),
+    )
+}
+
 struct Harness {
     scratch: Scratch,
     tasks: Arc<FakeTasks>,
@@ -252,26 +273,18 @@ impl Harness {
         let scratch = Scratch::new();
         scratch.define(frontmatter);
         let (tasks, sessions) = (Arc::new(tasks), Arc::new(sessions));
-        let executor = RoutineExecutor::new(
-            scratch.store(),
-            Arc::new(DirectoryDefinitions(scratch.0.join("automations"))),
-            tasks.clone(),
-            sessions.clone(),
-            Arc::new(CliForge::with(
-                "gh",
-                vec![
-                    ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
-                    ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
-                ],
-            )),
-            Arc::new(LoggingBridge),
-        );
+        let executor = executor_of(&scratch, tasks.clone(), sessions.clone());
         Self {
             scratch,
             tasks,
             sessions,
             executor,
         }
+    }
+
+    /// An executor of a new app process, on the same data and fakes.
+    fn restarted(&self) -> RoutineExecutor {
+        executor_of(&self.scratch, self.tasks.clone(), self.sessions.clone())
     }
 
     fn routine(extra: &str, sessions: FakeSessions) -> Self {
@@ -911,7 +924,9 @@ fn commands_fail_for_repositories_without_a_worktree_in_the_task() {
             automation: "demo".into(),
             run_id: "r1".into(),
             limits: Arc::default(),
+            valued: Arc::default(),
             deadline: Instant::now(),
+            kept: Default::default(),
         },
     )
     .unwrap();
@@ -1163,8 +1178,20 @@ fn the_inbox_hears_of_newly_settled_requests_and_of_the_run_end() {
 /// Answers every Operations call as a task log append.
 struct LoggingBridge;
 
+/// Appends task logs, and upserts tracker issues whose branch follows their marker unless the
+/// title asks for a failure.
 impl OperationsBridge for LoggingBridge {
     fn call(&self, method: &str, params: Value) -> Value {
+        if method == "linear.issue-upsert" {
+            let branch = params["marker"].as_str().unwrap().replace(':', "-");
+            return match params["title"].as_str().unwrap() {
+                "Offline" => json!({ "ok": false, "error": { "message": "Linear is offline" } }),
+                "Unbranched" => json!({ "ok": true, "data": { "identifier": "DX-2" } }),
+                _ => {
+                    json!({ "ok": true, "data": { "identifier": "DX-1", "branchName": format!("me/{branch}") } })
+                }
+            };
+        }
         assert_eq!(method, "task.log-append");
         json!({ "ok": true, "data": { "status": "appended", "path": params["id"] } })
     }
@@ -1297,3 +1324,4 @@ steps:
 }
 
 mod campaign;
+mod resume;

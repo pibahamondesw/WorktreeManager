@@ -781,3 +781,146 @@ fn the_app_scheduler_survives_an_unreadable_automations_directory() {
 
     assert!(scheduled(app.handle()).is_empty());
 }
+
+#[derive(Default)]
+struct ResumingExecutor(Mutex<Vec<(String, Vec<String>)>>);
+
+impl Executor for ResumingExecutor {
+    fn execute(&self, _: RunRequest, _: Option<Value>) {}
+
+    fn resume(&self, request: RunRequest, items: Vec<String>) -> bool {
+        assert_eq!(request.definition_hash, "hash");
+        self.0.lock().unwrap().push((request.run_id, items));
+        true
+    }
+}
+
+/// A run pinned to `hash` whose items moved to `active`, then were quit `quits` times each.
+fn quit_run(
+    store: &RunStore,
+    key: &str,
+    hash: &str,
+    items: &[(&str, usize)],
+    routine: bool,
+) -> String {
+    let trigger = RunTrigger {
+        source: RunSource::Schedule,
+        trigger_key: key.into(),
+        scheduled_for: (key == "routine").then(|| "2026-11-03T10:00:00Z".into()),
+        definition_hash: Some(hash.into()),
+        test: false,
+    };
+    let Claim::Created(id) = store.writer("quit").unwrap().claim(trigger).unwrap() else {
+        panic!("expected a new run");
+    };
+    let writer = store.writer("quit").unwrap();
+    writer.append(&id, &RunEvent::Started).unwrap();
+    for (item, quits) in items {
+        let created = RunEvent::ItemCreated {
+            item: (*item).into(),
+            version: "1".into(),
+            title: None,
+            data: Default::default(),
+        };
+        writer.append(&id, &created).unwrap();
+        let moved = RunEvent::ItemStatus {
+            item: (*item).into(),
+            status: ItemStatus::Active,
+            phase: Some("fix".into()),
+            stage: None,
+            cause: None,
+            counter: None,
+        };
+        writer.append(&id, &moved).unwrap();
+        for _ in 0..*quits {
+            let quit = RunEvent::ItemInterrupted {
+                item: (*item).into(),
+            };
+            writer.append(&id, &quit).unwrap();
+        }
+    }
+    if routine {
+        writer.append(&id, &RunEvent::Interrupted).unwrap();
+    } else {
+        let completed = RunEvent::Completed {
+            outcome: RunOutcome::Dispatched,
+        };
+        writer.append(&id, &completed).unwrap();
+    }
+    id
+}
+
+#[test]
+fn items_the_app_quit_while_driving_resume_and_the_rest_end_interrupted() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let routine = quit_run(&store, "routine", "hash", &[("routine", 1)], true);
+    let crashed = quit_run(&store, "crashed", "hash", &[("routine", 0)], true);
+    let campaign = quit_run(
+        &store,
+        "campaign",
+        "hash",
+        &[("quit", 2), ("crashed", 0), ("looping", 4)],
+        false,
+    );
+    let changed = quit_run(&store, "changed", "other", &[("quit", 1)], false);
+    let executor = Arc::new(ResumingExecutor::default());
+    executor.execute(scheduler_request(), None);
+    let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
+    let mut scheduler = Scheduler::new(scratch.store(), clock, executor.clone());
+
+    scheduler.recover_interrupted(&[hourly("quit")]);
+
+    let mut resumed = executor.0.lock().unwrap().clone();
+    resumed.sort();
+    assert_eq!(
+        resumed,
+        [
+            (routine.clone(), vec!["routine".to_string()]),
+            (campaign.clone(), vec!["quit".to_string()]),
+        ]
+    );
+    let run = |id: &str| store.run("quit", id).unwrap();
+    assert_eq!(run(&routine).status, RunStatus::Interrupted);
+    assert_eq!(
+        run(&crashed).failure_reason,
+        Some(FailureReason::Interrupted)
+    );
+    let statuses = |id: &str| {
+        run(id)
+            .items
+            .into_iter()
+            .map(|item| (item.id, item.status))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        statuses(&campaign),
+        [
+            ("quit".into(), ItemStatus::Active),
+            ("crashed".into(), ItemStatus::Failed),
+            ("looping".into(), ItemStatus::Failed),
+        ]
+    );
+    assert_eq!(statuses(&changed), [("quit".into(), ItemStatus::Failed)]);
+}
+
+#[test]
+fn an_executor_that_cannot_resume_ends_the_quit_items_as_interrupted() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let routine = quit_run(&store, "routine", "hash", &[("routine", 1)], true);
+    let campaign = quit_run(&store, "campaign", "hash", &[("quit", 1)], false);
+    let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
+    let (mut scheduler, executor) = scheduler(&scratch, &clock);
+    executor.quit();
+
+    scheduler.recover_interrupted(&[hourly("quit")]);
+
+    let routine = store.run("quit", &routine).unwrap();
+    assert_eq!(routine.failure_reason, Some(FailureReason::Interrupted));
+    let item = &store.run("quit", &campaign).unwrap().items[0];
+    assert_eq!(
+        (item.status, item.cause.as_deref()),
+        (ItemStatus::Failed, Some("interrupted"))
+    );
+}

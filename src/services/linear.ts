@@ -110,6 +110,8 @@ export interface MarkedIssue {
   id: string;
   identifier: string;
   url: string;
+  /** The branch Linear suggests for the issue; per-item tasks of a tracked campaign use it. */
+  branchName: string;
   created: boolean;
   updated: boolean;
 }
@@ -118,6 +120,7 @@ interface MarkedIssueNode {
   id: string;
   identifier: string;
   url: string;
+  branchName: string;
   title: string;
   state: { id: string; name: string } | null;
   team: { states: { nodes: { id: string; name: string }[] } };
@@ -141,7 +144,7 @@ const MARKED_ISSUE_QUERY = `
   query MarkedIssue($marker: String!) {
     issues(filter: { description: { contains: $marker } }, first: 1) {
       nodes {
-        id identifier url title
+        id identifier url branchName title
         state { id name }
         team { states(first: 250) { nodes { id name } } }
       }
@@ -496,8 +499,8 @@ export class LinearService {
     if (existing) {
       const updated = existing.title !== input.title;
       if (updated) await this.updateMarkedIssue(existing.id, { title: input.title });
-      const { id, identifier, url } = existing;
-      return { id, identifier, url, created: false, updated };
+      const { id, identifier, url, branchName } = existing;
+      return { id, identifier, url, branchName, created: false, updated };
     }
     const context = await this.gql.rawRequest<UpsertContextResponse, Record<string, unknown>>(
       UPSERT_CONTEXT_QUERY,
@@ -536,12 +539,12 @@ export class LinearService {
       {
         issueCreate: {
           success: boolean;
-          issue: { id: string; identifier: string; url: string } | null;
+          issue: { id: string; identifier: string; url: string; branchName: string } | null;
         };
       },
       Record<string, unknown>
     >(
-      `mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }`,
+      `mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url branchName } } }`,
       {
         input: {
           teamId: team.id,

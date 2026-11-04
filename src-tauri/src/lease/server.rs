@@ -128,8 +128,21 @@ fn lease_request(params: &Value) -> Result<LeaseRequest, Value> {
                 .ok_or_else(|| failure("invalid_args", "pid must be a positive process ID."))?,
         ),
     };
+    let values = text(params, "values").map(|values| {
+        values
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect()
+    });
     match (text(params, "pool"), text(params, "holder")) {
-        (Some(pool), Some(holder)) => Ok(LeaseRequest { pool, holder, pid }),
+        (Some(pool), Some(holder)) => Ok(LeaseRequest {
+            pool,
+            holder,
+            pid,
+            values,
+        }),
         _ => Err(failure("invalid_args", "A pool and a holder are required.")),
     }
 }

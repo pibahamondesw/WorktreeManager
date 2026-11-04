@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 
 use super::super::command::{CommandContext, HeldLeases};
 use super::super::pipeline::StepRequest;
+use super::super::store::events::ItemState;
 use super::super::store::write_atomically;
 use super::leases::StepLeases;
 use super::{render, ResolvedTask};
@@ -18,6 +19,17 @@ pub(super) struct Item {
     pub version: String,
     pub title: Option<String>,
     pub data: Map<String, Value>,
+}
+
+impl From<&ItemState> for Item {
+    fn from(item: &ItemState) -> Self {
+        Self {
+            id: item.id.clone(),
+            version: item.version.clone(),
+            title: item.title.clone(),
+            data: item.data.clone(),
+        }
+    }
 }
 
 pub(super) struct TaskCommands {
@@ -83,6 +95,10 @@ impl TaskCommands {
 
     pub fn variables(&self) -> &[(String, String)] {
         &self.variables
+    }
+
+    pub fn leases(&self) -> &StepLeases {
+        &self.leases
     }
 }
 

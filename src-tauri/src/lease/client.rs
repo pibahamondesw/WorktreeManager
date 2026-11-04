@@ -69,6 +69,7 @@ fn parse(options: &[String], command: Option<&[String]>) -> Result<Invocation, S
             "--pool" => "pool",
             "--holder" => "holder",
             "--pid" => "pid",
+            "--values" => "values",
             flag if flag.starts_with('-') => {
                 return Err("Unknown or duplicated option; see --help".into())
             }
@@ -107,8 +108,8 @@ fn parse(options: &[String], command: Option<&[String]>) -> Result<Invocation, S
         _ => return Err("Invalid lease operation; see --help".into()),
     };
     let allowed: &[&str] = match operation {
-        Operation::Run(_) => &["pool", "holder"],
-        Operation::Acquire => &["pool", "holder", "pid"],
+        Operation::Run(_) => &["pool", "holder", "values"],
+        Operation::Acquire => &["pool", "holder", "pid", "values"],
         Operation::Release if params.contains_key("id") => &["id"],
         Operation::Release => &["pool", "holder"],
         Operation::Status => &[],

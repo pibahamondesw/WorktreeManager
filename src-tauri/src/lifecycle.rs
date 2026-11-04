@@ -8,7 +8,7 @@ use serde_json::Value;
 use tauri::{AppHandle, CloseRequestApi, Listener, Manager, RunEvent, Runtime, State, WindowEvent};
 use tauri_plugin_store::StoreExt;
 
-use crate::commands::{chat, code_server, terminal};
+use crate::commands::{automations, chat, code_server, terminal};
 
 const PREFERENCES_STORE: &str = "store.json";
 const KEEP_RUNNING_KEY: &str = "keepRunningInBackground";
@@ -108,7 +108,11 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>, reopened: bool) {
     }
 }
 
+/// Automations stop first, so the sessions and commands torn down next do not fail their items.
 fn shutdown<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(engine) = app.try_state::<automations::actions::AutomationEngine>() {
+        engine.0.quit();
+    }
     chat::record_interrupted_sessions(app);
     app.state::<code_server::EditorRegistry>().shutdown_all();
     app.state::<terminal::TerminalRegistry>().shutdown_all();
@@ -135,6 +139,8 @@ mod tests {
 
     use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
     use tauri::{App, Emitter, WebviewWindowBuilder};
+
+    use crate::commands::automations::scheduler::Executor;
 
     use super::*;
     use crate::commands::chat::interrupted::{InterruptedSession, InterruptedStore};
@@ -296,13 +302,40 @@ mod tests {
         assert_eq!(events, ["close", "idle", "exit"]);
     }
 
+    #[derive(Default)]
+    struct QuittingEngine(AtomicBool);
+
+    impl automations::scheduler::Executor for QuittingEngine {
+        fn execute(&self, _: automations::scheduler::RunRequest, _: Option<Value>) {}
+
+        fn quit(&self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
     #[test]
     fn closing_quits_when_no_turn_is_in_progress() {
         let app = app("close");
         let handle = app.handle().clone();
         insert_live_session(&app.state(), "t1", "claude", Some("c1"));
+        let engine = Arc::new(QuittingEngine::default());
+        app.manage(automations::actions::AutomationEngine(engine.clone()));
+        engine.execute(engine_request(), None);
         assert_eq!(close_then(app, |_| {}), ["close", "exit"]);
         assert_eq!(interrupted(&handle), claude_c1());
+        assert!(engine.0.load(Ordering::SeqCst));
+    }
+
+    fn engine_request() -> automations::scheduler::RunRequest {
+        let now = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now());
+        automations::scheduler::RunRequest {
+            automation: "demo".into(),
+            run_id: "1700000000000-abcdef12".into(),
+            definition_hash: "hash".into(),
+            scheduled_for: now,
+            fired_at: now,
+            test: false,
+        }
     }
 
     #[test]

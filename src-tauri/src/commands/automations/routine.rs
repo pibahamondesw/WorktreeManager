@@ -10,11 +10,13 @@ mod commands;
 mod leases;
 mod prompt;
 mod result;
+mod resume;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,8 +26,8 @@ use serde_json::Value;
 
 use super::command::{CommandContext, CommandExecutor};
 use super::definition::{
-    AgentSettings, AgentStep, Authorization, AutomationDefinition, Effect, StepKind, Target,
-    TaskMode, Verb,
+    AgentSettings, AgentStep, Authorization, AutomationDefinition, Capacity, Effect, StepKind,
+    Target, TaskMode, Verb,
 };
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
@@ -104,6 +106,8 @@ pub struct SessionLaunch {
     pub output_schema: Option<Value>,
     /// The conversation the session continues.
     pub resume: Option<String>,
+    /// The environment of the leases held when the step starts, such as a test slot.
+    pub env: Vec<(String, String)>,
 }
 
 /// Task operations, run with the same validation and persistence as the UI and the CLI.
@@ -152,8 +156,14 @@ pub struct RoutineExecutor {
     quotas: Arc<Quotas>,
     /// Runs this process is executing.
     in_flight: Arc<Mutex<HashSet<String>>>,
+    /// Items being driven, by automation, run and item, and whether each is a routine's.
+    driven: Arc<Mutex<HashMap<DrivenItem, bool>>>,
+    /// Set when the app quits: items stop where they are, to resume on the next start.
+    quitting: Arc<AtomicBool>,
     runs_changed: RunsChanged,
 }
+
+type DrivenItem = (String, String, String);
 
 impl Executor for RoutineExecutor {
     fn execute(&self, request: RunRequest, payload: Option<Value>) {
@@ -168,6 +178,27 @@ impl Executor for RoutineExecutor {
 
     fn owns(&self, run_id: &str) -> bool {
         self.in_flight.lock().unwrap().contains(run_id)
+    }
+
+    fn resume(&self, request: RunRequest, items: Vec<String>) -> bool {
+        let executor = self.clone();
+        let run_id = request.run_id.clone();
+        self.in_flight.lock().unwrap().insert(run_id.clone());
+        thread::spawn(move || {
+            if let Err(error) = executor.resume_run(&request, &items) {
+                log::warn!(
+                    "Automation run {}/{} did not resume: {error}",
+                    request.automation,
+                    request.run_id
+                );
+            }
+            executor.in_flight.lock().unwrap().remove(&run_id);
+        });
+        true
+    }
+
+    fn quit(&self) {
+        self.halt();
     }
 }
 
@@ -197,6 +228,8 @@ impl RoutineExecutor {
             lease_pools: Arc::new(NoLeasePools),
             quotas: Arc::default(),
             in_flight: Arc::default(),
+            driven: Arc::default(),
+            quitting: Arc::default(),
             runs_changed: Arc::new(|_| {}),
         }
     }
@@ -243,14 +276,7 @@ impl RoutineExecutor {
         let mut log = WriterLog::of(&self.store, request);
         let task = match self.resolve_task(&definition, request) {
             Ok(task) => task,
-            Err(failure) => {
-                log.append(RunEvent::TaskFailed {
-                    message: failure.message,
-                    worktrees: failure.worktrees,
-                    item: None,
-                })?;
-                return self.finish(request, Ending::Failed(FailureReason::TaskCreateFailed));
-            }
+            Err(failure) => return self.task_failed(request, failure),
         };
         log.append(RunEvent::TaskResolved {
             task_id: task.id.clone(),
@@ -279,20 +305,57 @@ impl RoutineExecutor {
             payload,
             task: &task,
             item: &item,
+            history: &[],
             deadline: run_deadline(&definition, request),
         };
-        let ending = self.drive_item(&drive)?.1;
-        self.finish(request, ending)
+        self.finish_routine(&drive)
     }
 
-    /// Drives the item through the steps until it rests or ends.
+    /// Drives the routine's item and ends the run with it, unless the app quits meanwhile.
+    fn finish_routine(&self, drive: &ItemDrive) -> Result<(), String> {
+        let ending = self.drive_item(drive)?.1;
+        if self.halted() {
+            return Ok(());
+        }
+        self.finish(drive.request, ending)
+    }
+
+    fn task_failed(&self, request: &RunRequest, failure: TaskFailure) -> Result<(), String> {
+        WriterLog::of(&self.store, request).append(RunEvent::TaskFailed {
+            message: failure.message,
+            worktrees: failure.worktrees,
+            item: None,
+        })?;
+        self.finish(request, Ending::Failed(FailureReason::TaskCreateFailed))
+    }
+
+    fn halted(&self) -> bool {
+        self.quitting.load(Ordering::SeqCst)
+    }
+
+    /// Drives the item through the steps until it rests, ends or the app quits.
     fn drive_item(&self, item_drive: &ItemDrive) -> Result<(ItemStatus, Ending), String> {
+        let request = item_drive.request;
+        let key = (
+            request.automation.clone(),
+            request.run_id.clone(),
+            item_drive.item.id.clone(),
+        );
+        let routine = item_drive.definition.selector.is_none();
+        self.driven.lock().unwrap().insert(key.clone(), routine);
+        let driven = self.drive_steps(item_drive);
+        self.driven.lock().unwrap().remove(&key);
+        driven
+    }
+
+    fn drive_steps(&self, item_drive: &ItemDrive) -> Result<(ItemStatus, Ending), String> {
         let ItemDrive {
             definition,
             request,
             payload,
             task,
             item,
+            history,
             deadline,
         } = *item_drive;
         let run_dir = self.store.run_dir(&request.automation, &request.run_id)?;
@@ -302,7 +365,9 @@ impl RoutineExecutor {
             automation: request.automation.clone(),
             run_id: request.run_id.clone(),
             limits: Arc::new(definition.pools.leases.clone()),
+            valued: Arc::new(definition.pools.valued.clone()),
             deadline,
+            kept: Default::default(),
         };
         let context = TaskCommands::new(&run_dir, run_variables(request), task, item, leases)?;
         let mut steps = ItemSteps {
@@ -327,13 +392,17 @@ impl RoutineExecutor {
             settled: Vec::new(),
             prior: Vec::new(),
             evidence: Vec::new(),
+            quitting: &self.quitting,
+            shared_conversation: None,
+            interrupted_conversation: None,
         };
+        steps.resume_from(history);
         let pipeline = Pipeline {
             steps: &definition.steps,
             budgets: &definition.budgets,
             stages: &[],
         };
-        let mut machine = ItemMachine::from_log(pipeline, &item.id, &[]);
+        let mut machine = ItemMachine::from_log(pipeline, &item.id, history);
         let mut log = WriterLog::of(&self.store, request);
         let status = drive(&mut machine, &mut steps, &mut log);
         steps.close_sessions();
@@ -399,6 +468,8 @@ struct ItemDrive<'a> {
     payload: Option<&'a Value>,
     task: &'a ResolvedTask,
     item: &'a Item,
+    /// The run's log so far, for an item that resumes; empty for a new one.
+    history: &'a [LoggedEvent],
     deadline: Instant,
 }
 
@@ -449,6 +520,11 @@ struct ItemSteps<'a> {
     prior: Vec<PriorStep>,
     /// Evidence of the current attempt, recorded before its result.
     evidence: Vec<RunEvent>,
+    quitting: &'a AtomicBool,
+    /// A resumed item's shared conversation, by agent, for its next shared session.
+    shared_conversation: Option<(String, String)>,
+    /// The conversation of a resumed `fresh_session` attempt, by step and attempt.
+    interrupted_conversation: Option<(String, u32, String)>,
 }
 
 impl StepExecutor for ItemSteps<'_> {
@@ -457,14 +533,20 @@ impl StepExecutor for ItemSteps<'_> {
             self.deadline_passed = true;
             return Execution::Parked;
         };
+        if request.step.capacity == Capacity::Release {
+            self.commands.context().leases().release_active();
+        }
         let execution = match &request.step.kind {
             StepKind::Command(_) => self.command(request),
             kind => match self.commands.context().hold_leases(request) {
                 Err(error) => Execution::Finished(failed(ProcessEnd::Crashed, error)),
-                Ok(_leases) => match kind {
-                    StepKind::Agent(step) => {
-                        Execution::Finished(self.agent_turn(request, step, remaining))
-                    }
+                Ok(leases) => match kind {
+                    StepKind::Agent(step) => Execution::Finished(self.agent_turn(
+                        request,
+                        step,
+                        remaining,
+                        leases.env.clone(),
+                    )),
                     StepKind::Publish(effects) => self.publish(request, effects),
                     _ => Execution::Finished(failed(
                         ProcessEnd::Exited,
@@ -483,6 +565,10 @@ impl StepExecutor for ItemSteps<'_> {
     fn drain_events(&mut self) -> Vec<RunEvent> {
         std::mem::take(&mut self.evidence)
     }
+
+    fn halted(&self) -> bool {
+        self.quitting.load(Ordering::SeqCst)
+    }
 }
 
 impl ItemSteps<'_> {
@@ -491,6 +577,7 @@ impl ItemSteps<'_> {
         request: &StepRequest,
         step: &AgentStep,
         remaining: Duration,
+        env: Vec<(String, String)>,
     ) -> StepReport {
         let timeout = request
             .step
@@ -512,8 +599,9 @@ impl ItemSteps<'_> {
             read_only: step.readonly,
             output_schema,
             resume: None,
+            env,
         };
-        let session_id = match self.session_for(step, launch) {
+        let session_id = match self.session_for(request, step, launch) {
             Ok(session_id) => session_id,
             Err(error) => return failed(ProcessEnd::Crashed, format!("session_start: {error}")),
         };
@@ -659,10 +747,26 @@ impl ItemSteps<'_> {
     }
 
     /// A fresh step gets its own session. Any other continues the shared one, relaunching its
-    /// conversation when the step asks for different settings of the same agent.
-    fn session_for(&mut self, step: &AgentStep, launch: SessionLaunch) -> Result<String, String> {
+    /// conversation when the step asks for different settings of the same agent. A resumed item
+    /// continues the conversations its interrupted attempts had.
+    fn session_for(
+        &mut self,
+        request: &StepRequest,
+        step: &AgentStep,
+        launch: SessionLaunch,
+    ) -> Result<String, String> {
         if step.fresh_session {
-            return self.open(&launch);
+            let interrupted =
+                self.interrupted_conversation
+                    .as_ref()
+                    .is_some_and(|(step, attempt, _)| {
+                        *step == request.step.id && *attempt == request.attempt
+                    });
+            let resume = interrupted
+                .then(|| self.interrupted_conversation.take())
+                .flatten()
+                .map(|(_, _, conversation)| conversation);
+            return self.open(&SessionLaunch { resume, ..launch });
         }
         let resume = match self.shared_session.take() {
             Some((current, session_id)) if current == launch => {
@@ -674,7 +778,11 @@ impl ItemSteps<'_> {
                 self.sessions.close(&session_id);
                 conversation
             }
-            _ => None,
+            _ => self
+                .shared_conversation
+                .take()
+                .filter(|(agent, _)| *agent == launch.agent.id)
+                .map(|(_, conversation)| conversation),
         };
         let session_id = self.open(&SessionLaunch {
             resume,
@@ -737,9 +845,8 @@ impl ItemSteps<'_> {
         }
     }
 
-    /// Keeps what the attempt produced for the agent steps that follow.
     fn remember(&mut self, request: &StepRequest, report: &StepReport) {
-        let mut prior = PriorStep {
+        self.keep_prior(PriorStep {
             step: request.step.id.clone(),
             attempt: request.attempt,
             outcome: report.outcome,
@@ -750,7 +857,11 @@ impl ItemSteps<'_> {
             exit_code: report.exit_code,
             receipt: None,
             log: None,
-        };
+        });
+    }
+
+    /// Keeps what the attempt produced, with its evidence, for the agent steps that follow.
+    fn keep_prior(&mut self, mut prior: PriorStep) {
         for event in &self.evidence {
             if let RunEvent::StepOutput { reply, result, .. } = event {
                 prior.reply = reply.clone().filter(|_| result.is_none());

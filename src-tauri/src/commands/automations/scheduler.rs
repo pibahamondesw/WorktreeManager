@@ -20,8 +20,8 @@ use tauri::{AppHandle, Runtime};
 
 use super::definition::{self, AutomationDefinition, CatchUp, Schedule};
 use super::store::events::{
-    FailureReason, ItemStatus, MissedSlots, RunEvent, RunSource, RunState, RunStatus, RunTrigger,
-    SkipReason,
+    FailureReason, ItemState, ItemStatus, LoggedEvent, MissedSlots, RunEvent, RunSource, RunState,
+    RunStatus, RunTrigger, SkipReason,
 };
 use super::store::{
     Actor, AutomationState, AutomationWriter, Claim, PauseReason, RunStore, Toggle,
@@ -35,6 +35,8 @@ const CATCH_UP_WINDOW: TimeDelta = TimeDelta::days(7);
 const START_TIMEOUT: TimeDelta = TimeDelta::minutes(5);
 const AUTO_PAUSE_FAILURES: u32 = 3;
 const INTERRUPTED_CAUSE: &str = "interrupted";
+/// Quits an item may resume from; past them it ends as interrupted instead of resuming forever.
+const MAX_RESUMES: usize = 3;
 
 pub trait Clock: Send {
     fn now(&self) -> DateTime<Utc>;
@@ -69,6 +71,16 @@ pub trait Executor: Send + Sync {
     fn owns(&self, _run_id: &str) -> bool {
         false
     }
+
+    /// Resumes `items` of a run the app quit while driving, from its log. `false` when it
+    /// cannot, so the run or its items end as interrupted instead.
+    fn resume(&self, _request: RunRequest, _items: Vec<String>) -> bool {
+        false
+    }
+
+    /// The app quits: stops driving items and records each as interrupted, to resume on the
+    /// next start.
+    fn quit(&self) {}
 }
 
 pub struct Automation {
@@ -248,15 +260,13 @@ impl<C: Clock> Scheduler<C> {
         Ok(())
     }
 
-    /// Ends the runs, and the campaign items, an earlier app process left active; they are not
-    /// resumed yet.
+    /// Resumes the runs and campaign items an earlier app process was driving when it quit, and
+    /// ends those it left active otherwise: after a crash, past `MAX_RESUMES` quits or on a
+    /// definition other than the one the run pinned.
     pub fn recover_interrupted(&mut self, automations: &[Automation]) {
         let boot_ms = self.clock.now().timestamp_millis() as u64;
         for automation in automations {
-            let ended = self
-                .end_interrupted(&automation.name, boot_ms)
-                .and_then(|()| self.end_interrupted_items(&automation.name, boot_ms));
-            if let Err(error) = ended {
+            if let Err(error) = self.recover(automation, boot_ms) {
                 log::warn!(
                     "Automation {} kept its interrupted runs: {error}",
                     automation.name
@@ -265,61 +275,138 @@ impl<C: Clock> Scheduler<C> {
         }
     }
 
-    /// Fails the queued and active items of completed campaign runs, which release their slot,
-    /// their `id` + `version` and their `exclusive_on` values for the next selection.
-    fn end_interrupted_items(&self, name: &str, boot_ms: u64) -> Result<(), String> {
-        let mut interrupted = Vec::new();
+    fn recover(&self, automation: &Automation, boot_ms: u64) -> Result<(), String> {
+        let name = &automation.name;
+        let mut recoveries = Vec::new();
         for id in self.store.run_ids(name)? {
             let run = self.store.run(name, &id)?;
             let before_boot = run.claimed_at_ms.is_some_and(|claimed| claimed < boot_ms);
-            if run.status != RunStatus::Completed || !before_boot {
-                continue;
-            }
-            let open = run
-                .items
-                .iter()
-                .filter(|item| matches!(item.status, ItemStatus::Queued | ItemStatus::Active));
-            for item in open {
-                let failed = RunEvent::ItemStatus {
-                    item: item.id.clone(),
-                    status: ItemStatus::Failed,
-                    phase: item.phase.clone(),
-                    stage: item.stage.clone(),
-                    cause: Some(INTERRUPTED_CAUSE.into()),
-                    counter: None,
-                };
-                interrupted.push((id.clone(), failed));
+            let left_items =
+                run.status == RunStatus::Completed && open_items(&run).next().is_some();
+            if before_boot && (is_active(run.status) || left_items) {
+                let resumed = self.resumable(automation, &run)?;
+                recoveries.push((run, resumed));
             }
         }
-        if interrupted.is_empty() {
+        if recoveries.is_empty() {
             return Ok(());
         }
         let writer = self.store.writer(name)?;
-        for (id, failed) in interrupted {
-            writer.append(&id, &failed)?;
+        for (run, resumed) in &recoveries {
+            let kept = resumed.as_ref().map_or(&[][..], |(_, items)| items);
+            end_interrupted(&writer, run, kept)?;
+        }
+        drop(writer);
+        for (run, resumed) in recoveries {
+            let Some((request, items)) = resumed else {
+                continue;
+            };
+            if !self.executor.resume(request, items) {
+                end_interrupted(&self.store.writer(name)?, &run, &[])?;
+            }
         }
         Ok(())
     }
 
-    fn end_interrupted(&mut self, name: &str, boot_ms: u64) -> Result<(), String> {
-        let interrupted: Vec<_> = self
-            .active_runs(name)?
-            .into_iter()
-            .filter(|run| run.claimed_at_ms.is_some_and(|claimed| claimed < boot_ms))
+    /// The run's request and the open items the app quit while driving, if any may resume.
+    fn resumable(
+        &self,
+        automation: &Automation,
+        run: &RunState,
+    ) -> Result<Option<(RunRequest, Vec<String>)>, String> {
+        let Some(request) = interrupted_request(&automation.name, run)
+            .filter(|request| request.definition_hash == automation.definition_hash)
+        else {
+            return Ok(None);
+        };
+        let history = self.store.events(&automation.name, &run.id)?;
+        let items: Vec<String> = open_items(run)
+            .filter(|item| {
+                quit_interruptions(&history, &item.id).is_some_and(|quits| quits <= MAX_RESUMES)
+            })
+            .map(|item| item.id.clone())
             .collect();
-        if interrupted.is_empty() {
-            return Ok(());
-        }
-        let writer = self.store.writer(name)?;
-        for run in interrupted {
+        Ok(Some((request, items)).filter(|(_, items)| !items.is_empty()))
+    }
+}
+
+/// Ends what does not resume: an active run fails, and the queued and active items of a
+/// completed campaign run fail, releasing their slot, their `id` + `version` and their
+/// `exclusive_on` values for the next selection. Neither counts toward the auto-pause.
+fn end_interrupted(
+    writer: &AutomationWriter,
+    run: &RunState,
+    resumed: &[String],
+) -> Result<(), String> {
+    if is_active(run.status) {
+        if resumed.is_empty() {
             writer.append(&run.id, &RunEvent::Interrupted)?;
             let failed = RunEvent::Failed {
                 reason: FailureReason::Interrupted,
             };
             writer.append(&run.id, &failed)?;
         }
-        Ok(())
+        return Ok(());
     }
+    for item in open_items(run).filter(|item| !resumed.contains(&item.id)) {
+        let failed = RunEvent::ItemStatus {
+            item: item.id.clone(),
+            status: ItemStatus::Failed,
+            phase: item.phase.clone(),
+            stage: item.stage.clone(),
+            cause: Some(INTERRUPTED_CAUSE.into()),
+            counter: None,
+        };
+        writer.append(&run.id, &failed)?;
+    }
+    Ok(())
+}
+
+fn open_items(run: &RunState) -> impl Iterator<Item = &ItemState> {
+    run.items
+        .iter()
+        .filter(|item| matches!(item.status, ItemStatus::Queued | ItemStatus::Active))
+}
+
+/// How many times the app quit while it drove the item, when such a quit is the last thing the
+/// item's steps recorded; `None` when the item moved on since, as after a crash.
+fn quit_interruptions(history: &[LoggedEvent], item: &str) -> Option<usize> {
+    let mut quits = 0;
+    let mut quit_last = false;
+    for logged in history {
+        match &logged.event {
+            RunEvent::ItemInterrupted { item: quit } if quit == item => {
+                quits += 1;
+                quit_last = true;
+            }
+            RunEvent::ItemStatus { item: moved, .. } | RunEvent::StepStatus { item: moved, .. }
+                if moved == item =>
+            {
+                quit_last = false;
+            }
+            _ => {}
+        }
+    }
+    quit_last.then_some(quits)
+}
+
+/// The request a recorded run started with, its claim standing for when it fired.
+fn interrupted_request(name: &str, run: &RunState) -> Option<RunRequest> {
+    let trigger = run.trigger.as_ref()?;
+    let fired_at = DateTime::from_timestamp_millis(run.claimed_at_ms? as i64)?;
+    let scheduled_for = trigger
+        .scheduled_for
+        .as_deref()
+        .and_then(|slot| DateTime::parse_from_rfc3339(slot).ok())
+        .map_or(fired_at, |slot| slot.with_timezone(&Utc));
+    Some(RunRequest {
+        automation: name.to_string(),
+        run_id: run.id.clone(),
+        definition_hash: trigger.definition_hash.clone()?,
+        scheduled_for,
+        fired_at,
+        test: trigger.test,
+    })
 }
 
 /// Enables the automation, or resumes it after a pause: the failure count restarts and the
