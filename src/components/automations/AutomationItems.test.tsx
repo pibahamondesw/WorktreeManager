@@ -132,6 +132,13 @@ const TASKS: Task[] = [
     members: [],
     createdAt: "2026-11-01T00:00:00Z",
   },
+  {
+    id: "t-c",
+    workspaceId: "w1",
+    branchName: "pedro/wor-3-style-c",
+    members: [],
+    createdAt: "2026-11-01T00:00:00Z",
+  },
 ];
 
 const openConversation = vi.fn(() => true);
@@ -211,12 +218,24 @@ it("moves between cards with the arrow keys and opens the focused item with Ente
   fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
   expect(first).toHaveFocus();
 
-  openConversation.mockReturnValue(false);
-  fireEvent.click(within(first).getByRole("button", { name: "Open task" }));
-  expect(screen.getByText("The item's task no longer exists")).toBeInTheDocument();
   expect(
     within(screen.getByRole("article", { name: "Style/B" })).queryByRole("button")
   ).not.toBeInTheDocument();
+});
+
+it("shows items whose task was deleted as removed instead of offering to open them", async () => {
+  answer({
+    automation_items_list: [
+      item("cop-d", { title: "Style/D", status: "completed", task_id: "t-gone" }),
+    ],
+  });
+  await renderDetail();
+
+  const card = within(screen.getByRole("article", { name: "Style/D" }));
+  expect(card.getByText("Task removed")).toBeInTheDocument();
+  expect(card.queryByRole("button")).not.toBeInTheDocument();
+  fireEvent.keyDown(screen.getByRole("article", { name: "Style/D" }), { key: "Enter" });
+  expect(openConversation).not.toHaveBeenCalled();
 });
 
 it("grants one more item with Next and goes back to Continuous", async () => {

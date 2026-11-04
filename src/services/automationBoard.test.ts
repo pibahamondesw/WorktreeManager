@@ -231,7 +231,9 @@ describe("boardCard", () => {
       reason: null,
       evidence: null,
       target: { taskId: "t-gone", agent: "claude", conversationId: null },
+      taskRemoved: true,
     });
+    expect(boardCard(STEPS, item("q"), [], 0).taskRemoved).toBe(false);
     expect(boardCard(STEPS, item("q"), [], 0).target).toBeNull();
     expect(boardCard(STEPS, item("b", { status: "blocked", task_id: "t-a" }), [], 0)).toMatchObject(
       { evidence: null, target: { agent: null, conversationId: null } }

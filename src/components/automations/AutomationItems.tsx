@@ -132,12 +132,12 @@ interface ItemCardProps {
 
 function ItemCard({ card, position, focusable, onKeyDown, onFocus }: ItemCardProps) {
   const openConversation = useOpenConversation();
-  const [missing, setMissing] = useState(false);
-  const { item, target } = card;
+  const { item, taskRemoved } = card;
+  const target = taskRemoved ? null : card.target;
   const opensConversation = !!target?.agent && !!target.conversationId;
 
   const open = () => {
-    if (target && openConversation) setMissing(!openConversation(target));
+    if (target) openConversation?.(target);
   };
 
   return (
@@ -188,7 +188,14 @@ function ItemCard({ card, position, focusable, onKeyDown, onFocus }: ItemCardPro
           {opensConversation ? "Open conversation" : "Open task"}
         </Button>
       )}
-      {missing && <p className="text-danger">The item's task no longer exists</p>}
+      {taskRemoved && (
+        <p
+          className="text-text-muted"
+          title="The item's task and its worktrees were deleted, so there is nothing left to open."
+        >
+          Task removed
+        </p>
+      )}
     </article>
   );
 }

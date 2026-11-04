@@ -26,6 +26,8 @@ export interface BoardCard {
   evidence: string | null;
   /** Null when the item has no task yet. */
   target: ConversationTarget | null;
+  /** The item had a task that has since been deleted, for example by its cleanup. */
+  taskRemoved: boolean;
 }
 
 export interface BoardColumn {
@@ -128,6 +130,7 @@ export function boardCard(
     reason: stopped ? (item.cause ?? null) : null,
     evidence: stopped ? evidenceOf(steps, item.steps) : null,
     target: itemTarget(steps, item),
+    taskRemoved: !!item.task_id && !task,
   };
 }
 
