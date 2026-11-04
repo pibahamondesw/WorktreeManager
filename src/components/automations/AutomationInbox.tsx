@@ -1,5 +1,7 @@
 import { KeyboardEvent, useRef, useState } from "react";
 import { InboxItem, InboxKind, unreadCount } from "../../services/automationInbox";
+import { ApprovalAnswer } from "../../services/automations";
+import { AutomationApproval } from "./AutomationApproval";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 
@@ -14,6 +16,7 @@ const KIND_BADGES: Record<
   needs_attention: { label: "Needs attention", variant: "warning" },
   question: { label: "Question", variant: "warning" },
   permission: { label: "Permission", variant: "warning" },
+  approval: { label: "Approval", variant: "accent" },
   noop: { label: "No-op", variant: "default" },
   completed: { label: "Completed", variant: "success" },
 };
@@ -26,10 +29,18 @@ interface AutomationInboxProps {
   onOpen: (item: InboxItem) => boolean;
   onSetRead: (keys: string[], read: boolean) => void;
   onSetArchived: (keys: string[], archived: boolean) => void;
+  /** Answers a pending approval entry. */
+  onAnswer?: (item: InboxItem, answer: ApprovalAnswer) => Promise<unknown>;
 }
 
 /** Enter opens an entry, arrows move between entries, E archives and U toggles read. */
-export function AutomationInbox({ items, onOpen, onSetRead, onSetArchived }: AutomationInboxProps) {
+export function AutomationInbox({
+  items,
+  onOpen,
+  onSetRead,
+  onSetArchived,
+  onAnswer,
+}: AutomationInboxProps) {
   const [view, setView] = useState<View>("inbox");
   const [focusIndex, setFocusIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +133,7 @@ export function AutomationInbox({ items, onOpen, onSetRead, onSetArchived }: Aut
                 onKeyDown={(event) => handleKey(event, index)}
                 onSetRead={(read) => onSetRead([item.key], read)}
                 onSetArchived={(archived) => onSetArchived([item.key], archived)}
+                onAnswer={onAnswer && ((answer) => onAnswer(item, answer))}
               />
             ))}
           </ul>
@@ -138,9 +150,18 @@ interface InboxRowProps {
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   onSetRead: (read: boolean) => void;
   onSetArchived: (archived: boolean) => void;
+  onAnswer?: (answer: ApprovalAnswer) => Promise<unknown>;
 }
 
-function InboxRow({ item, focusable, onOpen, onKeyDown, onSetRead, onSetArchived }: InboxRowProps) {
+function InboxRow({
+  item,
+  focusable,
+  onOpen,
+  onKeyDown,
+  onSetRead,
+  onSetArchived,
+  onAnswer,
+}: InboxRowProps) {
   const badge = KIND_BADGES[item.kind];
   const meta = [
     item.automation,
@@ -150,56 +171,62 @@ function InboxRow({ item, focusable, onOpen, onKeyDown, onSetRead, onSetArchived
   ]
     .filter(Boolean)
     .join(" · ");
+  const pending = item.approval && item.approval.answer === null && !item.archived;
   return (
-    <li className="group flex items-start gap-2 rounded-lg hover:bg-bg-hover">
-      <button
-        type="button"
-        data-inbox-entry
-        tabIndex={focusable ? 0 : -1}
-        onClick={onOpen}
-        onKeyDown={onKeyDown}
-        aria-label={`${item.read ? "" : "Unread: "}${item.title}`}
-        className="flex-1 min-w-0 flex items-start gap-3 px-3 py-2 rounded-lg text-left cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent"
-      >
-        <span
-          aria-hidden="true"
-          className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.read ? "" : "bg-accent"}`}
-        />
-        <span className="min-w-0 flex-1 space-y-0.5">
-          <span className="flex items-center gap-2">
-            <span
-              className={`text-xs truncate ${item.read ? "text-text-secondary" : "font-semibold text-text-primary"}`}
-            >
-              {item.title}
-            </span>
-            <Badge variant={badge.variant}>{badge.label}</Badge>
-          </span>
-          {item.detail && (
-            <span className="block text-xs text-text-secondary truncate">{item.detail}</span>
-          )}
-          <span className="block text-[0.625rem] text-text-muted truncate">{meta}</span>
-        </span>
-      </button>
-      <span className="flex items-center gap-1 px-2 py-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
-        <Button
-          variant="ghost"
-          tabIndex={-1}
-          className="h-6 px-2 text-[0.625rem]"
-          onClick={() => onSetRead(!item.read)}
+    <li className="group rounded-lg hover:bg-bg-hover">
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          data-inbox-entry
+          tabIndex={focusable ? 0 : -1}
+          onClick={onOpen}
+          onKeyDown={onKeyDown}
+          aria-label={`${item.read ? "" : "Unread: "}${item.title}`}
+          className="flex-1 min-w-0 flex items-start gap-3 px-3 py-2 rounded-lg text-left cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
-          {item.read ? "Mark unread" : "Mark read"}
-        </Button>
-        {!item.autoArchived && (
+          <span
+            aria-hidden="true"
+            className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.read ? "" : "bg-accent"}`}
+          />
+          <span className="min-w-0 flex-1 space-y-0.5">
+            <span className="flex items-center gap-2">
+              <span
+                className={`text-xs truncate ${item.read ? "text-text-secondary" : "font-semibold text-text-primary"}`}
+              >
+                {item.title}
+              </span>
+              <Badge variant={badge.variant}>{badge.label}</Badge>
+            </span>
+            {item.detail && (
+              <span className="block text-xs text-text-secondary truncate">{item.detail}</span>
+            )}
+            <span className="block text-[0.625rem] text-text-muted truncate">{meta}</span>
+          </span>
+        </button>
+        <span className="flex items-center gap-1 px-2 py-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
           <Button
             variant="ghost"
             tabIndex={-1}
             className="h-6 px-2 text-[0.625rem]"
-            onClick={() => onSetArchived(!item.archived)}
+            onClick={() => onSetRead(!item.read)}
           >
-            {item.archived ? "Unarchive" : "Archive"}
+            {item.read ? "Mark unread" : "Mark read"}
           </Button>
-        )}
-      </span>
+          {!item.autoArchived && (
+            <Button
+              variant="ghost"
+              tabIndex={-1}
+              className="h-6 px-2 text-[0.625rem]"
+              onClick={() => onSetArchived(!item.archived)}
+            >
+              {item.archived ? "Unarchive" : "Archive"}
+            </Button>
+          )}
+        </span>
+      </div>
+      {pending && item.approval && onAnswer && (
+        <AutomationApproval title={item.title} request={item.approval} onAnswer={onAnswer} />
+      )}
     </li>
   );
 }

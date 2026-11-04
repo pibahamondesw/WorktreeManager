@@ -1,5 +1,9 @@
 import { useEffect, useRef } from "react";
-import { AutomationSummary } from "../../services/automations";
+import {
+  ApprovalAnswer,
+  AutomationSummary,
+  signalAutomationStep,
+} from "../../services/automations";
 import { EditorApp, Task } from "../../types";
 import { Modal } from "../ui/Modal";
 import { AutomationList } from "./AutomationList";
@@ -97,6 +101,7 @@ export function AutomationsModal({
                   onOpen={(item) => (item.target ? onOpenConversation(item.target) : true)}
                   onSetRead={inbox.setRead}
                   onSetArchived={inbox.setArchived}
+                  onAnswer={(item, answer) => answerApproval(item, answer).then(onChanged)}
                 />
               ) : (
                 selected && (
@@ -116,4 +121,15 @@ export function AutomationsModal({
       )}
     </Modal>
   );
+}
+
+function answerApproval(item: InboxItem, answer: ApprovalAnswer) {
+  const { runId, step, item: itemId } = item.approval ?? { runId: "", step: "", item: "" };
+  return signalAutomationStep({
+    name: item.automation,
+    runId,
+    step,
+    item: itemId,
+    payload: { ...answer },
+  });
 }

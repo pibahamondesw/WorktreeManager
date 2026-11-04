@@ -124,3 +124,61 @@ it("says when an entry's task is gone and when there is nothing to show", () => 
   expect(screen.getByText("All read")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Mark all read" })).toBeDisabled();
 });
+
+it("approves with edited params or rejects with a comment from the entry", async () => {
+  const approval = item("e", {
+    kind: "approval",
+    title: "Ship it?",
+    approval: {
+      runId: "7",
+      item: "routine",
+      step: "ship",
+      attempt: 1,
+      params: { files: ["a.rb"] },
+      timeoutAt: 5000,
+      default: "approve",
+      answer: null,
+    },
+  });
+  const onAnswer = vi.fn(() => Promise.resolve());
+  render(
+    <AutomationInbox
+      items={[
+        approval,
+        item("f", {
+          ...approval,
+          key: "f",
+          approval: { ...approval.approval!, answer: "Approved" },
+        }),
+      ]}
+      onOpen={vi.fn(() => true)}
+      onSetRead={vi.fn()}
+      onSetArchived={vi.fn()}
+      onAnswer={onAnswer}
+    />
+  );
+  const form = screen.getByRole("group", { name: "Answer Ship it?" });
+  expect(screen.getAllByRole("group")).toHaveLength(1);
+  expect(within(form).getByText(/Approves on its own at/)).toBeInTheDocument();
+  const files = within(form).getByLabelText("files");
+  fireEvent.change(files, { target: { value: "b.rb" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Approve" }));
+  expect(within(form).getByRole("alert")).toHaveTextContent('files must be JSON, like ["a.rb"]');
+  expect(onAnswer).not.toHaveBeenCalled();
+
+  fireEvent.change(files, { target: { value: '["b.rb"]' } });
+  fireEvent.click(within(form).getByRole("button", { name: "Approve" }));
+  expect(onAnswer).toHaveBeenLastCalledWith(approval, {
+    decision: "approve",
+    params: { files: ["b.rb"] },
+  });
+  await screen.findByRole("button", { name: "Reject" });
+
+  onAnswer.mockImplementationOnce(() => Promise.reject("No item of run 7 is waiting on step ship"));
+  fireEvent.change(within(form).getByLabelText("Comment"), { target: { value: " Split it " } });
+  fireEvent.click(within(form).getByRole("button", { name: "Reject" }));
+  expect(onAnswer).toHaveBeenLastCalledWith(approval, { decision: "reject", comment: "Split it" });
+  expect(await within(form).findByRole("alert")).toHaveTextContent(
+    "No item of run 7 is waiting on step ship"
+  );
+});

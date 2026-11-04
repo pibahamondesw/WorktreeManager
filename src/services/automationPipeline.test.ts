@@ -8,6 +8,7 @@ import {
   stepSummary,
   transitionLabel,
   waitConditionLabel,
+  waitFacts,
 } from "./automationPipeline";
 
 const agent = (onReject: Transition | null = null, skill: string | null = null): StepKind => ({
@@ -152,6 +153,23 @@ describe("labels", () => {
       "Until 2026-11-01T00:00:00Z"
     );
     expect(waitConditionLabel({ signal: "ci" })).toBe("Signal ci");
+    expect(waitConditionLabel({ event: { watcher: "pr_checks", params: {} } })).toBe(
+      "Event pr_checks"
+    );
+    const at = (ms: number) => new Date(ms).toLocaleString();
+    const armed = {
+      ...attempt("ci", 1, "waiting"),
+      wait: { wake_at_ms: 1000, timeout_at_ms: 2000 },
+    };
+    expect(waitFacts(armed)).toEqual([
+      ["Due", at(1000)],
+      ["Times out", at(2000)],
+    ]);
+    expect(waitFacts({ ...armed, wait: {}, signal: { sha: "abc" } })).toEqual([
+      ["Signal", '{"sha":"abc"}'],
+    ]);
+    expect(waitFacts(attempt("ci", 1, "waiting"))).toEqual([]);
+    expect(waitFacts(null)).toEqual([]);
 
     expect(CAMPAIGN.map(stepKindName)).toEqual([
       "agent",

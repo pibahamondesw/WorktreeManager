@@ -7,7 +7,9 @@ import {
   stepKindName,
   transitionLabel,
   waitConditionLabel,
+  waitFacts,
 } from "../../services/automationPipeline";
+import { approvalAnswer } from "../../services/automationInbox";
 
 const NOT_RECORDED = "Not recorded for this run yet";
 
@@ -28,8 +30,9 @@ export function AutomationStepDetail({
   const [openError, setOpenError] = useState<string | null>(null);
   const rejectTransition = onReject(step);
   const facts: Fact[] = [
-    ...kindFacts(step),
+    ...kindFacts(step, progress?.latest ?? null),
     ...attemptFacts(progress),
+    ...waitFacts(progress?.latest ?? null),
     ...effectFacts(progress?.latest?.effects ?? []),
     ["Next", step.next ?? "Following step"],
     ["On fail", transitionLabel(step.onFail)],
@@ -73,7 +76,7 @@ export function AutomationStepDetail({
   );
 }
 
-function kindFacts({ kind }: PipelineStep): Fact[] {
+function kindFacts({ kind }: PipelineStep, latest: StepAttempt | null): Fact[] {
   if ("agent" in kind) {
     const { agent, skill } = kind.agent;
     return [
@@ -93,7 +96,10 @@ function kindFacts({ kind }: PipelineStep): Fact[] {
     return [
       ["Title", kind.approval.title],
       ...(kind.approval.detail ? [["Detail", kind.approval.detail] as Fact] : []),
-      ["Inbox entry", NOT_RECORDED],
+      ...(kind.approval.params && Object.keys(kind.approval.params).length > 0
+        ? [["Params", JSON.stringify(kind.approval.params)] as Fact]
+        : []),
+      ["Inbox entry", approvalState(latest)],
     ];
   }
   return [["Effects", kind.publish.map((effect) => effect.effect).join(", ")]];
@@ -132,4 +138,9 @@ function attemptFacts(progress: StepProgress | undefined): Fact[] {
       latest[field] == null ? [] : [[label, String(latest[field])]]
     ),
   ];
+}
+
+function approvalState(latest: StepAttempt | null): string {
+  if (!latest?.wait) return NOT_RECORDED;
+  return approvalAnswer(latest) ?? "Waiting for an answer in the Inbox";
 }

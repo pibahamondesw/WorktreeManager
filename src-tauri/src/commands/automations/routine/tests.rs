@@ -144,7 +144,11 @@ impl Tasks for FakeTasks {
 
     fn get(&self, task_id: &str) -> Result<ResolvedTask, TaskFailure> {
         self.fetched.lock().unwrap().push(task_id.into());
-        Ok(task(task_id))
+        let mut fetched = task(task_id);
+        if let Some(worktree) = &self.worktree {
+            fetched.folders = vec![worktree.to_string_lossy().into_owned()];
+        }
+        Ok(fetched)
     }
 
     fn find(&self, workspace_id: &str, branch: &str) -> Result<Option<ResolvedTask>, TaskFailure> {
@@ -875,9 +879,6 @@ fn command_steps_run_in_the_task_worktree_and_reach_the_next_agent_step() {
   - id: fails
     command: [/bin/sh, -c, "exit 3"]
     on_fail: continue
-  - id: wait_here
-    wait: { signal: go }
-    on_fail: continue
   - id: report
     agent: {}
 "#;
@@ -899,11 +900,9 @@ fn command_steps_run_in_the_task_worktree_and_reach_the_next_agent_step() {
         [
             StepStatus::Succeeded,
             StepStatus::Failed,
-            StepStatus::Failed,
             StepStatus::Succeeded
         ]
     );
-    assert_eq!(causes(&run)[2], Some("unsupported_step:wait_here"));
     let prompt = &harness.prompts()[0];
     assert!(prompt.contains(r#""exit_code":3"#));
     assert!(prompt.contains("receipts/"));
@@ -1331,3 +1330,4 @@ steps:
 mod campaign;
 mod operator;
 mod resume;
+mod waits;

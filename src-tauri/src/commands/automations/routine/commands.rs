@@ -34,6 +34,8 @@ impl From<&ItemState> for Item {
 
 pub(super) struct TaskCommands {
     task: ResolvedTask,
+    data_file: PathBuf,
+    data: Map<String, Value>,
     variables: Vec<(String, String)>,
     env: Vec<(String, String)>,
     leases: StepLeases,
@@ -79,18 +81,31 @@ impl TaskCommands {
             ("task.branch".into(), task.branch.clone()),
         ]);
         variables.extend(item.title.clone().map(|title| ("item.title".into(), title)));
-        variables.extend(item.data.iter().map(|(key, value)| {
-            let text = value
-                .as_str()
-                .map_or_else(|| value.to_string(), str::to_string);
-            (format!("item.data.{key}"), text)
-        }));
+        variables.extend(item.data.iter().map(item_data_variable));
         Ok(Self {
             task: task.clone(),
+            data_file,
+            data: item.data.clone(),
             variables,
             env,
             leases,
         })
+    }
+
+    /// Values an approver edited: they replace the item's data for the steps that follow.
+    pub fn edit_item_data(&mut self, edited: &Map<String, Value>) -> Result<(), String> {
+        if edited.is_empty() {
+            return Ok(());
+        }
+        for (key, value) in edited {
+            self.data.insert(key.clone(), value.clone());
+            let (name, text) = item_data_variable((key, value));
+            self.variables.retain(|(variable, _)| *variable != name);
+            self.variables.push((name, text));
+        }
+        let data = serde_json::to_vec(&self.data).map_err(|e| e.to_string())?;
+        write_atomically(&self.data_file, &data)
+            .map_err(|e| format!("{}: {e}", self.data_file.display()))
     }
 
     pub fn variables(&self) -> &[(String, String)] {
@@ -123,6 +138,13 @@ impl CommandContext for TaskCommands {
     fn hold_leases(&self, request: &StepRequest) -> Result<HeldLeases, String> {
         self.leases.hold(request)
     }
+}
+
+fn item_data_variable((key, value): (&String, &Value)) -> (String, String) {
+    let text = value
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_string);
+    (format!("item.data.{key}"), text)
 }
 
 /// Item ids are free text, so each item's data file is named by a digest.

@@ -319,6 +319,7 @@ export async function dispatchCliBridge(
       "automation.next": ["name"],
       "automation.continuous": ["name"],
       "automation.limit": ["name", "limit", "value"],
+      "automation.signal": ["runId", "step", "payload", "item"],
       "linear.issue-upsert": [
         "workspaceId",
         "marker",
@@ -475,6 +476,18 @@ export async function dispatchCliBridge(
           by: "cli",
           limit: text(params.limit),
           value: limitValue(params.value),
+        });
+        break;
+      case "automation.signal":
+        result = await invokeAutomations("automation_signal", {
+          signal: {
+            name: null,
+            runId: text(params.runId),
+            step: text(params.step),
+            item: params.item === undefined ? null : text(params.item),
+            payload: payloadObject(params.payload) ?? {},
+            by: "cli",
+          },
         });
         break;
       case "linear.issue-upsert":

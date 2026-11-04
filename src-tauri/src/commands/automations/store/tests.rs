@@ -266,6 +266,8 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 effects: Vec::new(),
                 opened_at_ms: None,
                 elapsed_ms: 1,
+                wait: None,
+                signal: None,
             },
             StepAttemptState {
                 step: "fix".into(),
@@ -285,6 +287,8 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 effects: Vec::new(),
                 opened_at_ms: None,
                 elapsed_ms: 0,
+                wait: None,
+                signal: None,
             },
         ]
     );

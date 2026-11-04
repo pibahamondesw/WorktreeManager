@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Runtime, State};
 
@@ -19,6 +19,7 @@ use super::store::events::{RunEvent, RunSource, RunState, RunStatus, RunTrigger,
 use super::store::{
     Actor, AutomationState, AutomationWriter, Claim, PauseReason, RunStore, Toggle,
 };
+use super::wait;
 
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 
@@ -155,7 +156,7 @@ pub fn resume(
     Ok(state)
 }
 
-fn check_payload(payload: Option<&Value>) -> Result<(), String> {
+pub(super) fn check_payload(payload: Option<&Value>) -> Result<(), String> {
     match payload {
         Some(payload) if !payload.is_object() => Err("The payload must be a JSON object".into()),
         Some(payload) if payload.to_string().len() > MAX_PAYLOAD_BYTES => {
@@ -255,4 +256,67 @@ pub async fn automation_resume<R: Runtime>(
         resume(&RunStore::of(&app)?, &definition, by, note(reason), now())
     })
     .await
+}
+
+/// What the owner or the CLI sends a waiting step. Without `name`, the automation is the one
+/// that has the run.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalRequest {
+    name: Option<String>,
+    run_id: String,
+    step: String,
+    item: Option<String>,
+    payload: Value,
+    by: Actor,
+}
+
+/// Sends a waiting `signal` or `approval` step its payload.
+#[tauri::command]
+pub async fn automation_signal<R: Runtime>(
+    app: AppHandle<R>,
+    engine: State<'_, AutomationEngine>,
+    signal: SignalRequest,
+) -> Result<wait::SignaledStep, String> {
+    if signal.by == Actor::Auto {
+        return Err("Only the owner or the CLI signals a step".into());
+    }
+    let executor = engine.0.clone();
+    blocking(move || {
+        let store = RunStore::of(&app)?;
+        let name = match signal.name {
+            Some(name) => name,
+            None => run_owner(&store, &definition::load_current(&app)?, &signal.run_id)?,
+        };
+        let sent = wait::Signal {
+            run_id: &signal.run_id,
+            step: &signal.step,
+            item: signal.item.as_deref(),
+            payload: signal.payload,
+            by: signal.by,
+        };
+        wait::signal(
+            &store,
+            executor.as_ref(),
+            &valid_definition(&app, &name)?,
+            sent,
+        )
+    })
+    .await
+}
+
+fn run_owner(
+    store: &RunStore,
+    entries: &[definition::AutomationEntry],
+    run_id: &str,
+) -> Result<String, String> {
+    entries
+        .iter()
+        .map(|entry| entry.name.clone())
+        .find(|name| {
+            store
+                .run_ids(name)
+                .is_ok_and(|ids| ids.iter().any(|id| id == run_id))
+        })
+        .ok_or_else(|| format!("No automation has run {run_id}"))
 }

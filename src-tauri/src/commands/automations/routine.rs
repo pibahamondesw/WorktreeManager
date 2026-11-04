@@ -13,6 +13,7 @@ mod result;
 mod resume;
 #[cfg(test)]
 mod tests;
+mod waits;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -40,6 +41,8 @@ use super::store::events::{
     RunEvent, RunOutcome, StepOutcome,
 };
 use super::store::RunStore;
+use super::wait;
+use super::wait::Watchers;
 use crate::commands::agents::permission::Grant;
 use crate::commands::chat::{SettledRequest, TurnEnd};
 use commands::{Item, TaskCommands};
@@ -161,6 +164,9 @@ pub struct RoutineExecutor {
     /// Set when the app quits: items stop where they are, to resume on the next start.
     quitting: Arc<AtomicBool>,
     runs_changed: RunsChanged,
+    /// Items resting on a wait, with the request of their run, until it can end.
+    parked: Arc<Mutex<HashMap<DrivenItem, RunRequest>>>,
+    watchers: Watchers,
 }
 
 type DrivenItem = (String, String, String);
@@ -197,6 +203,10 @@ impl Executor for RoutineExecutor {
         });
         true
     }
+
+    fn wake_waiting(&self) {
+        self.wake_ready();
+    }
 }
 
 fn did_not_resume(request: &RunRequest, error: &str) {
@@ -211,6 +221,8 @@ fn did_not_resume(request: &RunRequest, error: &str) {
 enum Ending {
     Completed(RunOutcome),
     Failed(FailureReason),
+    /// The item rests on a wait; the run goes on when it ends.
+    Waiting,
 }
 
 impl RoutineExecutor {
@@ -236,6 +248,8 @@ impl RoutineExecutor {
             driven: Arc::default(),
             quitting: Arc::default(),
             runs_changed: Arc::new(|_| {}),
+            parked: Arc::default(),
+            watchers: Watchers::default(),
         }
     }
 
@@ -377,6 +391,10 @@ impl RoutineExecutor {
         self.driven.lock().unwrap().insert(key.clone(), routine);
         let driven = self.drive_steps(item_drive);
         self.driven.lock().unwrap().remove(&key);
+        if let Ok((_, Ending::Waiting)) = driven {
+            self.parked.lock().unwrap().insert(key, request.clone());
+            (self.runs_changed)(&request.automation);
+        }
         driven
     }
 
@@ -401,7 +419,8 @@ impl RoutineExecutor {
             deadline,
             kept: Default::default(),
         };
-        let context = TaskCommands::new(&run_dir, run_variables(request), task, item, leases)?;
+        let mut context = TaskCommands::new(&run_dir, run_variables(request), task, item, leases)?;
+        context.edit_item_data(&wait::edited_params(history, &item.id))?;
         let mut steps = ItemSteps {
             definition,
             request,
@@ -427,6 +446,8 @@ impl RoutineExecutor {
             quitting: &self.quitting,
             shared_conversation: None,
             interrupted_conversation: None,
+            watchers: &self.watchers,
+            parked: false,
         };
         steps.resume_from(history);
         let pipeline = Pipeline {
@@ -483,16 +504,17 @@ impl RoutineExecutor {
 
     /// Ends the run unless the sweep already did, and counts it toward the auto-pause.
     fn finish(&self, request: &RunRequest, ending: Ending) -> Result<(), String> {
+        let event = match ending {
+            Ending::Completed(outcome) => RunEvent::Completed { outcome },
+            Ending::Failed(reason) => RunEvent::Failed { reason },
+            Ending::Waiting => return Ok(()),
+        };
         let name = &request.automation;
         let writer = self.store.writer(name)?;
         let run = self.store.run(name, &request.run_id)?;
         if !is_active(run.status) {
             return Ok(());
         }
-        let event = match ending {
-            Ending::Completed(outcome) => RunEvent::Completed { outcome },
-            Ending::Failed(reason) => RunEvent::Failed { reason },
-        };
         writer.append(&request.run_id, &event)?;
         (self.runs_changed)(name);
         if run.trigger.is_some_and(|trigger| trigger.test) {
@@ -500,8 +522,8 @@ impl RoutineExecutor {
         }
         let mut state = self.store.state(name)?;
         match ending {
-            Ending::Completed(_) => state.consecutive_failures = 0,
             Ending::Failed(_) => record_failure(&mut state),
+            Ending::Completed(_) | Ending::Waiting => state.consecutive_failures = 0,
         }
         writer.save_state(&state)
     }
@@ -572,6 +594,9 @@ struct ItemSteps<'a> {
     shared_conversation: Option<(String, String)>,
     /// The conversation of a resumed `fresh_session` attempt, by step and attempt.
     interrupted_conversation: Option<(String, u32, String)>,
+    watchers: &'a Watchers,
+    /// Set when the item rests on a wait that has not ended.
+    parked: bool,
 }
 
 impl StepExecutor for ItemSteps<'_> {
@@ -595,10 +620,7 @@ impl StepExecutor for ItemSteps<'_> {
                         leases.env.clone(),
                     )),
                     StepKind::Publish(effects) => self.publish(request, effects),
-                    _ => Execution::Finished(failed(
-                        ProcessEnd::Exited,
-                        format!("unsupported_step:{}", request.step.id),
-                    )),
+                    _ => self.wait(request),
                 },
             },
         };
@@ -934,6 +956,9 @@ impl ItemSteps<'_> {
     }
 
     fn ending(&self, status: ItemStatus) -> Ending {
+        if self.parked {
+            return Ending::Waiting;
+        }
         match status {
             ItemStatus::Completed if self.last_outcome == Some(StepOutcome::Noop) => {
                 Ending::Completed(RunOutcome::Noop)

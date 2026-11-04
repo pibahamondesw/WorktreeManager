@@ -136,3 +136,39 @@ it("shows the empty state and selectable load errors", () => {
   expect(screen.getByText("Could not read /automations: denied")).toHaveClass("select-text");
   expect(screen.queryByText("No automations yet")).not.toBeInTheDocument();
 });
+
+it("answers an approval from the Inbox as the owner", async () => {
+  const approval: InboxItem = {
+    ...ENTRY,
+    key: "approval:babysitter:routine:ship:7:1",
+    kind: "approval",
+    title: "Ship it?",
+    approval: {
+      runId: "7",
+      item: "routine",
+      step: "ship",
+      attempt: 1,
+      params: {},
+      timeoutAt: null,
+      default: null,
+      answer: null,
+    },
+  };
+  render(<Harness items={[approval]} />);
+  fireEvent.click(screen.getByRole("button", { name: "Open automations" }));
+  fireEvent.keyDown(screen.getByRole("tab", { name: /babysitter/ }), { key: "ArrowUp" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+  expect(invoke).toHaveBeenCalledWith("automation_signal", {
+    signal: {
+      name: "babysitter",
+      runId: "7",
+      step: "ship",
+      item: "routine",
+      payload: { decision: "approve" },
+      by: "user",
+    },
+  });
+  await screen.findByRole("button", { name: "Approve" });
+});

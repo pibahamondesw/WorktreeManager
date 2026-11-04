@@ -246,6 +246,13 @@ impl<'a> ItemMachine<'a> {
         }
     }
 
+    /// A wait already open is checked again without recording its start anew, so its waiting
+    /// time counts from when it was armed.
+    fn rearms(&self, request: &StepRequest) -> bool {
+        matches!(self.current, Some(Attempt::Open(attempt)) if attempt == request.attempt)
+            && matches!(request.step.kind, StepKind::Wait(_) | StepKind::Approval(_))
+    }
+
     fn request(&self, position: Position, step: &'a Step, attempt: u32) -> StepRequest<'a> {
         let stages: &'a [String] = self.pipeline.stages;
         let budget_ms = self.pipeline.budgets.active_time_secs * 1000;
@@ -423,7 +430,9 @@ pub fn drive(
             Next::Rest(status) => return Ok(status),
             Next::Emit(event) => event,
             Next::Run(request) => {
-                machine.record(log, start_event(&request))?;
+                if !machine.rearms(&request) {
+                    machine.record(log, start_event(&request))?;
+                }
                 let execution = executor.execute(&request);
                 if executor.halted() {
                     return Ok(machine.status);

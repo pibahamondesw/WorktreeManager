@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::Actor;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoggedEvent {
     pub at_ms: u64,
@@ -168,8 +170,35 @@ pub enum RunEvent {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         warnings: Vec<String>,
     },
+    /// A `wait` or `approval` attempt started waiting: when its `time` is due and when it times
+    /// out, and the approval's rendered title.
+    WaitArmed {
+        item: String,
+        step: String,
+        attempt: u32,
+        #[serde(flatten)]
+        wait: ArmedWait,
+    },
+    /// What the owner or the CLI sent a waiting `signal` or `approval` attempt.
+    StepSignaled {
+        item: String,
+        step: String,
+        attempt: u32,
+        payload: serde_json::Value,
+        by: Actor,
+    },
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArmedWait {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -421,6 +450,11 @@ pub struct StepAttemptState {
     pub opened_at_ms: Option<u64>,
     /// Time from each opening to the status that closed it, as the item's budgets charge it.
     pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait: Option<ArmedWait>,
+    /// The payload that resolved a `signal` wait, or an approval's answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal: Option<serde_json::Value>,
 }
 
 impl RunStatus {
@@ -672,6 +706,33 @@ impl RunState {
                     });
                 }
             }
+            RunEvent::WaitArmed {
+                item,
+                step,
+                attempt,
+                wait,
+            } => {
+                if let Some(attempt) = self
+                    .open_item(&item)
+                    .and_then(|item| item.open_attempt(step, attempt))
+                {
+                    attempt.wait = Some(wait);
+                }
+            }
+            RunEvent::StepSignaled {
+                item,
+                step,
+                attempt,
+                payload,
+                ..
+            } => {
+                if let Some(attempt) = self
+                    .open_item(&item)
+                    .and_then(|item| item.open_attempt(step, attempt))
+                {
+                    attempt.signal = Some(payload);
+                }
+            }
             RunEvent::CandidateSkipped { .. }
             | RunEvent::ItemInterrupted { .. }
             | RunEvent::TaskFailed { item: Some(_), .. }
@@ -755,6 +816,8 @@ impl ItemState {
                     effects: Vec::new(),
                     opened_at_ms: None,
                     elapsed_ms: 0,
+                    wait: None,
+                    signal: None,
                 });
                 self.steps.len() - 1
             }

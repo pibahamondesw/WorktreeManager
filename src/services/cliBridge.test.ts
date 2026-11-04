@@ -278,6 +278,25 @@ it("reads automations and their runs through the Rust commands", async () => {
   expect(invokeCommand).toHaveBeenCalledTimes(calls);
 });
 
+it("signals a waiting step for the CLI", async () => {
+  invokeCommand.mockImplementation((command) => Promise.resolve({ command }));
+  const payload = { decision: "approve" };
+  expect(await call("automation.signal", { runId: "r1", step: "ship", payload })).toMatchObject({
+    ok: true,
+  });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_signal", {
+    signal: { name: null, runId: "r1", step: "ship", item: null, payload, by: "cli" },
+  });
+  await call("automation.signal", { runId: "r1", step: "go", item: "a" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_signal", {
+    signal: { name: null, runId: "r1", step: "go", item: "a", payload: {}, by: "cli" },
+  });
+  expect(await call("automation.signal", { runId: "r1", step: "go", payload: [1] })).toMatchObject({
+    ok: false,
+    error: { code: "invalid_params" },
+  });
+});
+
 it("starts, pauses and resumes automations for the CLI", async () => {
   invokeCommand.mockImplementation((command) => Promise.resolve({ command }));
   expect(await call("automation.run", { name: " babysitter " })).toMatchObject({

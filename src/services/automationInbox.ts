@@ -1,6 +1,8 @@
 import { AgentId } from "../types";
 import {
+  ApprovalDefault,
   AutomationEntry,
+  AutomationItem,
   AutomationRun,
   PermissionRequest,
   PipelineStep,
@@ -19,7 +21,8 @@ export type InboxKind =
   | "noop"
   | "completed"
   | "question"
-  | "permission";
+  | "permission"
+  | "approval";
 
 /** Where an entry leads: an agent conversation in the run's task. */
 export interface ConversationTarget {
@@ -44,6 +47,22 @@ export interface InboxEntry {
   /** A noop run under `archive_noop`: archived on arrival and never notified. */
   autoArchived: boolean;
   notify: boolean;
+  /** Set on approval entries. */
+  approval?: ApprovalRequest;
+}
+
+/** One attempt of an approval step, and how it was answered once it was. */
+export interface ApprovalRequest {
+  runId: string;
+  item: string;
+  step: string;
+  attempt: number;
+  /** The values the approver may edit, as the definition sets them. */
+  params: Record<string, unknown>;
+  timeoutAt: number | null;
+  default: ApprovalDefault | null;
+  /** Null while it waits for an answer. */
+  answer: string | null;
 }
 
 /** Read and archived entry keys, kept in app data. */
@@ -78,10 +97,13 @@ export function inboxEntries(automations: AutomationRuns[]): InboxEntry[] {
   const byKey = new Map<string, InboxEntry>();
   for (const { entry, runs } of automations) {
     const policy = reportPolicy(entry);
-    if (policy.inbox === "never") continue;
     const oldestFirst = [...runs].sort((a, b) => (a.id < b.id ? -1 : 1));
     for (const run of oldestFirst) {
-      for (const inboxEntry of runEntries(entry, run, policy)) {
+      const entries = [
+        ...approvalEntries(entry, run, policy),
+        ...(policy.inbox === "never" ? [] : runEntries(entry, run, policy)),
+      ];
+      for (const inboxEntry of entries) {
         if (!byKey.has(inboxEntry.key)) byKey.set(inboxEntry.key, inboxEntry);
       }
     }
@@ -95,6 +117,90 @@ function runEntries(entry: AutomationEntry, run: AutomationRun, policy: ReportPo
     requestEntry(entry, run, policy, request, index)
   );
   return outcome ? [outcome, ...requests] : requests;
+}
+
+/** Approvals are the only way to answer from the app, so even `inbox: never` shows them. */
+function approvalEntries(
+  entry: AutomationEntry,
+  run: AutomationRun,
+  policy: ReportPolicy
+): InboxEntry[] {
+  const steps = entry.definition?.steps ?? [];
+  return run.items.flatMap((item) =>
+    item.steps.flatMap((attempt) => {
+      const step = steps.find((candidate) => candidate.id === attempt.step);
+      if (!step || !("approval" in step.kind) || !attempt.wait) return [];
+      const { title, detail, params, default: fallback } = step.kind.approval;
+      const answer = approvalAnswer(attempt);
+      return [
+        {
+          ...runFacts(entry, run),
+          key: `approval:${entry.name}:${item.id}:${attempt.step}:${run.id}:${attempt.attempt}`,
+          kind: "approval" as const,
+          title: attempt.wait.title ?? title,
+          detail: answer ?? (detail ? clip(detail) : itemLabel(item)),
+          target: conversationTarget(steps, run, attempt),
+          autoArchived: false,
+          notify: policy.notify,
+          approval: {
+            runId: run.id,
+            item: item.id,
+            step: attempt.step,
+            attempt: attempt.attempt,
+            params: params ?? {},
+            timeoutAt: attempt.wait.timeout_at_ms ?? null,
+            default: fallback ?? null,
+            answer,
+          },
+        },
+      ];
+    })
+  );
+}
+
+const itemLabel = (item: AutomationItem) => (item.title ? `Item ${item.title}` : null);
+
+/** How an approval attempt was answered, or null while it waits. */
+export function approvalAnswer(attempt: StepAttempt): string | null {
+  if (attempt.status === "waiting" || attempt.status === "pending") return null;
+  const answer = (attempt.result ?? attempt.signal ?? {}) as {
+    decision?: unknown;
+    comment?: unknown;
+    default?: unknown;
+  };
+  if (answer.decision !== "approve" && answer.decision !== "reject")
+    return attempt.cause ? humanize(attempt.cause) : humanize(attempt.status);
+  const decided = answer.decision === "approve" ? "Approved" : "Rejected";
+  const how = answer.default === true ? `${decided} by default after the timeout` : decided;
+  return typeof answer.comment === "string" && answer.comment.trim()
+    ? clip(`${how}: ${answer.comment}`)
+    : how;
+}
+
+/** How a param shows in its input: strings as they are, other values as JSON. */
+export const paramText = (value: unknown) =>
+  typeof value === "string" ? value : JSON.stringify(value);
+
+/** The params whose text changed, read back as their original type: strings stay text. */
+export function editedParams(
+  params: Record<string, unknown>,
+  texts: Record<string, string>
+): { params: Record<string, unknown> } | { error: string } {
+  const edited: Record<string, unknown> = {};
+  for (const [key, original] of Object.entries(params)) {
+    const text = texts[key] ?? paramText(original);
+    if (text === paramText(original)) continue;
+    if (typeof original === "string") {
+      edited[key] = text;
+      continue;
+    }
+    try {
+      edited[key] = JSON.parse(text);
+    } catch {
+      return { error: `${key} must be JSON, like ${paramText(original)}` };
+    }
+  }
+  return { params: edited };
 }
 
 function outcomeKind(run: AutomationRun, { inbox, archiveNoop }: ReportPolicy): InboxKind | null {
