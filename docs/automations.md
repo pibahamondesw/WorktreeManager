@@ -227,7 +227,7 @@ A durable wait recorded in the run log: it survives app restarts and re-arms on 
 
 A waiting item holds no thread: the attempt records when it was armed (`wait_armed`, with when it is due and times out) and parks the item, and the scheduler's tick re-checks it once a minute; a signal wakes it at once. On start, a waiting item re-arms from the log with the same attempt, due time and timeout. A routine's run stays `running` while its item waits, so `run_deadline` still bounds it; campaign items wait without a deadline. `event` conditions go to the watcher registered under `watcher`; the validator rejects them until the watchers of WOR-264 exist.
 
-A signal is a JSON object ≤ 64 KiB, recorded as `step_signaled` with who sent it and kept as the attempt's result, so the steps that follow see it. `wtm automation signal` finds the automation that has the run; in a campaign run where several items wait on the step, `--item <id>` names one. Sending an attempt the payload it already has changes nothing; a different one is refused.
+A signal is a JSON object ≤ 64 KiB, recorded as `step_signaled` with who sent it and kept as the attempt's result, so the steps that follow see it. `wtm automation signal` finds the automation that has the run; in a campaign run where several items wait on the step, `--item <id>` names one. Sending a step the payload it already has, also after the item moved on, returns the same attempt with `repeated: true` and records nothing; a different payload for an answered step is refused.
 
 #### `approval`
 

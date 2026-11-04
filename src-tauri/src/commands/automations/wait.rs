@@ -312,13 +312,16 @@ pub fn edited_params(history: &[LoggedEvent], item: &str) -> Map<String, Value> 
     edited
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SignaledStep {
     pub automation: String,
     pub run_id: String,
     pub item: String,
     pub step: String,
     pub attempt: u32,
+    /// The attempt already had this payload: nothing was recorded.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub repeated: bool,
 }
 
 /// What the owner or the CLI sends a waiting step, to address one attempt.
@@ -332,8 +335,8 @@ pub struct Signal<'a> {
 }
 
 /// Resolves the attempt waiting on `signal.step`: a `signal` wait with any JSON object, an
-/// approval with its answer. Sending an attempt the payload it already has changes nothing; it
-/// never takes another.
+/// approval with its answer. Sending an attempt the payload it already has changes nothing, also
+/// once the item moved on; it never takes another.
 pub fn signal(
     store: &RunStore,
     executor: &dyn Executor,
@@ -356,13 +359,19 @@ pub fn signal(
             (step == signal.step).then(|| (item.id.clone(), attempt))
         })
         .collect();
+    let signaled = |item: String, attempt, repeated| SignaledStep {
+        automation: name.clone(),
+        run_id: signal.run_id.to_string(),
+        item,
+        step: signal.step.to_string(),
+        attempt,
+        repeated,
+    };
     let (item, attempt) = match waiting.as_slice() {
         [only] => only.clone(),
         [] => {
-            return Err(format!(
-                "No item of run {} is waiting on step {}",
-                signal.run_id, signal.step
-            ))
+            let (item, attempt) = earlier_signal(&history, &signal)?;
+            return Ok(signaled(item, attempt, true));
         }
         _ => {
             return Err(format!(
@@ -371,34 +380,59 @@ pub fn signal(
             ))
         }
     };
-    let signaled = SignaledStep {
-        automation: name.clone(),
-        run_id: signal.run_id.to_string(),
-        item: item.clone(),
-        step: signal.step.to_string(),
-        attempt,
-    };
     match WaitLog::of(&history, &item, signal.step, attempt).signal {
-        Some(existing) if existing == signal.payload => return Ok(signaled),
-        Some(_) => {
-            return Err(format!(
-                "Step {} of item {item} was already answered",
-                signal.step
-            ))
-        }
+        Some(existing) if existing == signal.payload => return Ok(signaled(item, attempt, true)),
+        Some(_) => return Err(already_answered(signal.step, &item)),
         None => {}
     }
     let event = RunEvent::StepSignaled {
-        item,
+        item: item.clone(),
         step: signal.step.to_string(),
         attempt,
-        payload: signal.payload,
+        payload: signal.payload.clone(),
         by: signal.by,
     };
     writer.append(signal.run_id, &event)?;
     drop(writer);
     executor.wake_waiting();
-    Ok(signaled)
+    Ok(signaled(item, attempt, false))
+}
+
+/// The attempt an earlier, identical signal resolved, for a step no item waits on any more.
+fn earlier_signal(history: &[LoggedEvent], signal: &Signal) -> Result<(String, u32), String> {
+    let earlier: Vec<(&String, u32, &Value)> = history
+        .iter()
+        .filter_map(|logged| match &logged.event {
+            RunEvent::StepSignaled {
+                item,
+                step,
+                attempt,
+                payload,
+                ..
+            } if step == signal.step && signal.item.map_or(true, |id| item == id) => {
+                Some((item, *attempt, payload))
+            }
+            _ => None,
+        })
+        .collect();
+    if let Some((item, attempt, _)) = earlier
+        .iter()
+        .rev()
+        .find(|(_, _, payload)| **payload == signal.payload)
+    {
+        return Ok(((*item).clone(), *attempt));
+    }
+    match earlier.last() {
+        Some((item, _, _)) => Err(already_answered(signal.step, item)),
+        None => Err(format!(
+            "No item of run {} is waiting on step {}",
+            signal.run_id, signal.step
+        )),
+    }
+}
+
+fn already_answered(step: &str, item: &str) -> String {
+    format!("Step {step} of item {item} was already answered")
 }
 
 fn check_signal(

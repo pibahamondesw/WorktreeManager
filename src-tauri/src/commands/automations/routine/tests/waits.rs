@@ -113,12 +113,20 @@ fn a_signal_wait_parks_the_run_and_its_payload_reaches_the_next_step() {
         item: "routine".into(),
         step: "go".into(),
         attempt: 1,
+        repeated: false,
+    };
+    let repeated = SignaledStep {
+        repeated: true,
+        ..signaled.clone()
     };
     assert_eq!(
         harness.signal(&run.id, "go", None, payload.clone()),
         Ok(signaled)
     );
-    assert!(harness.signal(&run.id, "go", None, payload.clone()).is_ok());
+    assert_eq!(
+        harness.signal(&run.id, "go", None, payload.clone()),
+        Ok(repeated.clone())
+    );
     assert_eq!(
         harness.signal(&run.id, "go", None, json!({ "sha": "def" })),
         Err("Step go of item routine was already answered".into())
@@ -146,12 +154,21 @@ fn a_signal_wait_parks_the_run_and_its_payload_reaches_the_next_step() {
         attempts(&run.items[0]),
         ["go#1:Succeeded", "report#1:Succeeded"]
     );
-    assert_eq!(run.items[0].steps[0].signal, Some(payload));
+    assert_eq!(run.items[0].steps[0].signal, Some(payload.clone()));
     assert!(harness.prompts()[0].contains(r#"{"sha":"abc"}"#));
     assert_eq!(
+        harness.signal(&run.id, "go", None, payload.clone()),
+        Ok(repeated)
+    );
+    assert_eq!(
         harness.signal(&run.id, "go", None, json!({})),
+        Err("Step go of item routine was already answered".into())
+    );
+    assert_eq!(
+        harness.signal(&run.id, "go", Some("other"), payload),
         Err(format!("No item of run {} is waiting on step go", run.id))
     );
+    assert_eq!(count(&harness.events(&run.id), signals), 1);
 }
 
 #[test]
@@ -262,6 +279,19 @@ fn an_answered_approval_is_not_asked_again_and_a_rejection_reaches_the_agent() {
     harness.executor.wake_ready();
     settles(&harness, &run.id, RunStatus::Completed);
 
+    let repeat = harness
+        .signal(&run.id, "ship", None, approval.clone())
+        .unwrap();
+    assert_eq!((repeat.attempt, repeat.repeated), (2, true));
+    let rejected_first = json!({ "decision": "reject", "comment": "Split the PR" });
+    let earlier = harness
+        .signal(&run.id, "ship", None, rejected_first)
+        .unwrap();
+    assert_eq!((earlier.attempt, earlier.repeated), (1, true));
+    assert_eq!(
+        harness.signal(&run.id, "ship", None, json!({ "decision": "reject" })),
+        Err("Step ship of item routine was already answered".into())
+    );
     let run = harness.state(&run.id);
     assert_eq!(
         attempts(&run.items[0]),
