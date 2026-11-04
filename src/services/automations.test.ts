@@ -108,6 +108,12 @@ it("summarizes triggers", () => {
   expect(triggerSummary({ ...definition, trigger: { manual: false, schedule } })).toBe(
     "Schedule */15 * * * * (UTC)"
   );
+  expect(
+    triggerSummary({ ...definition, trigger: { manual: false, schedule: null, cli: true } })
+  ).toBe("CLI");
+  expect(triggerSummary({ ...definition, trigger: { manual: true, schedule, cli: true } })).toBe(
+    "Schedule */15 * * * * (UTC) · manual · CLI"
+  );
 });
 
 it("describes run results, start and duration", () => {

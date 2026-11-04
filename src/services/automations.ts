@@ -22,6 +22,7 @@ export interface AutomationDefinition {
   trigger: {
     manual: boolean;
     schedule: { cron: string; tz: string; catchUp: "latest" | "skip" } | null;
+    cli?: boolean;
   };
   steps: PipelineStep[];
   report?: ReportPolicy;
@@ -347,10 +348,15 @@ export function toggleSummary(state: AutomationState | null): string | null {
 }
 
 export function triggerSummary(definition: AutomationDefinition): string {
-  const { manual, schedule } = definition.trigger;
-  if (!schedule) return manual ? "Manual only" : "No trigger";
-  const scheduled = `Schedule ${schedule.cron} (${schedule.tz})`;
-  return manual ? `${scheduled} · manual` : scheduled;
+  const { manual, schedule, cli } = definition.trigger;
+  if (!schedule && !cli) return manual ? "Manual only" : "No trigger";
+  const sources = [
+    schedule && `Schedule ${schedule.cron} (${schedule.tz})`,
+    manual && "manual",
+    cli && "CLI",
+  ].filter(Boolean);
+  const summary = sources.join(" · ");
+  return summary.charAt(0).toUpperCase() + summary.slice(1);
 }
 
 export const humanize = (value: string) => value.replace(/_/g, " ");

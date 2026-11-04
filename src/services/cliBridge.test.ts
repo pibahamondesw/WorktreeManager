@@ -295,6 +295,12 @@ it("starts, pauses and resumes automations for the CLI", async () => {
     test: false,
     payload: { pr: 7 },
   });
+  await call("automation.fire", { name: "babysitter", key: " pr:7 ", payload: { pr: 7 } });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_fire", {
+    name: "babysitter",
+    key: "pr:7",
+    payload: { pr: 7 },
+  });
   await call("automation.pause", { name: "babysitter", reason: " vacation " });
   expect(invokeCommand).toHaveBeenLastCalledWith("automation_pause", {
     name: "babysitter",
@@ -311,6 +317,8 @@ it("starts, pauses and resumes automations for the CLI", async () => {
   for (const [method, params] of [
     ["automation.run", { name: "babysitter", payload: [1] }],
     ["automation.run", { name: "babysitter", payload: null }],
+    ["automation.fire", { name: "babysitter" }],
+    ["automation.fire", { name: "babysitter", key: "pr:7", payload: "{}" }],
     ["automation.pause", { name: "babysitter", reason: " " }],
     ["automation.resume", { name: "babysitter", test: true }],
   ] as const)
