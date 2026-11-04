@@ -286,9 +286,59 @@ describe("Rust coverage pipeline", () => {
     expect(calls()).toHaveLength(1);
   });
 
-  it("requires macOS", () => {
+  it("measures the library tests on Linux and leaves macOS changes to the macOS gate", () => {
+    writeFileSync(
+      join(directory, "scripts/macos-changes.py"),
+      `import sys
+assert sys.argv[1:] == ["fixture-base"]
+print("src-tauri/src/menu.rs")
+print("src-tauri/src/commands/new module.rs")
+`
+    );
+    const result = run({ TEST_PLATFORM: "Linux", MISSING_MENU: "1" });
+    expect(result.status).toBe(0);
+    const commands = calls();
+    expect(
+      commands.find((call) => call.tool === "rustup" && call.args[3] === "test")?.args
+    ).toEqual([
+      "run",
+      "1.93.1",
+      "cargo",
+      "test",
+      "--locked",
+      "--manifest-path",
+      "src-tauri/Cargo.toml",
+      "--lib",
+      "--no-run",
+      "--message-format=json-render-diagnostics",
+    ]);
+    expect(commands.filter((call) => call.tool === "menu")).toHaveLength(0);
+    expect(commands.find((call) => call.tool === "unit tests")?.args).toContain("lease::");
+    const diffCover = commands.at(-1)?.args ?? [];
+    const excluded = diffCover.slice(
+      diffCover.indexOf("--exclude") + 1,
+      diffCover.indexOf("--fail-under=100")
+    );
+    expect(excluded).toEqual([
+      "*src-tauri/src/lib.rs",
+      "*src-tauri/src/menu.rs",
+      "*src-tauri/src/commands/new module.rs",
+    ]);
+    expect(diffCover).toContain("--diff-file=coverage/rust/linux/changes.diff");
+    expect(readFileSync(join(directory, "coverage/rust/linux/lcov.info"), "utf8")).toBe("report");
+  });
+
+  it("rejects a macOS menu target in the Linux build", () => {
+    writeFileSync(join(directory, "scripts/macos-changes.py"), "");
     const result = run({ TEST_PLATFORM: "Linux" });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("requires macOS");
+    expect(result.stderr).toContain("Expected the app_lib unit test executable");
+    expect(calls().some((call) => call.tool === "unit tests" || call.tool === "menu")).toBe(false);
+  });
+
+  it("requires macOS or Linux", () => {
+    const result = run({ TEST_PLATFORM: "FreeBSD" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("requires macOS or Linux");
   });
 });
