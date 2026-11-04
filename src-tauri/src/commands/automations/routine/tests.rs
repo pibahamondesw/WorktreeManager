@@ -112,6 +112,8 @@ struct FakeTasks {
     existing: Vec<ResolvedTask>,
     /// Created tasks are named after their branch, for runs that create several.
     by_branch: bool,
+    /// Holds every creation, once recorded, until it receives.
+    gate: Mutex<Option<mpsc::Receiver<()>>>,
 }
 
 fn task(id: &str) -> ResolvedTask {
@@ -126,6 +128,9 @@ fn task(id: &str) -> ResolvedTask {
 impl Tasks for FakeTasks {
     fn create(&self, new_task: &NewTask) -> Result<ResolvedTask, TaskFailure> {
         self.created.lock().unwrap().push(new_task.clone());
+        if let Some(gate) = self.gate.lock().unwrap().as_ref() {
+            gate.recv().unwrap();
+        }
         let mut created = task("t1");
         if self.by_branch {
             created.id = format!("t-{}", new_task.branch);

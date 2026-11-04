@@ -910,14 +910,17 @@ fn an_executor_that_cannot_resume_ends_the_quit_items_as_interrupted() {
     let store = scratch.store();
     let routine = quit_run(&store, "routine", "hash", &[("routine", 1)], true);
     let campaign = quit_run(&store, "campaign", "hash", &[("quit", 1)], false);
+    let before_first_item = quit_run(&store, "before-first-item", "hash", &[], true);
     let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
     let (mut scheduler, executor) = scheduler(&scratch, &clock);
     executor.quit();
 
     scheduler.recover_interrupted(&[hourly("quit")]);
 
-    let routine = store.run("quit", &routine).unwrap();
-    assert_eq!(routine.failure_reason, Some(FailureReason::Interrupted));
+    for run in [&routine, &before_first_item] {
+        let run = store.run("quit", run).unwrap();
+        assert_eq!(run.failure_reason, Some(FailureReason::Interrupted));
+    }
     let item = &store.run("quit", &campaign).unwrap().items[0];
     assert_eq!(
         (item.status, item.cause.as_deref()),

@@ -1,7 +1,7 @@
 use super::campaign::{by_branch, item, wait_until};
 use super::*;
 use crate::commands::automations::scheduler::{Automation, Scheduler, SystemClock};
-use crate::commands::automations::store::events::ItemState;
+use crate::commands::automations::store::events::{ItemState, RunOutcome};
 
 fn gated() -> (mpsc::Sender<()>, FakeSessions) {
     let (open_gate, gate) = mpsc::channel();
@@ -218,4 +218,205 @@ fn a_session_of_a_step_that_is_no_agent_step_is_not_resumed() {
 
     assert_eq!(harness.state_of(&request).status, RunStatus::Completed);
     assert_eq!(harness.sessions.started.lock().unwrap()[0].resume, None);
+}
+
+fn gated_tasks(tasks: FakeTasks) -> (mpsc::Sender<()>, FakeTasks) {
+    let (open_gate, gate) = mpsc::channel();
+    let tasks = FakeTasks {
+        gate: Mutex::new(Some(gate)),
+        ..tasks
+    };
+    (open_gate, tasks)
+}
+
+impl Harness {
+    /// Starts a run and quits the app while it creates its task, which ends right after.
+    fn quit_during_task_creation(&self, open_gate: &mpsc::Sender<()>) -> RunRequest {
+        let request = self.claim(false, now());
+        self.executor.execute(request.clone(), None);
+        wait_until(|| self.tasks.created.lock().unwrap().len() == 1);
+        self.executor.quit();
+        open_gate.send(()).unwrap();
+        wait_until(|| !self.executor.owns(&request.run_id));
+        request
+    }
+
+    /// A run an earlier process recorded `events` for, then quit `quits` times before its first
+    /// item.
+    fn quit_before_first_item(&self, events: Vec<RunEvent>, quits: usize) -> RunRequest {
+        let request = self.claim(false, now());
+        let writer = self.scratch.store().writer("demo").unwrap();
+        let quit_events = std::iter::repeat_n(RunEvent::Interrupted, quits).collect::<Vec<_>>();
+        for event in events.into_iter().chain(quit_events) {
+            writer.append(&request.run_id, &event).unwrap();
+        }
+        request
+    }
+}
+
+#[test]
+fn a_routine_the_app_quit_while_creating_its_task_restarts_in_that_task() {
+    let (open_gate, tasks) = gated_tasks(FakeTasks::default());
+    let harness = Harness::new(TARGET, tasks, FakeSessions::default());
+
+    let request = harness.quit_during_task_creation(&open_gate);
+
+    let quit = harness.state_of(&request);
+    assert_eq!(quit.status, RunStatus::Interrupted);
+    assert_eq!(quit.task_id.as_deref(), Some("t1"));
+    assert!(quit.items.is_empty());
+
+    harness.restart(&request);
+
+    let run = harness.state_of(&request);
+    assert_eq!(run.status, RunStatus::Completed);
+    assert_eq!(run.items[0].status, ItemStatus::Completed);
+    assert_eq!(harness.tasks.created.lock().unwrap().len(), 1);
+    assert_eq!(*harness.tasks.fetched.lock().unwrap(), ["t1"]);
+}
+
+#[test]
+fn a_task_creation_the_quit_broke_leaves_the_run_to_restart() {
+    let failing = FakeTasks {
+        failure: Some(TaskFailure::new("the app quit")),
+        ..FakeTasks::default()
+    };
+    let (open_gate, tasks) = gated_tasks(failing);
+    let harness = Harness::new(TARGET, tasks, FakeSessions::default());
+
+    let request = harness.quit_during_task_creation(&open_gate);
+
+    let run = harness.state_of(&request);
+    assert_eq!(run.status, RunStatus::Interrupted);
+    assert_eq!(run.task_error, None);
+}
+
+#[test]
+fn a_restarted_routine_finds_the_task_it_created_without_recording_it() {
+    let frontmatter = "target: { workspace: Fintoc, repos: [rails], branch: wtm/demo/branch }\nagent: { id: claude }\n";
+    let tasks = FakeTasks {
+        existing: vec![task("t0")],
+        ..FakeTasks::default()
+    };
+    let harness = Harness::new(frontmatter, tasks, FakeSessions::default());
+    let request = harness.quit_before_first_item(Vec::new(), 1);
+
+    harness.restart(&request);
+
+    let run = harness.state_of(&request);
+    assert_eq!(run.status, RunStatus::Completed);
+    assert_eq!(run.task_id.as_deref(), Some("t0"));
+    assert!(harness.tasks.created.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_restarted_routine_creates_the_task_it_never_got_to_create() {
+    let harness = Harness::routine("", FakeSessions::default());
+    let request = harness.quit_before_first_item(Vec::new(), 2);
+
+    harness.restart(&request);
+
+    let run = harness.state_of(&request);
+    assert_eq!(run.status, RunStatus::Completed);
+    assert_eq!(run.task_id.as_deref(), Some("t1"));
+    assert_eq!(harness.tasks.created.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_restarted_routine_on_an_existing_task_looks_it_up_again() {
+    let frontmatter = "target: { workspace: Fintoc, repos: [rails], task: existing, existing_task: t9 }\nagent: { id: claude }\n";
+    let harness = Harness::new(frontmatter, FakeTasks::default(), FakeSessions::default());
+    let request = harness.quit_before_first_item(Vec::new(), 1);
+
+    harness.restart(&request);
+
+    assert_eq!(harness.state_of(&request).status, RunStatus::Completed);
+    assert_eq!(*harness.tasks.fetched.lock().unwrap(), ["t9"]);
+}
+
+#[test]
+fn a_run_quit_before_its_first_item_too_often_or_after_a_crash_fails() {
+    let harness = Harness::routine("", FakeSessions::default());
+    let looping = harness.quit_before_first_item(Vec::new(), 4);
+    let crashed = harness.quit_before_first_item(Vec::new(), 0);
+
+    harness.restart(&looping);
+
+    for request in [&looping, &crashed] {
+        let run = harness.state_of(request);
+        assert_eq!(run.failure_reason, Some(FailureReason::Interrupted));
+    }
+    assert!(harness.tasks.created.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_selection_pass_the_app_quit_starts_the_items_it_queued_on_the_next_start() {
+    let (open_gate, sessions) = gated();
+    let harness = Harness::campaign("", by_branch(None), sessions);
+    let go = harness.scratch.0.join("go");
+    harness.selector_script(&format!(
+        "cat > /dev/null\ntouch \"$0.started\"\nwhile [ ! -f '{}' ]; do sleep 0.05; done\nprintf '%s' '{{\"items\":[{{\"id\":\"a\",\"version\":\"1\"}}],\"cursor\":1}}'\n",
+        go.display()
+    ));
+    let request = harness.claim(false, now());
+    harness.executor.execute(request.clone(), None);
+    wait_until(|| harness.folder().join("scripts/select.sh.started").exists());
+
+    harness.executor.quit();
+    fs::write(&go, "").unwrap();
+    wait_until(|| !harness.executor.owns(&request.run_id));
+
+    let quit = harness.state_of(&request);
+    assert_eq!(quit.status, RunStatus::Interrupted);
+    assert_eq!(item(&quit, "a").status, ItemStatus::Queued);
+    assert!(harness.sessions.started.lock().unwrap().is_empty());
+    open_gate.send(()).unwrap();
+
+    harness.restart(&request);
+
+    let run = harness.state_of(&request);
+    assert_eq!(run.status, RunStatus::Completed);
+    assert_eq!(run.outcome, Some(RunOutcome::Dispatched));
+    assert_eq!(item(&run, "a").status, ItemStatus::Completed);
+    assert_eq!(harness.automation().cursor, None);
+}
+
+#[test]
+fn a_selection_pass_the_app_quit_before_it_queued_anything_selects_again() {
+    let harness = Harness::campaign("", by_branch(None), FakeSessions::default());
+    harness.selector_printing(r#"{"items":[{"id":"a","version":"1"}]}"#);
+    let request = harness.quit_before_first_item(Vec::new(), 1);
+
+    harness.restart(&request);
+
+    let run = harness.state_of(&request);
+    assert_eq!(run.outcome, Some(RunOutcome::Dispatched));
+    assert_eq!(item(&run, "a").status, ItemStatus::Completed);
+}
+
+#[test]
+fn a_restart_of_a_run_it_cannot_read_is_logged() {
+    let harness = Harness::routine("", FakeSessions::default());
+    let request = RunRequest {
+        automation: "Not A Name".into(),
+        ..harness.claim(false, now())
+    };
+
+    assert!(harness.executor.restart(request.clone()));
+    wait_until(|| !harness.executor.owns(&request.run_id));
+}
+
+#[test]
+fn quitting_marks_runs_still_before_their_first_item_and_logs_the_rest() {
+    let harness = Harness::routine("", FakeSessions::default());
+    let starting = harness.claim(false, now());
+    let in_flight = [
+        (starting.run_id.clone(), "demo".to_string()),
+        ("r".to_string(), "Not A Name".to_string()),
+    ];
+    harness.executor.in_flight.lock().unwrap().extend(in_flight);
+
+    harness.executor.quit();
+
+    assert_eq!(harness.state_of(&starting).status, RunStatus::Interrupted);
 }

@@ -1,32 +1,48 @@
 //! Items the app quit while driving resume on the next start from the run log: in the task they
 //! had, from the interrupted attempt, with the outputs of earlier attempts and the conversations
-//! their agent steps held.
+//! their agent steps held. Runs the app quit before their first item resume from the top, in
+//! the task they had resolved or created by then.
 
 use std::sync::atomic::Ordering;
 use std::thread;
 
-use super::super::definition::{AgentStep, AutomationDefinition, StepKind};
+use super::super::definition::{AgentStep, AutomationDefinition, StepKind, TaskMode};
 use super::super::pipeline::RunLog;
 use super::super::scheduler::RunRequest;
-use super::super::store::events::{LoggedEvent, RunEvent, StepStatus};
+use super::super::store::events::{LoggedEvent, RunEvent, RunStatus, StepStatus};
 use super::commands::Item;
 use super::prompt::PriorStep;
 use super::{
-    run_deadline, ItemDrive, ItemSteps, RoutineExecutor, TaskFailure, WriterLog, ROUTINE_ITEM,
+    per_run_branch, run_deadline, ItemDrive, ItemSteps, ResolvedTask, RoutineExecutor, TaskFailure,
+    WriterLog, ROUTINE_ITEM,
 };
 
 impl RoutineExecutor {
-    /// Stops driving items and records each as interrupted, a routine's run too.
+    /// Stops driving items and records each as interrupted, a routine's run too, and so the
+    /// runs still before their first item.
     pub(super) fn halt(&self) {
         self.quitting.store(true, Ordering::SeqCst);
         let driven = self.driven.lock().unwrap().clone();
         for ((automation, run_id, item), routine) in driven {
             if let Err(error) = self.mark_interrupted(&automation, &run_id, item, routine) {
-                log::warn!(
-                    "Automation run {automation}/{run_id} was not marked interrupted: {error}"
-                );
+                not_marked(&automation, &run_id, &error);
             }
         }
+        let in_flight = self.in_flight.lock().unwrap().clone();
+        for (run_id, automation) in in_flight {
+            if let Err(error) = self.mark_starting_interrupted(&automation, &run_id) {
+                not_marked(&automation, &run_id, &error);
+            }
+        }
+    }
+
+    fn mark_starting_interrupted(&self, automation: &str, run_id: &str) -> Result<(), String> {
+        let writer = self.store.writer(automation)?;
+        let status = self.store.run(automation, run_id)?.status;
+        if matches!(status, RunStatus::Starting | RunStatus::Running) {
+            writer.append(run_id, &RunEvent::Interrupted)?;
+        }
+        Ok(())
     }
 
     fn mark_interrupted(
@@ -42,6 +58,36 @@ impl RoutineExecutor {
             writer.append(run_id, &RunEvent::Interrupted)?;
         }
         Ok(())
+    }
+
+    /// Runs a run the app quit before its first item again, from the top.
+    pub(super) fn restart_run(&self, request: &RunRequest) -> Result<(), String> {
+        let payload = self.store.payload(&request.automation, &request.run_id)?;
+        WriterLog::of(&self.store, request).append(RunEvent::Resumed)?;
+        (self.runs_changed)(&request.automation);
+        self.try_run(request, payload.as_ref(), true)
+    }
+
+    /// The task a restarted routine run had: the one it recorded, or the `per-run` task an earlier
+    /// process created on its branch without recording it.
+    pub(super) fn reattached_task(
+        &self,
+        definition: &AutomationDefinition,
+        request: &RunRequest,
+    ) -> Result<Option<ResolvedTask>, TaskFailure> {
+        let run = self
+            .store
+            .run(&request.automation, &request.run_id)
+            .map_err(TaskFailure::new)?;
+        if let Some(task_id) = run.task_id {
+            return self.tasks.get(&task_id).map(Some);
+        }
+        let target = &definition.target;
+        if target.task != TaskMode::PerRun {
+            return Ok(None);
+        }
+        self.tasks
+            .find(&target.workspace_id, &per_run_branch(target, request)?)
     }
 
     pub(super) fn resume_run(&self, request: &RunRequest, items: &[String]) -> Result<(), String> {
@@ -155,6 +201,10 @@ impl ItemSteps<'_> {
             }
         }
     }
+}
+
+fn not_marked(automation: &str, run_id: &str, error: &str) {
+    log::warn!("Automation run {automation}/{run_id} was not marked interrupted: {error}");
 }
 
 fn agent_step<'a>(definition: &'a AutomationDefinition, step_id: &str) -> Option<&'a AgentStep> {
