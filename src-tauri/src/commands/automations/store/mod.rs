@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, Runtime};
 
-use events::{parse_log, reduce, LoggedEvent, RunEvent, RunState, RunTrigger};
+use events::{parse_log, reduce, ItemState, LoggedEvent, RunEvent, RunState, RunTrigger};
 
 const EVENTS_FILE: &str = "events.jsonl";
 const PAYLOAD_FILE: &str = "payload.json";
@@ -48,13 +48,64 @@ pub struct Toggle {
 
 impl Toggle {
     pub fn now(enabled: bool, by: Actor, reason: Option<String>) -> Self {
-        let now = chrono::DateTime::<chrono::Utc>::from(SystemTime::now());
         Self {
             enabled,
             by,
             reason,
-            at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            at: utc_now(),
         }
+    }
+}
+
+fn utc_now() -> String {
+    chrono::DateTime::<chrono::Utc>::from(SystemTime::now())
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// A value the operator set in place of the definition's, with who set it and when.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Override<T> {
+    pub value: T,
+    pub by: Actor,
+    pub at: String,
+}
+
+impl<T> Override<T> {
+    pub fn now(value: T, by: Actor) -> Self {
+        Self {
+            value,
+            by,
+            at: utc_now(),
+        }
+    }
+}
+
+/// How a campaign takes new items: as capacity allows, or only the ones Next granted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum Pace {
+    Continuous,
+    Next { remaining: u64 },
+}
+
+/// Operator overrides of a campaign's definition; an absent field keeps the definition's value.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Overrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_active: Option<Override<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_open_prs: Option<Override<u64>>,
+    /// New items per selection pass, in place of `selector.max_new_items`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<Override<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pace: Option<Override<Pace>>,
+}
+
+impl Overrides {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
     }
 }
 
@@ -68,6 +119,8 @@ pub struct AutomationState {
     pub consecutive_failures: u32,
     pub cursor: Option<serde_json::Value>,
     pub last_toggle: Option<Toggle>,
+    #[serde(skip_serializing_if = "Overrides::is_empty")]
+    pub overrides: Overrides,
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
 }
@@ -81,6 +134,7 @@ impl Default for AutomationState {
             consecutive_failures: 0,
             cursor: None,
             last_toggle: None,
+            overrides: Overrides::default(),
             other: serde_json::Map::new(),
         }
     }
@@ -221,6 +275,45 @@ impl RunStore {
     }
 }
 
+/// An item as the board shows it: the newest of its id, with the run that holds it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RunItem {
+    pub run_id: String,
+    pub test: bool,
+    #[serde(flatten)]
+    pub item: ItemState,
+}
+
+impl RunStore {
+    /// The newest item of each id across the automation's runs, oldest first. Test runs' items
+    /// are kept apart from the others.
+    pub fn latest_items(&self, name: &str) -> Result<Vec<RunItem>, String> {
+        let runs_dir = self.automation_dir(name)?.join("runs");
+        let mut ids = run_ids(&runs_dir)?;
+        ids.sort_unstable();
+        let mut items: Vec<RunItem> = Vec::new();
+        for id in ids {
+            let run = match read_run(&runs_dir, &id) {
+                Ok(run) => run,
+                Err(error) => {
+                    log::warn!("Skipping unreadable automation run {name}/{id}: {error}");
+                    continue;
+                }
+            };
+            let test = run.trigger.as_ref().is_some_and(|trigger| trigger.test);
+            for item in run.items {
+                items.retain(|known| known.test != test || known.item.id != item.id);
+                items.push(RunItem {
+                    run_id: run.id.clone(),
+                    test,
+                    item,
+                });
+            }
+        }
+        Ok(items)
+    }
+}
+
 impl AutomationWriter {
     pub fn save_state(&self, state: &AutomationState) -> Result<(), String> {
         let bytes = serde_json::to_vec_pretty(state).map_err(|e| e.to_string())?;
@@ -319,6 +412,17 @@ pub async fn automation_runs_list<R: Runtime>(
     tauri::async_runtime::spawn_blocking(move || store.list_runs(&name, before.as_deref(), limit))
         .await
         .map_err(|_| "Could not list automation runs".to_string())?
+}
+
+#[tauri::command]
+pub async fn automation_items_list<R: Runtime>(
+    app: AppHandle<R>,
+    name: String,
+) -> Result<Vec<RunItem>, String> {
+    let store = RunStore::of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || store.latest_items(&name))
+        .await
+        .map_err(|_| "Could not list automation items".to_string())?
 }
 
 #[tauri::command]

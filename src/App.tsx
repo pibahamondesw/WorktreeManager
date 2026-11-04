@@ -611,6 +611,7 @@ function App() {
         inboxSelected={automationInboxSelected}
         onSelectInbox={() => setAutomationInboxSelected(true)}
         onOpenConversation={openAutomationConversation}
+        tasks={state.tasks}
       />
       <SettingsModal
         shortcutOperations={operations}

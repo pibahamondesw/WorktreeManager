@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod command;
 pub mod definition;
+pub mod operator;
 pub mod pipeline;
 pub mod publish;
 pub mod routine;

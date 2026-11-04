@@ -1,12 +1,15 @@
 import { useEffect, useRef } from "react";
 import { AutomationSummary } from "../../services/automations";
-import { EditorApp } from "../../types";
+import { EditorApp, Task } from "../../types";
 import { Modal } from "../ui/Modal";
 import { AutomationList } from "./AutomationList";
 import { AutomationDetail } from "./AutomationDetail";
 import { AutomationInbox } from "./AutomationInbox";
 import { OpenConversation, OpenConversationContext } from "./openConversation";
+import { AutomationTasksContext } from "./automationTasks";
 import { InboxItem } from "../../services/automationInbox";
+
+const NO_TASKS: Task[] = [];
 
 interface InboxProps {
   items: InboxItem[];
@@ -31,6 +34,8 @@ interface AutomationsModalProps {
   inboxSelected: boolean;
   onSelectInbox: () => void;
   onOpenConversation: OpenConversation;
+  /** Campaign items show their task's branch and issue. */
+  tasks?: Task[];
 }
 
 export function AutomationsModal({
@@ -46,6 +51,7 @@ export function AutomationsModal({
   inboxSelected,
   onSelectInbox,
   onOpenConversation,
+  tasks = NO_TASKS,
 }: AutomationsModalProps) {
   const selected =
     automations.find((summary) => summary.entry.name === selectedName) ?? automations[0];
@@ -94,12 +100,14 @@ export function AutomationsModal({
                 />
               ) : (
                 selected && (
-                  <AutomationDetail
-                    key={selected.entry.name}
-                    summary={selected}
-                    editorApp={editorApp}
-                    onChanged={onChanged}
-                  />
+                  <AutomationTasksContext.Provider value={tasks}>
+                    <AutomationDetail
+                      key={selected.entry.name}
+                      summary={selected}
+                      editorApp={editorApp}
+                      onChanged={onChanged}
+                    />
+                  </AutomationTasksContext.Provider>
                 )
               )}
             </div>

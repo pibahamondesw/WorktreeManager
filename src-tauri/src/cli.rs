@@ -42,6 +42,13 @@ automation run <name> [--payload <json>]
 automation pause <name> [--reason <text>]
 automation resume <name> [--reason <text>]
                                      Resuming skips the slots missed while paused.
+automation items <name>              Campaign items, the newest of each id.
+automation next <name>               Campaigns: grant one more item and start a
+                                     selection pass; pending items keep going.
+automation continuous <name>         Campaigns: take new items as capacity allows.
+automation limit <name> <max_active|max_open_prs|batch_size> <n|default>
+                                     Campaigns: override a limit live, or go back
+                                     to the definition's value.
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
 lease run --pool <name> [--holder <key>] [--values <v,…>] -- <command> [args]
@@ -188,6 +195,8 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.status" => (&["name", "runId"], false, &[]),
         "automation.run" => (&["name"], false, &["payload"]),
         "automation.pause" | "automation.resume" => (&["name"], false, &["reason"]),
+        "automation.items" | "automation.next" | "automation.continuous" => (&["name"], false, &[]),
+        "automation.limit" => (&["name", "limit", "value"], false, &[]),
         _ => return Err("Unknown operation; see --help".into()),
     };
     if words.len() != 2 + positional.len()
@@ -211,6 +220,10 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         {
             return Err("Provide working, waiting or done and --agent claude or codex".into());
         }
+    }
+    if method == "automation.limit" {
+        let value = limit_value(&params["limit"], &params["value"])?;
+        params.insert("value".into(), value);
     }
     if method == "task.link-issue" && !params.contains_key("issue") {
         return Err("Provide --issue with a Linear issue identifier".into());
@@ -236,6 +249,22 @@ fn payload(value: Option<&String>) -> Result<Value, String> {
         .and_then(|value| serde_json::from_str::<Value>(value).ok())
         .filter(Value::is_object)
         .ok_or_else(|| "--payload requires a JSON object".into())
+}
+
+/// `default` goes back to the definition's value.
+fn limit_value(limit: &Value, value: &Value) -> Result<Value, String> {
+    if !["max_active", "max_open_prs", "batch_size"].contains(&limit.as_str().unwrap_or_default()) {
+        return Err("Provide max_active, max_open_prs or batch_size".into());
+    }
+    match value.as_str().unwrap_or_default() {
+        "default" => Ok(Value::Null),
+        number => number
+            .parse::<u64>()
+            .ok()
+            .filter(|number| *number > 0)
+            .map(|number| json!(number))
+            .ok_or_else(|| "A limit is a positive number or default".into()),
+    }
 }
 
 fn page_limit(value: Option<&String>) -> Result<u64, String> {
@@ -978,6 +1007,34 @@ mod tests {
             resume.params,
             *json!({ "name": "babysitter" }).as_object().unwrap()
         );
+    }
+
+    #[test]
+    fn parses_campaign_operator_verbs_and_live_limits() {
+        for verb in ["items", "next", "continuous"] {
+            let parsed = parse(&args(&format!("automation {verb} rubocop"))).unwrap();
+            assert_eq!(parsed.method, format!("automation.{verb}"));
+            assert_eq!(parsed.params["name"], "rubocop");
+        }
+        let limit = parse(&args("automation limit rubocop max_active 3")).unwrap();
+        assert_eq!(limit.method, "automation.limit");
+        assert_eq!(
+            limit.params,
+            *json!({ "name": "rubocop", "limit": "max_active", "value": 3 })
+                .as_object()
+                .unwrap()
+        );
+        let reset = parse(&args("automation limit rubocop batch_size default")).unwrap();
+        assert_eq!(reset.params["value"], Value::Null);
+        for invalid in [
+            "automation limit rubocop max_active 0",
+            "automation limit rubocop max_active many",
+            "automation limit rubocop pools 2",
+            "automation limit rubocop max_active",
+            "automation next",
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "{invalid}");
+        }
     }
 
     #[test]

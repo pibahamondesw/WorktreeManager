@@ -10,6 +10,7 @@ use serde_json::Value;
 use super::super::definition::{
     AutomationDefinition, LinearOverrides, SelectorSettings, Target, TaskMode,
 };
+use super::super::operator::{pass_limits, take_granted};
 use super::super::pipeline::RunLog;
 use super::super::publish::{marked_issue, operation};
 use super::super::scheduler::{is_active, record_failure, RunRequest};
@@ -17,7 +18,7 @@ use super::super::selector::script::ScriptSelector;
 use super::super::selector::{
     self, Selection, SelectionPass, SelectionPolicy, Selector, SelectorInput, SelectorOutput,
 };
-use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent};
+use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, SkipReason};
 use super::commands::Item;
 use super::{
     bases, render, run_variables, ItemDrive, NewTask, ResolvedTask, RoutineExecutor, TaskFailure,
@@ -51,10 +52,20 @@ impl RoutineExecutor {
             return Ok(());
         }
         let settings = definition.selector.as_ref().ok_or("not a campaign")?;
+        let limits = pass_limits(definition, &self.store.state(name)?, request.test);
+        if limits.exhausted() {
+            let skipped = RunEvent::Skipped {
+                reason: SkipReason::Capped,
+                missed: None,
+            };
+            self.store.writer(name)?.append(&request.run_id, &skipped)?;
+            (self.runs_changed)(name);
+            return Ok(());
+        }
         let policy = SelectionPolicy {
-            active_pool: definition.pools.active,
-            open_prs: definition.pools.open_prs,
-            max_new_items: settings.max_new_items,
+            active_pool: limits.max_active,
+            open_prs: limits.max_open_prs,
+            max_new_items: limits.max_new_items,
             exclusive_on: settings.exclusive_on.clone(),
             complete_when_empty: definition.completion.selector_empty,
         };
@@ -75,6 +86,9 @@ impl RoutineExecutor {
         };
         let items = dispatch.items.clone();
         selector::complete(&pass, dispatch)?;
+        if limits.granted.is_some() {
+            take_granted(&self.store, name, items.len() as u64)?;
+        }
         (self.runs_changed)(name);
         thread::scope(|scope| {
             for candidate in items {

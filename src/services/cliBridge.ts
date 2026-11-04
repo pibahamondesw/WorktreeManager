@@ -226,6 +226,14 @@ function pageLimit(value: unknown): number {
   return value;
 }
 
+/** Null goes back to the definition's value. */
+function limitValue(value: unknown): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1)
+    throw new OperationError("invalid_params", "value must be a positive integer or null.");
+  return value;
+}
+
 function payloadObject(value: unknown): Record<string, unknown> | null {
   if (value === undefined) return null;
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -306,6 +314,10 @@ export async function dispatchCliBridge(
       "automation.run": ["name", "payload"],
       "automation.pause": ["name", "reason"],
       "automation.resume": ["name", "reason"],
+      "automation.items": ["name"],
+      "automation.next": ["name"],
+      "automation.continuous": ["name"],
+      "automation.limit": ["name", "limit", "value"],
       "linear.issue-upsert": [
         "workspaceId",
         "marker",
@@ -438,6 +450,24 @@ export async function dispatchCliBridge(
             reason: params.reason === undefined ? null : text(params.reason),
           }
         );
+        break;
+      case "automation.items":
+        result = await invokeAutomations("automation_items_list", { name: text(params.name) });
+        break;
+      case "automation.next":
+      case "automation.continuous":
+        result = await invokeAutomations(
+          request.method === "automation.next" ? "automation_next" : "automation_continuous",
+          { name: text(params.name), by: "cli" }
+        );
+        break;
+      case "automation.limit":
+        result = await invokeAutomations("automation_set_limit", {
+          name: text(params.name),
+          by: "cli",
+          limit: text(params.limit),
+          value: limitValue(params.value),
+        });
         break;
       case "linear.issue-upsert":
         result = await operations.upsertMarkedIssue(
