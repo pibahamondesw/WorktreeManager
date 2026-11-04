@@ -12,8 +12,11 @@ import { AutomationRuns } from "./AutomationRuns";
 import { AutomationDefinition } from "./AutomationDefinition";
 import { AutomationPipeline } from "./AutomationPipeline";
 import { AutomationActions } from "./AutomationActions";
+import { AutomationItems } from "./AutomationItems";
+import { isCampaign } from "../../services/automationBoard";
 
-type Tab = "runs" | "pipeline" | "definition";
+type Tab = "items" | "runs" | "pipeline" | "definition";
+const ITEMS_TAB: { id: Tab; label: string } = { id: "items", label: "Items" };
 const TABS: { id: Tab; label: string }[] = [
   { id: "runs", label: "Runs" },
   { id: "pipeline", label: "Pipeline" },
@@ -27,17 +30,25 @@ interface AutomationDetailProps {
 }
 
 export function AutomationDetail({ summary, editorApp, onChanged }: AutomationDetailProps) {
-  const [tab, setTab] = useState<Tab>(summary.entry.errors.length > 0 ? "definition" : "runs");
+  const campaign = isCampaign(summary.entry.definition);
+  const tabs = campaign ? [ITEMS_TAB, ...TABS] : TABS;
+  const [tab, setTab] = useState<Tab>(
+    summary.entry.errors.length > 0 ? "definition" : campaign ? "items" : "runs"
+  );
   const [revision, setRevision] = useState(0);
   const { entry } = summary;
   const status = automationStatus(summary);
+  const changed = () => {
+    setRevision((current) => current + 1);
+    onChanged();
+  };
 
   const switchTabWithArrows = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const step = event.key === "ArrowRight" ? 1 : -1;
-    const index = TABS.findIndex((t) => t.id === tab);
-    const next = TABS[(index + step + TABS.length) % TABS.length].id;
+    const index = tabs.findIndex((t) => t.id === tab);
+    const next = tabs[(index + step + tabs.length) % tabs.length].id;
     setTab(next);
     event.currentTarget.parentElement
       ?.querySelector<HTMLElement>(`#automation-tab-${next}`)
@@ -53,13 +64,7 @@ export function AutomationDetail({ summary, editorApp, onChanged }: AutomationDe
         </h3>
         <span className="text-xs text-text-muted">{AUTOMATION_STATUS_LABELS[status]}</span>
         <div className="ml-auto">
-          <AutomationActions
-            summary={summary}
-            onChanged={() => {
-              setRevision((current) => current + 1);
-              onChanged();
-            }}
-          />
+          <AutomationActions summary={summary} onChanged={changed} />
         </div>
       </div>
 
@@ -70,7 +75,7 @@ export function AutomationDetail({ summary, editorApp, onChanged }: AutomationDe
         aria-label="Automation"
         className="flex gap-1 px-4 border-b border-border flex-shrink-0"
       >
-        {TABS.map(({ id, label }) => (
+        {tabs.map(({ id, label }) => (
           <button
             key={id}
             id={`automation-tab-${id}`}
@@ -98,6 +103,9 @@ export function AutomationDetail({ summary, editorApp, onChanged }: AutomationDe
         aria-labelledby={`automation-tab-${tab}`}
         className="flex-1 min-h-0 overflow-y-auto p-6"
       >
+        {tab === "items" && campaign && entry.definition && (
+          <AutomationItems summary={summary} steps={entry.definition.steps} onChanged={changed} />
+        )}
         {tab === "runs" && <AutomationRuns key={`${entry.name}:${revision}`} name={entry.name} />}
         {tab === "pipeline" &&
           (entry.definition ? (

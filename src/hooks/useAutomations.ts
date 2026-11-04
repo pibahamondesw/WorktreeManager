@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import {
   AutomationRun,
   AutomationSummary,
+  RunItem,
+  listAutomationItems,
   listAutomationRuns,
   loadAutomationSummaries,
 } from "../services/automations";
@@ -125,4 +127,34 @@ export function useAutomationRuns(name: string) {
     reload,
     loadMore: current.nextBefore ? () => load(current.nextBefore) : null,
   };
+}
+
+interface ItemsState {
+  name: string;
+  items: RunItem[];
+  error: string | null;
+  loading: boolean;
+}
+
+/** The campaign's board items, reloaded on focus and whenever the engine records a change. */
+export function useAutomationItems(name: string) {
+  const [page, setPage] = useState<ItemsState>({ name, items: [], error: null, loading: true });
+  const startRequest = useLatestRequest();
+
+  const reload = useCallback(() => {
+    const isLatest = startRequest();
+    listAutomationItems(name)
+      .then((items) => {
+        if (isLatest()) setPage({ name, items, error: null, loading: false });
+      })
+      .catch((reason: unknown) => {
+        if (isLatest())
+          setPage((current) => ({ ...current, name, error: String(reason), loading: false }));
+      });
+  }, [name, startRequest]);
+
+  useLoadOnFocus(reload);
+  useReloadOnRunsChanged(reload);
+  const current = page.name === name ? page : { name, items: [], error: null, loading: true };
+  return { items: current.items, error: current.error, loading: current.loading, reload };
 }

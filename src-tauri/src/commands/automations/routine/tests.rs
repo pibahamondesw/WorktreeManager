@@ -1324,4 +1324,5 @@ steps:
 }
 
 mod campaign;
+mod operator;
 mod resume;

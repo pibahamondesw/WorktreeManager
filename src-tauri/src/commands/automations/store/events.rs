@@ -417,6 +417,10 @@ pub struct StepAttemptState {
     pub result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<StepEffect>,
+    /// When the attempt last went pending, running or waiting, while it is open.
+    pub opened_at_ms: Option<u64>,
+    /// Time from each opening to the status that closed it, as the item's budgets charge it.
+    pub elapsed_ms: u64,
 }
 
 impl RunStatus {
@@ -431,6 +435,17 @@ impl RunStatus {
 impl ItemStatus {
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Canceled)
+    }
+}
+
+impl StepAttemptState {
+    fn clock(&mut self, at_ms: u64) {
+        if self.status.is_terminal() {
+            let opened_at_ms = self.opened_at_ms.take().unwrap_or(at_ms);
+            self.elapsed_ms += at_ms.saturating_sub(opened_at_ms);
+        } else {
+            self.opened_at_ms = Some(at_ms);
+        }
     }
 }
 
@@ -560,6 +575,7 @@ impl RunState {
                     attempt.verdict = verdict;
                     attempt.cause = cause;
                     attempt.head = head;
+                    attempt.clock(at_ms);
                 }
             }
             RunEvent::TaskResolved {
@@ -737,6 +753,8 @@ impl ItemState {
                     reply: None,
                     result: None,
                     effects: Vec::new(),
+                    opened_at_ms: None,
+                    elapsed_ms: 0,
                 });
                 self.steps.len() - 1
             }

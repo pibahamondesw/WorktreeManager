@@ -264,6 +264,8 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 reply: None,
                 result: None,
                 effects: Vec::new(),
+                opened_at_ms: None,
+                elapsed_ms: 1,
             },
             StepAttemptState {
                 step: "fix".into(),
@@ -281,6 +283,8 @@ fn reduces_items_and_step_attempts_in_log_order() {
                 reply: None,
                 result: None,
                 effects: Vec::new(),
+                opened_at_ms: None,
+                elapsed_ms: 0,
             },
         ]
     );
@@ -964,4 +968,135 @@ fn a_run_reads_back_its_log_and_its_payload() {
         .unwrap_err()
         .starts_with(PAYLOAD_FILE));
     assert!(store.events("demo", "1700000000000-abcdef12").is_err());
+}
+
+#[test]
+fn attempts_clock_the_time_from_their_last_opening_to_their_end() {
+    let created_a = || RunEvent::ItemCreated {
+        item: "a".into(),
+        version: "1".into(),
+        title: None,
+        data: Default::default(),
+    };
+    let open = reduce(
+        "r",
+        [
+            at(1, created_a()),
+            at(10, step("a", 1, StepStatus::Running)),
+            at(30, step("a", 1, StepStatus::Waiting)),
+        ],
+    );
+    let attempt = &open.items[0].steps[0];
+    assert_eq!((attempt.opened_at_ms, attempt.elapsed_ms), (Some(30), 0));
+
+    let ended = reduce(
+        "r",
+        [
+            at(1, created_a()),
+            at(10, step("a", 1, StepStatus::Running)),
+            at(30, step("a", 1, StepStatus::Waiting)),
+            at(100, step("a", 1, StepStatus::Succeeded)),
+        ],
+    );
+    let attempt = &ended.items[0].steps[0];
+    assert_eq!((attempt.opened_at_ms, attempt.elapsed_ms), (None, 70));
+}
+
+#[test]
+fn overrides_are_typed_state_fields_older_states_do_without() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let dir = scratch.0.join("automations/rubocop");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("state.json"), json!({"enabled": true}).to_string()).unwrap();
+    let mut state = store.state("rubocop").unwrap();
+    assert_eq!(state.overrides, Overrides::default());
+    let writer = store.writer("rubocop").unwrap();
+    writer.save_state(&state).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("state.json")).unwrap()).unwrap();
+    assert!(saved.get("overrides").is_none());
+
+    state.overrides.max_active = Some(Override::now(3, Actor::Cli));
+    state.overrides.pace = Some(Override::now(Pace::Next { remaining: 1 }, Actor::User));
+    writer.save_state(&state).unwrap();
+
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("state.json")).unwrap()).unwrap();
+    assert_eq!(saved["overrides"]["max_active"]["value"], 3);
+    assert_eq!(saved["overrides"]["max_active"]["by"], "cli");
+    assert_eq!(
+        saved["overrides"]["pace"]["value"],
+        json!({"mode": "next", "remaining": 1})
+    );
+    assert!(saved["overrides"].get("batch_size").is_none());
+    assert_eq!(store.state("rubocop").unwrap(), state);
+}
+
+#[test]
+fn the_board_lists_the_newest_item_of_each_id_with_test_items_apart() {
+    let scratch = Scratch::new();
+    let app_data = scratch.0.join("app-data");
+    let store = RunStore::new(&app_data);
+    let writer = store.writer("rubocop").unwrap();
+    let item_created = |item: &str, version: &str| RunEvent::ItemCreated {
+        item: item.into(),
+        version: version.into(),
+        title: None,
+        data: Default::default(),
+    };
+    let first = created(writer.claim(trigger("manual:1")).unwrap());
+    writer.append(&first, &item_created("a", "1")).unwrap();
+    writer.append(&first, &item_created("b", "1")).unwrap();
+    let test = created(
+        writer
+            .claim(RunTrigger {
+                test: true,
+                ..trigger("test:1")
+            })
+            .unwrap(),
+    );
+    writer.append(&test, &item_created("a", "9")).unwrap();
+    let second = created(writer.claim(trigger("manual:2")).unwrap());
+    writer.append(&second, &item_created("a", "2")).unwrap();
+    let broken = new_run_id();
+    let broken_dir = app_data.join("automations/rubocop/runs").join(&broken);
+    fs::create_dir_all(&broken_dir).unwrap();
+    fs::write(broken_dir.join("events.jsonl"), "not json\n").unwrap();
+    drop(writer);
+
+    let mut context = mock_context(noop_assets());
+    context.config_mut().identifier = app_data.to_string_lossy().into_owned();
+    let app = mock_builder().build(context).unwrap();
+    let items = tauri::async_runtime::block_on(automation_items_list(
+        app.handle().clone(),
+        "rubocop".into(),
+    ))
+    .unwrap();
+
+    let listed: Vec<_> = items
+        .iter()
+        .map(|entry| {
+            (
+                entry.item.id.as_str(),
+                entry.item.version.as_str(),
+                entry.test,
+                entry.run_id == second,
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("b", "1", false, false),
+            ("a", "9", true, false),
+            ("a", "2", false, true)
+        ]
+    );
+    let json = serde_json::to_value(&items[2]).unwrap();
+    assert_eq!(
+        (json["id"].clone(), json["test"].clone()),
+        (json!("a"), json!(false))
+    );
+    assert!(store.latest_items("../escape").is_err());
 }

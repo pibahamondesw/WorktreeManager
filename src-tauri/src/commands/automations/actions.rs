@@ -150,7 +150,7 @@ fn active_runs(store: &RunStore, name: &str) -> Result<Vec<RunState>, String> {
         .collect())
 }
 
-fn valid_definition<R: Runtime>(
+pub(super) fn valid_definition<R: Runtime>(
     app: &AppHandle<R>,
     name: &str,
 ) -> Result<AutomationDefinition, String> {
@@ -160,7 +160,7 @@ fn valid_definition<R: Runtime>(
 }
 
 /// The engine pauses on its own; the app and the CLI act for the owner.
-fn operator(by: Actor) -> Result<Actor, String> {
+pub(super) fn operator(by: Actor) -> Result<Actor, String> {
     match by {
         Actor::Auto => Err("Only the engine pauses an automation automatically".into()),
         by => Ok(by),
@@ -173,11 +173,11 @@ fn note(reason: Option<String>) -> Option<String> {
         .filter(|reason| !reason.is_empty())
 }
 
-fn now() -> DateTime<Utc> {
+pub(super) fn now() -> DateTime<Utc> {
     DateTime::from(SystemTime::now())
 }
 
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     action: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(action)

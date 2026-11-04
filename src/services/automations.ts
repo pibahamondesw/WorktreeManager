@@ -16,7 +16,7 @@ export interface ReportPolicy {
   notify: boolean;
 }
 
-interface AutomationDefinition {
+export interface AutomationDefinition {
   name: string;
   description: string | null;
   trigger: {
@@ -25,6 +25,9 @@ interface AutomationDefinition {
   };
   steps: PipelineStep[];
   report?: ReportPolicy;
+  /** Present in campaigns. */
+  selector?: { maxNewItems: number | null } | null;
+  pools?: { active: number; openPrs: number };
 }
 
 type GotoLimit = { count: number } | { budget: string };
@@ -106,6 +109,20 @@ interface Toggle {
   at: string;
 }
 
+/** A value the operator set in place of the definition's. */
+export interface Override<T> {
+  value: T;
+  by: Actor;
+  at: string;
+}
+
+export type Pace = { mode: "continuous" } | { mode: "next"; remaining: number };
+
+export type Limit = "max_active" | "max_open_prs" | "batch_size";
+
+/** Operator overrides of a campaign; an absent field keeps the definition's value. */
+type Overrides = Partial<Record<Limit, Override<number>>> & { pace?: Override<Pace> };
+
 /** The run store's `state.json`, serialized in snake_case. */
 export interface AutomationState {
   enabled: boolean;
@@ -113,6 +130,7 @@ export interface AutomationState {
   next_run_at: string | null;
   consecutive_failures: number;
   last_toggle?: Toggle | null;
+  overrides?: Overrides;
 }
 
 export type StepStatus =
@@ -145,6 +163,9 @@ export interface StepAttempt {
   result?: unknown;
   /** The effects of a publish attempt, in order. */
   effects?: StepEffect[];
+  /** When the attempt last opened, while it is open. */
+  opened_at_ms?: number | null;
+  elapsed_ms?: number;
 }
 
 export interface AutomationItem {
@@ -156,6 +177,17 @@ export interface AutomationItem {
   /** Why a blocked or deferred item rests. */
   cause?: string | null;
   steps: StepAttempt[];
+  /** `goto` rounds taken, by counter. */
+  counters?: Record<string, number>;
+  /** The item's own task, in campaigns. */
+  task_id?: string | null;
+}
+
+/** An item on the board: the newest of its id, with the run that holds it. */
+export interface RunItem extends AutomationItem {
+  version: string;
+  run_id: string;
+  test: boolean;
 }
 
 /** A tool request the agent's unattended policy denied, or that no one answered in time. */
@@ -232,6 +264,24 @@ export const pauseAutomation = (name: string, by: Operator, reason: string | nul
 export const resumeAutomation = (name: string, by: Operator, reason: string | null = null) =>
   invoke<AutomationState>("automation_resume", { name, by, reason });
 
+export const listAutomationItems = (name: string) =>
+  invoke<RunItem[]>("automation_items_list", { name });
+
+/** Grants one more item; the run is the selection pass it started, if manual runs are allowed. */
+export const nextAutomationItem = (name: string, by: Operator) =>
+  invoke<{ state: AutomationState; run: StartedRun | null }>("automation_next", { name, by });
+
+export const runAutomationContinuously = (name: string, by: Operator) =>
+  invoke<AutomationState>("automation_continuous", { name, by });
+
+/** Null goes back to the definition's value. */
+export const setAutomationLimit = (
+  name: string,
+  by: Operator,
+  limit: Limit,
+  value: number | null
+) => invoke<AutomationState>("automation_set_limit", { name, by, limit, value });
+
 export const listAutomationRuns = (name: string, before: string | null, limit: number) =>
   invoke<AutomationRunPage>("automation_runs_list", { name, before, limit });
 
@@ -282,6 +332,10 @@ export const AUTOMATION_STATUS_LABELS: Record<AutomationStatus, string> = {
 };
 
 const ACTOR_LABELS: Record<Actor, string> = { user: "you", cli: "the CLI", auto: "WTM" };
+
+/** Who changed a setting and when. */
+export const provenance = ({ by, at }: { by: Actor; at: string }) =>
+  `by ${ACTOR_LABELS[by]} on ${new Date(at).toLocaleString()}`;
 
 export function toggleSummary(state: AutomationState | null): string | null {
   const toggle = state?.last_toggle;
