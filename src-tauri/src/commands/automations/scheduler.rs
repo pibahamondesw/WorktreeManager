@@ -81,6 +81,12 @@ pub trait Executor: Send + Sync {
     /// The app quits: stops driving items and records each as interrupted, to resume on the
     /// next start.
     fn quit(&self) {}
+
+    /// Runs again, from the top, a run the app quit before its first item. `false` when it
+    /// cannot, so the run ends as interrupted instead.
+    fn restart(&self, _request: RunRequest) -> bool {
+        false
+    }
 }
 
 pub struct Automation {
@@ -293,7 +299,7 @@ impl<C: Clock> Scheduler<C> {
         }
         let writer = self.store.writer(name)?;
         for (run, resumed) in &recoveries {
-            let kept = resumed.as_ref().map_or(&[][..], |(_, items)| items);
+            let kept = resumed.as_ref().map(|(_, items)| items.as_slice());
             end_interrupted(&writer, run, kept)?;
         }
         drop(writer);
@@ -301,14 +307,20 @@ impl<C: Clock> Scheduler<C> {
             let Some((request, items)) = resumed else {
                 continue;
             };
-            if !self.executor.resume(request, items) {
-                end_interrupted(&self.store.writer(name)?, &run, &[])?;
+            let recovered = if items.is_empty() {
+                self.executor.restart(request)
+            } else {
+                self.executor.resume(request, items)
+            };
+            if !recovered {
+                end_interrupted(&self.store.writer(name)?, &run, None)?;
             }
         }
         Ok(())
     }
 
-    /// The run's request and the open items the app quit while driving, if any may resume.
+    /// The run's request and the open items the app quit while driving, if any may resume; none
+    /// for a run the app quit before its first item, which restarts.
     fn resumable(
         &self,
         automation: &Automation,
@@ -326,7 +338,8 @@ impl<C: Clock> Scheduler<C> {
             })
             .map(|item| item.id.clone())
             .collect();
-        Ok(Some((request, items)).filter(|(_, items)| !items.is_empty()))
+        let recovers = !items.is_empty() || restartable(run, &history);
+        Ok(recovers.then_some((request, items)))
     }
 }
 
@@ -336,10 +349,10 @@ impl<C: Clock> Scheduler<C> {
 fn end_interrupted(
     writer: &AutomationWriter,
     run: &RunState,
-    resumed: &[String],
+    resumed: Option<&[String]>,
 ) -> Result<(), String> {
     if is_active(run.status) {
-        if resumed.is_empty() {
+        if resumed.is_none() {
             writer.append(&run.id, &RunEvent::Interrupted)?;
             let failed = RunEvent::Failed {
                 reason: FailureReason::Interrupted,
@@ -348,6 +361,7 @@ fn end_interrupted(
         }
         return Ok(());
     }
+    let resumed = resumed.unwrap_or_default();
     for item in open_items(run).filter(|item| !resumed.contains(&item.id)) {
         let failed = RunEvent::ItemStatus {
             item: item.id.clone(),
@@ -388,6 +402,28 @@ fn quit_interruptions(history: &[LoggedEvent], item: &str) -> Option<usize> {
         }
     }
     quit_last.then_some(quits)
+}
+
+/// Whether the app quit the run, at most `MAX_RESUMES` times, before any of its items started:
+/// while it resolved its task or ran its selection pass. A run that crashed is still active.
+fn restartable(run: &RunState, history: &[LoggedEvent]) -> bool {
+    let quits = history
+        .iter()
+        .filter(|logged| matches!(logged.event, RunEvent::Interrupted))
+        .count();
+    let item_started = history.iter().any(|logged| {
+        matches!(
+            logged.event,
+            RunEvent::ItemInterrupted { .. } | RunEvent::StepStatus { .. }
+        )
+    });
+    run.status == RunStatus::Interrupted
+        && quits <= MAX_RESUMES
+        && !item_started
+        && run
+            .items
+            .iter()
+            .all(|item| item.status == ItemStatus::Queued)
 }
 
 /// The request a recorded run started with, its claim standing for when it fired.

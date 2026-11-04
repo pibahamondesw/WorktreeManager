@@ -14,7 +14,7 @@ mod resume;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -154,8 +154,8 @@ pub struct RoutineExecutor {
     pull_requests: Arc<dyn OpenPullRequests>,
     lease_pools: Arc<dyn LeasePools>,
     quotas: Arc<Quotas>,
-    /// Runs this process is executing.
-    in_flight: Arc<Mutex<HashSet<String>>>,
+    /// Runs this process is executing, with their automation.
+    in_flight: Arc<Mutex<HashMap<String, String>>>,
     /// Items being driven, by automation, run and item, and whether each is a routine's.
     driven: Arc<Mutex<HashMap<DrivenItem, bool>>>,
     /// Set when the app quits: items stop where they are, to resume on the next start.
@@ -167,32 +167,20 @@ type DrivenItem = (String, String, String);
 
 impl Executor for RoutineExecutor {
     fn execute(&self, request: RunRequest, payload: Option<Value>) {
-        let executor = self.clone();
-        let run_id = request.run_id.clone();
-        self.in_flight.lock().unwrap().insert(run_id.clone());
-        thread::spawn(move || {
-            executor.run(&request, payload.as_ref());
-            executor.in_flight.lock().unwrap().remove(&run_id);
+        self.in_flight_thread(request, move |executor, request| {
+            executor.run(request, payload.as_ref());
         });
     }
 
     fn owns(&self, run_id: &str) -> bool {
-        self.in_flight.lock().unwrap().contains(run_id)
+        self.in_flight.lock().unwrap().contains_key(run_id)
     }
 
     fn resume(&self, request: RunRequest, items: Vec<String>) -> bool {
-        let executor = self.clone();
-        let run_id = request.run_id.clone();
-        self.in_flight.lock().unwrap().insert(run_id.clone());
-        thread::spawn(move || {
-            if let Err(error) = executor.resume_run(&request, &items) {
-                log::warn!(
-                    "Automation run {}/{} did not resume: {error}",
-                    request.automation,
-                    request.run_id
-                );
+        self.in_flight_thread(request, move |executor, request| {
+            if let Err(error) = executor.resume_run(request, &items) {
+                did_not_resume(request, &error);
             }
-            executor.in_flight.lock().unwrap().remove(&run_id);
         });
         true
     }
@@ -200,6 +188,23 @@ impl Executor for RoutineExecutor {
     fn quit(&self) {
         self.halt();
     }
+
+    fn restart(&self, request: RunRequest) -> bool {
+        self.in_flight_thread(request, |executor, request| {
+            if let Err(error) = executor.restart_run(request) {
+                did_not_resume(request, &error);
+            }
+        });
+        true
+    }
+}
+
+fn did_not_resume(request: &RunRequest, error: &str) {
+    log::warn!(
+        "Automation run {}/{} did not resume: {error}",
+        request.automation,
+        request.run_id
+    );
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,9 +253,28 @@ impl RoutineExecutor {
         }
     }
 
+    /// Works on the run on a thread of its own, as one of the runs this process is executing.
+    fn in_flight_thread(
+        &self,
+        request: RunRequest,
+        work: impl FnOnce(&Self, &RunRequest) + Send + 'static,
+    ) {
+        let executor = self.clone();
+        let run_id = request.run_id.clone();
+        let automation = request.automation.clone();
+        self.in_flight
+            .lock()
+            .unwrap()
+            .insert(run_id.clone(), automation);
+        thread::spawn(move || {
+            work(&executor, &request);
+            executor.in_flight.lock().unwrap().remove(&run_id);
+        });
+    }
+
     /// Runs a claimed run to its end. `payload` is the untrusted data its trigger carried.
     pub fn run(&self, request: &RunRequest, payload: Option<&Value>) {
-        if let Err(error) = self.try_run(request, payload) {
+        if let Err(error) = self.try_run(request, payload, false) {
             log::warn!(
                 "Automation run {}/{} stopped: {error}",
                 request.automation,
@@ -259,7 +283,13 @@ impl RoutineExecutor {
         }
     }
 
-    fn try_run(&self, request: &RunRequest, payload: Option<&Value>) -> Result<(), String> {
+    /// A `restarted` run reattaches to the task an earlier process resolved or created for it.
+    fn try_run(
+        &self,
+        request: &RunRequest,
+        payload: Option<&Value>,
+        restarted: bool,
+    ) -> Result<(), String> {
         let Some(definition) = self
             .definitions
             .current(&request.automation)
@@ -274,16 +304,18 @@ impl RoutineExecutor {
             return self.run_campaign(&definition, request, payload);
         }
         let mut log = WriterLog::of(&self.store, request);
-        let task = match self.resolve_task(&definition, request) {
-            Ok(task) => task,
+        let (task, created) = match self.routine_task(&definition, request, restarted) {
+            Ok(resolved) => resolved,
+            Err(_) if self.halted() => return Ok(()),
             Err(failure) => return self.task_failed(request, failure),
         };
         log.append(RunEvent::TaskResolved {
             task_id: task.id.clone(),
-            created: definition.target.task == TaskMode::PerRun,
+            created,
             item: None,
         })?;
-        if !is_active(self.store.run(&request.automation, &request.run_id)?.status) {
+        if self.halted() || !is_active(self.store.run(&request.automation, &request.run_id)?.status)
+        {
             return Ok(());
         }
         log.append(RunEvent::Started)?;
@@ -410,6 +442,22 @@ impl RoutineExecutor {
         Ok((status, steps.ending(status)))
     }
 
+    /// The routine's task and whether the run created it.
+    fn routine_task(
+        &self,
+        definition: &AutomationDefinition,
+        request: &RunRequest,
+        restarted: bool,
+    ) -> Result<(ResolvedTask, bool), TaskFailure> {
+        if restarted {
+            if let Some(task) = self.reattached_task(definition, request)? {
+                return Ok((task, false));
+            }
+        }
+        let task = self.resolve_task(definition, request)?;
+        Ok((task, definition.target.task == TaskMode::PerRun))
+    }
+
     fn resolve_task(
         &self,
         definition: &AutomationDefinition,
@@ -418,8 +466,7 @@ impl RoutineExecutor {
         let target = &definition.target;
         match target.task {
             TaskMode::PerRun => {
-                let template = target.branch.as_deref().unwrap_or_default();
-                let branch = render(template, &run_variables(request)).map_err(TaskFailure::new)?;
+                let branch = per_run_branch(target, request)?;
                 self.tasks.create(&NewTask {
                     workspace_id: target.workspace_id.clone(),
                     branch,
@@ -983,6 +1030,11 @@ fn run_deadline(definition: &AutomationDefinition, request: &RunRequest) -> Inst
     let now = DateTime::<Utc>::from(std::time::SystemTime::now());
     let remaining = (deadline - now).to_std().unwrap_or_default();
     Instant::now() + remaining
+}
+
+fn per_run_branch(target: &Target, request: &RunRequest) -> Result<String, TaskFailure> {
+    let template = target.branch.as_deref().unwrap_or_default();
+    render(template, &run_variables(request)).map_err(TaskFailure::new)
 }
 
 fn run_variables(request: &RunRequest) -> Vec<(&'static str, String)> {

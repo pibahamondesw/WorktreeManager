@@ -15,7 +15,7 @@ impl Harness {
         Self::new(&format!("{CAMPAIGN}{extra}"), tasks, sessions)
     }
 
-    fn folder(&self) -> PathBuf {
+    pub(super) fn folder(&self) -> PathBuf {
         self.scratch.0.join("automations").join("demo")
     }
 
@@ -26,7 +26,7 @@ impl Harness {
         ));
     }
 
-    fn selector_script(&self, body: &str) {
+    pub(super) fn selector_script(&self, body: &str) {
         let scripts = self.folder().join("scripts");
         fs::create_dir_all(&scripts).unwrap();
         let script = scripts.join("select.sh");

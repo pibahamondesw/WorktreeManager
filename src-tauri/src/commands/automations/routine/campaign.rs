@@ -16,9 +16,10 @@ use super::super::publish::{marked_issue, operation};
 use super::super::scheduler::{is_active, record_failure, RunRequest};
 use super::super::selector::script::ScriptSelector;
 use super::super::selector::{
-    self, Selection, SelectionPass, SelectionPolicy, Selector, SelectorInput, SelectorOutput,
+    self, Candidate, Dispatch, Selection, SelectionPass, SelectionPolicy, Selector, SelectorInput,
+    SelectorOutput,
 };
-use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, SkipReason};
+use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, RunState, SkipReason};
 use super::commands::Item;
 use super::{
     bases, render, run_variables, ItemDrive, NewTask, ResolvedTask, RoutineExecutor, TaskFailure,
@@ -48,12 +49,14 @@ impl RoutineExecutor {
         payload: Option<&Value>,
     ) -> Result<(), String> {
         let name = &request.automation;
-        if !is_active(self.store.run(name, &request.run_id)?.status) {
+        let run = self.store.run(name, &request.run_id)?;
+        if !is_active(run.status) {
             return Ok(());
         }
         let settings = definition.selector.as_ref().ok_or("not a campaign")?;
         let limits = pass_limits(definition, &self.store.state(name)?, request.test);
-        if limits.exhausted() {
+        let recorded = recorded_selection(&run);
+        if recorded.is_none() && limits.exhausted() {
             let skipped = RunEvent::Skipped {
                 reason: SkipReason::Capped,
                 missed: None,
@@ -79,11 +82,21 @@ impl RoutineExecutor {
             Ok(script) => Box::new(script),
             Err(error) => Box::new(Unrunnable(error)),
         };
-        let selection = selector::select(&pass, script.as_ref(), self.pull_requests.as_ref());
-        (self.runs_changed)(name);
-        let Selection::Dispatch(dispatch) = selection? else {
+        let selection = match recorded {
+            Some(dispatch) => Selection::Dispatch(dispatch),
+            None => {
+                let selection =
+                    selector::select(&pass, script.as_ref(), self.pull_requests.as_ref());
+                (self.runs_changed)(name);
+                selection?
+            }
+        };
+        let Selection::Dispatch(dispatch) = selection else {
             return Ok(());
         };
+        if self.halted() {
+            return Ok(());
+        }
         let items = dispatch.items.clone();
         selector::complete(&pass, dispatch)?;
         if limits.granted.is_some() {
@@ -257,6 +270,22 @@ impl RoutineExecutor {
         }
         writer.save_state(&state)
     }
+}
+
+/// The items a pass the app quit before it completed already queued, which a restarted run
+/// starts instead of selecting again; the selector's cursor of that pass is not kept.
+fn recorded_selection(run: &RunState) -> Option<Dispatch> {
+    let items = run.items.iter().map(|item| Candidate {
+        id: item.id.clone(),
+        version: item.version.clone(),
+        title: item.title.clone(),
+        data: item.data.clone(),
+    });
+    Some(Dispatch {
+        items: items.collect(),
+        cursor: None,
+    })
+    .filter(|dispatch| !dispatch.items.is_empty())
 }
 
 fn item_variables(request: &RunRequest, item: &Item) -> Vec<(&'static str, String)> {
