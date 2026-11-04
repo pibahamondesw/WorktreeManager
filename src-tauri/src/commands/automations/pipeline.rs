@@ -68,6 +68,12 @@ pub trait StepExecutor {
     fn drain_events(&mut self) -> Vec<RunEvent> {
         Vec::new()
     }
+
+    /// The app is quitting: what the attempt in progress produced is not recorded, so it stays
+    /// open and resumes on the next start.
+    fn halted(&self) -> bool {
+        false
+    }
 }
 
 pub trait RunLog {
@@ -402,19 +408,26 @@ impl<'a> ItemMachine<'a> {
     }
 }
 
-/// Runs the item until it rests, ends or parks on a durable wait, recording every transition.
+/// Runs the item until it rests, ends, parks on a durable wait or the executor halts, recording
+/// every transition.
 pub fn drive(
     machine: &mut ItemMachine,
     executor: &mut impl StepExecutor,
     log: &mut impl RunLog,
 ) -> Result<ItemStatus, String> {
     loop {
+        if executor.halted() {
+            return Ok(machine.status);
+        }
         let event = match machine.next() {
             Next::Rest(status) => return Ok(status),
             Next::Emit(event) => event,
             Next::Run(request) => {
                 machine.record(log, start_event(&request))?;
                 let execution = executor.execute(&request);
+                if executor.halted() {
+                    return Ok(machine.status);
+                }
                 for evidence in executor.drain_events() {
                     machine.record(log, evidence)?;
                 }

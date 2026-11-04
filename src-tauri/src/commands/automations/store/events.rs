@@ -28,6 +28,10 @@ pub enum RunEvent {
         reason: FailureReason,
     },
     Canceled,
+    /// The app quit while it drove the item; the next start may resume it from the log.
+    ItemInterrupted {
+        item: String,
+    },
     ItemCreated {
         item: String,
         version: String,
@@ -255,7 +259,7 @@ pub enum FailureReason {
     StartTimeout,
     Deadline,
     DefinitionChanged,
-    /// The app quit while the run was active; runs are not resumed yet.
+    /// The app quit, or stopped unexpectedly, while the run was active and it could not resume.
     Interrupted,
 }
 
@@ -653,6 +657,7 @@ impl RunState {
                 }
             }
             RunEvent::CandidateSkipped { .. }
+            | RunEvent::ItemInterrupted { .. }
             | RunEvent::TaskFailed { item: Some(_), .. }
             | RunEvent::StepReceipt { .. }
             | RunEvent::Unknown => {}

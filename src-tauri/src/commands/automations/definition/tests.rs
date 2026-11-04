@@ -191,6 +191,7 @@ fn minimal_routine_fills_every_default() {
             active: 1,
             open_prs: 3,
             leases: BTreeMap::new(),
+            valued: BTreeMap::new(),
         }
     );
     assert_eq!(
@@ -1145,6 +1146,7 @@ fn pools_set_built_in_limits_and_defer_global_pools() {
             active: 5,
             open_prs: 2,
             leases: BTreeMap::new(),
+            valued: BTreeMap::new(),
         }
     );
     let leased = valid(&routine("pools: { heavy_checks: 2 }\n"));
@@ -1152,11 +1154,34 @@ fn pools_set_built_in_limits_and_defer_global_pools() {
         leased.pools.leases,
         BTreeMap::from([("heavy_checks".into(), 2)])
     );
-    assert_issue(
-        &routine("pools: { test_slot: { values: [13, 14], hold: active } }\n"),
-        "pools.test_slot",
-        IssueKind::Unsupported,
+    let valued = valid(&routine(
+        "pools: { test_slot: { values: [13, \"14\"], hold: active }, other: { values: [a] } }\n",
+    ));
+    assert_eq!(
+        valued.pools.leases,
+        BTreeMap::from([("other".into(), 1), ("test_slot".into(), 2)])
     );
+    assert_eq!(
+        valued.pools.valued["test_slot"],
+        ValuedPool {
+            values: vec!["13".into(), "14".into()],
+            hold: LeaseHold::Active,
+        }
+    );
+    assert_eq!(valued.pools.valued["other"].hold, LeaseHold::Step);
+    for (pools, field, kind) in [
+        ("{ values: [13, 13] }", "values", IssueKind::Invalid),
+        ("{ values: [] }", "values", IssueKind::Invalid),
+        ("{ values: [1.5] }", "values[0]", IssueKind::Invalid),
+        ("{ values: [1], hold: run }", "hold", IssueKind::Invalid),
+        ("{ hold: item }", "values", IssueKind::Missing),
+    ] {
+        assert_issue(
+            &routine(&format!("pools: {{ test_slot: {pools} }}\n")),
+            &format!("pools.test_slot.{field}"),
+            kind,
+        );
+    }
     assert_issue(
         &routine("pools: { heavy_checks: 0 }\n"),
         "pools.heavy_checks",
@@ -1398,12 +1423,12 @@ fn campaigns_check_their_selector_and_task_mode() {
             .contains(&("target.task".into(), IssueKind::Invalid))
     );
     let tracked = "selector: { run: [scripts/queue.sh] }\ntracker: { linear: { team: DX } }\n";
-    assert!(
-        issues_of(&campaign(tracked)).contains(&("target.branch".into(), IssueKind::Unsupported))
-    );
+    let on_issue_branch = load_campaign(&campaign(tracked)).definition.unwrap();
+    assert_eq!(on_issue_branch.target.branch, None);
     let branched =
         campaign(tracked).replace("task: per-item", "task: per-item\n  branch: lint/{item.id}");
-    assert_eq!(load_campaign(&branched).errors, Vec::new());
+    let definition = load_campaign(&branched).definition.unwrap();
+    assert_eq!(definition.target.branch.as_deref(), Some("lint/{item.id}"));
 }
 
 #[test]

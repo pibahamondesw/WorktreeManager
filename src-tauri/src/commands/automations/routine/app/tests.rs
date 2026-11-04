@@ -16,7 +16,7 @@ use crate::commands::login_shell::remember_availability;
 /// hang, and logs every line it receives.
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 log="$(dirname "$0")/received.log"
-printf '%s\n' "$*" >> "$(dirname "$0")/argv.log"
+printf 'slot=%s %s\n' "${TEST_ENV_NUMBER:-}" "$*" >> "$(dirname "$0")/argv.log"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
@@ -106,6 +106,7 @@ fn chat_sessions_run_turns_of_a_headless_agent_with_the_step_settings() {
         read_only: false,
         output_schema: None,
         resume: None,
+        env: vec![("TEST_ENV_NUMBER".into(), "13".into())],
     };
 
     let session_id = sessions.start(&task, &launch).unwrap();
@@ -142,6 +143,7 @@ fn chat_sessions_run_turns_of_a_headless_agent_with_the_step_settings() {
         TurnEnd::Ended { code: None, .. }
     ));
     assert!(scratch.argv().contains("Bash(git commit *)"));
+    assert!(scratch.argv().starts_with("slot=13 "));
     let codex = SessionLaunch {
         agent: AgentSettings {
             id: "codex".into(),
@@ -171,6 +173,7 @@ fn chat_sessions_hold_result_steps_to_their_schema_and_resume_conversations() {
         read_only: true,
         output_schema: Some(json!({ "type": "object" })),
         resume: Some("c1".into()),
+        env: Vec::new(),
     };
     let task = worktree_task(&scratch);
     let transcripts = scratch.0.join(".claude/projects/elsewhere");

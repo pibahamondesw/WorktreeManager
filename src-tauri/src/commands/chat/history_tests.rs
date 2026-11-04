@@ -1629,6 +1629,7 @@ fn start_headless(
             folders,
             resume: None,
             output_schema: None,
+            env: vec![("TEST_ENV_NUMBER".into(), "13".into())],
         },
         policy,
     )

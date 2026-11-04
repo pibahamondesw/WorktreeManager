@@ -16,9 +16,10 @@ use super::fields::{
 use super::{
     AgentSettings, AgentStep, ApprovalDefault, ApprovalStep, Authorization, AutomationDefinition,
     Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency, Effect, Environment,
-    GotoLimit, InboxPolicy, IssueKind, LinearOverrides, LinearTracker, Pools, PullRequestEffect,
-    RepoRef, ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step, StepKind, StopAfter,
-    Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, Verb, WaitStep, WorkspaceRef,
+    GotoLimit, InboxPolicy, IssueKind, LeaseHold, LinearOverrides, LinearTracker, Pools,
+    PullRequestEffect, RepoRef, ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step,
+    StepKind, StopAfter, Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, ValuedPool,
+    Verb, WaitStep, WorkspaceRef,
 };
 use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
@@ -158,10 +159,14 @@ pub(super) fn definition(
     });
     fields.finish(report);
     check_instructions(report, instructions, steps.as_deref());
-    if let (Some(target), Some(selector)) = (&target, &selector) {
+    let mut target = target;
+    if let (Some(target), Some(selector)) = (&mut target, &selector) {
+        check_task_mode(report, target, selector.is_some());
         let explicit_branch = frontmatter["target"].get("branch").is_some();
-        let tracked = matches!(tracker, Some(Some(_)));
-        check_task_mode(report, target, selector.is_some(), tracked, explicit_branch);
+        if target.task == TaskMode::PerItem && matches!(tracker, Some(Some(_))) && !explicit_branch
+        {
+            target.branch = None;
+        }
     }
     if let (Some(steps), Some(pools)) = (&steps, &pools) {
         check_uses(report, steps, pools);
@@ -1706,6 +1711,7 @@ fn default_pools() -> Pools {
         active: 1,
         open_prs: 3,
         leases: BTreeMap::new(),
+        valued: BTreeMap::new(),
     }
 }
 
@@ -1716,25 +1722,65 @@ fn pools(report: &mut Report, value: &Value, field: &str) -> Option<Pools> {
         |report: &mut Report, value: &Value, field: &str| integer(report, value, field, 1);
     let active = fields.or(report, "active", defaults.active, at_least_one);
     let open_prs = fields.or(report, "open_prs", defaults.open_prs, at_least_one);
+    let mut valued = BTreeMap::new();
     let leases = each_entry(report, value, field, |report, name, item, field| {
         if ["active", "open_prs"].contains(&name) || name.starts_with("x-") {
             return Some(None);
         }
-        if item.is_object() {
-            report.error(
-                IssueKind::Unsupported,
-                field,
-                "valued pools held per item are not supported yet",
-            );
-            return None;
+        if !item.is_object() {
+            return Some(Some((name.to_string(), at_least_one(report, item, field)?)));
         }
-        Some(Some((name.to_string(), at_least_one(report, item, field)?)))
+        let pool = valued_pool(report, item, field)?;
+        let limit = pool.values.len() as u64;
+        valued.insert(name.to_string(), pool);
+        Some(Some((name.to_string(), limit)))
     });
     Some(Pools {
         active: active?,
         open_prs: open_prs?,
         leases: leases?.into_iter().flatten().collect(),
+        valued,
     })
+}
+
+/// `{values: [..], hold: step | active | item}`: the subset of a valued pool, one lease per value.
+fn valued_pool(report: &mut Report, value: &Value, field: &str) -> Option<ValuedPool> {
+    let mut fields = Fields::of(report, value, field)?;
+    let values = fields.require(report, "values", pool_values);
+    let hold = fields.or(report, "hold", LeaseHold::Step, |report, value, field| {
+        choice(
+            report,
+            value,
+            field,
+            &[
+                ("step", LeaseHold::Step),
+                ("active", LeaseHold::Active),
+                ("item", LeaseHold::Item),
+            ],
+        )
+    });
+    fields.finish(report);
+    Some(ValuedPool {
+        values: values?,
+        hold: hold?,
+    })
+}
+
+fn pool_values(report: &mut Report, value: &Value, field: &str) -> Option<Vec<String>> {
+    let values = each(report, value, field, |report, value, field| match value {
+        Value::String(text) if !text.is_empty() => Some(text.clone()),
+        Value::Number(number) if number.is_i64() => Some(number.to_string()),
+        _ => {
+            report.error(IssueKind::Invalid, field, "must be a string or an integer");
+            None
+        }
+    })?;
+    let unique: HashSet<&String> = values.iter().collect();
+    if values.is_empty() || unique.len() != values.len() {
+        report.error(IssueKind::Invalid, field, "must list unique values");
+        return None;
+    }
+    Some(values)
 }
 
 fn selector(
@@ -1765,13 +1811,7 @@ fn selector(
 }
 
 /// `per-item` tasks belong to campaigns and `per-run` tasks to routines.
-fn check_task_mode(
-    report: &mut Report,
-    target: &Target,
-    campaign: bool,
-    tracked: bool,
-    explicit_branch: bool,
-) {
+fn check_task_mode(report: &mut Report, target: &Target, campaign: bool) {
     match (target.task, campaign) {
         (TaskMode::PerItem, false) => report.error(
             IssueKind::Invalid,
@@ -1782,11 +1822,6 @@ fn check_task_mode(
             IssueKind::Invalid,
             "target.task",
             "campaigns work in per-item or existing tasks",
-        ),
-        (TaskMode::PerItem, true) if tracked && !explicit_branch => report.error(
-            IssueKind::Unsupported,
-            "target.branch",
-            "per-item tasks on the tracker issue's branch are not supported yet: set target.branch",
         ),
         _ => {}
     }

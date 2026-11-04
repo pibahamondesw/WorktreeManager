@@ -568,20 +568,9 @@ impl Publisher {
         .referencing(pr.url))
     }
 
-    /// The tracker's fields with the effect's overrides, rendered.
     fn issue(&self, scope: &PublishScope, overrides: &LinearOverrides) -> Result<Value, String> {
-        let tracker = tracker(scope)?;
-        let title = overrides.title.as_ref().unwrap_or(&tracker.title);
-        let marker = overrides.marker.as_ref().unwrap_or(&tracker.marker);
-        Ok(json!({
-            "workspaceId": scope.workspace_id,
-            "team": overrides.team.as_ref().unwrap_or(&tracker.team),
-            "project": overrides.project.as_ref().or(tracker.project.as_ref()),
-            "assignee": overrides.assignee.as_ref().unwrap_or(&tracker.assignee),
-            "labels": overrides.labels.as_ref().unwrap_or(&tracker.labels),
-            "title": self.render(scope, title)?,
-            "marker": self.render(scope, marker)?,
-        }))
+        let render = |template: &str| self.render(scope, template);
+        marked_issue(scope.workspace_id, tracker(scope)?, overrides, &render)
     }
 
     fn upsert_issue(
@@ -772,7 +761,27 @@ fn read(path: &Path) -> Result<String, String> {
 }
 
 /// The data of an Operations response, or its error message.
-fn operation(response: Value) -> Result<Value, String> {
+/// The tracker's fields with the effect's overrides, rendered, as `linear.issue-upsert` takes them.
+pub(super) fn marked_issue(
+    workspace_id: &str,
+    tracker: &LinearTracker,
+    overrides: &LinearOverrides,
+    render: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<Value, String> {
+    let title = overrides.title.as_ref().unwrap_or(&tracker.title);
+    let marker = overrides.marker.as_ref().unwrap_or(&tracker.marker);
+    Ok(json!({
+        "workspaceId": workspace_id,
+        "team": overrides.team.as_ref().unwrap_or(&tracker.team),
+        "project": overrides.project.as_ref().or(tracker.project.as_ref()),
+        "assignee": overrides.assignee.as_ref().unwrap_or(&tracker.assignee),
+        "labels": overrides.labels.as_ref().unwrap_or(&tracker.labels),
+        "title": render(title)?,
+        "marker": render(marker)?,
+    }))
+}
+
+pub(super) fn operation(response: Value) -> Result<Value, String> {
     if response["ok"] == true {
         return Ok(response["data"].clone());
     }

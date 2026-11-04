@@ -178,9 +178,16 @@ struct FakeExecutor {
     scripts: HashMap<String, VecDeque<(u64, Execution)>>,
     calls: Vec<String>,
     active_time_left: Vec<Duration>,
+    /// The app quits while this step runs.
+    quit_during: Option<String>,
+    quitting: bool,
 }
 
 impl StepExecutor for FakeExecutor {
+    fn halted(&self) -> bool {
+        self.quitting
+    }
+
     fn execute(&mut self, request: &StepRequest) -> Execution {
         let stage = request
             .stage
@@ -188,6 +195,7 @@ impl StepExecutor for FakeExecutor {
         self.calls
             .push(format!("{}#{}{stage}", request.step.id, request.attempt));
         self.active_time_left.push(request.active_time_left);
+        self.quitting = self.quit_during.as_deref() == Some(request.step.id.as_str());
         let (millis, execution) = self
             .scripts
             .get_mut(&request.step.id)
@@ -236,6 +244,8 @@ impl Harness {
                 scripts: HashMap::new(),
                 calls: Vec::new(),
                 active_time_left: Vec::new(),
+                quit_during: None,
+                quitting: false,
             },
         }
     }
@@ -630,6 +640,29 @@ fn resuming_from_the_log_reruns_an_interrupted_attempt_with_its_number() {
     assert_eq!(
         harness.item().counters,
         BTreeMap::from([(REPAIR_ROUNDS.into(), 1)])
+    );
+}
+
+#[test]
+fn a_halted_executor_leaves_the_attempt_open_for_the_next_start() {
+    let mut harness = Harness::new(vec![agent("implement", None), command("verify")])
+        .script("verify", vec![failed("killed by quit")]);
+    harness.executor.quit_during = Some("verify".into());
+
+    assert_eq!(harness.drive(), ItemStatus::Active);
+    assert_eq!(
+        harness.attempts(),
+        ["implement#1:succeeded", "verify#1:running"]
+    );
+    assert_eq!(harness.drive(), ItemStatus::Active);
+    assert_eq!(harness.executor.calls, ["implement#1", "verify#1"]);
+
+    harness.executor.quit_during = None;
+    harness.executor.quitting = false;
+    assert_eq!(harness.drive(), ItemStatus::Completed);
+    assert_eq!(
+        harness.attempts(),
+        ["implement#1:succeeded", "verify#1:succeeded"]
     );
 }
 

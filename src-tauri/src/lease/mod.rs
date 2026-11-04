@@ -39,12 +39,22 @@ pub struct Lease {
     pub env: BTreeMap<String, String>,
 }
 
-/// `pid` ties the lease to a process: it is released once that process is gone.
+/// `pid` ties the lease to a process: it is released once that process is gone. `values`, when
+/// set, is the subset of the pool's values the holder may take.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LeaseRequest {
     pub pool: String,
     pub holder: String,
     pub pid: Option<i32>,
+    pub values: Option<Vec<String>>,
+}
+
+impl LeaseRequest {
+    fn allows(&self, value: &str) -> bool {
+        self.values
+            .as_ref()
+            .map_or(true, |values| values.iter().any(|allowed| allowed == value))
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -90,21 +100,24 @@ impl State {
         self.queue.retain(|queued| queued.id != ticket);
     }
 
-    /// Strict FIFO per pool: only the oldest ticket of a pool may take a free value.
+    /// Strict FIFO per pool: a ticket only takes a free value no older ticket of the pool may
+    /// take, so subsets that do not overlap do not wait on each other.
     fn try_grant(&mut self, ticket: u64, pool: &Pool) -> Option<Lease> {
         let request = self.request(ticket)?.clone();
-        let first = self
+        let older: Vec<&LeaseRequest> = self
             .queue
             .iter()
-            .find(|queued| queued.request.pool == request.pool)?;
-        if first.id != ticket {
-            return None;
-        }
+            .take_while(|queued| queued.id != ticket)
+            .map(|queued| &queued.request)
+            .filter(|older| older.pool == request.pool)
+            .collect();
         let value = pool.values.iter().find(|value| {
-            !self
-                .held
-                .iter()
-                .any(|lease| lease.pool == request.pool && &lease.value == *value)
+            request.allows(value)
+                && !older.iter().any(|older| older.allows(value))
+                && !self
+                    .held
+                    .iter()
+                    .any(|lease| lease.pool == request.pool && &lease.value == *value)
         })?;
         let lease = Lease {
             id: uuid::Uuid::new_v4().simple().to_string(),
@@ -174,11 +187,24 @@ impl Leases {
         self.0.state.lock().unwrap()
     }
 
-    fn pool(&self, name: &str) -> Result<Pool, LeaseError> {
-        config::load(self.0.config.as_deref())
+    fn pool(&self, request: &LeaseRequest) -> Result<Pool, LeaseError> {
+        let name = &request.pool;
+        let pool = config::load(self.0.config.as_deref())
             .map_err(LeaseError::Config)?
             .remove(name)
-            .ok_or_else(|| LeaseError::Config(format!("Unknown pool `{name}`")))
+            .ok_or_else(|| LeaseError::Config(format!("Unknown pool `{name}`")))?;
+        let values = request.values.as_deref().unwrap_or_default();
+        if request.values.is_some() && values.is_empty() {
+            return Err(LeaseError::Config(format!(
+                "Pick at least one value of pool `{name}`"
+            )));
+        }
+        if let Some(value) = values.iter().find(|value| !pool.values.contains(value)) {
+            return Err(LeaseError::Config(format!(
+                "Pool `{name}` has no value `{value}`"
+            )));
+        }
+        Ok(pool)
     }
 
     /// Waits in FIFO order for a free value. `keep_waiting` runs between waits, outside the lock,
@@ -188,7 +214,7 @@ impl Leases {
         request: LeaseRequest,
         mut keep_waiting: impl FnMut(usize) -> bool,
     ) -> Result<LeaseGuard, LeaseError> {
-        let pool = self.pool(&request.pool)?;
+        let pool = self.pool(&request)?;
         let ticket = self.lock().enqueue(&request);
         loop {
             let ahead = {
@@ -268,6 +294,7 @@ impl Leases {
                     "waiting": state.queue.iter().filter(|ticket| &ticket.request.pool == name).map(|ticket| json!({
                         "holder": ticket.request.holder,
                         "pid": ticket.request.pid,
+                        "values": ticket.request.values,
                         "sinceMs": ticket.since_ms,
                     })).collect::<Vec<_>>(),
                 })
@@ -277,18 +304,20 @@ impl Leases {
     }
 }
 
-/// Automation steps hold their leases for one attempt, in the same queues as `wtm lease`.
+/// Automation steps hold their leases in the same queues as `wtm lease`.
 impl LeasePools for Leases {
     fn acquire(
         &self,
         pool: &str,
         holder: &str,
+        values: Option<&[String]>,
         keep_waiting: &mut dyn FnMut() -> bool,
     ) -> Result<HeldLeases, String> {
         let request = LeaseRequest {
             pool: pool.to_string(),
             holder: holder.to_string(),
             pid: None,
+            values: values.map(<[String]>::to_vec),
         };
         let guard =
             Leases::acquire(self, request, |_| keep_waiting()).map_err(|error| match error {

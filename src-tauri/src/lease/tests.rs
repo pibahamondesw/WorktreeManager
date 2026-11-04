@@ -53,6 +53,14 @@ fn request(pool: &str, holder: &str) -> LeaseRequest {
         pool: pool.into(),
         holder: holder.into(),
         pid: None,
+        values: None,
+    }
+}
+
+fn among(values: &[&str], pool: &str, holder: &str) -> LeaseRequest {
+    LeaseRequest {
+        values: Some(values.iter().map(|value| value.to_string()).collect()),
+        ..request(pool, holder)
     }
 }
 
@@ -396,6 +404,11 @@ fn bridge_methods_validate_params_and_report_results() {
         json!({ "pool": "named", "holder": "/wt/a", "pid": std::process::id() }),
     );
     assert_eq!(acquired["data"]["value"], "a");
+    let subset = call(
+        "lease.acquire",
+        json!({ "pool": "test_slot", "holder": "/wt/s", "values": "15, 16," }),
+    );
+    assert_eq!(subset["data"]["value"], "15");
     assert_eq!(acquired["data"]["heldUntil"], "release");
     assert_eq!(
         call("lease.status", json!({}))["data"]["pools"][1]["name"],
@@ -512,6 +525,8 @@ mod cli {
             "lease acquire --pool a --pid 0",
             "lease acquire --pool a --pid",
             "lease acquire --pool a --bogus",
+            "lease acquire --pool a --values",
+            "lease release --pool a --values 1",
             "--local --local lease status",
             "lease status --pool a",
             "lease release abc --pool a",
@@ -609,11 +624,12 @@ mod cli {
         let leases = scratch.leases();
         assert_eq!(
             run_if_requested(
-                &args("lease acquire --pool named --pid 1"),
+                &args("lease acquire --pool named --pid 1 --values b"),
                 connect_to(&leases)
             ),
             Some(0)
         );
+        assert_eq!(leases.lock().held[0].value, "b");
         let holder = std::env::current_dir()
             .unwrap()
             .to_string_lossy()
@@ -671,7 +687,9 @@ fn automation_steps_share_the_pool_queues_and_release_on_drop() {
     let pools: &dyn LeasePools = &leases;
 
     let step = pools
-        .acquire("test_slot", "automation:demo/r1/a/check", &mut || true)
+        .acquire("test_slot", "automation:demo/r1/a/check", None, &mut || {
+            true
+        })
         .unwrap();
     assert_eq!(
         step.env,
@@ -688,24 +706,101 @@ fn automation_steps_share_the_pool_queues_and_release_on_drop() {
     drop(step);
     assert_eq!(held(&leases), 1);
 
-    let error = pools.acquire("missing", "h", &mut || true).err();
+    let error = pools.acquire("missing", "h", None, &mut || true).err();
     assert_eq!(error.as_deref(), Some("Unknown pool `missing`"));
-    let _heavy = pools.acquire("heavy_checks", "h1", &mut || true).unwrap();
-    let error = pools.acquire("heavy_checks", "h2", &mut || false).err();
+    let _heavy = pools
+        .acquire("heavy_checks", "h1", None, &mut || true)
+        .unwrap();
+    let error = pools
+        .acquire("heavy_checks", "h2", None, &mut || false)
+        .err();
     assert_eq!(error.as_deref(), Some("stopped waiting"));
+    let subset = ["16".to_string(), "17".to_string()];
+    let slot = pools
+        .acquire(
+            "test_slot",
+            "automation:demo/r1/a",
+            Some(&subset),
+            &mut || true,
+        )
+        .unwrap();
+    assert_eq!(
+        slot.env[1],
+        ("TEST_ENV_NUMBER".to_string(), "16".to_string())
+    );
+}
+
+#[test]
+fn a_subset_takes_only_its_values_and_does_not_wait_on_disjoint_requests() {
+    let scratch = Scratch::new(POOLS);
+    let leases = scratch.leases();
+    let upper = leases
+        .acquire(among(&["16", "17"], "test_slot", "a"), |_| true)
+        .unwrap();
+    assert_eq!(upper.lease().value, "16");
+    let last = leases
+        .acquire(among(&["16", "17"], "test_slot", "b"), |_| true)
+        .unwrap();
+    assert_eq!(last.lease().value, "17");
+    let waiting = {
+        let leases = leases.clone();
+        thread::spawn(move || {
+            leases
+                .acquire(among(&["17"], "test_slot", "c"), |_| true)
+                .map(|guard| guard.lease().value.clone())
+        })
+    };
+    eventually(|| waiters(&leases, "test_slot") == 1);
+
+    let disjoint = leases
+        .acquire(among(&["13"], "test_slot", "d"), |_| true)
+        .unwrap();
+    let overlapping = leases.acquire(request("test_slot", "e"), |_| true);
+
+    assert_eq!(disjoint.lease().value, "13");
+    assert_eq!(overlapping.unwrap().lease().value, "14");
+    drop(last);
+    assert_eq!(waiting.join().unwrap().unwrap(), "17");
+    assert_eq!(
+        leases.status().unwrap()["pools"][2]["leases"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn a_subset_must_name_values_of_the_pool() {
+    let scratch = Scratch::new(POOLS);
+    let leases = scratch.leases();
+    assert_eq!(
+        leases
+            .acquire(among(&["99"], "test_slot", "a"), |_| true)
+            .err(),
+        Some(LeaseError::Config(
+            "Pool `test_slot` has no value `99`".into()
+        ))
+    );
+    assert_eq!(
+        leases.acquire(among(&[], "test_slot", "a"), |_| true).err(),
+        Some(LeaseError::Config(
+            "Pick at least one value of pool `test_slot`".into()
+        ))
+    );
 }
 
 #[test]
 fn leases_live_in_memory_so_a_restart_releases_them() {
     let scratch = Scratch::new(POOLS);
     let before_quit = scratch.leases();
-    let kept = LeasePools::acquire(&before_quit, "heavy_checks", "h1", &mut || true).unwrap();
+    let kept = LeasePools::acquire(&before_quit, "heavy_checks", "h1", None, &mut || true).unwrap();
     std::mem::forget(kept);
     assert_eq!(held(&before_quit), 1);
 
     let after_restart = scratch.leases();
 
     assert_eq!(held(&after_restart), 0);
-    let lease = LeasePools::acquire(&after_restart, "heavy_checks", "h1", &mut || false);
+    let lease = LeasePools::acquire(&after_restart, "heavy_checks", "h1", None, &mut || false);
     assert!(lease.is_ok());
 }

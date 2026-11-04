@@ -925,3 +925,43 @@ fn campaign_items_keep_their_own_task_and_the_run_its_selector_failure() {
         Some("selector exited with 3")
     );
 }
+
+#[test]
+fn a_run_reads_back_its_log_and_its_payload() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let writer = store.writer("demo").unwrap();
+    let id = created(writer.claim(trigger("manual:1")).unwrap());
+    writer.append(&id, &RunEvent::Started).unwrap();
+    assert_eq!(store.payload("demo", &id).unwrap(), None);
+    writer.save_payload(&id, &json!({ "pr": 7 })).unwrap();
+
+    let events: Vec<RunEvent> = store
+        .events("demo", &id)
+        .unwrap()
+        .into_iter()
+        .map(|logged| logged.event)
+        .collect();
+
+    assert_eq!(
+        events,
+        [RunEvent::Claimed(trigger("manual:1")), RunEvent::Started]
+    );
+    assert_eq!(
+        store.payload("demo", &id).unwrap(),
+        Some(json!({ "pr": 7 }))
+    );
+    let payload = store.run_dir("demo", &id).unwrap().join(PAYLOAD_FILE);
+    fs::write(&payload, "not json").unwrap();
+    assert!(store
+        .payload("demo", &id)
+        .unwrap_err()
+        .starts_with(PAYLOAD_FILE));
+    fs::remove_file(&payload).unwrap();
+    fs::create_dir(&payload).unwrap();
+    assert!(store
+        .payload("demo", &id)
+        .unwrap_err()
+        .starts_with(PAYLOAD_FILE));
+    assert!(store.events("demo", "1700000000000-abcdef12").is_err());
+}

@@ -348,9 +348,14 @@ describe("engine-only operations", () => {
   });
 
   it("upsert and move marked Linear issues with the workspace credential", async () => {
-    const upsertIssue = vi
-      .spyOn(LinearService.prototype, "upsertMarkedIssue")
-      .mockResolvedValue({ id: "i", identifier: "DX-1", url: "u", created: true, updated: false });
+    const upsertIssue = vi.spyOn(LinearService.prototype, "upsertMarkedIssue").mockResolvedValue({
+      id: "i",
+      identifier: "DX-1",
+      url: "u",
+      branchName: "me/dx-1",
+      created: true,
+      updated: false,
+    });
     const moveIssue = vi
       .spyOn(LinearService.prototype, "moveMarkedIssue")
       .mockRejectedValueOnce(new Error("Linear state Shipped not found in the issue's team"))
