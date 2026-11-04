@@ -293,11 +293,8 @@ impl<C: Clock> Scheduler<C> {
         }
         let writer = self.store.writer(name)?;
         for (run, resumed) in &recoveries {
-            end_interrupted(
-                &writer,
-                run,
-                resumed.as_ref().map_or(&[], |(_, items)| items),
-            )?;
+            let kept = resumed.as_ref().map_or(&[][..], |(_, items)| items);
+            end_interrupted(&writer, run, kept)?;
         }
         drop(writer);
         for (run, resumed) in recoveries {

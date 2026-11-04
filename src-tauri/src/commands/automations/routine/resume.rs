@@ -146,24 +146,22 @@ impl ItemSteps<'_> {
     }
 
     fn held_conversation(&mut self, step_id: &str, attempt: u32, conversation: &str) {
-        let Some(step) = agent_step(self.definition, step_id) else {
-            return;
-        };
-        if step.fresh_session {
-            self.interrupted_conversation =
-                Some((step_id.to_string(), attempt, conversation.to_string()));
-        } else {
-            self.shared_conversation = Some((step.agent.id.clone(), conversation.to_string()));
+        if let Some(step) = agent_step(self.definition, step_id) {
+            if step.fresh_session {
+                self.interrupted_conversation =
+                    Some((step_id.to_string(), attempt, conversation.to_string()));
+            } else {
+                self.shared_conversation = Some((step.agent.id.clone(), conversation.to_string()));
+            }
         }
     }
 }
 
 fn agent_step<'a>(definition: &'a AutomationDefinition, step_id: &str) -> Option<&'a AgentStep> {
-    let step = definition.steps.iter().find(|step| step.id == step_id)?;
-    match &step.kind {
-        StepKind::Agent(agent) => Some(agent),
+    definition.steps.iter().find_map(|step| match &step.kind {
+        StepKind::Agent(agent) if step.id == step_id => Some(agent),
         _ => None,
-    }
+    })
 }
 
 fn finished(status: StepStatus) -> bool {
