@@ -332,6 +332,40 @@ interface StepSignal {
 export const signalAutomationStep = (signal: StepSignal) =>
   invoke("automation_signal", { signal: { ...signal, by: "user" } });
 
+interface GitFingerprint {
+  head: string | null;
+  branch: string | null;
+  index: string;
+  worktree: string;
+}
+
+/** What a `command` attempt recorded: its receipt and the end of its log. */
+export interface StepReceipt {
+  receipt: {
+    attempt: number;
+    process_end: string;
+    exit_code: number | null;
+    duration_ms: number;
+    /** Only for steps bound to the Git fingerprint. */
+    fingerprint: GitFingerprint | null;
+  };
+  /** The receipt is an earlier attempt's whose fingerprint still matched. */
+  reused: boolean;
+  log: string;
+  log_truncated: boolean;
+}
+
+/** The automation, run and item an attempt belongs to. */
+export interface AttemptSource {
+  name: string;
+  runId: string;
+  item: string;
+}
+
+/** Null while the attempt has no receipt. */
+export const readStepReceipt = (source: AttemptSource, step: string, attempt: number) =>
+  invoke<StepReceipt | null>("automation_step_receipt", { ...source, step, attempt });
+
 export const listAutomationRuns = (name: string, before: string | null, limit: number) =>
   invoke<AutomationRunPage>("automation_runs_list", { name, before, limit });
 

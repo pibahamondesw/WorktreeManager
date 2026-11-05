@@ -6,6 +6,7 @@ mod fingerprint;
 mod receipt;
 #[cfg(test)]
 mod tests;
+pub mod view;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
