@@ -67,10 +67,13 @@ fn step_status(step: &str, status: StepStatus) -> LoggedEvent {
 }
 
 const WATCH: Watch = Watch {
-    automation: "demo",
-    run_id: "r1",
     item: "unit",
-    step: "gate",
+    armed_at_ms: 0,
+    now_ms: 0,
+    history: &[],
+    task: None,
+    test: false,
+    wait_per_head_secs: 3_600,
 };
 
 struct Fixed(WatchVerdict);
@@ -78,8 +81,7 @@ struct Fixed(WatchVerdict);
 impl Watcher for Fixed {
     fn check(&self, params: &Map<String, Value>, watch: &Watch) -> WatchVerdict {
         assert_eq!(params["required"], json!(["tests"]));
-        assert_eq!((watch.automation, watch.run_id), ("demo", "r1"));
-        assert_eq!((watch.item, watch.step), ("unit", "gate"));
+        assert_eq!(watch.item, "unit");
         self.0.clone()
     }
 }
@@ -176,13 +178,18 @@ fn event_waits_follow_their_watcher() {
         resolve(&event, &log, 0, &watchers, &WATCH)
     };
     assert_eq!(decide(WatchVerdict::Pending), None);
+    let evidence = json!({ "verdict": "ci_green" });
     assert_eq!(
-        decide(WatchVerdict::Succeeded),
-        ended(StepOutcome::Success, None, None)
+        decide(WatchVerdict::Succeeded(Some(evidence.clone()))),
+        ended(StepOutcome::Success, None, Some(evidence))
     );
+    let failed = json!({ "failed_checks": [{ "name": "tests" }] });
     assert_eq!(
-        decide(WatchVerdict::Failed("ci_failed".into())),
-        ended(StepOutcome::Failure, Some("ci_failed"), None)
+        decide(WatchVerdict::Failed(
+            "ci_failed".into(),
+            Some(failed.clone())
+        )),
+        ended(StepOutcome::Failure, Some("ci_failed"), Some(failed))
     );
     assert_eq!(
         resolved(&event, &log, 0),
@@ -305,7 +312,7 @@ fn the_log_keeps_each_attempt_its_own_wait_and_reuses_earlier_approvals() {
         ),
         signaled(1, json!({ "decision": "reject" })),
         logged(
-            0,
+            7,
             RunEvent::WaitArmed {
                 item: "unit".into(),
                 step: "gate".into(),
@@ -331,6 +338,7 @@ fn the_log_keeps_each_attempt_its_own_wait_and_reuses_earlier_approvals() {
         WaitLog::of(&history, "unit", "gate", 2),
         WaitLog {
             armed: Some(armed),
+            armed_at_ms: Some(7),
             signal: Some(json!({ "decision": "approve", "params": { "files": ["c.rb"] } })),
             approved: Some(json!({ "decision": "approve", "params": { "files": ["b.rb"] } })),
         }

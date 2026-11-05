@@ -32,7 +32,7 @@ fn validate_repo(slug: &str) -> Result<(&str, &str), String> {
     Ok((parts[0], parts[1]))
 }
 
-fn run_process(
+pub(super) fn run_process(
     command: &mut Command,
     input: &[u8],
     timeout: Duration,

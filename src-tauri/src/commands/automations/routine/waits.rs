@@ -3,12 +3,12 @@
 
 use std::time::SystemTime;
 
-use super::super::definition::StepKind;
+use super::super::definition::{StepKind, WaitStep};
 use super::super::pipeline::{Execution, StepReport, StepRequest};
 use super::super::scheduler::{is_active, RunRequest};
-use super::super::store::events::{ProcessEnd, RunEvent, StepOutcome};
+use super::super::store::events::{ProcessEnd, RunEvent, RunState, StepOutcome};
 use super::super::wait::{self, parked_on, Ended, WaitLog, Watch};
-use super::{failed, DrivenItem, ItemSteps, RoutineExecutor};
+use super::{failed, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor};
 
 impl RoutineExecutor {
     /// Drives again each parked item whose wait can end now.
@@ -48,16 +48,30 @@ impl RoutineExecutor {
         let history = self.store.events(automation, run_id)?;
         let (step_id, attempt) = parked_on(&history, item).ok_or("it no longer waits")?;
         let step = definition.steps.iter().find(|step| step.id == step_id);
+        let Some(step) = step else { return Ok(true) };
         let log = WaitLog::of(&history, item, &step_id, attempt);
-        let watch = Watch {
-            automation,
-            run_id,
-            item,
-            step: &step_id,
+        let task = match &step.kind {
+            StepKind::Wait(WaitStep::Event { .. }) => self.waiting_task(&run, item),
+            _ => None,
         };
-        Ok(step.map_or(true, |step| {
-            wait::resolve(step, &log, now_ms(), &self.watchers, &watch).is_some()
-        }))
+        let now = now_ms();
+        let watch = Watch {
+            item,
+            armed_at_ms: log.armed_at_ms.unwrap_or(now),
+            now_ms: now,
+            history: &history,
+            task: task.as_ref(),
+            test: request.test,
+            wait_per_head_secs: definition.budgets.wait_per_head_secs,
+        };
+        Ok(wait::resolve(step, &log, now, &self.watchers, &watch).is_some())
+    }
+
+    /// The task the item works in: its own in a campaign, the run's in a routine.
+    fn waiting_task(&self, run: &RunState, item: &str) -> Option<ResolvedTask> {
+        let own = run.items.iter().find(|state| state.id == item);
+        let task_id = own.and_then(|state| state.task_id.as_deref());
+        self.tasks.get(task_id.or(run.task_id.as_deref())?).ok()
     }
 
     /// The Inbox learns at once that what it showed as waiting is moving on.
@@ -89,6 +103,7 @@ impl ItemSteps<'_> {
         let mut log = WaitLog::of(&history, request.item, &request.step.id, request.attempt);
         let now = now_ms();
         if log.armed.is_none() {
+            log.armed_at_ms = Some(now);
             let armed = wait::arm(request.step, now, self.approval_title(request));
             self.evidence.push(RunEvent::WaitArmed {
                 item: request.item.to_string(),
@@ -99,10 +114,13 @@ impl ItemSteps<'_> {
             log.armed = Some(armed);
         }
         let watch = Watch {
-            automation,
-            run_id,
             item: request.item,
-            step: &request.step.id,
+            armed_at_ms: log.armed_at_ms.unwrap_or(now),
+            now_ms: now,
+            history: &history,
+            task: Some(self.task),
+            test: self.request.test,
+            wait_per_head_secs: self.definition.budgets.wait_per_head_secs,
         };
         let Some(ended) = wait::resolve(request.step, &log, now, self.watchers, &watch) else {
             self.parked = true;
