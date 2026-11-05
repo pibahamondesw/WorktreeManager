@@ -253,7 +253,13 @@ it("moves between steps with the keyboard and opens what each kind has", async (
       })
     )
   );
-  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+  render(
+    <AutomationPipeline
+      name="babysitter"
+      steps={STEPS}
+      repos={[{ id: "app", name: "fintoc-rails" }]}
+    />
+  );
   await within(node("verify")).findByText("failed");
   expect(screen.queryByRole("combobox", { name: "Item" })).not.toBeInTheDocument();
 
@@ -276,6 +282,7 @@ it("moves between steps with the keyboard and opens what each kind has", async (
   fireEvent.click(node("verify"));
   detail = screen.getByRole("region", { name: "Step verify" });
   expect(within(detail).getByText("scripts/verify --fast")).toBeInTheDocument();
+  expect(within(detail).getByText("fintoc-rails")).toBeInTheDocument();
   expect(within(detail).getByText("Log and receipt")).toBeInTheDocument();
   expect(within(detail).getByText("failed · attempt 1")).toBeInTheDocument();
   expect(within(detail).getByText("2")).toBeInTheDocument();

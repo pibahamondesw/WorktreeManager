@@ -291,25 +291,51 @@ pub fn parked_on(history: &[LoggedEvent], item: &str) -> Option<(String, u32)> {
     parked
 }
 
-/// The params approvers edited for the item, the latest value of each key last.
-pub fn edited_params(history: &[LoggedEvent], item: &str) -> Map<String, Value> {
-    let mut edited = Map::new();
+/// What an approved approval gives the item's data: the step's declared params, overridden by
+/// the ones the approver edited.
+pub fn approved_data(approval: &ApprovalStep, answer: Option<&Value>) -> Map<String, Value> {
+    let mut data = approval.params.clone();
+    if let Some(answer) = answer.and_then(|answer| Answer::of(answer).ok()) {
+        data.extend(answer.params);
+    }
+    data
+}
+
+/// The data the item's approved approvals gave it so far, the latest value of each key last.
+pub fn approved_params(history: &[LoggedEvent], item: &str, steps: &[Step]) -> Map<String, Value> {
+    let mut answers: HashMap<(&str, u32), &Value> = HashMap::new();
+    let mut approved = Map::new();
     for logged in history {
-        if let RunEvent::StepSignaled {
-            item: signaled,
-            payload,
-            ..
-        } = &logged.event
-        {
-            if let Some(answer) = Answer::of(payload)
-                .ok()
-                .filter(|answer| signaled == item && answer.approve)
-            {
-                edited.extend(answer.params);
+        match &logged.event {
+            RunEvent::StepOutput {
+                item: answered,
+                step,
+                attempt,
+                result: Some(result),
+                ..
+            } if answered == item => {
+                answers.insert((step, *attempt), result);
             }
+            RunEvent::StepStatus {
+                item: moved,
+                step,
+                attempt,
+                status: StepStatus::Succeeded,
+                ..
+            } if moved == item => {
+                let approval = steps.iter().find_map(|candidate| match &candidate.kind {
+                    StepKind::Approval(approval) if candidate.id == *step => Some(approval),
+                    _ => None,
+                });
+                if let Some(approval) = approval {
+                    let answer = answers.get(&(step.as_str(), *attempt)).copied();
+                    approved.extend(approved_data(approval, answer));
+                }
+            }
+            _ => {}
         }
     }
-    edited
+    approved
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

@@ -1,6 +1,6 @@
 import { ReactNode, useState } from "react";
 import { Button } from "../ui/Button";
-import { PipelineStep, StepAttempt, StepEffect } from "../../services/automations";
+import { PipelineStep, StepAttempt, StepEffect, TargetRepo } from "../../services/automations";
 import {
   StepProgress,
   onReject,
@@ -17,6 +17,7 @@ type Fact = [label: string, value: ReactNode];
 
 interface AutomationStepDetailProps {
   step: PipelineStep;
+  repos?: TargetRepo[];
   progress: StepProgress | undefined;
   /** Opens the latest attempt's conversation in its task; false when the task is gone. */
   onOpenConversation?: () => boolean;
@@ -24,13 +25,14 @@ interface AutomationStepDetailProps {
 
 export function AutomationStepDetail({
   step,
+  repos = [],
   progress,
   onOpenConversation,
 }: AutomationStepDetailProps) {
   const [openError, setOpenError] = useState<string | null>(null);
   const rejectTransition = onReject(step);
   const facts: Fact[] = [
-    ...kindFacts(step, progress?.latest ?? null),
+    ...kindFacts(step, progress?.latest ?? null, repos),
     ...attemptFacts(progress),
     ...waitFacts(progress?.latest ?? null),
     ...effectFacts(progress?.latest?.effects ?? []),
@@ -76,7 +78,11 @@ export function AutomationStepDetail({
   );
 }
 
-function kindFacts({ kind }: PipelineStep, latest: StepAttempt | null): Fact[] {
+function kindFacts(
+  { kind }: PipelineStep,
+  latest: StepAttempt | null,
+  repos: TargetRepo[]
+): Fact[] {
   if ("agent" in kind) {
     const { agent, skill } = kind.agent;
     return [
@@ -87,7 +93,10 @@ function kindFacts({ kind }: PipelineStep, latest: StepAttempt | null): Fact[] {
   if ("command" in kind) {
     return [
       ["Command", <code className="font-mono">{kind.command.command.join(" ")}</code>],
-      ["Repository", kind.command.repo],
+      [
+        "Repository",
+        repos.find((repo) => repo.id === kind.command.repo)?.name ?? kind.command.repo,
+      ],
       ["Log and receipt", NOT_RECORDED],
     ];
   }

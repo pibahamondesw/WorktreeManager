@@ -16,14 +16,18 @@ fn step(kind: StepKind, timeout_secs: Option<u64>) -> Step {
     }
 }
 
-fn approval(default: Option<ApprovalDefault>) -> StepKind {
-    StepKind::Approval(ApprovalStep {
+fn declared(default: Option<ApprovalDefault>) -> ApprovalStep {
+    ApprovalStep {
         title: "Ship it?".into(),
         detail: None,
         params: Map::from_iter([("files".to_string(), json!(["a.rb"]))]),
         default,
         on_reject: None,
-    })
+    }
+}
+
+fn approval(default: Option<ApprovalDefault>) -> StepKind {
+    StepKind::Approval(declared(default))
 }
 
 fn logged(at_ms: u64, event: RunEvent) -> LoggedEvent {
@@ -335,33 +339,70 @@ fn the_log_keeps_each_attempt_its_own_wait_and_reuses_earlier_approvals() {
         WaitLog::of(&history, "other", "gate", 1),
         WaitLog::default()
     );
-    assert_eq!(
-        edited_params(&history, "unit"),
-        Map::from_iter([("files".to_string(), json!(["c.rb"]))])
-    );
-    assert!(edited_params(&history, "other").is_empty());
+}
+
+fn output(step: &str, attempt: u32, result: Value) -> LoggedEvent {
+    logged(
+        0,
+        RunEvent::StepOutput {
+            item: "unit".into(),
+            step: step.into(),
+            attempt,
+            reply: None,
+            result: Some(result),
+        },
+    )
+}
+
+fn finished(step: &str, attempt: u32, status: StepStatus) -> LoggedEvent {
+    let mut event = step_status(step, status);
+    if let RunEvent::StepStatus {
+        attempt: recorded, ..
+    } = &mut event.event
+    {
+        *recorded = attempt;
+    }
+    event
 }
 
 #[test]
-fn an_item_is_parked_while_its_last_step_event_waits() {
-    let waiting = step_status("gate", StepStatus::Waiting);
+fn approved_approvals_give_the_item_their_declared_params_with_edits_on_top() {
+    let declared = declared(None);
+    let files = |files: Value| Map::from_iter([("files".to_string(), files)]);
+    assert_eq!(approved_data(&declared, None), files(json!(["a.rb"])));
+    let edited = json!({ "decision": "approve", "params": { "files": ["b.rb"], "extra": 1 } });
+    let mut expected = files(json!(["b.rb"]));
+    expected.insert("extra".into(), json!(1));
+    assert_eq!(approved_data(&declared, Some(&edited)), expected);
+
+    let steps = [step(approval(None), None)];
+    let by_default = json!({ "decision": "approve", "default": true });
+    let history = [
+        output("gate", 1, json!({ "decision": "reject" })),
+        finished("gate", 1, StepStatus::Rejected),
+        output("gate", 2, by_default),
+        finished("gate", 2, StepStatus::Succeeded),
+        finished("other", 1, StepStatus::Succeeded),
+    ];
     assert_eq!(
-        parked_on(std::slice::from_ref(&waiting), "unit"),
-        Some(("gate".into(), 2))
+        approved_params(&history, "unit", &steps),
+        files(json!(["a.rb"]))
     );
-    assert_eq!(parked_on(std::slice::from_ref(&waiting), "other"), None);
-    let finished = [waiting.clone(), step_status("gate", StepStatus::Succeeded)];
-    assert_eq!(parked_on(&finished, "unit"), None);
-    let moved = logged(
-        0,
-        RunEvent::ItemStatus {
-            item: "unit".into(),
-            status: crate::commands::automations::store::events::ItemStatus::Canceled,
-            phase: None,
-            stage: None,
-            cause: None,
-            counter: None,
-        },
+    let edited_later = [
+        &history[..],
+        &[
+            output(
+                "gate",
+                3,
+                json!({ "decision": "approve", "params": { "files": ["c.rb"] } }),
+            ),
+            finished("gate", 3, StepStatus::Succeeded),
+        ],
+    ]
+    .concat();
+    assert_eq!(
+        approved_params(&edited_later, "unit", &steps),
+        files(json!(["c.rb"]))
     );
-    assert_eq!(parked_on(&[waiting, moved], "unit"), None);
+    assert!(approved_params(&history, "other", &steps).is_empty());
 }

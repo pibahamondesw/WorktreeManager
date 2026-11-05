@@ -6,6 +6,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AutomationsModal } from "./AutomationsModal";
 import { AutomationSummary } from "../../services/automations";
+import { Task } from "../../types";
 import { InboxItem } from "../../services/automationInbox";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 
@@ -47,6 +48,8 @@ const ENTRY: InboxItem = {
   archived: false,
 };
 
+const TASKS = [{ id: "t1" } as Task];
+
 const openConversation = vi.fn(() => true);
 const setRead = vi.fn();
 
@@ -73,6 +76,7 @@ function Harness({
           setInboxSelected(false);
         }}
         editorApp="cursor"
+        tasks={TASKS}
         inbox={{ items, unread: items.length, setRead, setArchived: vi.fn() }}
         inboxSelected={inboxSelected}
         onSelectInbox={() => setInboxSelected(true)}

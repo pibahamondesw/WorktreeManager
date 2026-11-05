@@ -6,8 +6,8 @@ use std::time::SystemTime;
 use super::super::definition::StepKind;
 use super::super::pipeline::{Execution, StepReport, StepRequest};
 use super::super::scheduler::{is_active, RunRequest};
-use super::super::store::events::{ProcessEnd, RunEvent};
-use super::super::wait::{self, parked_on, Answer, Ended, WaitLog, Watch};
+use super::super::store::events::{ProcessEnd, RunEvent, StepOutcome};
+use super::super::wait::{self, parked_on, Ended, WaitLog, Watch};
 use super::{failed, DrivenItem, ItemSteps, RoutineExecutor};
 
 impl RoutineExecutor {
@@ -127,12 +127,13 @@ impl ItemSteps<'_> {
         } else {
             ProcessEnd::Exited
         };
-        if let Some(output) = &ended.output {
-            let approved = Answer::of(output).ok().filter(|answer| answer.approve);
-            let approval = matches!(request.step.kind, StepKind::Approval(_));
-            if let Some(answer) = approved.filter(|_| approval) {
-                self.commands.context_mut().edit_item_data(&answer.params)?;
+        if let StepKind::Approval(approval) = &request.step.kind {
+            if ended.outcome == StepOutcome::Success {
+                let data = wait::approved_data(approval, ended.output.as_ref());
+                self.commands.context_mut().edit_item_data(&data)?;
             }
+        }
+        if let Some(output) = &ended.output {
             self.evidence.push(RunEvent::StepOutput {
                 item: request.item.to_string(),
                 step: request.step.id.clone(),

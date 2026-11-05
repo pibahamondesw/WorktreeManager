@@ -31,6 +31,8 @@ interface AutomationInboxProps {
   onSetArchived: (keys: string[], archived: boolean) => void;
   /** Answers a pending approval entry. */
   onAnswer?: (item: InboxItem, answer: ApprovalAnswer) => Promise<unknown>;
+  /** The app's tasks; an entry whose task is not among them has nothing to open. */
+  taskIds?: ReadonlySet<string>;
 }
 
 /** Enter opens an entry, arrows move between entries, E archives and U toggles read. */
@@ -40,6 +42,7 @@ export function AutomationInbox({
   onSetRead,
   onSetArchived,
   onAnswer,
+  taskIds,
 }: AutomationInboxProps) {
   const [view, setView] = useState<View>("inbox");
   const [focusIndex, setFocusIndex] = useState(0);
@@ -54,9 +57,12 @@ export function AutomationInbox({
     listRef.current?.querySelectorAll<HTMLElement>("[data-inbox-entry]")[index]?.focus();
   };
 
+  const taskRemoved = (item: InboxItem) =>
+    !!item.target && !!taskIds && !taskIds.has(item.target.taskId);
+
   const open = (item: InboxItem) => {
     onSetRead([item.key], true);
-    setError(item.target && !onOpen(item) ? MISSING_TASK : null);
+    setError(item.target && !taskRemoved(item) && !onOpen(item) ? MISSING_TASK : null);
   };
 
   const handleKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -125,6 +131,7 @@ export function AutomationInbox({
               <InboxRow
                 key={item.key}
                 item={item}
+                taskRemoved={taskRemoved(item)}
                 focusable={index === focusable}
                 onOpen={() => {
                   setFocusIndex(index);
@@ -145,6 +152,7 @@ export function AutomationInbox({
 
 interface InboxRowProps {
   item: InboxItem;
+  taskRemoved: boolean;
   focusable: boolean;
   onOpen: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
@@ -155,6 +163,7 @@ interface InboxRowProps {
 
 function InboxRow({
   item,
+  taskRemoved,
   focusable,
   onOpen,
   onKeyDown,
@@ -201,6 +210,14 @@ function InboxRow({
               <span className="block text-xs text-text-secondary truncate">{item.detail}</span>
             )}
             <span className="block text-[0.625rem] text-text-muted truncate">{meta}</span>
+            {taskRemoved && (
+              <span
+                className="block text-[0.625rem] text-text-muted"
+                title="The entry's task and its worktrees were deleted, so there is nothing left to open."
+              >
+                Task removed
+              </span>
+            )}
           </span>
         </button>
         <span className="flex items-center gap-1 px-2 py-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">

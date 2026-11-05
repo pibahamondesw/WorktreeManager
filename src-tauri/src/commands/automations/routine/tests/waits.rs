@@ -201,6 +201,32 @@ fn a_time_wait_keeps_waiting_across_a_restart_and_ends_on_a_tick_once_due() {
 }
 
 #[test]
+fn an_approval_gives_later_steps_its_declared_params_unless_edited() {
+    let worktree = Scratch::new();
+    let tasks = FakeTasks {
+        worktree: Some(worktree.0.clone()),
+        ..FakeTasks::default()
+    };
+    let steps = r#"steps:
+  - id: ship
+    approval: { title: Ship it?, params: { note: hi, size: 2 } }
+  - id: record
+    command: [/bin/sh, -c, 'printf "%s %s" "$1" "$(cat "$WTM_ITEM_DATA")" > out.txt', sh, "{item.data.note}"]
+"#;
+    let harness = Harness::new(&format!("{TARGET}{steps}"), tasks, FakeSessions::default());
+    let run = harness.run();
+    let approve = json!({ "decision": "approve", "params": { "size": 3 } });
+    harness.signal(&run.id, "ship", None, approve).unwrap();
+    harness.executor.wake_ready();
+    settles(&harness, &run.id, RunStatus::Completed);
+
+    assert_eq!(
+        fs::read_to_string(worktree.0.join("out.txt")).unwrap(),
+        r#"hi {"note":"hi","size":3}"#
+    );
+}
+
+#[test]
 fn an_unanswered_approval_takes_its_default_when_it_times_out() {
     let steps = r#"steps:
   - id: ship

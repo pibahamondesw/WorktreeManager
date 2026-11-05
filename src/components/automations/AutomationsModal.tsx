@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   ApprovalAnswer,
   AutomationSummary,
@@ -60,6 +60,7 @@ export function AutomationsModal({
   const selected =
     automations.find((summary) => summary.entry.name === selectedName) ?? automations[0];
   const contentRef = useRef<HTMLDivElement>(null);
+  const taskIds = useMemo(() => new Set(tasks.map((task) => task.id)), [tasks]);
 
   useEffect(() => {
     if (!open) return;
@@ -102,6 +103,7 @@ export function AutomationsModal({
                   onSetRead={inbox.setRead}
                   onSetArchived={inbox.setArchived}
                   onAnswer={(item, answer) => answerApproval(item, answer).then(onChanged)}
+                  taskIds={taskIds}
                 />
               ) : (
                 selected && (

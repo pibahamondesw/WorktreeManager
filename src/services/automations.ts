@@ -16,6 +16,11 @@ export interface ReportPolicy {
   notify: boolean;
 }
 
+export interface TargetRepo {
+  id: string;
+  name: string;
+}
+
 export interface AutomationDefinition {
   name: string;
   description: string | null;
@@ -25,6 +30,7 @@ export interface AutomationDefinition {
     cli?: boolean;
   };
   steps: PipelineStep[];
+  target?: { repos: TargetRepo[] };
   report?: ReportPolicy;
   /** Present in campaigns. */
   selector?: { maxNewItems: number | null } | null;

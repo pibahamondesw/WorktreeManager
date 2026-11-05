@@ -182,3 +182,30 @@ it("approves with edited params or rejects with a comment from the entry", async
     "No item of run 7 is waiting on step ship"
   );
 });
+
+it("shows a removed task up front, with nothing to open and no error", () => {
+  const onOpen = vi.fn(() => true);
+  const onSetRead = vi.fn();
+  render(
+    <AutomationInbox
+      items={[
+        item("a"),
+        item("b", { target: { taskId: "t2", agent: null, conversationId: null } }),
+      ]}
+      onOpen={onOpen}
+      onSetRead={onSetRead}
+      onSetArchived={vi.fn()}
+      taskIds={new Set(["t2"])}
+    />
+  );
+  const removed = entry(/^Unread: Entry a/);
+  expect(within(removed).getByText("Task removed")).toHaveAttribute(
+    "title",
+    "The entry's task and its worktrees were deleted, so there is nothing left to open."
+  );
+  expect(within(entry(/^Unread: Entry b/)).queryByText("Task removed")).not.toBeInTheDocument();
+  fireEvent.click(removed);
+  expect(onSetRead).toHaveBeenCalledWith(["a"], true);
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

@@ -420,7 +420,7 @@ impl RoutineExecutor {
             kept: Default::default(),
         };
         let mut context = TaskCommands::new(&run_dir, run_variables(request), task, item, leases)?;
-        context.edit_item_data(&wait::edited_params(history, &item.id))?;
+        context.edit_item_data(&wait::approved_params(history, &item.id, &definition.steps))?;
         let mut steps = ItemSteps {
             definition,
             request,
