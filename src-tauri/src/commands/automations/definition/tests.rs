@@ -955,11 +955,6 @@ fn wait_steps_wait_for_one_time_or_signal() {
         ]
     );
     assert_issue(
-        &routine("steps:\n  - id: ci\n    wait: { event: { watcher: pr_checks } }\n"),
-        "steps[0].wait.event",
-        IssueKind::Unsupported,
-    );
-    assert_issue(
         &routine("steps:\n  - id: pause\n    wait: { time: 2h, signal: go }\n"),
         "steps[0].wait",
         IssueKind::Invalid,
@@ -967,6 +962,117 @@ fn wait_steps_wait_for_one_time_or_signal() {
     assert_issue(
         &routine("steps:\n  - id: pause\n    wait: { time: soon }\n"),
         "steps[0].wait.time",
+        IssueKind::Invalid,
+    );
+}
+
+#[test]
+fn event_waits_name_a_watcher_and_normalize_its_params() {
+    let definition = valid(&routine(
+        "authorization: { allow: [pr_comment] }
+steps:
+  - id: ci
+    wait:
+      event:
+        watcher: pr_checks
+        required: [tests, \"lint*\"]
+        bot_lgtm: fin-review[bot]
+        unresolved_threads: 0
+        request_review_comment: fin review
+        interval: 2m
+  - id: human
+    wait: { event: { watcher: pr_integrated, repo: fintoc-rails } }
+",
+    ));
+    let waits: Vec<_> = definition.steps.iter().map(kind).collect();
+    assert_eq!(
+        waits,
+        [
+            json!({ "wait": { "event": { "watcher": "pr_checks", "params": {
+                "required": ["tests", "lint*"],
+                "bot_lgtm": "fin-review[bot]",
+                "unresolved_threads": 0,
+                "request_review_comment": "fin review",
+                "interval_secs": 120,
+                "repo": "r1",
+            } } } }),
+            json!({ "wait": { "event": { "watcher": "pr_integrated", "params": { "repo": "r1" } } } }),
+        ]
+    );
+    let event = |params: &str| {
+        routine(&format!(
+            "steps:\n  - id: ci\n    wait: {{ event: {{ {params} }} }}\n"
+        ))
+    };
+    for (params, field, kind) in [
+        (
+            "watcher: merged",
+            "steps[0].wait.event.watcher",
+            IssueKind::Invalid,
+        ),
+        (
+            "required: [tests]",
+            "steps[0].wait.event.watcher",
+            IssueKind::Missing,
+        ),
+        (
+            "watcher: pr_checks, required: [\"*\"]",
+            "steps[0].wait.event.required[0]",
+            IssueKind::Invalid,
+        ),
+        (
+            "watcher: pr_checks, required: [\"a*b\"]",
+            "steps[0].wait.event.required[0]",
+            IssueKind::Invalid,
+        ),
+        (
+            "watcher: pr_checks, request_review_comment: \" \"",
+            "steps[0].wait.event.request_review_comment",
+            IssueKind::Invalid,
+        ),
+        (
+            "watcher: pr_checks, unresolved_threads: -1",
+            "steps[0].wait.event.unresolved_threads",
+            IssueKind::Invalid,
+        ),
+        (
+            "watcher: pr_checks, interval: 30s",
+            "steps[0].wait.event.interval",
+            IssueKind::Invalid,
+        ),
+        (
+            "watcher: pr_checks, interval: soon",
+            "steps[0].wait.event.interval",
+            IssueKind::Invalid,
+        ),
+        (
+            "watcher: pr_integrated, bot_lgtm: x",
+            "steps[0].wait.event.bot_lgtm",
+            IssueKind::UnknownField,
+        ),
+        (
+            "watcher: pr_integrated, repo: web",
+            "steps[0].wait.event.repo",
+            IssueKind::UnknownRepo,
+        ),
+        (
+            "watcher: pr_checks, request_review_comment: go",
+            "steps[0].wait.event.request_review_comment",
+            IssueKind::Invalid,
+        ),
+    ] {
+        assert_issue(&event(params), field, kind);
+    }
+    let denied = routine(
+        "authorization: { allow: [pr_comment], deny: [pr_comment] }\nsteps:\n  - id: ci\n    wait: { event: { watcher: pr_checks, request_review_comment: go } }\n",
+    );
+    assert_eq!(
+        message(&denied, "steps[0].wait.event.request_review_comment"),
+        "needs pr_comment in authorization.allow and not in deny"
+    );
+    assert_issue(
+        &routine("steps:\n  - id: ci\n    wait: { time: 2h, event: { watcher: pr_integrated } }\n"),
+        "steps[0].wait",
         IssueKind::Invalid,
     );
 }

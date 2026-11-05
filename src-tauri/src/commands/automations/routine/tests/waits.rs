@@ -3,7 +3,9 @@ use super::*;
 use crate::commands::automations::scheduler::{Automation, Scheduler, SystemClock};
 use crate::commands::automations::store::events::{ItemState, LoggedEvent};
 use crate::commands::automations::store::Actor;
-use crate::commands::automations::wait::{signal, Signal, SignaledStep};
+use crate::commands::automations::wait::{
+    signal, Signal, SignaledStep, Watch, WatchVerdict, Watcher, Watchers,
+};
 
 const ITEMS_AB: &str = r#"{"items":[{"id":"a","version":"1"},{"id":"b","version":"1"}]}"#;
 
@@ -402,4 +404,43 @@ fn signals_to_a_campaign_name_their_item_when_several_wait() {
     let run = harness.state(&run.id);
     assert_eq!(item(&run, "b").status, ItemStatus::Waiting);
     assert_eq!(restarted.parked.lock().unwrap().len(), 1);
+}
+
+/// Pending until opened, then green; it sees the item's task and when its attempt was armed.
+struct Gate(AtomicBool);
+
+impl Watcher for Gate {
+    fn check(&self, params: &serde_json::Map<String, Value>, watch: &Watch) -> WatchVerdict {
+        assert_eq!(params["repo"], json!("r1"));
+        assert_eq!(watch.task.map(|task| task.id.as_str()), Some("t1"));
+        assert!(watch.armed_at_ms <= watch.now_ms);
+        match self.0.load(Ordering::SeqCst) {
+            true => WatchVerdict::Succeeded(Some(json!({ "verdict": "ci_green" }))),
+            false => WatchVerdict::Pending,
+        }
+    }
+}
+
+#[test]
+fn an_event_wait_parks_until_its_watcher_decides_and_its_evidence_reaches_the_next_step() {
+    let steps = "steps:\n  - id: ci\n    wait: { event: { watcher: pr_checks, required: [tests] } }\n  - id: report\n    agent: {}\n";
+    let mut harness = Harness::routine(steps, FakeSessions::default());
+    let gate = Arc::new(Gate(AtomicBool::new(false)));
+    let watchers = Watchers::default().with("pr_checks", gate.clone());
+    harness.executor = harness.executor.clone().with_watchers(watchers);
+
+    let run = harness.run();
+    assert_eq!(attempts(&run.items[0]), ["ci#1:Waiting"]);
+    harness.executor.wake_ready();
+    assert_eq!(attempts(&harness.state(&run.id).items[0]), ["ci#1:Waiting"]);
+
+    gate.0.store(true, Ordering::SeqCst);
+    harness.executor.wake_ready();
+    settles(&harness, &run.id, RunStatus::Completed);
+    let run = harness.state(&run.id);
+    assert_eq!(
+        attempts(&run.items[0]),
+        ["ci#1:Succeeded", "report#1:Succeeded"]
+    );
+    assert!(harness.prompts()[0].contains(r#"{"verdict":"ci_green"}"#));
 }

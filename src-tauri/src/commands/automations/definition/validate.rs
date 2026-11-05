@@ -25,6 +25,7 @@ use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
 };
 use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
+use crate::commands::automations::watchers::{PR_CHECKS, PR_INTEGRATED};
 
 const SUPPORTED_SCHEMA: u64 = 1;
 const MAX_DESCRIPTION_CHARS: usize = 500;
@@ -41,6 +42,8 @@ const AGENT_STEP_TIMEOUT_SECS: u64 = 60 * 60;
 const COMMAND_STEP_TIMEOUT_SECS: u64 = 30 * 60;
 const PUBLISH_STEP_TIMEOUT_SECS: u64 = 30 * 60;
 const SELECTOR_TIMEOUT_SECS: u64 = 5 * 60;
+/// The scheduler's tick re-checks waits once a minute.
+const MIN_WATCH_INTERVAL_SECS: u64 = 60;
 const EFFECTS: [&str; 10] = [
     "git.push",
     "github.pr_create",
@@ -175,6 +178,7 @@ pub(super) fn definition(
         check_enforceable_grants(report, context.env, steps, authorization);
         let tracked = !matches!(tracker, Some(None));
         check_effects(report, steps, authorization, tracked);
+        check_review_requests(report, steps, authorization);
     }
     if !report.errors.is_empty() {
         return None;
@@ -978,7 +982,7 @@ fn step_kind(
     match kind {
         "agent" => agent_step(report, scope, value, &field).map(StepKind::Agent),
         "command" => command_step(report, scope, fields, value).map(StepKind::Command),
-        "wait" => wait_step(report, value, &field).map(StepKind::Wait),
+        "wait" => wait_step(report, scope.repos, value, &field).map(StepKind::Wait),
         "approval" => approval_step(report, value, &field, timeout).map(StepKind::Approval),
         _ => publish_step(report, scope, value, &field).map(StepKind::Publish),
     }
@@ -1250,7 +1254,12 @@ fn moment(report: &mut Report, value: &Value, field: &str) -> Option<Moment> {
     None
 }
 
-fn wait_step(report: &mut Report, value: &Value, field: &str) -> Option<WaitStep> {
+fn wait_step(
+    report: &mut Report,
+    repos: Option<&[TargetRepo]>,
+    value: &Value,
+    field: &str,
+) -> Option<WaitStep> {
     let mut fields = Fields::of(report, value, field)?;
     let time = fields.optional(report, "time", |report, value, field| {
         Some(match moment(report, value, field)? {
@@ -1259,19 +1268,14 @@ fn wait_step(report: &mut Report, value: &Value, field: &str) -> Option<WaitStep
         })
     });
     let signal = fields.optional(report, "signal", string);
-    let event = fields.get("event");
-    if event.is_some() {
-        report.error(
-            IssueKind::Unsupported,
-            &fields.path("event"),
-            "event waits are not supported yet (WOR-264)",
-        );
-    }
+    let event = fields.optional(report, "event", |report, value, field| {
+        event_wait(report, repos, value, field)
+    });
     fields.finish(report);
-    match (time?, signal?, event) {
+    match (time?, signal?, event?) {
         (Some(wait), None, None) => Some(wait),
         (None, Some(signal), None) => Some(WaitStep::Signal(signal)),
-        (None, None, Some(_)) => None,
+        (None, None, Some(event)) => Some(event),
         _ => {
             report.error(
                 IssueKind::Invalid,
@@ -1281,6 +1285,95 @@ fn wait_step(report: &mut Report, value: &Value, field: &str) -> Option<WaitStep
             None
         }
     }
+}
+
+/// `{watcher, …params}`, its params normalized for the watcher: `interval` in seconds and `repo`
+/// as the target repository's id.
+fn event_wait(
+    report: &mut Report,
+    repos: Option<&[TargetRepo]>,
+    value: &Value,
+    field: &str,
+) -> Option<WaitStep> {
+    let mut fields = Fields::of(report, value, field)?;
+    let watcher = fields.require(report, "watcher", |report, value, field| {
+        choice(
+            report,
+            value,
+            field,
+            &[(PR_CHECKS, PR_CHECKS), (PR_INTEGRATED, PR_INTEGRATED)],
+        )
+    });
+    let mut params = Map::new();
+    let mut valid = true;
+    let mut keep = |key: &str, parsed: Option<Option<Value>>| match parsed {
+        Some(Some(value)) => {
+            params.insert(key.to_string(), value);
+        }
+        Some(None) => {}
+        None => valid = false,
+    };
+    if watcher == Some(PR_CHECKS) {
+        let required = fields.optional(report, "required", |report, value, field| {
+            each(report, value, field, context_pattern).map(Value::from)
+        });
+        keep("required", required);
+        keep(
+            "bot_lgtm",
+            fields.optional(report, "bot_lgtm", string).map(json_of),
+        );
+        let threads = fields.optional(report, "unresolved_threads", |report, value, field| {
+            integer(report, value, field, 0)
+        });
+        keep("unresolved_threads", threads.map(json_of));
+        let request = fields.optional(report, "request_review_comment", non_empty_string);
+        keep("request_review_comment", request.map(json_of));
+    }
+    let interval = fields.optional(report, "interval", |report, value, field| {
+        let secs = duration(report, value, field)?;
+        if secs < MIN_WATCH_INTERVAL_SECS {
+            report.error(IssueKind::Invalid, field, "must be at least 1m");
+            return None;
+        }
+        Some(secs)
+    });
+    keep("interval_secs", interval.map(json_of));
+    let repo_field = fields.path("repo");
+    let repo = command_repo(report, fields.get("repo"), repos, &repo_field);
+    fields.finish(report);
+    params.insert("repo".into(), Value::from(repo?));
+    valid.then_some(())?;
+    Some(WaitStep::Event {
+        watcher: watcher?.to_string(),
+        params,
+    })
+}
+
+fn json_of<T: Into<Value>>(value: Option<T>) -> Option<Value> {
+    value.map(Into::into)
+}
+
+fn non_empty_string(report: &mut Report, value: &Value, field: &str) -> Option<String> {
+    let text = string(report, value, field)?;
+    if text.trim().is_empty() {
+        report.error(IssueKind::Invalid, field, "must not be empty");
+        return None;
+    }
+    Some(text)
+}
+
+/// A check or status context name, or a prefix ending in `*`.
+fn context_pattern(report: &mut Report, value: &Value, field: &str) -> Option<String> {
+    let pattern = non_empty_string(report, value, field)?;
+    if pattern.trim_end_matches('*').contains('*') || pattern == "*" {
+        report.error(
+            IssueKind::Invalid,
+            field,
+            "must be a context name or a prefix ending in *",
+        );
+        return None;
+    }
+    Some(pattern)
 }
 
 fn approval_step(
@@ -1644,6 +1737,29 @@ fn check_effects(
                     format!("{} needs tracker.linear", effect.name()),
                 );
             }
+        }
+    }
+}
+
+/// A watcher's review request comments on the PR, which needs `pr_comment`.
+fn check_review_requests(report: &mut Report, steps: &[Step], authorization: &Authorization) {
+    let allowed = authorization.allow.contains(&Verb::PrComment)
+        && !authorization.deny.contains(&Verb::PrComment);
+    for (position, step) in steps.iter().enumerate() {
+        let requests = matches!(
+            &step.kind,
+            StepKind::Wait(WaitStep::Event { params, .. })
+                if params.contains_key("request_review_comment")
+        );
+        if requests && !allowed {
+            report.error(
+                IssueKind::Invalid,
+                &format!(
+                    "{}.wait.event.request_review_comment",
+                    index("steps", position)
+                ),
+                "needs pr_comment in authorization.allow and not in deny",
+            );
         }
     }
 }

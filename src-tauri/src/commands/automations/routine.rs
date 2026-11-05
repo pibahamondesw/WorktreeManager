@@ -43,6 +43,7 @@ use super::store::events::{
 use super::store::RunStore;
 use super::wait;
 use super::wait::Watchers;
+use super::watchers::{self, CliWatchForge};
 use crate::commands::agents::permission::Grant;
 use crate::commands::chat::{SettledRequest, TurnEnd};
 use commands::{Item, TaskCommands};
@@ -249,8 +250,13 @@ impl RoutineExecutor {
             quitting: Arc::default(),
             runs_changed: Arc::new(|_| {}),
             parked: Arc::default(),
-            watchers: Watchers::default(),
+            watchers: watchers::registry(Arc::new(CliWatchForge::default())),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_watchers(self, watchers: Watchers) -> Self {
+        Self { watchers, ..self }
     }
 
     pub fn with_lease_pools(self, lease_pools: Arc<dyn LeasePools>) -> Self {

@@ -16,6 +16,7 @@ use super::actions::check_payload;
 use super::definition::{
     ApprovalDefault, ApprovalStep, AutomationDefinition, Step, StepKind, WaitStep,
 };
+use super::routine::ResolvedTask;
 use super::scheduler::{is_active, Executor};
 use super::store::events::{ArmedWait, LoggedEvent, RunEvent, StepOutcome, StepStatus};
 use super::store::{Actor, RunStore};
@@ -24,28 +25,26 @@ const TIMEOUT: &str = "timeout";
 const REJECTED: &str = "rejected";
 
 /// What a watcher decides about an `event` wait each time it is checked.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the CI and merge watchers decide them (WOR-264)")
-)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WatchVerdict {
     Pending,
-    Succeeded,
-    /// Fails the attempt with this cause.
-    Failed(String),
+    /// Ends the attempt with this result.
+    Succeeded(Option<Value>),
+    /// Fails the attempt with this cause and result, which the steps that follow see.
+    Failed(String, Option<Value>),
 }
 
 /// The attempt a watcher is asked about.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the CI and merge watchers read it (WOR-264)")
-)]
 pub struct Watch<'a> {
-    pub automation: &'a str,
-    pub run_id: &'a str,
     pub item: &'a str,
-    pub step: &'a str,
+    pub armed_at_ms: u64,
+    pub now_ms: u64,
+    /// The run log, where the item's published effects are.
+    pub history: &'a [LoggedEvent],
+    pub task: Option<&'a ResolvedTask>,
+    /// A Test run: watchers only read.
+    pub test: bool,
+    pub wait_per_head_secs: u64,
 }
 
 /// Decides `event` conditions. Checked on every scheduler tick while a wait is open, so it should
@@ -59,22 +58,20 @@ pub trait Watcher: Send + Sync {
 pub struct Watchers(HashMap<String, Arc<dyn Watcher>>);
 
 impl Watchers {
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the CI and merge watchers register here (WOR-264)"
-        )
-    )]
     pub fn with(mut self, name: &str, watcher: Arc<dyn Watcher>) -> Self {
         self.0.insert(name.to_string(), watcher);
         self
     }
 
-    fn check(&self, name: &str, params: &Map<String, Value>, watch: &Watch) -> WatchVerdict {
+    pub(super) fn check(
+        &self,
+        name: &str,
+        params: &Map<String, Value>,
+        watch: &Watch,
+    ) -> WatchVerdict {
         match self.0.get(name) {
             Some(watcher) => watcher.check(params, watch),
-            None => WatchVerdict::Failed(format!("unknown_watcher:{name}")),
+            None => WatchVerdict::Failed(format!("unknown_watcher:{name}"), None),
         }
     }
 }
@@ -83,6 +80,7 @@ impl Watchers {
 #[derive(Debug, Default, PartialEq)]
 pub struct WaitLog {
     pub armed: Option<ArmedWait>,
+    pub armed_at_ms: Option<u64>,
     pub signal: Option<Value>,
     /// An earlier attempt's approval, which a retry reuses instead of asking again.
     pub approved: Option<Value>,
@@ -100,6 +98,7 @@ impl WaitLog {
                     wait,
                 } if armed_item == item && armed_step == step && *armed_attempt == attempt => {
                     log.armed = Some(wait.clone());
+                    log.armed_at_ms = Some(logged.at_ms);
                 }
                 RunEvent::StepSignaled {
                     item: signaled_item,
@@ -225,8 +224,12 @@ pub fn resolve(
         StepKind::Wait(WaitStep::Event { watcher, params }) => {
             match watchers.check(watcher, params, watch) {
                 WatchVerdict::Pending => None,
-                WatchVerdict::Succeeded => Ended::success(None),
-                WatchVerdict::Failed(cause) => Ended::failure(cause),
+                WatchVerdict::Succeeded(output) => Ended::success(output),
+                WatchVerdict::Failed(cause, output) => Some(Ended {
+                    outcome: StepOutcome::Failure,
+                    cause: Some(cause),
+                    output,
+                }),
             }
         }
         StepKind::Approval(_) => log
