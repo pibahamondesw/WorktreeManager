@@ -440,6 +440,34 @@ describe("automations overlay", () => {
     mocks.inbox.items = [];
   });
 
+  it("opens an approval's notification on its Inbox entry, not its task", async () => {
+    const task: Task = {
+      id: "task",
+      workspaceId: "second",
+      branchName: "feature/task",
+      members: [],
+      createdAt: "2026-09-24T00:00:00Z",
+    };
+    const store = mocks.useStore();
+    mocks.useStore.mockReturnValue({ ...store, state: { ...store.state, tasks: [task] } });
+    const approval: InboxItem = {
+      ...inboxEntry({ taskId: "task", agent: null, conversationId: null }),
+      key: "approval:demo:routine:ship:1:1",
+      kind: "approval",
+      title: "Ship it?",
+    };
+    mocks.inbox.items = [approval];
+    const view = render(<App />);
+    act(() => mocks.inbox.openEntry(approval));
+
+    expect(view.getByRole("tabpanel", { name: "Inbox" })).toBeTruthy();
+    expect(view.queryByText("Task surface")).toBeNull();
+    await waitFor(() =>
+      expect(view.getByRole("button", { name: "Unread: Ship it?" })).toBe(document.activeElement)
+    );
+    mocks.inbox.items = [];
+  });
+
   it("opens the Inbox for a clicked notification whose task is gone", () => {
     mocks.inbox.items = [inboxEntry({ taskId: "gone", agent: "claude", conversationId: null })];
     const view = render(<App />);

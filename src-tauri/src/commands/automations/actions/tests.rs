@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use serde_json::json;
@@ -69,11 +70,15 @@ impl Drop for Scratch {
 }
 
 #[derive(Default)]
-struct FakeExecutor(Mutex<Vec<(RunRequest, Option<Value>)>>);
+struct FakeExecutor(Mutex<Vec<(RunRequest, Option<Value>)>>, AtomicUsize);
 
 impl Executor for FakeExecutor {
     fn execute(&self, request: RunRequest, payload: Option<Value>) {
         self.0.lock().unwrap().push((request, payload));
+    }
+
+    fn wake_waiting(&self) {
+        self.1.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -318,6 +323,26 @@ impl Harness {
     }
 }
 
+impl Harness {
+    fn signal(
+        &self,
+        name: Option<&str>,
+        run_id: &str,
+        by: Actor,
+    ) -> Result<wait::SignaledStep, String> {
+        let engine = self.app.state::<AutomationEngine>();
+        let signal = SignalRequest {
+            name: name.map(String::from),
+            run_id: run_id.into(),
+            step: "go".into(),
+            item: None,
+            payload: json!({ "sha": "abc" }),
+            by,
+        };
+        tauri::async_runtime::block_on(automation_signal(self.app.handle().clone(), engine, signal))
+    }
+}
+
 #[test]
 fn fire_starts_a_cli_run_once_per_trigger_key() {
     let harness = Harness::enabled(&fireable("concurrency: { max_runs: 3 }\n"));
@@ -414,4 +439,63 @@ fn fire_needs_the_cli_trigger_a_valid_key_and_a_small_object_payload() {
     );
     assert!(harness.executed().is_empty());
     assert!(!harness.fire(&"k".repeat(200), None).unwrap().deduped);
+}
+
+#[test]
+fn signals_find_the_automation_of_their_run_and_wake_the_engine() {
+    let harness = Harness::new(&hourly(
+        "steps:\n  - id: go\n    wait: { signal: deploy }\n",
+    ));
+    harness.scratch.define("other", &hourly(""));
+    let run_id = harness.run("demo", true, None).unwrap().run_id;
+    let writer = harness.scratch.store().writer("demo").unwrap();
+    let parked = [
+        RunEvent::Started,
+        RunEvent::ItemCreated {
+            item: "routine".into(),
+            version: "1".into(),
+            title: None,
+            data: Default::default(),
+        },
+        RunEvent::StepStatus {
+            item: "routine".into(),
+            step: "go".into(),
+            attempt: 1,
+            status: super::super::store::events::StepStatus::Waiting,
+            process_end: None,
+            exit_code: None,
+            outcome: None,
+            stage: None,
+            verdict: None,
+            cause: None,
+            head: None,
+        },
+    ];
+    for event in &parked {
+        writer.append(&run_id, event).unwrap();
+    }
+    drop(writer);
+
+    let signaled = harness.signal(None, &run_id, Actor::User).unwrap();
+
+    assert_eq!(
+        (
+            signaled.automation.as_str(),
+            signaled.item.as_str(),
+            signaled.attempt
+        ),
+        ("demo", "routine", 1)
+    );
+    assert_eq!(harness.executor.1.load(Ordering::SeqCst), 1);
+    let run = harness.scratch.store().run("demo", &run_id).unwrap();
+    assert_eq!(run.items[0].steps[0].signal, Some(json!({ "sha": "abc" })));
+    assert!(harness.signal(Some("demo"), &run_id, Actor::Cli).is_ok());
+    assert_eq!(
+        harness.signal(None, "0000000000000-00000000", Actor::Cli),
+        Err("No automation has run 0000000000000-00000000".into())
+    );
+    assert_eq!(
+        harness.signal(Some("demo"), &run_id, Actor::Auto),
+        Err("Only the owner or the CLI signals a step".into())
+    );
 }

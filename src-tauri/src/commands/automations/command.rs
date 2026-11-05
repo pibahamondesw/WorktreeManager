@@ -131,6 +131,10 @@ impl<C: CommandContext> CommandExecutor<C> {
         &self.context
     }
 
+    pub fn context_mut(&mut self) -> &mut C {
+        &mut self.context
+    }
+
     /// Whether the bound step ran and its latest receipt no longer vouches for its worktree.
     pub fn stale(&self, request: &StepRequest, step: &CommandStep) -> Result<bool, String> {
         let latest = self

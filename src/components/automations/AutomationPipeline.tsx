@@ -3,6 +3,7 @@ import { useAutomationRuns } from "../../hooks/useAutomations";
 import {
   AutomationRun,
   PipelineStep,
+  TargetRepo,
   isRunActive,
   runResult,
   runStartedAt,
@@ -56,7 +57,14 @@ const EDGE_LABELS: Record<EdgeKind, string> = {
 
 const humanize = (value: string) => value.replace(/_/g, " ");
 
-export function AutomationPipeline({ name, steps }: { name: string; steps: PipelineStep[] }) {
+interface AutomationPipelineProps {
+  name: string;
+  steps: PipelineStep[];
+  /** The definition's target repositories, to name a command step's repository. */
+  repos?: TargetRepo[];
+}
+
+export function AutomationPipeline({ name, steps, repos = [] }: AutomationPipelineProps) {
   const { runs, error, loading, reload } = useAutomationRuns(name);
   const [runId, setRunId] = useState<string | null>(null);
   const [itemId, setItemId] = useState<string | null>(null);
@@ -102,7 +110,7 @@ export function AutomationPipeline({ name, steps }: { name: string; steps: Pipel
         )}
         {live && <span className="text-success">Live</span>}
       </div>
-      <PipelineGraph steps={steps} progress={progress} run={run} />
+      <PipelineGraph steps={steps} progress={progress} run={run} repos={repos} />
       {run?.permission_requests?.length ? (
         <AutomationPermissions requests={run.permission_requests} />
       ) : null}
@@ -137,9 +145,10 @@ interface PipelineGraphProps {
   steps: PipelineStep[];
   progress: Map<string, StepProgress>;
   run: AutomationRun | null;
+  repos: TargetRepo[];
 }
 
-function PipelineGraph({ steps, progress, run }: PipelineGraphProps) {
+function PipelineGraph({ steps, progress, run, repos }: PipelineGraphProps) {
   const openConversation = useOpenConversation();
   const layout = useMemo(() => pipelineLayout(steps), [steps]);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -203,6 +212,7 @@ function PipelineGraph({ steps, progress, run }: PipelineGraphProps) {
       {openStep && (
         <AutomationStepDetail
           step={openStep}
+          repos={repos}
           progress={progress.get(openStep.id)}
           onOpenConversation={conversationOpener(
             openConversation,

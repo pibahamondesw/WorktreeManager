@@ -1,5 +1,9 @@
-import { useEffect, useRef } from "react";
-import { AutomationSummary } from "../../services/automations";
+import { useEffect, useMemo, useRef } from "react";
+import {
+  ApprovalAnswer,
+  AutomationSummary,
+  signalAutomationStep,
+} from "../../services/automations";
 import { EditorApp, Task } from "../../types";
 import { Modal } from "../ui/Modal";
 import { AutomationList } from "./AutomationList";
@@ -16,6 +20,8 @@ interface InboxProps {
   unread: number;
   setRead: (keys: string[], read: boolean) => void;
   setArchived: (keys: string[], archived: boolean) => void;
+  /** The entry to focus when the Inbox shows, such as a clicked notification's. */
+  focusKey?: string | null;
 }
 
 interface AutomationsModalProps {
@@ -56,6 +62,7 @@ export function AutomationsModal({
   const selected =
     automations.find((summary) => summary.entry.name === selectedName) ?? automations[0];
   const contentRef = useRef<HTMLDivElement>(null);
+  const taskIds = useMemo(() => new Set(tasks.map((task) => task.id)), [tasks]);
 
   useEffect(() => {
     if (!open) return;
@@ -97,6 +104,9 @@ export function AutomationsModal({
                   onOpen={(item) => (item.target ? onOpenConversation(item.target) : true)}
                   onSetRead={inbox.setRead}
                   onSetArchived={inbox.setArchived}
+                  onAnswer={(item, answer) => answerApproval(item, answer).then(onChanged)}
+                  taskIds={taskIds}
+                  focusKey={inbox.focusKey}
                 />
               ) : (
                 selected && (
@@ -116,4 +126,15 @@ export function AutomationsModal({
       )}
     </Modal>
   );
+}
+
+function answerApproval(item: InboxItem, answer: ApprovalAnswer) {
+  const { runId, step, item: itemId } = item.approval ?? { runId: "", step: "", item: "" };
+  return signalAutomationStep({
+    name: item.automation,
+    runId,
+    step,
+    item: itemId,
+    payload: { ...answer },
+  });
 }

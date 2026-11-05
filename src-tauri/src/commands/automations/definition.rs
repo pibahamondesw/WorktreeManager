@@ -276,6 +276,18 @@ pub enum WaitStep {
     /// An RFC 3339 instant.
     Until(String),
     Signal(String),
+    /// Decided by the named watcher with the rest of the condition as its params.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "event waits are validated once watchers exist (WOR-264)"
+        )
+    )]
+    Event {
+        watcher: String,
+        params: Map<String, Value>,
+    },
 }
 
 #[derive(Debug, Serialize)]

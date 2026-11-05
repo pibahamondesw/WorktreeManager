@@ -91,6 +91,16 @@ impl RoutineExecutor {
     }
 
     pub(super) fn resume_run(&self, request: &RunRequest, items: &[String]) -> Result<(), String> {
+        self.redrive(request, items, true)
+    }
+
+    /// Drives `items` again from the run's log. Only a run the app quit records that it resumed.
+    pub(super) fn redrive(
+        &self,
+        request: &RunRequest,
+        items: &[String],
+        after_quit: bool,
+    ) -> Result<(), String> {
         let name = &request.automation;
         let definition = self
             .definitions
@@ -118,8 +128,10 @@ impl RoutineExecutor {
             .map(Item::from)
             .find(|item| item.id == ROUTINE_ITEM)
             .ok_or("the run has no routine item")?;
-        WriterLog::of(&self.store, request).append(RunEvent::Resumed)?;
-        (self.runs_changed)(name);
+        if after_quit {
+            WriterLog::of(&self.store, request).append(RunEvent::Resumed)?;
+            (self.runs_changed)(name);
+        }
         let task = match run.task_id.as_deref() {
             Some(task_id) => self.tasks.get(task_id),
             None => Err(TaskFailure::new("The run has no task")),

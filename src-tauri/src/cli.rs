@@ -53,6 +53,12 @@ automation continuous <name>         Campaigns: take new items as capacity allow
 automation limit <name> <max_active|max_open_prs|batch_size> <n|default>
                                      Campaigns: override a limit live, or go back
                                      to the definition's value.
+automation signal <run_id> <step> <payload> [--item <id>]
+                                     Resolves a waiting signal step with the JSON
+                                     object, or answers an approval step with
+                                     {"decision":"approve|reject","comment":…,
+                                     "params":{…}}. --item picks one of several
+                                     items of a campaign run waiting on the step.
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
 lease run --pool <name> [--holder <key>] [--values <v,…>] -- <command> [args]
@@ -162,6 +168,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     json!(args.next().ok_or("--reason requires a text")?),
                 );
             }
+            "--item" if !params.contains_key("item") => {
+                params.insert(
+                    "item".into(),
+                    json!(args.next().ok_or("--item requires an item ID")?),
+                );
+            }
             "--git" if !params.contains_key("git") => {
                 params.insert("git".into(), json!(true));
             }
@@ -208,6 +220,7 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.pause" | "automation.resume" => (&["name"], false, &["reason"]),
         "automation.items" | "automation.next" | "automation.continuous" => (&["name"], false, &[]),
         "automation.limit" => (&["name", "limit", "value"], false, &[]),
+        "automation.signal" => (&["runId", "step", "payload"], false, &["item"]),
         _ => return Err("Unknown operation; see --help".into()),
     };
     if words.len() != 2 + positional.len()
@@ -238,6 +251,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
     }
     if method == "automation.fire" && !params.contains_key("key") {
         return Err("Provide --key with the trigger key".into());
+    }
+    if method == "automation.signal" {
+        let word = params["payload"].as_str().unwrap_or_default().to_string();
+        let signal =
+            payload(Some(&word)).map_err(|_| "The signal payload must be a JSON object")?;
+        params.insert("payload".into(), signal);
     }
     if method == "task.link-issue" && !params.contains_key("issue") {
         return Err("Provide --issue with a Linear issue identifier".into());
@@ -1008,6 +1027,41 @@ mod tests {
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn parses_automation_signals_with_a_json_payload() {
+        let words = [
+            "automation",
+            "signal",
+            "r1",
+            "approve",
+            r#"{"decision":"approve"}"#,
+        ];
+        let signal = parse(&words.map(String::from)).unwrap();
+        assert_eq!(signal.method, "automation.signal");
+        assert_eq!(
+            signal.params,
+            *json!({ "runId": "r1", "step": "approve", "payload": { "decision": "approve" } })
+                .as_object()
+                .unwrap()
+        );
+        let picked = parse(&args("automation signal r1 go {} --item unit-1")).unwrap();
+        assert_eq!(picked.params["item"], "unit-1");
+        for invalid in [
+            "automation signal r1 go [1]",
+            "automation signal r1 go",
+            "automation signal r1 go {} --item",
+            "automation signal r1 go {} --reason x",
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "{invalid}");
+        }
+        assert_eq!(
+            parse(&args("automation signal r1 go nope"))
+                .err()
+                .as_deref(),
+            Some("The signal payload must be a JSON object")
+        );
     }
 
     #[test]

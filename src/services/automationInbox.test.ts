@@ -3,7 +3,10 @@ import {
   EMPTY_INBOX_MARKS,
   InboxItem,
   badgeCount,
+  approvalAnswer,
   conversationTarget,
+  editedParams,
+  opensInInbox,
   freshEntries,
   inboxEntries,
   mark,
@@ -319,5 +322,104 @@ describe("freshEntries", () => {
     const known = new Map<string, Set<string>>();
     expect(freshEntries([], ["babysitter"], known)).toEqual([]);
     expect(keys(freshEntries([item("first")], ["babysitter"], known))).toEqual(["first"]);
+  });
+});
+
+describe("approval entries", () => {
+  const ship = {
+    id: "ship",
+    label: "ship",
+    next: null,
+    onFail: "fail" as const,
+    kind: {
+      approval: {
+        title: "Ship it?",
+        detail: "Check the diff",
+        params: { files: ["a.rb"] },
+        default: "reject" as const,
+        onReject: null,
+      },
+    },
+  };
+  const approving = (report?: ReportPolicy): AutomationEntry => {
+    const base = entry("babysitter", report);
+    return { ...base, definition: { ...base.definition!, steps: [...STEPS, ship] } };
+  };
+  const waiting = attempt({
+    step: "ship",
+    status: "waiting",
+    outcome: null,
+    session_id: null,
+    conversation_id: null,
+    wait: { timeout_at_ms: 5000, title: "Ship babysitter?" },
+  });
+  const pendingRun = (steps: StepAttempt[]) =>
+    run("7", {
+      status: "running",
+      outcome: null,
+      items: [{ id: "routine", title: null, status: "waiting", phase: "ship", steps }],
+    });
+
+  it("asks once per attempt and records the answer, even with inbox never", () => {
+    const never = { inbox: "never" as const, archiveNoop: true, notify: true };
+    const [pending] = inboxEntries([
+      { entry: approving(never), runs: [pendingRun([attempt(), waiting])] },
+    ]);
+    expect(pending).toMatchObject({
+      key: "approval:babysitter:routine:ship:7:1",
+      kind: "approval",
+      title: "Ship babysitter?",
+      detail: "Check the diff",
+      target: { taskId: "t1", agent: null, conversationId: null },
+      approval: {
+        runId: "7",
+        item: "routine",
+        step: "ship",
+        attempt: 1,
+        params: { files: ["a.rb"] },
+        timeoutAt: 5000,
+        default: "reject",
+        answer: null,
+      },
+    });
+    const rejected = {
+      ...waiting,
+      status: "rejected" as const,
+      result: { decision: "reject", comment: "Split it" },
+    };
+    const [answered] = inboxEntries([{ entry: approving(), runs: [pendingRun([rejected])] }]);
+    expect(answered.detail).toBe("Rejected: Split it");
+    expect(answered.approval?.answer).toBe("Rejected: Split it");
+    expect(inboxEntries([{ entry: approving(), runs: [pendingRun([attempt()])] }])).toEqual([]);
+  });
+
+  it("opens approvals in the Inbox and other entries in their task", () => {
+    const [pending] = inboxEntries([{ entry: approving(), runs: [pendingRun([waiting])] }]);
+    expect(opensInInbox(pending)).toBe(true);
+    const [findings] = inboxEntries([{ entry: entry(), runs: [run("1")] }]);
+    expect(opensInInbox(findings)).toBe(false);
+  });
+
+  it("describes how each approval ended", () => {
+    const ended = (overrides: Partial<StepAttempt>) =>
+      approvalAnswer({ ...waiting, status: "succeeded", ...overrides });
+    expect(approvalAnswer(waiting)).toBeNull();
+    expect(ended({ signal: { decision: "approve" } })).toBe("Approved");
+    expect(ended({ result: { decision: "approve", default: true } })).toBe(
+      "Approved by default after the timeout"
+    );
+    expect(ended({ status: "failed", cause: "invalid_answer" })).toBe("invalid answer");
+    expect(ended({ status: "canceled" })).toBe("canceled");
+  });
+
+  it("reads edited params back as their type and rejects invalid JSON", () => {
+    const params = { files: ["a.rb"], base: "main", depth: 2 };
+    expect(editedParams(params, { files: '["a.rb"]', base: "main" })).toEqual({ params: {} });
+    expect(editedParams(params, { files: '["b.rb"]', base: "dev", depth: "3" })).toEqual({
+      params: { files: ["b.rb"], base: "dev", depth: 3 },
+    });
+    expect(editedParams(params, { files: "b.rb" })).toEqual({
+      error: 'files must be JSON, like ["a.rb"]',
+    });
   });
 });

@@ -126,7 +126,20 @@ export function transitionLabel(transition: Transition): string {
 export function waitConditionLabel(condition: WaitCondition): string {
   if ("duration_secs" in condition) return `For ${formatDuration(condition.duration_secs * 1000)}`;
   if ("until" in condition) return `Until ${condition.until}`;
+  if ("event" in condition) return `Event ${condition.event.watcher}`;
   return `Signal ${condition.signal}`;
+}
+
+/** When a wait or approval attempt is due and times out, and what it was signaled. */
+export function waitFacts(attempt: StepAttempt | null): [label: string, value: string][] {
+  const wait = attempt?.wait;
+  if (!attempt || !wait) return [];
+  const at = (ms: number) => new Date(ms).toLocaleString();
+  const facts: [string, string][] = [];
+  if (wait.wake_at_ms != null) facts.push(["Due", at(wait.wake_at_ms)]);
+  if (wait.timeout_at_ms != null) facts.push(["Times out", at(wait.timeout_at_ms)]);
+  if (attempt.signal != null) facts.push(["Signal", JSON.stringify(attempt.signal)]);
+  return facts;
 }
 
 export function stepSummary(step: PipelineStep): string {

@@ -16,6 +16,11 @@ export interface ReportPolicy {
   notify: boolean;
 }
 
+export interface TargetRepo {
+  id: string;
+  name: string;
+}
+
 export interface AutomationDefinition {
   name: string;
   description: string | null;
@@ -25,6 +30,7 @@ export interface AutomationDefinition {
     cli?: boolean;
   };
   steps: PipelineStep[];
+  target?: { repos: TargetRepo[] };
   report?: ReportPolicy;
   /** Present in campaigns. */
   selector?: { maxNewItems: number | null } | null;
@@ -40,7 +46,13 @@ export type Transition =
   | "continue"
   | { goto: { step: string; max: GotoLimit | null } };
 
-export type WaitCondition = { duration_secs: number } | { until: string } | { signal: string };
+export type WaitCondition =
+  | { duration_secs: number }
+  | { until: string }
+  | { signal: string }
+  | { event: { watcher: string; params: Record<string, unknown> } };
+
+export type ApprovalDefault = "approve" | "reject";
 
 export type StepKind =
   | {
@@ -53,7 +65,16 @@ export type StepKind =
     }
   | { command: { command: string[]; repo: string } }
   | { wait: WaitCondition }
-  | { approval: { title: string; detail: string | null; onReject: Transition | null } }
+  | {
+      approval: {
+        title: string;
+        detail: string | null;
+        /** Values the approver may edit. */
+        params?: Record<string, unknown>;
+        default?: ApprovalDefault | null;
+        onReject: Transition | null;
+      };
+    }
   | { publish: PublishEffect[] };
 
 /** One effect of a publish step, named as in the definition, with its params. */
@@ -167,6 +188,23 @@ export interface StepAttempt {
   /** When the attempt last opened, while it is open. */
   opened_at_ms?: number | null;
   elapsed_ms?: number;
+  /** When a wait or approval attempt is due and times out, and the approval's title. */
+  wait?: ArmedWait;
+  /** The payload that resolved a signal wait, or an approval's answer. */
+  signal?: unknown;
+}
+
+interface ArmedWait {
+  wake_at_ms?: number;
+  timeout_at_ms?: number;
+  title?: string;
+}
+
+/** An approval's answer: edited params are available to later steps as `item.data`. */
+export interface ApprovalAnswer {
+  decision: ApprovalDefault;
+  comment?: string;
+  params?: Record<string, unknown>;
 }
 
 export interface AutomationItem {
@@ -282,6 +320,17 @@ export const setAutomationLimit = (
   limit: Limit,
   value: number | null
 ) => invoke<AutomationState>("automation_set_limit", { name, by, limit, value });
+interface StepSignal {
+  name: string;
+  runId: string;
+  step: string;
+  item: string;
+  payload: Record<string, unknown>;
+}
+
+/** Sends a waiting signal or approval step its payload, as the owner. */
+export const signalAutomationStep = (signal: StepSignal) =>
+  invoke("automation_signal", { signal: { ...signal, by: "user" } });
 
 export const listAutomationRuns = (name: string, before: string | null, limit: number) =>
   invoke<AutomationRunPage>("automation_runs_list", { name, before, limit });

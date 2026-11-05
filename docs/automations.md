@@ -225,6 +225,10 @@ A durable wait recorded in the run log: it survives app restarts and re-arms on 
 
 `timeout` defaults to none, except `pr_checks`, which uses `budgets.wait_per_head`. Expiry is a failure with cause `timeout`.
 
+A waiting item holds no thread: the attempt records when it was armed (`wait_armed`, with when it is due and times out) and parks the item, and the scheduler's tick re-checks it once a minute; a signal wakes it at once. On start, a waiting item re-arms from the log with the same attempt, due time and timeout. A routine's run stays `running` while its item waits, so `run_deadline` still bounds it; campaign items wait without a deadline. `event` conditions go to the watcher registered under `watcher`; the validator rejects them until the watchers of WOR-264 exist.
+
+A signal is a JSON object ≤ 64 KiB, recorded as `step_signaled` with who sent it and kept as the attempt's result, so the steps that follow see it. `wtm automation signal` finds the automation that has the run; in a campaign run where several items wait on the step, `--item <id>` names one. Sending a step the payload it already has, also after the item moved on, returns the same attempt with `repeated: true` and records nothing; a different payload for an answered step is refused.
+
 #### `approval`
 
 Creates an Inbox entry keyed by `(automation, item.id, step id)`; a retry never asks again for an approval already answered.
@@ -237,6 +241,8 @@ Creates an Inbox entry keyed by `(automation, item.id, step id)`; a retry never 
 | `timeout`   | duration              | none                    |                                                                                                  |
 | `default`   | `approve` \| `reject` | required with `timeout` | Applied when the timeout expires.                                                                |
 | `on_reject` | transition            | `on_fail`               | The approver's comment is injected into the target step's context.                               |
+
+The Inbox shows each approval attempt with its rendered title, its params and, with a `timeout`, when the default applies; it is listed whatever `report.inbox` says, since it is where the owner answers. An answer is `{"decision": "approve" | "reject", "comment"?: string, "params"?: {..}}`, sent from the entry or with `wtm automation signal <run> <step> <answer>`; `params` may only name keys the step declares. The answer becomes the attempt's result: a rejection takes `on_reject` with cause `rejected` and its comment reaches the target step as the findings that led there; an expired timeout records `{"decision": <default>, "default": true}` with cause `timeout`. An attempt never asks twice, also across restarts, and once an item's approval is approved, later attempts of the step reuse that answer instead of asking again; after a rejection the next attempt asks again. Waits and approvals end with process end `exited`, or `timed_out` on expiry.
 
 #### `publish`
 

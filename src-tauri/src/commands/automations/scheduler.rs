@@ -26,6 +26,7 @@ use super::store::events::{
 use super::store::{
     Actor, AutomationState, AutomationWriter, Claim, PauseReason, RunStore, Toggle,
 };
+use super::wait::parked_on;
 
 const TICK: Duration = Duration::from_secs(60);
 const MAX_STAGGER_SECS: u64 = 120;
@@ -87,6 +88,9 @@ pub trait Executor: Send + Sync {
     fn restart(&self, _request: RunRequest) -> bool {
         false
     }
+
+    /// Drives again the items parked on a wait that can end now.
+    fn wake_waiting(&self) {}
 }
 
 pub struct Automation {
@@ -176,6 +180,7 @@ impl<C: Clock> Scheduler<C> {
                 log::warn!("Automation {} skipped this tick: {error}", automation.name);
             }
         }
+        self.executor.wake_waiting();
     }
 
     fn tick_automation(
@@ -287,8 +292,8 @@ impl<C: Clock> Scheduler<C> {
         for id in self.store.run_ids(name)? {
             let run = self.store.run(name, &id)?;
             let before_boot = run.claimed_at_ms.is_some_and(|claimed| claimed < boot_ms);
-            let left_items =
-                run.status == RunStatus::Completed && open_items(&run).next().is_some();
+            let left_items = run.status == RunStatus::Completed
+                && (open_items(&run).next().is_some() || waiting_items(&run).next().is_some());
             if before_boot && (is_active(run.status) || left_items) {
                 let resumed = self.resumable(automation, &run)?;
                 recoveries.push((run, resumed));
@@ -333,8 +338,11 @@ impl<C: Clock> Scheduler<C> {
         };
         let history = self.store.events(&automation.name, &run.id)?;
         let items: Vec<String> = open_items(run)
+            .chain(waiting_items(run))
             .filter(|item| {
-                quit_interruptions(&history, &item.id).is_some_and(|quits| quits <= MAX_RESUMES)
+                parked_on(&history, &item.id).is_some()
+                    || quit_interruptions(&history, &item.id)
+                        .is_some_and(|quits| quits <= MAX_RESUMES)
             })
             .map(|item| item.id.clone())
             .collect();
@@ -380,6 +388,13 @@ fn open_items(run: &RunState) -> impl Iterator<Item = &ItemState> {
     run.items
         .iter()
         .filter(|item| matches!(item.status, ItemStatus::Queued | ItemStatus::Active))
+}
+
+/// Items resting on a `wait` or `approval` step, which re-arm on start.
+fn waiting_items(run: &RunState) -> impl Iterator<Item = &ItemState> {
+    run.items
+        .iter()
+        .filter(|item| item.status == ItemStatus::Waiting)
 }
 
 /// How many times the app quit while it drove the item, when such a quit is the last thing the

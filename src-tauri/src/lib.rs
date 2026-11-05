@@ -101,6 +101,7 @@ pub fn run() {
                 commands::automations::operator::automation_continuous,
                 commands::automations::operator::automation_set_limit,
                 commands::automations::actions::fire::automation_fire,
+                commands::automations::actions::automation_signal,
                 commands::agent_alerts::agent_hooks_status,
                 commands::agent_alerts::agent_hooks_install,
                 commands::agent_alerts::agent_hooks_remove,
