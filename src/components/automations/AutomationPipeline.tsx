@@ -279,7 +279,7 @@ function StepNode({ step, progress, open, focusable, onOpen, onKeyDown }: StepNo
           <span className="text-text-muted">{stepKindName(step)}</span>
         </span>
         <span className="block text-xs text-text-muted font-mono truncate">
-          {stepSummary(step)}
+          {stepSummary(step, progress?.latest ?? null)}
         </span>
       </span>
       <span className="flex flex-col items-end gap-0.5 flex-shrink-0">

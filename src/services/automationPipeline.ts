@@ -142,11 +142,12 @@ export function waitFacts(attempt: StepAttempt | null): [label: string, value: s
   return facts;
 }
 
-export function stepSummary(step: PipelineStep): string {
+/** An approval's run title replaces its template once the step has run. */
+export function stepSummary(step: PipelineStep, attempt: StepAttempt | null = null): string {
   const { kind } = step;
   if ("agent" in kind) return [kind.agent.agent.id, kind.agent.skill].filter(Boolean).join(" · ");
   if ("command" in kind) return kind.command.command.join(" ");
   if ("wait" in kind) return waitConditionLabel(kind.wait);
-  if ("approval" in kind) return kind.approval.title;
+  if ("approval" in kind) return attempt?.wait?.title ?? kind.approval.title;
   return kind.publish.map((effect) => effect.effect).join(" · ");
 }
