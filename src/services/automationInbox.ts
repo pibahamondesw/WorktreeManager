@@ -65,6 +65,9 @@ export interface ApprovalRequest {
   answer: string | null;
 }
 
+/** Entries answered in the Inbox itself, so opening one shows it there rather than its task. */
+export const opensInInbox = (item: InboxEntry) => item.kind === "approval";
+
 /** Read and archived entry keys, kept in app data. */
 export interface InboxMarks {
   read: string[];

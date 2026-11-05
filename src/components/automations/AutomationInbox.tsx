@@ -1,4 +1,4 @@
-import { KeyboardEvent, useRef, useState } from "react";
+import { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { InboxItem, InboxKind, unreadCount } from "../../services/automationInbox";
 import { ApprovalAnswer } from "../../services/automations";
 import { AutomationApproval } from "./AutomationApproval";
@@ -33,6 +33,8 @@ interface AutomationInboxProps {
   onAnswer?: (item: InboxItem, answer: ApprovalAnswer) => Promise<unknown>;
   /** The app's tasks; an entry whose task is not among them has nothing to open. */
   taskIds?: ReadonlySet<string>;
+  /** The entry to focus on mount, after the modal places its own focus. */
+  focusKey?: string | null;
 }
 
 /** Enter opens an entry, arrows move between entries, E archives and U toggles read. */
@@ -43,6 +45,7 @@ export function AutomationInbox({
   onSetArchived,
   onAnswer,
   taskIds,
+  focusKey,
 }: AutomationInboxProps) {
   const [view, setView] = useState<View>("inbox");
   const [focusIndex, setFocusIndex] = useState(0);
@@ -56,6 +59,17 @@ export function AutomationInbox({
     setFocusIndex(index);
     listRef.current?.querySelectorAll<HTMLElement>("[data-inbox-entry]")[index]?.focus();
   };
+
+  useEffect(() => {
+    const index = items.filter((item) => !item.archived).findIndex((item) => item.key === focusKey);
+    if (index === -1) return;
+    setFocusIndex(index);
+    const timer = window.setTimeout(() =>
+      listRef.current?.querySelectorAll<HTMLElement>("[data-inbox-entry]")[index]?.focus()
+    );
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- focuses once per requested entry
+  }, [focusKey]);
 
   const taskRemoved = (item: InboxItem) =>
     !!item.target && !!taskIds && !taskIds.has(item.target.taskId);

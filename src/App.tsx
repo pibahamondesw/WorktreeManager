@@ -35,7 +35,7 @@ import { useAutomations } from "./hooks/useAutomations";
 import { needsAttention } from "./services/automations";
 import { AutomationsModal } from "./components/automations/AutomationsModal";
 import { useAutomationInbox } from "./hooks/useAutomationInbox";
-import { ConversationTarget, InboxItem } from "./services/automationInbox";
+import { ConversationTarget, InboxItem, opensInInbox } from "./services/automationInbox";
 import { requestChatIntent } from "./embedded/chatIntents";
 
 function App() {
@@ -272,9 +272,11 @@ function App() {
     },
     [state.tasks, openTask, openTaskSurface]
   );
+  const [focusedInboxEntry, setFocusedInboxEntry] = useState<string | null>(null);
   const openInboxEntry = useCallback(
     (item: InboxItem) => {
-      if (item.target && openAutomationConversation(item.target)) return;
+      if (!opensInInbox(item) && item.target && openAutomationConversation(item.target)) return;
+      setFocusedInboxEntry(item.key);
       setAutomationInboxSelected(true);
       setAutomationsOpen(true);
     },
@@ -600,14 +602,17 @@ function App() {
       />
       <AutomationsModal
         open={automationsOpen}
-        onClose={() => setAutomationsOpen(false)}
+        onClose={() => {
+          setAutomationsOpen(false);
+          setFocusedInboxEntry(null);
+        }}
         automations={automations.automations}
         error={automations.error}
         onChanged={automations.reload}
         selectedName={selectedAutomationName}
         onSelect={selectAutomation}
         editorApp={editorApp}
-        inbox={automationInbox}
+        inbox={{ ...automationInbox, focusKey: focusedInboxEntry }}
         inboxSelected={automationInboxSelected}
         onSelectInbox={() => setAutomationInboxSelected(true)}
         onOpenConversation={openAutomationConversation}

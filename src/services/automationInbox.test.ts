@@ -6,6 +6,7 @@ import {
   approvalAnswer,
   conversationTarget,
   editedParams,
+  opensInInbox,
   freshEntries,
   inboxEntries,
   mark,
@@ -390,6 +391,13 @@ describe("approval entries", () => {
     expect(answered.detail).toBe("Rejected: Split it");
     expect(answered.approval?.answer).toBe("Rejected: Split it");
     expect(inboxEntries([{ entry: approving(), runs: [pendingRun([attempt()])] }])).toEqual([]);
+  });
+
+  it("opens approvals in the Inbox and other entries in their task", () => {
+    const [pending] = inboxEntries([{ entry: approving(), runs: [pendingRun([waiting])] }]);
+    expect(opensInInbox(pending)).toBe(true);
+    const [findings] = inboxEntries([{ entry: entry(), runs: [run("1")] }]);
+    expect(opensInInbox(findings)).toBe(false);
   });
 
   it("describes how each approval ended", () => {

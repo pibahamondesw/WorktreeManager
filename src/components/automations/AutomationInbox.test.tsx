@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { AutomationInbox } from "./AutomationInbox";
 import { InboxItem } from "../../services/automationInbox";
@@ -208,4 +208,18 @@ it("shows a removed task up front, with nothing to open and no error", () => {
   expect(onSetRead).toHaveBeenCalledWith(["a"], true);
   expect(onOpen).not.toHaveBeenCalled();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("focuses the requested entry once the Inbox shows", async () => {
+  render(
+    <AutomationInbox
+      items={[item("a"), item("b")]}
+      onOpen={vi.fn(() => true)}
+      onSetRead={vi.fn()}
+      onSetArchived={vi.fn()}
+      focusKey="b"
+    />
+  );
+  await waitFor(() => expect(entry(/^Unread: Entry b/)).toHaveFocus());
+  expect(entry(/^Unread: Entry b/)).toHaveAttribute("tabindex", "0");
 });

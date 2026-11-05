@@ -20,6 +20,8 @@ interface InboxProps {
   unread: number;
   setRead: (keys: string[], read: boolean) => void;
   setArchived: (keys: string[], archived: boolean) => void;
+  /** The entry to focus when the Inbox shows, such as a clicked notification's. */
+  focusKey?: string | null;
 }
 
 interface AutomationsModalProps {
@@ -104,6 +106,7 @@ export function AutomationsModal({
                   onSetArchived={inbox.setArchived}
                   onAnswer={(item, answer) => answerApproval(item, answer).then(onChanged)}
                   taskIds={taskIds}
+                  focusKey={inbox.focusKey}
                 />
               ) : (
                 selected && (
