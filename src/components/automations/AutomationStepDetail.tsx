@@ -1,6 +1,15 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Button } from "../ui/Button";
-import { PipelineStep, StepAttempt, StepEffect, TargetRepo } from "../../services/automations";
+import {
+  AttemptSource,
+  PipelineStep,
+  StepAttempt,
+  StepEffect,
+  StepReceipt,
+  TargetRepo,
+  formatDuration,
+  readStepReceipt,
+} from "../../services/automations";
 import {
   StepProgress,
   onReject,
@@ -19,6 +28,8 @@ interface AutomationStepDetailProps {
   step: PipelineStep;
   repos?: TargetRepo[];
   progress: StepProgress | undefined;
+  /** Where the latest attempt ran, to read a command step's receipt and log. */
+  source?: AttemptSource;
   /** Opens the latest attempt's conversation in its task; false when the task is gone. */
   onOpenConversation?: () => boolean;
 }
@@ -27,12 +38,16 @@ export function AutomationStepDetail({
   step,
   repos = [],
   progress,
+  source,
   onOpenConversation,
 }: AutomationStepDetailProps) {
   const [openError, setOpenError] = useState<string | null>(null);
+  const latest = progress?.latest ?? null;
+  const receipt = useStepReceipt("command" in step.kind ? source : undefined, latest);
   const rejectTransition = onReject(step);
   const facts: Fact[] = [
-    ...kindFacts(step, progress?.latest ?? null, repos),
+    ...kindFacts(step, latest, repos),
+    ...("command" in step.kind ? receiptFacts(receipt) : []),
     ...attemptFacts(progress),
     ...waitFacts(progress?.latest ?? null),
     ...effectFacts(progress?.latest?.effects ?? []),
@@ -74,6 +89,7 @@ export function AutomationStepDetail({
           </div>
         ))}
       </dl>
+      {"command" in step.kind && receipt.loaded && <CommandLog loaded={receipt.loaded} />}
     </section>
   );
 }
@@ -97,13 +113,12 @@ function kindFacts(
         "Repository",
         repos.find((repo) => repo.id === kind.command.repo)?.name ?? kind.command.repo,
       ],
-      ["Log and receipt", NOT_RECORDED],
     ];
   }
   if ("wait" in kind) return [["Condition", waitConditionLabel(kind.wait)]];
   if ("approval" in kind) {
     return [
-      ["Title", kind.approval.title],
+      ["Title", latest?.wait?.title ?? kind.approval.title],
       ...(kind.approval.detail ? [["Detail", kind.approval.detail] as Fact] : []),
       ...(kind.approval.params && Object.keys(kind.approval.params).length > 0
         ? [["Params", JSON.stringify(kind.approval.params)] as Fact]
@@ -152,4 +167,71 @@ function attemptFacts(progress: StepProgress | undefined): Fact[] {
 function approvalState(latest: StepAttempt | null): string {
   if (!latest?.wait) return NOT_RECORDED;
   return approvalAnswer(latest) ?? "Waiting for an answer in the Inbox";
+}
+
+interface ReceiptState {
+  loaded: StepReceipt | null;
+  error: string | null;
+}
+
+/** Reads the receipt of the latest attempt again whenever that attempt changes status. */
+function useStepReceipt(source: AttemptSource | undefined, latest: StepAttempt | null) {
+  const [state, setState] = useState<ReceiptState>({ loaded: null, error: null });
+  const { name, runId, item } = source ?? {};
+  const step = latest?.step;
+  const attempt = latest?.attempt;
+  const status = latest?.status;
+  useEffect(() => {
+    setState({ loaded: null, error: null });
+    if (name === undefined || runId === undefined || item === undefined) return;
+    if (step === undefined || attempt === undefined) return;
+    let current = true;
+    readStepReceipt({ name, runId, item }, step, attempt).then(
+      (loaded) => {
+        if (current) setState({ loaded, error: null });
+      },
+      (error) => {
+        if (current) setState({ loaded: null, error: String(error) });
+      }
+    );
+    return () => {
+      current = false;
+    };
+  }, [name, runId, item, step, attempt, status]);
+  return state;
+}
+
+function receiptFacts({ loaded, error }: ReceiptState): Fact[] {
+  if (error) return [["Receipt", <span className="text-danger">{error}</span>]];
+  if (!loaded) return [["Log and receipt", NOT_RECORDED]];
+  const { receipt, reused } = loaded;
+  const end =
+    receipt.exit_code === null
+      ? receipt.process_end.replace(/_/g, " ")
+      : `exit ${receipt.exit_code}`;
+  return [
+    ["Receipt", `${end} · ${formatDuration(receipt.duration_ms)}`],
+    ["Fingerprint", fingerprintLabel(receipt.fingerprint)],
+    ["Reused", reused ? `Yes, from attempt ${receipt.attempt}` : "No"],
+  ];
+}
+
+function fingerprintLabel(fingerprint: StepReceipt["receipt"]["fingerprint"]): string {
+  if (!fingerprint) return "Not bound";
+  const { branch, head, worktree } = fingerprint;
+  return [branch, head?.slice(0, 7), worktree.slice(0, 8)].filter(Boolean).join(" · ");
+}
+
+function CommandLog({ loaded }: { loaded: StepReceipt }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-text-muted">{loaded.log_truncated ? "Log (last 64 KB)" : "Log"}</p>
+      <pre
+        aria-label="Command log"
+        className="max-h-64 overflow-auto rounded bg-bg-tertiary p-1.5 font-mono text-xs text-text-secondary whitespace-pre-wrap break-words select-text"
+      >
+        {loaded.log || "No output"}
+      </pre>
+    </div>
+  );
 }

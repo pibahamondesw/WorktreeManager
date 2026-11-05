@@ -1,6 +1,7 @@
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useAutomationRuns } from "../../hooks/useAutomations";
 import {
+  AttemptSource,
   AutomationRun,
   PipelineStep,
   TargetRepo,
@@ -110,7 +111,13 @@ export function AutomationPipeline({ name, steps, repos = [] }: AutomationPipeli
         )}
         {live && <span className="text-success">Live</span>}
       </div>
-      <PipelineGraph steps={steps} progress={progress} run={run} repos={repos} />
+      <PipelineGraph
+        steps={steps}
+        progress={progress}
+        run={run}
+        repos={repos}
+        source={run && item ? { name, runId: run.id, item: item.id } : undefined}
+      />
       {run?.permission_requests?.length ? (
         <AutomationPermissions requests={run.permission_requests} />
       ) : null}
@@ -146,9 +153,10 @@ interface PipelineGraphProps {
   progress: Map<string, StepProgress>;
   run: AutomationRun | null;
   repos: TargetRepo[];
+  source: AttemptSource | undefined;
 }
 
-function PipelineGraph({ steps, progress, run, repos }: PipelineGraphProps) {
+function PipelineGraph({ steps, progress, run, repos, source }: PipelineGraphProps) {
   const openConversation = useOpenConversation();
   const layout = useMemo(() => pipelineLayout(steps), [steps]);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -214,6 +222,7 @@ function PipelineGraph({ steps, progress, run, repos }: PipelineGraphProps) {
           step={openStep}
           repos={repos}
           progress={progress.get(openStep.id)}
+          source={source}
           onOpenConversation={conversationOpener(
             openConversation,
             steps,

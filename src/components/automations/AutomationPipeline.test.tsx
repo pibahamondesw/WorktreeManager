@@ -12,6 +12,7 @@ import {
   AutomationSummary,
   PipelineStep,
   StepAttempt,
+  StepReceipt,
 } from "../../services/automations";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -94,6 +95,14 @@ const run = (id: string, overrides: Partial<AutomationRun> = {}): AutomationRun 
 });
 
 const page = (...runs: AutomationRun[]) => ({ runs, next_before: null });
+
+/** Answers the runs list with `runs` and every receipt read with `receipt`. */
+const answer = (runs: ReturnType<typeof page>, receipt: StepReceipt | Error | null = null) =>
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command !== "automation_step_receipt") return runs;
+    if (receipt instanceof Error) throw receipt.message;
+    return receipt;
+  });
 
 const node = (label: string) => screen.getByRole("button", { name: new RegExp(`^${label}`) });
 
@@ -221,7 +230,7 @@ it("defaults to the newest run with items and shows each step's latest attempt",
 });
 
 it("moves between steps with the keyboard and opens what each kind has", async () => {
-  vi.mocked(invoke).mockResolvedValue(
+  answer(
     page(
       run("1761800000001-aaaaaaaa", {
         items: [
@@ -283,7 +292,8 @@ it("moves between steps with the keyboard and opens what each kind has", async (
   detail = screen.getByRole("region", { name: "Step verify" });
   expect(within(detail).getByText("scripts/verify --fast")).toBeInTheDocument();
   expect(within(detail).getByText("fintoc-rails")).toBeInTheDocument();
-  expect(within(detail).getByText("Log and receipt")).toBeInTheDocument();
+  expect(await within(detail).findByText("Log and receipt")).toBeInTheDocument();
+  expect(within(detail).getByText("Not recorded for this run yet")).toBeInTheDocument();
   expect(within(detail).getByText("failed · attempt 1")).toBeInTheDocument();
   expect(within(detail).getByText("2")).toBeInTheDocument();
   expect(within(detail).getByText("timeout")).toBeInTheDocument();
@@ -319,6 +329,100 @@ it("moves between steps with the keyboard and opens what each kind has", async (
   expect(node("Implement")).toHaveFocus();
   fireEvent.keyDown(node("Implement"), { key: "a" });
   expect(node("Implement")).toHaveFocus();
+});
+
+const RECEIPT: StepReceipt = {
+  receipt: {
+    attempt: 1,
+    process_end: "exited",
+    exit_code: 1,
+    duration_ms: 2_400,
+    fingerprint: null,
+  },
+  reused: false,
+  log: "1 offense detected\n",
+  log_truncated: false,
+};
+
+const commandRun = (...steps: StepAttempt[]) =>
+  page(run("1761800000001-aaaaaaaa", { items: [item("pr-1", { steps })] }));
+
+it("shows a command attempt's receipt and the end of its log", async () => {
+  answer(commandRun(attempt("verify", { status: "failed", exit_code: 1 })), RECEIPT);
+  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^verify/ }));
+  const detail = screen.getByRole("region", { name: "Step verify" });
+
+  const log = await within(detail).findByLabelText("Command log");
+  expect(log).toHaveTextContent("1 offense detected");
+  expect(log).toHaveClass("font-mono", "select-text", "overflow-auto", "max-h-64");
+  expect(within(detail).getByText("Log")).toBeInTheDocument();
+  expect(within(detail).getByText("exit 1 · 2s")).toBeInTheDocument();
+  expect(within(detail).getByText("Not bound")).toBeInTheDocument();
+  expect(within(detail).getByText("No")).toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("automation_step_receipt", {
+    name: "babysitter",
+    runId: "1761800000001-aaaaaaaa",
+    item: "pr-1",
+    step: "verify",
+    attempt: 1,
+  });
+});
+
+it("shows a reused receipt's fingerprint and a truncated log", async () => {
+  answer(commandRun(attempt("verify", { attempt: 3, status: "skipped" })), {
+    receipt: {
+      ...RECEIPT.receipt,
+      process_end: "timed_out",
+      exit_code: null,
+      fingerprint: {
+        head: "0123456789abcdef",
+        branch: "wtm/pr-1",
+        index: "i",
+        worktree: "fedcba9876543210",
+      },
+    },
+    reused: true,
+    log: "",
+    log_truncated: true,
+  });
+  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^verify/ }));
+  const detail = screen.getByRole("region", { name: "Step verify" });
+
+  expect(await within(detail).findByText("Log (last 64 KB)")).toBeInTheDocument();
+  expect(within(detail).getByLabelText("Command log")).toHaveTextContent("No output");
+  expect(within(detail).getByText("timed out · 2s")).toBeInTheDocument();
+  expect(within(detail).getByText("wtm/pr-1 · 0123456 · fedcba98")).toBeInTheDocument();
+  expect(within(detail).getByText("Yes, from attempt 1")).toBeInTheDocument();
+});
+
+it("shows why a receipt could not be read", async () => {
+  answer(
+    commandRun(attempt("verify", { status: "failed" })),
+    new Error("receipts/x.json is outside the run directory")
+  );
+  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^verify/ }));
+  const detail = screen.getByRole("region", { name: "Step verify" });
+
+  expect(
+    await within(detail).findByText("receipts/x.json is outside the run directory")
+  ).toHaveClass("text-danger");
+  expect(within(detail).queryByLabelText("Command log")).not.toBeInTheDocument();
+});
+
+it("shows an approval's title as the run rendered it", async () => {
+  answer(
+    commandRun(attempt("approve", { status: "waiting", wait: { title: "Ship babysitter?" } }))
+  );
+  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^approve/ }));
+  const detail = screen.getByRole("region", { name: "Step approve" });
+
+  expect(within(detail).getByText("Ship babysitter?")).toBeInTheDocument();
+  expect(within(detail).queryByText("Ship it?")).not.toBeInTheDocument();
+  expect(invoke).not.toHaveBeenCalledWith("automation_step_receipt", expect.anything());
 });
 
 it("refreshes while the run is active and stops once it ends", async () => {
