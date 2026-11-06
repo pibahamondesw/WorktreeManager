@@ -11,7 +11,8 @@ use serde_json::{Map, Value};
 
 use super::fields::{
     boolean, choice, duration, duration_secs, each, each_entry, index, integer, is_automation_name,
-    is_instant, is_step_id, join, map, string, string_list, template, Fields, Report,
+    is_instant, is_step_id, join, map, string, string_list, template, template_list, Fields,
+    Report,
 };
 use super::{
     AgentSettings, AgentStep, ApprovalDefault, ApprovalStep, Authorization, AutomationDefinition,
@@ -1731,7 +1732,8 @@ fn linear_overrides(report: &mut Report, fields: &mut Fields) -> Option<LinearOv
     let team = fields.optional(report, "team", string);
     let project = fields.optional(report, "project", string);
     let assignee = fields.optional(report, "assignee", string);
-    let labels = fields.optional(report, "labels", string_list);
+    let labels = fields.optional(report, "labels", template_list);
+    let milestone = fields.optional(report, "milestone", template);
     let title = fields.optional(report, "title", template);
     let marker = fields.optional(report, "marker", template);
     Some(LinearOverrides {
@@ -1739,6 +1741,7 @@ fn linear_overrides(report: &mut Report, fields: &mut Fields) -> Option<LinearOv
         project: project?,
         assignee: assignee?,
         labels: labels?,
+        milestone: milestone?,
         title: title?,
         marker: marker?,
     })
@@ -1821,7 +1824,8 @@ fn linear_tracker(report: &mut Report, value: &Value, field: &str) -> Option<Lin
     let team = fields.require(report, "team", string);
     let project = fields.optional(report, "project", string);
     let assignee = fields.or(report, "assignee", "me".into(), string);
-    let labels = fields.or(report, "labels", Vec::new(), string_list);
+    let labels = fields.or(report, "labels", Vec::new(), template_list);
+    let milestone = fields.optional(report, "milestone", template);
     let title = fields.or(report, "title", "{item.title}".into(), template);
     let marker = fields.or(
         report,
@@ -1836,6 +1840,7 @@ fn linear_tracker(report: &mut Report, value: &Value, field: &str) -> Option<Lin
         project: project?,
         assignee: assignee?,
         labels: labels?,
+        milestone: milestone?,
         title: title?,
         marker: marker?,
         states: states?,

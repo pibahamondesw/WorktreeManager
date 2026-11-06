@@ -103,7 +103,10 @@ export interface MarkedIssueInput {
   project?: string | null;
   /** `me`, or a user's email or display name. */
   assignee: string;
+  /** Label names; blank or unknown ones are skipped with a warning. */
   labels: string[];
+  /** Milestone name in the project; blank or unknown is skipped with a warning. */
+  milestone?: string | null;
 }
 
 export interface MarkedIssue {
@@ -114,6 +117,8 @@ export interface MarkedIssue {
   branchName: string;
   created: boolean;
   updated: boolean;
+  /** Labels or milestone that could not be applied. */
+  warnings: string[];
 }
 
 interface MarkedIssueNode {
@@ -123,7 +128,9 @@ interface MarkedIssueNode {
   branchName: string;
   title: string;
   state: { id: string; name: string } | null;
-  team: { states: { nodes: { id: string; name: string }[] } };
+  labels: { nodes: { id: string }[] };
+  projectMilestone: { id: string } | null;
+  team: { id: string; key: string; states: { nodes: { id: string; name: string }[] } };
 }
 
 interface MarkedIssuesResponse {
@@ -136,6 +143,11 @@ interface UpsertContextResponse {
   issueLabels: { nodes: { id: string; name: string; team: { id: string } | null }[] };
 }
 
+interface ProjectNode {
+  id: string;
+  projectMilestones: { nodes: { id: string; name: string }[] };
+}
+
 type NodesResponse = Record<string, { nodes: { id: string }[] }>;
 
 // ---- GraphQL queries ----
@@ -146,7 +158,9 @@ const MARKED_ISSUE_QUERY = `
       nodes {
         id identifier url branchName title
         state { id name }
-        team { states(first: 250) { nodes { id name } } }
+        labels(first: 250) { nodes { id } }
+        projectMilestone { id }
+        team { id key states(first: 250) { nodes { id name } } }
       }
     }
   }
@@ -163,7 +177,7 @@ const UPSERT_CONTEXT_QUERY = `
 const PROJECT_QUERY = `
   query Project($project: String!) {
     projects(filter: { or: [{ name: { eqIgnoreCase: $project } }, { slugId: { eq: $project } }] }, first: 1) {
-      nodes { id }
+      nodes { id projectMilestones(first: 250) { nodes { id name } } }
     }
   }
 `;
@@ -493,40 +507,42 @@ export class LinearService {
     return id;
   }
 
-  /** Reuses the issue whose description carries the marker, retitling it, or creates one. */
-  async upsertMarkedIssue(input: MarkedIssueInput): Promise<MarkedIssue> {
-    const existing = await this.markedIssue(input.marker);
-    if (existing) {
-      const updated = existing.title !== input.title;
-      if (updated) await this.updateMarkedIssue(existing.id, { title: input.title });
-      const { id, identifier, url, branchName } = existing;
-      return { id, identifier, url, branchName, created: false, updated };
-    }
-    const context = await this.gql.rawRequest<UpsertContextResponse, Record<string, unknown>>(
+  private async project(name: string): Promise<ProjectNode> {
+    const res = await this.gql.rawRequest<
+      { projects: { nodes: ProjectNode[] } },
+      Record<string, unknown>
+    >(PROJECT_QUERY, { project: name });
+    const project = res.data!.projects.nodes[0];
+    if (!project) throw new Error(`Linear project ${name} not found`);
+    return project;
+  }
+
+  private async upsertContext(labels: string[]): Promise<UpsertContextResponse> {
+    const res = await this.gql.rawRequest<UpsertContextResponse, Record<string, unknown>>(
       UPSERT_CONTEXT_QUERY,
-      { labels: input.labels }
+      { labels }
     );
-    const { viewer, teams, issueLabels } = context.data!;
+    return res.data!;
+  }
+
+  /**
+   * Reuses the issue whose description carries the marker, retitling it and adding the labels and
+   * milestone it lacks, or creates one.
+   */
+  async upsertMarkedIssue(input: MarkedIssueInput): Promise<MarkedIssue> {
+    const warnings: string[] = [];
+    const labels = labelNames(input.labels, warnings);
+    const existing = await this.markedIssue(input.marker);
+    if (existing) return this.reconcileMarkedIssue(existing, input, labels, warnings);
+    const { viewer, teams, issueLabels } = await this.upsertContext(labels);
     const wanted = input.team.toLowerCase();
     const team = teams.nodes.find((candidate) =>
       [candidate.id, candidate.key.toLowerCase(), candidate.name.toLowerCase()].includes(wanted)
     );
     if (!team) throw new Error(`Linear team ${input.team} not found`);
-    const labelIds = input.labels.map((name) => {
-      const label = issueLabels.nodes.find(
-        (candidate) => candidate.name === name && (!candidate.team || candidate.team.id === team.id)
-      );
-      if (!label) throw new Error(`Linear label ${name} not found in team ${team.key}`);
-      return label.id;
-    });
-    const [projectId, assigneeId] = await Promise.all([
-      input.project
-        ? this.lookup(
-            PROJECT_QUERY,
-            { project: input.project },
-            `Linear project ${input.project} not found`
-          )
-        : undefined,
+    const labelIds = labelIdsInTeam(labels, issueLabels.nodes, team, warnings);
+    const [project, assigneeId] = await Promise.all([
+      input.project ? this.project(input.project) : undefined,
       input.assignee === "me"
         ? viewer.id
         : this.lookup(
@@ -535,6 +551,7 @@ export class LinearService {
             `Linear user ${input.assignee} not found`
           ),
     ]);
+    const projectMilestoneId = milestoneId(input.milestone, project, warnings);
     const res = await this.gql.rawRequest<
       {
         issueCreate: {
@@ -552,13 +569,41 @@ export class LinearService {
           description: input.marker,
           assigneeId,
           labelIds,
-          ...(projectId ? { projectId } : {}),
+          ...(project ? { projectId: project.id } : {}),
+          ...(projectMilestoneId ? { projectMilestoneId } : {}),
         },
       }
     );
     const created = res.data?.issueCreate;
     if (!created?.success || !created.issue) throw new Error("Linear rejected the issue creation");
-    return { ...created.issue, created: true, updated: false };
+    return { ...created.issue, created: true, updated: false, warnings };
+  }
+
+  private async reconcileMarkedIssue(
+    existing: MarkedIssueNode,
+    input: MarkedIssueInput,
+    labels: string[],
+    warnings: string[]
+  ): Promise<MarkedIssue> {
+    const known = labels.length ? (await this.upsertContext(labels)).issueLabels.nodes : [];
+    const current = new Set(existing.labels.nodes.map((label) => label.id));
+    const addedLabelIds = labelIdsInTeam(labels, known, existing.team, warnings).filter(
+      (id) => !current.has(id)
+    );
+    const project =
+      input.milestone?.trim() && input.project ? await this.project(input.project) : undefined;
+    const projectMilestoneId = milestoneId(input.milestone, project, warnings);
+    const changes = {
+      ...(existing.title !== input.title ? { title: input.title } : {}),
+      ...(addedLabelIds.length ? { addedLabelIds } : {}),
+      ...(projectMilestoneId && projectMilestoneId !== existing.projectMilestone?.id
+        ? { projectMilestoneId }
+        : {}),
+    };
+    const updated = Object.keys(changes).length > 0;
+    if (updated) await this.updateMarkedIssue(existing.id, changes);
+    const { id, identifier, url, branchName } = existing;
+    return { id, identifier, url, branchName, created: false, updated, warnings };
   }
 
   /** Moves the issue whose description carries the marker to the team's state named `state`. */
@@ -670,4 +715,48 @@ export class LinearService {
       return {};
     }
   }
+}
+
+function labelNames(labels: string[], warnings: string[]): string[] {
+  const names = labels.map((label) => label.trim());
+  if (names.includes("")) warnings.push("A Linear label rendered empty; skipped it");
+  return names.filter(Boolean);
+}
+
+function labelIdsInTeam(
+  names: string[],
+  labels: UpsertContextResponse["issueLabels"]["nodes"],
+  team: { id: string; key: string },
+  warnings: string[]
+): string[] {
+  return names.flatMap((name) => {
+    const label = labels.find(
+      (candidate) => candidate.name === name && (!candidate.team || candidate.team.id === team.id)
+    );
+    if (label) return [label.id];
+    warnings.push(`Linear label ${name} not found in team ${team.key}; skipped it`);
+    return [];
+  });
+}
+
+function milestoneId(
+  name: string | null | undefined,
+  project: ProjectNode | undefined,
+  warnings: string[]
+): string | undefined {
+  if (name == null) return undefined;
+  const wanted = name.trim();
+  if (!wanted) {
+    warnings.push("The Linear milestone rendered empty; skipped it");
+    return undefined;
+  }
+  if (!project) {
+    warnings.push(`Linear milestone ${wanted} needs a project; skipped it`);
+    return undefined;
+  }
+  const milestone = project.projectMilestones.nodes.find(
+    (candidate) => candidate.name.toLowerCase() === wanted.toLowerCase()
+  );
+  if (!milestone) warnings.push(`Linear milestone ${wanted} not found in the project; skipped it`);
+  return milestone?.id;
 }

@@ -409,7 +409,7 @@ describe("marked issues", () => {
     assignee: "me",
     labels: ["Lint"],
   };
-  const marked = (title: string, state = "Todo") => ({
+  const marked = (title: string, state = "Todo", labels = [{ id: "label" }]) => ({
     issues: {
       nodes: [
         {
@@ -419,7 +419,11 @@ describe("marked issues", () => {
           branchName: "me/dx-9-lint-unit-1",
           title,
           state: { id: "s-todo", name: state },
+          labels: { nodes: labels },
+          projectMilestone: null,
           team: {
+            id: "team",
+            key: "DX",
             states: {
               nodes: [
                 { id: "s-todo", name: "Todo" },
@@ -450,7 +454,7 @@ describe("marked issues", () => {
   };
 
   it("reuses the issue the marker finds and retitles it when the title changed", async () => {
-    const same = service(marked("Lint: unit 1"));
+    const same = service(marked("Lint: unit 1"), context);
     await expect(same.linear.upsertMarkedIssue(input)).resolves.toEqual({
       id: "issue",
       identifier: "DX-9",
@@ -458,19 +462,21 @@ describe("marked issues", () => {
       branchName: "me/dx-9-lint-unit-1",
       created: false,
       updated: false,
+      warnings: [],
     });
     expect(same.request.mock.calls[0][1]).toEqual({ marker });
+    expect(same.request).toHaveBeenCalledTimes(2);
 
-    const renamed = service(marked("Old"), { issueUpdate: { success: true } });
+    const renamed = service(marked("Old"), context, { issueUpdate: { success: true } });
     await expect(renamed.linear.upsertMarkedIssue(input)).resolves.toMatchObject({
       updated: true,
     });
-    expect(renamed.request.mock.calls[1][1]).toEqual({
+    expect(renamed.request.mock.calls[2][1]).toEqual({
       id: "issue",
       input: { title: "Lint: unit 1" },
     });
 
-    const rejected = service(marked("Old"), { issueUpdate: { success: false } });
+    const rejected = service(marked("Old"), context, { issueUpdate: { success: false } });
     await expect(rejected.linear.upsertMarkedIssue(input)).rejects.toThrow(
       "Linear rejected the issue update"
     );
@@ -493,6 +499,7 @@ describe("marked issues", () => {
       ...created,
       created: true,
       updated: false,
+      warnings: [],
     });
     expect(request.mock.calls[1][1]).toEqual({ labels: ["Lint"] });
     expect(request.mock.calls[2][1]).toEqual({ project: "Code quality" });
@@ -536,7 +543,6 @@ describe("marked issues", () => {
 
   it.each([
     [{ team: "web" }, [context], "Linear team web not found"],
-    [{ labels: ["Missing"] }, [context], "Linear label Missing not found in team DX"],
     [{}, [context, { projects: { nodes: [] } }], "Linear project Code quality not found"],
     [
       { project: null },
@@ -546,6 +552,68 @@ describe("marked issues", () => {
   ])("reports what it cannot resolve or create: %j", async (overrides, responses, message) => {
     const { linear } = service({ issues: { nodes: [] } }, ...responses);
     await expect(linear.upsertMarkedIssue({ ...input, ...overrides })).rejects.toThrow(message);
+  });
+
+  const milestones = {
+    projects: {
+      nodes: [{ id: "project", projectMilestones: { nodes: [{ id: "m1", name: "M1" }] } }],
+    },
+  };
+
+  it("creates the issue with the labels and milestone that resolve and warns about the rest", async () => {
+    const { linear, request } = service({ issues: { nodes: [] } }, context, milestones, {
+      issueCreate: { success: true, issue: { id: "n", identifier: "DX-1", url: "u" } },
+    });
+    const result = await linear.upsertMarkedIssue({
+      ...input,
+      labels: ["Lint", " ", "lint:missing"],
+      milestone: "m1",
+    });
+    expect(result.warnings).toEqual([
+      "A Linear label rendered empty; skipped it",
+      "Linear label lint:missing not found in team DX; skipped it",
+    ]);
+    expect(request.mock.calls[1][1]).toEqual({ labels: ["Lint", "lint:missing"] });
+    expect(request.mock.calls[3][1]).toMatchObject({
+      input: { labelIds: ["label"], projectId: "project", projectMilestoneId: "m1" },
+    });
+  });
+
+  it.each([
+    [{ milestone: "M9" }, "Linear milestone M9 not found in the project; skipped it"],
+    [{ milestone: " " }, "The Linear milestone rendered empty; skipped it"],
+    [{ milestone: "M1", project: null }, "Linear milestone M1 needs a project; skipped it"],
+  ])(
+    "creates the issue without a milestone that does not resolve: %j",
+    async (overrides, warning) => {
+      const lookups = "project" in overrides ? [] : [milestones];
+      const { linear, request } = service({ issues: { nodes: [] } }, context, ...lookups, {
+        issueCreate: { success: true, issue: { id: "n", identifier: "DX-1", url: "u" } },
+      });
+      const result = await linear.upsertMarkedIssue({ ...input, ...overrides });
+      expect(result.warnings).toEqual([warning]);
+      expect(request.mock.calls.at(-1)![1]).not.toHaveProperty("input.projectMilestoneId");
+    }
+  );
+
+  it("adds the labels and milestone a reused issue lacks", async () => {
+    const { linear, request } = service(marked("Lint: unit 1", "Todo", []), context, milestones, {
+      issueUpdate: { success: true },
+    });
+    const result = await linear.upsertMarkedIssue({
+      ...input,
+      labels: ["Lint", "Missing"],
+      milestone: "M1",
+    });
+    expect(result).toMatchObject({
+      updated: true,
+      warnings: ["Linear label Missing not found in team DX; skipped it"],
+    });
+    expect(request.mock.calls[2][1]).toEqual({ project: "Code quality" });
+    expect(request.mock.calls[3][1]).toEqual({
+      id: "issue",
+      input: { addedLabelIds: ["label"], projectMilestoneId: "m1" },
+    });
   });
 
   it("moves the marked issue to a state of its team by name", async () => {

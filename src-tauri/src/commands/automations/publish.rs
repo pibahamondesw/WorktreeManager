@@ -314,10 +314,11 @@ impl Publisher {
             Effect::LinearUpsert(overrides) => {
                 let issue = self.issue(scope, overrides)?;
                 format!(
-                    "Create or update the {} issue marked {}: {}",
+                    "Create or update the {} issue marked {}: {}{}",
                     issue["team"].as_str().unwrap_or_default(),
                     issue["marker"].as_str().unwrap_or_default(),
-                    issue["title"].as_str().unwrap_or_default()
+                    issue["title"].as_str().unwrap_or_default(),
+                    classification(&issue)
                 )
             }
             Effect::LinearState { state } => {
@@ -600,7 +601,10 @@ impl Publisher {
                 format!("{identifier} is up to date"),
             ),
         };
-        Ok(Outcome::of(status, detail).referencing(identifier))
+        Ok(Outcome {
+            warnings: issue_warnings(&issue),
+            ..Outcome::of(status, detail).referencing(identifier)
+        })
     }
 
     /// The marker of the item's issue and the name of the Linear state `state` stands for.
@@ -779,15 +783,51 @@ pub(super) fn marked_issue(
 ) -> Result<Value, String> {
     let title = overrides.title.as_ref().unwrap_or(&tracker.title);
     let marker = overrides.marker.as_ref().unwrap_or(&tracker.marker);
+    let labels = overrides.labels.as_ref().unwrap_or(&tracker.labels);
+    let labels = labels
+        .iter()
+        .map(|label| render(label))
+        .collect::<Result<Vec<_>, _>>()?;
+    let milestone = overrides.milestone.as_ref().or(tracker.milestone.as_ref());
     Ok(json!({
         "workspaceId": workspace_id,
         "team": overrides.team.as_ref().unwrap_or(&tracker.team),
         "project": overrides.project.as_ref().or(tracker.project.as_ref()),
         "assignee": overrides.assignee.as_ref().unwrap_or(&tracker.assignee),
-        "labels": overrides.labels.as_ref().unwrap_or(&tracker.labels),
+        "labels": labels,
+        "milestone": milestone.map(|milestone| render(milestone)).transpose()?,
         "title": render(title)?,
         "marker": render(marker)?,
     }))
+}
+
+/// The rendered labels and milestone of `linear.issue-upsert` params, for a Test run's detail.
+fn classification(issue: &Value) -> String {
+    let labels: Vec<_> = issue["labels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let mut parts = Vec::new();
+    if !labels.is_empty() {
+        parts.push(format!("labels {}", labels.join(", ")));
+    }
+    if let Some(milestone) = issue["milestone"].as_str() {
+        parts.push(format!("milestone {milestone}"));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!(" ({})", parts.join("; "))
+}
+
+fn issue_warnings(issue: &Value) -> Vec<String> {
+    let warnings = issue["warnings"].as_array().into_iter().flatten();
+    warnings
+        .filter_map(Value::as_str)
+        .map(String::from)
+        .collect()
 }
 
 pub(super) fn operation(response: Value) -> Result<Value, String> {

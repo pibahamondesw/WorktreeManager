@@ -1296,7 +1296,8 @@ fn trackers_describe_the_linear_issue_per_item() {
   linear:
     team: DX
     project: P-DX-1
-    labels: [Lint]
+    labels: [Lint, \"lint:{item.data.cop}\"]
+    milestone: \"{item.data.milestone_name}\"
     title: \"Lint: {item.title}\"
     states: { started: In Progress, done: Done }
 ",
@@ -1306,7 +1307,11 @@ fn trackers_describe_the_linear_issue_per_item() {
     assert_eq!(linear.project.as_deref(), Some("P-DX-1"));
     assert_eq!(linear.assignee, "me");
     assert_eq!(linear.marker, "wtm:{automation}:{item.id}");
-    assert_eq!(linear.labels, ["Lint"]);
+    assert_eq!(linear.labels, ["Lint", "lint:{item.data.cop}"]);
+    assert_eq!(
+        linear.milestone.as_deref(),
+        Some("{item.data.milestone_name}")
+    );
     assert_eq!(linear.states.len(), 2);
     assert_issue(
         &routine("tracker:\n  linear: { project: P }\n"),
@@ -1316,6 +1321,16 @@ fn trackers_describe_the_linear_issue_per_item() {
     assert_issue(
         &routine("tracker:\n  linear: { team: DX, states: { review: [x] } }\n"),
         "tracker.linear.states.review",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &routine("tracker:\n  linear: { team: DX, labels: [\"{{x}\"] }\n"),
+        "tracker.linear.labels[0]",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &routine("tracker:\n  linear: { team: DX, milestone: \"{item.nope}\" }\n"),
+        "tracker.linear.milestone",
         IssueKind::Invalid,
     );
 }
@@ -1779,7 +1794,7 @@ fn publish_steps_list_effects_with_their_params() {
       - github.pr_update: {{ draft: true }}
       - github.pr_comment: {{ body: fin review }}
       - github.pr_ready
-      - linear.upsert: {{ team: API, labels: [Lint], title: \"Lint {{item.id}}\", marker: \"m:{{item.id}}\", project: P, assignee: me }}
+      - linear.upsert: {{ team: API, labels: [Lint], milestone: \"{{item.data.milestone}}\", title: \"Lint {{item.id}}\", marker: \"m:{{item.id}}\", project: P, assignee: me }}
       - linear.state: {{ state: review }}
       - wtm.task_create: null
       - wtm.task_log: {{ entry: \"Opened {{pr.url}}\" }}
@@ -1808,7 +1823,8 @@ fn publish_steps_list_effects_with_their_params() {
             { "effect": "github.pr_comment", "repo": "r1", "body": "fin review" },
             { "effect": "github.pr_ready", "repo": "r1" },
             { "effect": "linear.upsert", "team": "API", "project": "P", "assignee": "me",
-              "labels": ["Lint"], "title": "Lint {item.id}", "marker": "m:{item.id}" },
+              "labels": ["Lint"], "milestone": "{item.data.milestone}", "title": "Lint {item.id}",
+              "marker": "m:{item.id}" },
             { "effect": "linear.state", "state": "review" },
             { "effect": "wtm.task_create" },
             { "effect": "wtm.task_log", "entry": "Opened {pr.url}" },
@@ -1935,6 +1951,16 @@ fn publish_steps_report_malformed_effects() {
     assert_issue(
         &step("{ linear.upsert: { labels: Lint } }"),
         "steps[0].publish.linear.upsert.labels",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &step("{ linear.upsert: { labels: [\"{item.nope}\"] } }"),
+        "steps[0].publish.linear.upsert.labels[0]",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &step("{ linear.upsert: { milestone: \"{item.nope}\" } }"),
+        "steps[0].publish.linear.upsert.milestone",
         IssueKind::Invalid,
     );
     assert_issue(
