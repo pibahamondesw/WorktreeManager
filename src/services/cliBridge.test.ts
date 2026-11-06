@@ -314,6 +314,12 @@ it("starts, pauses and resumes automations for the CLI", async () => {
     test: false,
     payload: { pr: 7 },
   });
+  await call("automation.run", { name: "babysitter", test: true });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_run", {
+    name: "babysitter",
+    test: true,
+    payload: null,
+  });
   await call("automation.fire", { name: "babysitter", key: " pr:7 ", payload: { pr: 7 } });
   expect(invokeCommand).toHaveBeenLastCalledWith("automation_fire", {
     name: "babysitter",

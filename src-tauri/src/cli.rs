@@ -36,9 +36,11 @@ automation get <name>
 automation runs <name> [--before <run_id>] [--limit <n>]   Newest first, 20 per
                                      page (max 200); pass next_before as --before.
 automation status <name> <run_id>
-automation run <name> [--payload <json|@file>]
+automation run <name> [--payload <json|@file>] [--test]
                                      Starts a run now and prints its run_id without
                                      waiting; the payload is a JSON object (≤ 64 KiB).
+                                     --test starts a Test run: publish effects are
+                                     staged and the automation's state is unchanged.
 automation fire <name> --key <trigger_key> [--payload <json|@file>]
                                      For external callers of automations with
                                      trigger.cli. Fires once per key: firing it again
@@ -174,6 +176,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     json!(args.next().ok_or("--item requires an item ID")?),
                 );
             }
+            "--test" if !params.contains_key("test") => {
+                params.insert("test".into(), json!(true));
+            }
             "--git" if !params.contains_key("git") => {
                 params.insert("git".into(), json!(true));
             }
@@ -215,7 +220,7 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.get" => (&["name"], false, &[]),
         "automation.runs" => (&["name"], false, &["before", "limit"]),
         "automation.status" => (&["name", "runId"], false, &[]),
-        "automation.run" => (&["name"], false, &["payload"]),
+        "automation.run" => (&["name"], false, &["payload", "test"]),
         "automation.fire" => (&["name"], false, &["key", "payload"]),
         "automation.pause" | "automation.resume" => (&["name"], false, &["reason"]),
         "automation.items" | "automation.next" | "automation.continuous" => (&["name"], false, &[]),
@@ -1078,6 +1083,15 @@ mod tests {
             parse(&args("automation run babysitter")).unwrap().params,
             *json!({ "name": "babysitter" }).as_object().unwrap()
         );
+        assert_eq!(
+            parse(&args("automation run babysitter --test"))
+                .unwrap()
+                .params,
+            *json!({ "name": "babysitter", "test": true })
+                .as_object()
+                .unwrap()
+        );
+        assert!(parse(&args("automation get babysitter --test")).is_err());
         let reasoned = [
             "automation",
             "pause",
