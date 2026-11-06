@@ -19,10 +19,10 @@ const QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) {
       url state headRefOid
       commits(last: 1) { nodes { commit { committedDate statusCheckRollup { contexts(first: 100) { nodes {
         __typename
-        ... on CheckRun { name status conclusion detailsUrl }
+        ... on CheckRun { name status conclusion detailsUrl checkSuite { app { databaseId } } }
         ... on StatusContext { context state targetUrl }
       } } } } } }
-      reviews(last: 50) { nodes { author { login } state body url commit { oid } } }
+      reviews(last: 50) { nodes { author { __typename login } state body url commit { oid } } }
       reviewThreads(first: 100) { nodes { isResolved path line comments(first: 1) { nodes { author { login } body url } } } }
       comments(last: 30) { nodes { body createdAt } }
     }
@@ -84,7 +84,7 @@ impl PrChecks {
     fn request_review(&self, pr: &PullRequest, params: &WatchParams, body: &str) {
         let reviewed = params
             .bot_lgtm
-            .as_deref()
+            .as_ref()
             .is_some_and(|bot| pr.bot_review(bot).is_some());
         if pr.state != "OPEN" || reviewed || pr.requested_since_head(body) {
             return;
@@ -201,6 +201,7 @@ enum Context {
         status: String,
         conclusion: Option<String>,
         details_url: Option<String>,
+        check_suite: Option<CheckSuite>,
     },
     #[serde(rename_all = "camelCase")]
     StatusContext {
@@ -211,8 +212,64 @@ enum Context {
 }
 
 #[derive(Debug, Deserialize)]
+struct CheckSuite {
+    app: Option<App>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct App {
+    database_id: u64,
+}
+
+#[derive(Debug, Deserialize)]
 struct Author {
+    #[serde(rename = "__typename", default)]
+    kind: String,
     login: String,
+}
+
+/// Whose review of the HEAD is the LGTM: a login's, approving or saying "lgtm" in any case, or a
+/// bot account's containing `pattern` verbatim; with `app_id`, that GitHub App's checks on the
+/// HEAD must also pass.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(super) enum BotLgtm {
+    Login(String),
+    Rule {
+        login: String,
+        pattern: String,
+        app_id: Option<u64>,
+    },
+}
+
+impl BotLgtm {
+    fn login(&self) -> &str {
+        match self {
+            Self::Login(login) | Self::Rule { login, .. } => login,
+        }
+    }
+
+    fn authored(&self, author: &Author) -> bool {
+        same_login(&author.login, self.login())
+            && (matches!(self, Self::Login(_)) || author.kind == "Bot")
+    }
+
+    fn approves(&self, review: &Review) -> bool {
+        match self {
+            Self::Login(_) => {
+                review.state == "APPROVED" || review.body.to_lowercase().contains("lgtm")
+            }
+            Self::Rule { pattern, .. } => review.body.contains(pattern.as_str()),
+        }
+    }
+
+    fn app_id(&self) -> Option<u64> {
+        match self {
+            Self::Login(_) => None,
+            Self::Rule { app_id, .. } => *app_id,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,6 +321,7 @@ struct Check<'a> {
     status: CheckStatus,
     conclusion: &'a str,
     url: Option<&'a str>,
+    app_id: Option<u64>,
 }
 
 impl Context {
@@ -274,6 +332,7 @@ impl Context {
                 status,
                 conclusion,
                 details_url,
+                check_suite,
             } => {
                 let conclusion = conclusion.as_deref().unwrap_or(status);
                 let status = match (status.as_str(), conclusion) {
@@ -286,6 +345,10 @@ impl Context {
                     status,
                     conclusion,
                     url: details_url.as_deref(),
+                    app_id: check_suite
+                        .as_ref()
+                        .and_then(|suite| suite.app.as_ref())
+                        .map(|app| app.database_id),
                 }
             }
             Self::StatusContext {
@@ -301,6 +364,7 @@ impl Context {
                 },
                 conclusion: state,
                 url: target_url.as_deref(),
+                app_id: None,
             },
         }
     }
@@ -333,14 +397,35 @@ impl PullRequest {
     }
 
     /// The bot's newest review of the HEAD.
-    fn bot_review(&self, bot: &str) -> Option<&Review> {
+    fn bot_review(&self, bot: &BotLgtm) -> Option<&Review> {
         self.reviews.nodes.iter().rev().find(|review| {
             review
                 .author
                 .as_ref()
-                .is_some_and(|author| same_login(&author.login, bot))
+                .is_some_and(|author| bot.authored(author))
                 && review.commit.as_ref().map(|commit| &commit.oid) == Some(&self.head_ref_oid)
         })
+    }
+
+    /// The failed checks of the GitHub App on the HEAD, once it has some and none is running.
+    fn failed_app_checks(&self, app_id: u64) -> Result<Vec<String>, Vec<String>> {
+        let checks: Vec<Check> = self
+            .checks()
+            .into_iter()
+            .filter(|check| check.app_id == Some(app_id))
+            .collect();
+        if checks.is_empty()
+            || checks
+                .iter()
+                .any(|check| check.status == CheckStatus::Pending)
+        {
+            return Err(vec![format!("bot_app:{app_id}")]);
+        }
+        Ok(checks
+            .iter()
+            .filter(|check| check.status == CheckStatus::Failed)
+            .map(|check| check.name.to_string())
+            .collect())
     }
 
     /// Whether a comment with `body` was posted since the HEAD was committed.
@@ -360,7 +445,16 @@ impl PullRequest {
             evidence["state"] = json!(self.state.to_lowercase());
             return Ok(WatchVerdict::Failed("pr_closed".into(), Some(evidence)));
         }
-        let checks = self.checks();
+        let checks: Vec<Check> = self
+            .checks()
+            .into_iter()
+            .filter(|check| {
+                !params
+                    .ignore
+                    .iter()
+                    .any(|pattern| matches(pattern, check.name))
+            })
+            .collect();
         let required: Vec<&Check> = checks
             .iter()
             .filter(|check| {
@@ -408,11 +502,19 @@ impl PullRequest {
         if let Some(bot) = &params.bot_lgtm {
             let review = self
                 .bot_review(bot)
-                .ok_or_else(|| vec![format!("bot_lgtm:{bot}")])?;
-            if !lgtm(review) {
+                .ok_or_else(|| vec![format!("bot_lgtm:{}", bot.login())])?;
+            let failed_app_checks = match bot.app_id() {
+                Some(app_id) => self.failed_app_checks(app_id)?,
+                None => Vec::new(),
+            };
+            if !failed_app_checks.is_empty() {
+                findings = true;
+                evidence["bot_app_checks"] = json!(failed_app_checks);
+            }
+            if !bot.approves(review) {
                 findings = true;
                 evidence["bot_review"] = json!({
-                    "author": bot,
+                    "author": bot.login(),
                     "state": review.state,
                     "body": excerpt(&review.body),
                     "url": review.url,
@@ -474,10 +576,6 @@ fn missing<'a>(required: &'a [String], checks: &'a [Check]) -> impl Iterator<Ite
 fn same_login(login: &str, bot: &str) -> bool {
     let bare = |login: &str| login.trim_end_matches("[bot]").to_lowercase();
     bare(login) == bare(bot)
-}
-
-fn lgtm(review: &Review) -> bool {
-    review.state == "APPROVED" || review.body.to_lowercase().contains("lgtm")
 }
 
 fn excerpt(text: &str) -> String {

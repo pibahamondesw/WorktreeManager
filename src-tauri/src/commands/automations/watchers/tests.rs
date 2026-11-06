@@ -372,6 +372,145 @@ fn the_bot_lgtm_counts_only_on_the_exact_head() {
     );
 }
 
+fn bot_account_review(kind: &str, state: &str, body: &str, commit: &str) -> Value {
+    let mut review = review("fin-review", state, body, commit);
+    review["author"]["__typename"] = json!(kind);
+    review
+}
+
+fn app_check(status: &str, conclusion: Option<&str>) -> Value {
+    let mut check = check_run("fin review", status, conclusion);
+    check["checkSuite"] = json!({ "app": { "databaseId": 3_106_567 } });
+    check
+}
+
+#[test]
+fn a_bot_lgtm_rule_counts_only_its_pattern_from_the_bot_account_on_the_head() {
+    let mut pr = open_pr(HEAD, vec![passed("tests")]);
+    pr["reviews"]["nodes"] = json!([
+        bot_account_review("Bot", "COMMENTED", "## LGTM ✅", "old999"),
+        bot_account_review("User", "COMMENTED", "## LGTM ✅", HEAD),
+    ]);
+    let forge = FakeForge::answering(pr.clone());
+    let watchers = inline_registry(&forge);
+    let waiting = Waiting::published();
+    let params = json!({ "required": ["tests"],
+        "bot_lgtm": { "login": "fin-review[bot]", "pattern": "LGTM ✅" } });
+
+    assert_eq!(
+        waiting.checks(&watchers, params.clone(), NOW + HOUR_MS),
+        expired(json!(["bot_lgtm:fin-review[bot]"]))
+    );
+
+    pr["reviews"]["nodes"] = json!([bot_account_review("Bot", "APPROVED", "lgtm", HEAD)]);
+    forge.set(pr.clone());
+    let findings = json!({ "verdict": "review_findings", "pr": PR_URL, "head": HEAD,
+        "bot_review": { "author": "fin-review[bot]", "state": "APPROVED", "body": "lgtm",
+            "url": "https://github.com/o/r/pull/7#review" } });
+    assert_eq!(
+        waiting.checks(&watchers, params.clone(), NOW + HOUR_MS + 60_000),
+        WatchVerdict::Failed("review_findings".into(), Some(findings))
+    );
+
+    pr["reviews"]["nodes"] = json!([bot_account_review(
+        "Bot",
+        "COMMENTED",
+        "## LGTM ✅\nNo findings",
+        HEAD
+    )]);
+    forge.set(pr);
+    assert_eq!(
+        waiting.checks(&watchers, params, NOW + HOUR_MS + 120_000),
+        green()
+    );
+}
+
+#[test]
+fn a_bot_lgtm_rule_with_an_app_id_needs_the_app_checks_to_pass() {
+    let mut pr = open_pr(HEAD, vec![passed("tests")]);
+    pr["reviews"]["nodes"] = json!([bot_account_review("Bot", "COMMENTED", "LGTM ✅", HEAD)]);
+    let forge = FakeForge::answering(pr.clone());
+    let watchers = inline_registry(&forge);
+    let waiting = Waiting::published();
+    let params = json!({ "required": ["tests"], "bot_lgtm":
+        { "login": "fin-review[bot]", "pattern": "LGTM ✅", "app_id": 3_106_567 } });
+    let mut now = NOW + HOUR_MS;
+    let mut verdict = |contexts: Vec<Value>| {
+        now += 60_000;
+        pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"] =
+            json!(contexts);
+        forge.set(pr.clone());
+        waiting.checks(&watchers, params.clone(), now)
+    };
+
+    assert_eq!(
+        verdict(vec![passed("tests")]),
+        expired(json!(["bot_app:3106567"]))
+    );
+    assert_eq!(
+        verdict(vec![passed("tests"), app_check("IN_PROGRESS", None)]),
+        expired(json!(["bot_app:3106567"]))
+    );
+    let findings = json!({ "verdict": "review_findings", "pr": PR_URL, "head": HEAD,
+        "bot_app_checks": ["fin review"] });
+    assert_eq!(
+        verdict(vec![
+            passed("tests"),
+            app_check("COMPLETED", Some("FAILURE"))
+        ]),
+        WatchVerdict::Failed("review_findings".into(), Some(findings))
+    );
+    assert_eq!(
+        verdict(vec![
+            passed("tests"),
+            app_check("COMPLETED", Some("SUCCESS"))
+        ]),
+        green()
+    );
+}
+
+#[test]
+fn every_check_but_the_ignored_ones_counts() {
+    let forge = FakeForge::answering(open_pr(HEAD, Vec::new()));
+    let watchers = inline_registry(&forge);
+    let waiting = Waiting::published();
+    let params = json!({ "ignore": ["bors*", "approval-gate"] });
+    let verdict = |contexts: Vec<Value>, now_ms: u64| {
+        forge.set(open_pr(HEAD, contexts));
+        waiting.checks(&watchers, params.clone(), now_ms)
+    };
+    let bors_failed = || check_run("bors-merge", "COMPLETED", Some("FAILURE"));
+
+    assert_eq!(
+        verdict(vec![bors_failed(), check_run("tests", "QUEUED", None)], NOW),
+        WatchVerdict::Pending
+    );
+    let lint_failed = check_run("lint", "COMPLETED", Some("FAILURE"));
+    let failed = json!({ "verdict": "ci_failed", "pr": PR_URL, "head": HEAD, "failed_checks": [
+        { "name": "lint", "conclusion": "FAILURE", "url": "https://ci/lint" },
+    ] });
+    assert_eq!(
+        verdict(
+            vec![bors_failed(), passed("tests"), lint_failed],
+            NOW + 60_000
+        ),
+        WatchVerdict::Failed("ci_failed".into(), Some(failed))
+    );
+    let docs_skipped = check_run("docs", "COMPLETED", Some("SKIPPED"));
+    assert_eq!(
+        verdict(
+            vec![bors_failed(), passed("tests"), docs_skipped],
+            NOW + 120_000
+        ),
+        green()
+    );
+    let only_ignored = vec![bors_failed(), status("approval-gate", "PENDING")];
+    assert_eq!(
+        verdict(only_ignored, NOW + HOUR_MS),
+        expired(json!(["checks"]))
+    );
+}
+
 #[test]
 fn unresolved_threads_beyond_the_allowed_are_findings() {
     let mut pr = open_pr(HEAD, vec![passed("tests")]);

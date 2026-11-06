@@ -1314,14 +1314,21 @@ fn event_wait(
         None => valid = false,
     };
     if watcher == Some(PR_CHECKS) {
-        let required = fields.optional(report, "required", |report, value, field| {
+        let required = fields.optional(report, "required", required_checks);
+        let all = matches!(required, Some(Some(None)));
+        keep(
+            "required",
+            required.map(|checks| checks.flatten().map(Value::from)),
+        );
+        let ignore = fields.optional(report, "ignore", |report, value, field| {
+            if !all {
+                report.error(IssueKind::Invalid, field, "needs required: all");
+                return None;
+            }
             each(report, value, field, context_pattern).map(Value::from)
         });
-        keep("required", required);
-        keep(
-            "bot_lgtm",
-            fields.optional(report, "bot_lgtm", string).map(json_of),
-        );
+        keep("ignore", ignore);
+        keep("bot_lgtm", fields.optional(report, "bot_lgtm", bot_lgtm));
         let threads = fields.optional(report, "unresolved_threads", |report, value, field| {
             integer(report, value, field, 0)
         });
@@ -1360,6 +1367,44 @@ fn non_empty_string(report: &mut Report, value: &Value, field: &str) -> Option<S
         return None;
     }
     Some(text)
+}
+
+/// `all`, normalized to no list since the watcher then judges every reported check, or a list of
+/// context patterns.
+fn required_checks(report: &mut Report, value: &Value, field: &str) -> Option<Option<Vec<String>>> {
+    match value.as_str() {
+        Some("all") => Some(None),
+        Some(_) => {
+            report.error(
+                IssueKind::Invalid,
+                field,
+                "must be all or a list of context names",
+            );
+            None
+        }
+        None => each(report, value, field, context_pattern).map(Some),
+    }
+}
+
+/// A login, kept as is, or `{login, pattern, app_id?}`.
+fn bot_lgtm(report: &mut Report, value: &Value, field: &str) -> Option<Value> {
+    if value.is_string() {
+        return string(report, value, field).map(Value::from);
+    }
+    let mut fields = Fields::of(report, value, field)?;
+    let login = fields.require(report, "login", non_empty_string);
+    let pattern = fields.require(report, "pattern", non_empty_string);
+    let app_id = fields.optional(report, "app_id", |report, value, field| {
+        integer(report, value, field, 1)
+    });
+    fields.finish(report);
+    let mut rule = Map::new();
+    rule.insert("login".into(), login?.into());
+    rule.insert("pattern".into(), pattern?.into());
+    if let Some(app_id) = app_id? {
+        rule.insert("app_id".into(), app_id.into());
+    }
+    Some(Value::Object(rule))
 }
 
 /// A check or status context name, or a prefix ending in `*`.
