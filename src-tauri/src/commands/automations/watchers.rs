@@ -17,7 +17,7 @@ use std::thread;
 
 use chrono::DateTime;
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 pub use forge::{CliWatchForge, WatchForge};
 use pr_checks::PrChecks;
@@ -143,6 +143,15 @@ impl Target {
             }
         }
     }
+}
+
+/// A Test run stages its push and PR, so there is no PR to watch: the wait follows its success
+/// route at once, recording that it was staged.
+fn staged(watcher: &str) -> WatchVerdict {
+    WatchVerdict::Succeeded(Some(json!({
+        "verdict": "staged",
+        "detail": format!("{watcher} not watched: a Test run stages its PR"),
+    })))
 }
 
 fn failed(cause: &str) -> WatchVerdict {

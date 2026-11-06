@@ -42,7 +42,7 @@ pub struct Watch<'a> {
     /// The run log, where the item's published effects are.
     pub history: &'a [LoggedEvent],
     pub task: Option<&'a ResolvedTask>,
-    /// A Test run: watchers only read.
+    /// A Test run: its publish effects were staged, so there is nothing published to watch.
     pub test: bool,
     pub wait_per_head_secs: u64,
 }

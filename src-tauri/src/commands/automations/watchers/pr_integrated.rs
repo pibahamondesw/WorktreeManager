@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::{worktree, Github, Polls, Spawn, Target, WatchParams};
+use super::{staged, worktree, Github, Polls, Spawn, Target, WatchParams, PR_INTEGRATED};
 use crate::commands::automations::wait::{Watch, WatchVerdict, Watcher};
 
 const QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) {
@@ -64,6 +64,9 @@ impl PrIntegrated {
 
 impl Watcher for PrIntegrated {
     fn check(&self, params: &Map<String, Value>, watch: &Watch) -> WatchVerdict {
+        if watch.test {
+            return staged(PR_INTEGRATED);
+        }
         WatchParams::of(params)
             .and_then(|params| self.watch(&params, watch))
             .unwrap_or_else(|verdict| verdict)

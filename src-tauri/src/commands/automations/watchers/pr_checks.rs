@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::{epoch_ms, pushed_head, Github, Polls, Spawn, Target, WatchParams};
+use super::{epoch_ms, pushed_head, staged, Github, Polls, Spawn, Target, WatchParams, PR_CHECKS};
 use crate::commands::automations::wait::{Watch, WatchVerdict, Watcher};
 
 /// The longest review or thread text kept as evidence.
@@ -69,7 +69,7 @@ impl PrChecks {
                 .map_or(true, |head| *head == pr.head_ref_oid)
         });
         if let (Some(pr), Some(body)) = (pr, &params.request_review_comment) {
-            self.request_review(pr, params, body, watch.test);
+            self.request_review(pr, params, body);
         }
         Ok(judge(
             pr,
@@ -81,12 +81,12 @@ impl PrChecks {
     }
 
     /// Posts the comment that asks the bot to review a HEAD it has not reviewed, once per HEAD.
-    fn request_review(&self, pr: &PullRequest, params: &WatchParams, body: &str, test: bool) {
+    fn request_review(&self, pr: &PullRequest, params: &WatchParams, body: &str) {
         let reviewed = params
             .bot_lgtm
             .as_deref()
             .is_some_and(|bot| pr.bot_review(bot).is_some());
-        if test || pr.state != "OPEN" || reviewed || pr.requested_since_head(body) {
+        if pr.state != "OPEN" || reviewed || pr.requested_since_head(body) {
             return;
         }
         let previous = self
@@ -110,6 +110,9 @@ impl PrChecks {
 
 impl Watcher for PrChecks {
     fn check(&self, params: &Map<String, Value>, watch: &Watch) -> WatchVerdict {
+        if watch.test {
+            return staged(PR_CHECKS);
+        }
         WatchParams::of(params)
             .and_then(|params| self.watch(&params, watch))
             .unwrap_or_else(|verdict| verdict)

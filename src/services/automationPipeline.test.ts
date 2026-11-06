@@ -168,6 +168,18 @@ describe("labels", () => {
     expect(waitFacts({ ...armed, wait: {}, signal: { sha: "abc" } })).toEqual([
       ["Signal", '{"sha":"abc"}'],
     ]);
+    expect(
+      waitFacts({
+        ...armed,
+        wait: {},
+        result: { verdict: "staged", detail: "pr_checks not watched: a Test run stages its PR" },
+      })
+    ).toEqual([["Watcher", "staged · pr_checks not watched: a Test run stages its PR"]]);
+    expect(waitFacts({ ...armed, wait: {}, result: { verdict: "ci_green" } })).toEqual([
+      ["Watcher", "ci_green"],
+    ]);
+    expect(waitFacts({ ...armed, wait: {}, result: "plain" })).toEqual([]);
+    expect(waitFacts({ ...armed, wait: {}, result: { decision: "approve" } })).toEqual([]);
     expect(waitFacts(attempt("ci", 1, "waiting"))).toEqual([]);
     expect(waitFacts(null)).toEqual([]);
 

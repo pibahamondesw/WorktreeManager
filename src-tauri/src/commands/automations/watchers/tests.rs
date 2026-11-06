@@ -656,10 +656,6 @@ fn the_review_request_is_posted_once_per_head() {
         "request_review_comment": "fin review" });
     let posted = |forge: &FakeForge| forge.comments.lock().unwrap().len();
 
-    waiting.test = true;
-    waiting.checks(&watchers, params.clone(), NOW);
-    assert_eq!(posted(&forge), 0);
-    waiting.test = false;
     *forge.comment_failure.lock().unwrap() = Some("gh: forbidden".into());
     waiting.checks(&watchers, params.clone(), NOW);
     assert_eq!(posted(&forge), 0);
@@ -694,6 +690,30 @@ fn the_review_request_is_posted_once_per_head() {
     forge.set(open_pr(NEW_HEAD, vec![passed("tests")]));
     waiting.checks(&watchers, params, NOW + 60_000);
     assert_eq!(posted(&forge), 2);
+}
+
+#[test]
+fn a_test_run_stages_both_pr_watchers_without_asking_github() {
+    let forge = FakeForge::answering(open_pr(HEAD, vec![passed("tests")]));
+    let watchers = inline_registry(&forge);
+    let waiting = Waiting {
+        history: Vec::new(),
+        test: true,
+        ..Waiting::published()
+    };
+    let params = json!({ "required": ["tests"], "request_review_comment": "fin review" });
+    let staged = |watcher: &str| {
+        WatchVerdict::Succeeded(Some(json!({ "verdict": "staged",
+            "detail": format!("{watcher} not watched: a Test run stages its PR") })))
+    };
+
+    assert_eq!(waiting.checks(&watchers, params, NOW), staged(PR_CHECKS));
+    assert_eq!(
+        waiting.at(&watchers, PR_INTEGRATED, json!({}), NOW),
+        staged(PR_INTEGRATED)
+    );
+    assert_eq!(forge.queries(), 0);
+    assert!(forge.comments.lock().unwrap().is_empty());
 }
 
 #[test]

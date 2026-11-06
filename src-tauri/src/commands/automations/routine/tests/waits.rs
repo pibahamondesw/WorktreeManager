@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use super::campaign::{by_branch, item, wait_until};
 use super::*;
 use crate::commands::automations::scheduler::{Automation, Scheduler, SystemClock};
@@ -6,6 +8,7 @@ use crate::commands::automations::store::Actor;
 use crate::commands::automations::wait::{
     signal, Signal, SignaledStep, Watch, WatchVerdict, Watcher, Watchers,
 };
+use crate::commands::automations::watchers::{registry, WatchForge};
 
 const ITEMS_AB: &str = r#"{"items":[{"id":"a","version":"1"},{"id":"b","version":"1"}]}"#;
 
@@ -443,4 +446,66 @@ fn an_event_wait_parks_until_its_watcher_decides_and_its_evidence_reaches_the_ne
         ["ci#1:Succeeded", "report#1:Succeeded"]
     );
     assert!(harness.prompts()[0].contains(r#"{"verdict":"ci_green"}"#));
+}
+
+/// GitHub must not be asked anything.
+struct Unreachable;
+
+impl WatchForge for Unreachable {
+    fn graphql(&self, _: &str, _: Value) -> Result<Value, String> {
+        unreachable!("a Test run asked GitHub")
+    }
+    fn branch_pull_request(&self, _: &Path, _: &str) -> Result<Option<String>, String> {
+        unreachable!("a Test run asked GitHub")
+    }
+    fn comment(&self, _: &str, _: &str) -> Result<(), String> {
+        unreachable!("a Test run asked GitHub")
+    }
+    fn integrated(&self, _: &Path, _: u64, _: &str, _: &str) -> Result<bool, String> {
+        unreachable!("a Test run asked GitHub")
+    }
+}
+
+#[test]
+fn a_test_run_follows_the_success_route_of_its_staged_pr_waits() {
+    let steps = "steps:
+  - id: implement
+    agent: {}
+  - id: ci
+    wait: { event: { watcher: pr_checks, required: [tests] } }
+    on_fail: { goto: implement, max: 1 }
+  - id: merged
+    wait: { event: { watcher: pr_integrated } }
+  - id: report
+    agent: {}
+";
+    let mut harness = Harness::routine(steps, FakeSessions::default());
+    harness.executor = harness
+        .executor
+        .clone()
+        .with_watchers(registry(Arc::new(Unreachable)));
+
+    let run = harness.run_with(true, None);
+    settles(&harness, &run.id, RunStatus::Completed);
+
+    let item = &harness.state(&run.id).items[0];
+    assert_eq!(
+        attempts(item),
+        [
+            "implement#1:Succeeded",
+            "ci#1:Succeeded",
+            "merged#1:Succeeded",
+            "report#1:Succeeded"
+        ]
+    );
+    let verdicts: Vec<_> = item.steps[1..3]
+        .iter()
+        .map(|attempt| {
+            attempt
+                .result
+                .as_ref()
+                .map(|result| result["verdict"].clone())
+        })
+        .collect();
+    assert_eq!(verdicts, [Some(json!("staged")), Some(json!("staged"))]);
 }

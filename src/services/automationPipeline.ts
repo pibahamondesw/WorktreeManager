@@ -130,7 +130,8 @@ export function waitConditionLabel(condition: WaitCondition): string {
   return `Signal ${condition.signal}`;
 }
 
-/** When a wait or approval attempt is due and times out, and what it was signaled. */
+/** When a wait or approval attempt is due and times out, what it was signaled and what its
+ * watcher decided, such as `staged` in a Test run. */
 export function waitFacts(attempt: StepAttempt | null): [label: string, value: string][] {
   const wait = attempt?.wait;
   if (!attempt || !wait) return [];
@@ -139,7 +140,16 @@ export function waitFacts(attempt: StepAttempt | null): [label: string, value: s
   if (wait.wake_at_ms != null) facts.push(["Due", at(wait.wake_at_ms)]);
   if (wait.timeout_at_ms != null) facts.push(["Times out", at(wait.timeout_at_ms)]);
   if (attempt.signal != null) facts.push(["Signal", JSON.stringify(attempt.signal)]);
+  const watched = watcherVerdict(attempt.result);
+  if (watched) facts.push(["Watcher", watched]);
   return facts;
+}
+
+function watcherVerdict(result: unknown): string | null {
+  if (typeof result !== "object" || result === null) return null;
+  const { verdict, detail } = result as { verdict?: unknown; detail?: unknown };
+  if (typeof verdict !== "string") return null;
+  return typeof detail === "string" ? `${verdict} · ${detail}` : verdict;
 }
 
 /** An approval's run title replaces its template once the step has run. */
