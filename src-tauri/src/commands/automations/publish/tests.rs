@@ -83,9 +83,19 @@ impl Forge for FakeForge {
         Ok(self.remote_head.clone())
     }
 
-    fn push(&self, worktree: &Path, branch: &str, timeout: Duration) -> Result<(), String> {
+    fn push(
+        &self,
+        worktree: &Path,
+        branch: &str,
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let env: String = env
+            .iter()
+            .map(|(key, value)| format!(" {key}={value}"))
+            .collect();
         self.call(format!(
-            "push {} {branch} {}",
+            "push {} {branch} {}{env}",
             worktree.display(),
             timeout.as_secs()
         ));
@@ -241,6 +251,7 @@ struct Run {
     staged: bool,
     stale: Vec<String>,
     bases: BTreeMap<String, String>,
+    lease_env: Vec<(String, String)>,
 }
 
 impl Run {
@@ -253,6 +264,7 @@ impl Run {
             staged: false,
             stale: Vec::new(),
             bases: BTreeMap::new(),
+            lease_env: Vec::new(),
         }
     }
 
@@ -298,6 +310,7 @@ impl Run {
             staged: self.staged,
             variables: &variables,
             stale_receipts: &stale_receipts,
+            lease_env: &self.lease_env,
         };
         let report = publisher.publish(&request, &effects, &scope);
         let mut events = vec![
@@ -515,6 +528,23 @@ fn pushes_reconcile_with_the_remote_and_never_run_on_stale_receipts() {
     };
     let (report, _) = run.publish(&mut publisher(&forge, &bridge), 3, vec![broken]);
     assert_eq!(report.cause.as_deref(), Some("receipts unreadable"));
+}
+
+#[test]
+fn pushes_run_with_the_lease_environment_of_the_attempt() {
+    let bridge = Arc::new(silent());
+    let mut run = Run::allowing(&[Verb::Push]);
+    run.lease_env = vec![("TEST_ENV_NUMBER".into(), "13".into())];
+    let forge = Arc::new(FakeForge::at("abc"));
+
+    let (report, _) = run.publish(&mut publisher(&forge, &bridge), 1, vec![push()]);
+
+    assert_eq!(report.outcome, StepOutcome::Success);
+    let worktree = run.worktree.0.display();
+    assert_eq!(
+        forge.calls().last().unwrap(),
+        &format!("push {worktree} wtm/demo/1 90 TEST_ENV_NUMBER=13")
+    );
 }
 
 #[test]
@@ -1098,17 +1128,26 @@ fn cli_forge_reads_and_pushes_the_worktree_with_its_hooks() {
     let head = forge.head(&clone.0).unwrap();
     assert_eq!(forge.last_subject(&clone.0).unwrap(), "First change");
     assert_eq!(forge.remote_head(&clone.0, "wtm/x").unwrap(), None);
-    hook(&clone.0, "#!/bin/sh\necho hook ran >&2\nexit 1\n");
+    let record_env = "echo \"${TEST_ENV_NUMBER:-none}\" >> .git/hook-env";
+    hook(
+        &clone.0,
+        &format!("#!/bin/sh\n{record_env}\necho hook ran >&2\nexit 1\n"),
+    );
 
     let rejected = forge
-        .push(&clone.0, "wtm/x", Duration::from_secs(60))
+        .push(&clone.0, "wtm/x", &[], Duration::from_secs(60))
         .unwrap_err();
     assert!(rejected.contains("hook ran"), "{rejected}");
 
-    hook(&clone.0, "#!/bin/sh\nexit 0\n");
+    hook(&clone.0, &format!("#!/bin/sh\n{record_env}\n"));
+    let lease_env = [("TEST_ENV_NUMBER".to_string(), "13".to_string())];
     forge
-        .push(&clone.0, "wtm/x", Duration::from_secs(60))
+        .push(&clone.0, "wtm/x", &lease_env, Duration::from_secs(60))
         .unwrap();
+    assert_eq!(
+        fs::read_to_string(clone.0.join(".git/hook-env")).unwrap(),
+        "none\n13\n"
+    );
     assert_eq!(
         forge.remote_head(&clone.0, "wtm/x").unwrap(),
         Some(head.clone())
@@ -1127,7 +1166,7 @@ fn cli_forge_stops_a_push_whose_hooks_outlast_the_timeout() {
     let forge = CliForge::with("gh", isolated_git());
 
     let error = forge
-        .push(&clone.0, "wtm/x", Duration::from_millis(1500))
+        .push(&clone.0, "wtm/x", &[], Duration::from_millis(1500))
         .unwrap_err();
 
     assert!(error.starts_with("git push timed out"), "{error}");
