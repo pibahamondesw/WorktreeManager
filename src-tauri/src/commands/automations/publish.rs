@@ -64,8 +64,14 @@ pub trait Forge: Send + Sync {
     fn head(&self, worktree: &Path) -> Result<String, String>;
     /// The commit `branch` points at on `origin`, `None` when it does not exist there.
     fn remote_head(&self, worktree: &Path, branch: &str) -> Result<Option<String>, String>;
-    /// Pushes HEAD to `branch` on `origin`, hooks included.
-    fn push(&self, worktree: &Path, branch: &str, timeout: Duration) -> Result<(), String>;
+    /// Pushes HEAD to `branch` on `origin`, hooks included, with `env` added to theirs.
+    fn push(
+        &self,
+        worktree: &Path,
+        branch: &str,
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<(), String>;
     fn last_subject(&self, worktree: &Path) -> Result<String, String>;
     /// Uncommitted changes and untracked files, as `git status` names them.
     fn dirty_paths(&self, worktree: &Path) -> Result<Vec<String>, String>;
@@ -111,6 +117,8 @@ pub struct PublishScope<'a> {
     pub variables: &'a [(String, String)],
     /// Bound command steps of a repository whose receipts no longer match its worktree.
     pub stale_receipts: &'a dyn Fn(&str) -> Result<Vec<String>, String>,
+    /// The environment of the leases held for the attempt, which pushes and their hooks see.
+    pub lease_env: &'a [(String, String)],
 }
 
 enum Stop {
@@ -390,7 +398,8 @@ impl Publisher {
             )
             .referencing(head));
         }
-        self.forge.push(&worktree, branch, timeout)?;
+        self.forge
+            .push(&worktree, branch, scope.lease_env, timeout)?;
         Ok(Outcome::of(EffectStatus::Executed, format!("Pushed {branch}")).referencing(head))
     }
 

@@ -97,10 +97,19 @@ impl Forge for CliForge {
         Ok(listed.split_whitespace().next().map(String::from))
     }
 
-    fn push(&self, worktree: &Path, branch: &str, timeout: Duration) -> Result<(), String> {
+    fn push(
+        &self,
+        worktree: &Path,
+        branch: &str,
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Result<(), String> {
         let refspec = format!("HEAD:refs/heads/{branch}");
         let args = ["push", "--set-upstream", "origin", refspec.as_str()];
-        let spec = self.login("git", &args, worktree).terminal();
+        let spec = self
+            .login("git", &args, worktree)
+            .envs(env.iter().cloned())
+            .terminal();
         let exit = run_headless(&spec, HEADLESS_SESSION, Some(timeout))?;
         match (exit.timed_out, exit.code) {
             (true, _) => Err(format!("git push timed out: {}", tail(&exit.output))),

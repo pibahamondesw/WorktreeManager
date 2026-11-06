@@ -525,3 +525,33 @@ fn tracked_items_work_on_their_issue_branch_and_fail_without_one() {
         Some("t-wtm/demo/a")
     );
 }
+
+#[test]
+fn a_published_push_runs_with_the_lease_environment_the_item_keeps() {
+    let (remote, worktree) = pushable();
+    let hook = worktree.0.join(".git/hooks/pre-push");
+    fs::write(&hook, "#!/bin/sh\necho \"${SLOT:-none}\" > .git/hook-env\n").unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    let steps = r#"pools: { test_slot: { values: [13, 14], hold: item } }
+authorization: { allow: [push] }
+steps:
+  - id: check
+    command: [/bin/sh, -c, 'exit 0']
+    uses: [test_slot]
+  - id: ship
+    publish: git.push
+"#;
+    let (harness, _pools) = leased_routine(steps, &worktree);
+
+    let run = harness.run();
+
+    assert_eq!(run.status, RunStatus::Completed, "{run:?}");
+    assert_eq!(
+        fs::read_to_string(worktree.0.join(".git/hook-env")).unwrap(),
+        "13\n"
+    );
+    assert_eq!(
+        git(&remote.0, &["rev-parse", "wtm/demo/branch"]),
+        git(&worktree.0, &["rev-parse", "HEAD"])
+    );
+}

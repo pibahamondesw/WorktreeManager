@@ -625,7 +625,7 @@ impl StepExecutor for ItemSteps<'_> {
                         remaining,
                         leases.env.clone(),
                     )),
-                    StepKind::Publish(effects) => self.publish(request, effects),
+                    StepKind::Publish(effects) => self.publish(request, effects, &leases.env),
                     _ => self.wait(request),
                 },
             },
@@ -709,7 +709,12 @@ impl ItemSteps<'_> {
         execution
     }
 
-    fn publish(&mut self, request: &StepRequest, effects: &[Effect]) -> Execution {
+    fn publish(
+        &mut self,
+        request: &StepRequest,
+        effects: &[Effect],
+        lease_env: &[(String, String)],
+    ) -> Execution {
         let stale: BTreeMap<&str, Result<Vec<String>, String>> = effects
             .iter()
             .filter_map(|effect| match effect {
@@ -739,6 +744,7 @@ impl ItemSteps<'_> {
             staged: self.request.test,
             variables: self.commands.context().variables(),
             stale_receipts: &stale_receipts,
+            lease_env,
         };
         let report = self.publisher.publish(request, effects, &scope);
         self.evidence.extend(self.publisher.drain_events());
