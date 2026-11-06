@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 pub use forge::{CliWatchForge, WatchForge};
-use pr_checks::PrChecks;
+use pr_checks::{BotLgtm, PrChecks};
 use pr_integrated::PrIntegrated;
 
 use super::store::events::{EffectStatus, RunEvent};
@@ -59,7 +59,9 @@ type Spawn = Arc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>;
 struct WatchParams {
     /// Context names, or prefixes ending in `*`.
     required: Vec<String>,
-    bot_lgtm: Option<String>,
+    /// Context names, or prefixes ending in `*`, that do not count when `required` is empty.
+    ignore: Vec<String>,
+    bot_lgtm: Option<BotLgtm>,
     unresolved_threads: u64,
     request_review_comment: Option<String>,
     interval_secs: Option<u64>,

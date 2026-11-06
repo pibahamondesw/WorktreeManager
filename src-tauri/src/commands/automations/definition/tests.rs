@@ -967,6 +967,75 @@ fn wait_steps_wait_for_one_time_or_signal() {
 }
 
 #[test]
+fn pr_checks_accepts_all_checks_but_ignored_ones_and_a_bot_lgtm_rule() {
+    let definition = valid(&routine(
+        "steps:
+  - id: ci
+    wait:
+      event:
+        watcher: pr_checks
+        required: all
+        ignore: [\"bors*\", approval-gate]
+        bot_lgtm: { login: \"fin-review[bot]\", pattern: \"LGTM ✅\", app_id: 3106567 }
+",
+    ));
+    assert_eq!(
+        kind(&definition.steps[0]),
+        json!({ "wait": { "event": { "watcher": "pr_checks", "params": {
+            "ignore": ["bors*", "approval-gate"],
+            "bot_lgtm": { "login": "fin-review[bot]", "pattern": "LGTM ✅", "app_id": 3_106_567 },
+            "repo": "r1",
+        } } } })
+    );
+    let event = |params: &str| {
+        routine(&format!(
+            "steps:\n  - id: ci\n    wait: {{ event: {{ watcher: pr_checks, {params} }} }}\n"
+        ))
+    };
+    for (params, field, kind) in [
+        ("required: some", "required", IssueKind::Invalid),
+        ("ignore: [bors]", "ignore", IssueKind::Invalid),
+        (
+            "required: [tests], ignore: [bors]",
+            "ignore",
+            IssueKind::Invalid,
+        ),
+        (
+            "required: all, ignore: [\"*\"]",
+            "ignore[0]",
+            IssueKind::Invalid,
+        ),
+        (
+            "bot_lgtm: { pattern: LGTM }",
+            "bot_lgtm.login",
+            IssueKind::Missing,
+        ),
+        (
+            "bot_lgtm: { login: bot, pattern: \" \" }",
+            "bot_lgtm.pattern",
+            IssueKind::Invalid,
+        ),
+        (
+            "bot_lgtm: { login: bot, pattern: LGTM, app_id: 0 }",
+            "bot_lgtm.app_id",
+            IssueKind::Invalid,
+        ),
+        (
+            "bot_lgtm: { login: bot, pattern: LGTM, app: 1 }",
+            "bot_lgtm.app",
+            IssueKind::UnknownField,
+        ),
+        ("bot_lgtm: [bot]", "bot_lgtm", IssueKind::Invalid),
+    ] {
+        assert_issue(
+            &event(params),
+            &format!("steps[0].wait.event.{field}"),
+            kind,
+        );
+    }
+}
+
+#[test]
 fn event_waits_name_a_watcher_and_normalize_its_params() {
     let definition = valid(&routine(
         "authorization: { allow: [pr_comment] }
