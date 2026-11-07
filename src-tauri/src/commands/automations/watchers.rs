@@ -23,11 +23,14 @@ pub use forge::{CliWatchForge, WatchForge};
 use pr_checks::{BotLgtm, PrChecks};
 use pr_integrated::PrIntegrated;
 
+use super::publish::pushed_commits;
 use super::store::events::{EffectStatus, RunEvent};
 use super::wait::{Watch, WatchVerdict, Watchers};
 
 pub const PR_CHECKS: &str = "pr_checks";
 pub const PR_INTEGRATED: &str = "pr_integrated";
+const CONFLICT: &str = "conflict";
+const PR_CLOSED: &str = "pr_closed";
 /// Below this many GraphQL points left, GitHub is not asked again until the limit resets.
 const RATE_LIMIT_FLOOR: u64 = 100;
 const DEFAULT_INTERVAL_SECS: u64 = 60;
@@ -184,20 +187,38 @@ fn published_pull_request(watch: &Watch) -> Option<PullRequestRef> {
 
 /// The commit the item's `git.push` effects published last.
 fn pushed_head(watch: &Watch) -> Option<String> {
-    watch
-        .history
-        .iter()
-        .rev()
-        .find_map(|logged| match &logged.event {
-            RunEvent::EffectRecorded {
-                item,
-                effect,
-                status: EffectStatus::Executed | EffectStatus::Reconciled,
-                reference,
-                ..
-            } if item == watch.item && effect == "git.push" => reference.clone(),
-            _ => None,
-        })
+    pushed_commits(watch.history.iter().map(|logged| &logged.event), watch.item).pop()
+}
+
+/// GitHub's answer on whether a PR merges cleanly into its base; `UNKNOWN` until it has computed
+/// it, which a query starts.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum Mergeability {
+    Mergeable,
+    Conflicting,
+    #[serde(other)]
+    Unknown,
+}
+
+/// A PR someone closed needs its owner: a repair would only publish it again, so the item
+/// blocks whatever `on_fail` says. `how` completes "The PR <url> was …" for the Inbox.
+fn closed(evidence: Value, how: &str) -> WatchVerdict {
+    let mut evidence = evidence;
+    evidence["verdict"] = json!(PR_CLOSED);
+    let pr = evidence["pr"].as_str().unwrap_or_default().to_string();
+    evidence["summary"] = json!(format!("The PR {pr} was {how}"));
+    WatchVerdict::Blocked(PR_CLOSED.into(), Some(evidence))
+}
+
+/// A PR that conflicts with its base fails the wait, so `on_fail` can send it to be rebased.
+fn conflict(evidence: Value, base: &str) -> WatchVerdict {
+    let mut evidence = evidence;
+    evidence["verdict"] = json!(CONFLICT);
+    evidence["conflict"] = json!(format!(
+        "The PR conflicts with {base}: rebase it onto origin/{base} and resolve the conflicts"
+    ));
+    WatchVerdict::Failed(CONFLICT.into(), Some(evidence))
 }
 
 fn worktree(watch: &Watch, params: &WatchParams) -> Option<PathBuf> {

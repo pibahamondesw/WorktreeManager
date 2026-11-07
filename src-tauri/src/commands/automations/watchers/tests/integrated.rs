@@ -18,6 +18,14 @@ fn evidence(verdict: &str, merged_at: Option<&str>) -> Option<Value> {
     )
 }
 
+fn closed_evidence() -> Option<Value> {
+    let mut evidence = evidence("pr_closed", None).unwrap();
+    evidence["summary"] = json!(format!(
+        "The PR {PR_URL} was closed without its changes on main"
+    ));
+    Some(evidence)
+}
+
 fn integrated(waiting: &Waiting, forge: &Arc<FakeForge>) -> WatchVerdict {
     waiting.at(
         &inline_registry(forge),
@@ -43,6 +51,30 @@ fn an_open_pr_keeps_waiting_and_a_merged_one_is_integrated() {
 }
 
 #[test]
+fn an_open_pr_that_conflicts_with_its_base_fails_and_one_not_yet_known_keeps_waiting() {
+    let forge = FakeForge::answering(mergeable(open_pr(HEAD, Vec::new()), "CONFLICTING"));
+    let waiting = Waiting::published();
+
+    let mut conflict = evidence("conflict", None).unwrap();
+    conflict["conflict"] =
+        json!("The PR conflicts with main: rebase it onto origin/main and resolve the conflicts");
+    assert_eq!(
+        integrated(&waiting, &forge),
+        WatchVerdict::Failed("conflict".into(), Some(conflict))
+    );
+    forge.set(mergeable(open_pr(HEAD, Vec::new()), "UNKNOWN"));
+    assert_eq!(integrated(&waiting, &forge), WatchVerdict::Pending);
+    forge.set(mergeable(
+        closed(Some("2026-11-05T13:00:00Z")),
+        "CONFLICTING",
+    ));
+    assert_eq!(
+        integrated(&waiting, &forge),
+        WatchVerdict::Succeeded(evidence("merged", Some("2026-11-05T13:00:00Z")))
+    );
+}
+
+#[test]
 fn a_pr_closed_without_merged_at_is_integrated_when_its_changes_are_on_the_base() {
     let forge = FakeForge::answering(closed(None));
     let waiting = Waiting::published();
@@ -65,7 +97,7 @@ fn a_pr_closed_without_merged_at_is_integrated_when_its_changes_are_on_the_base(
     *forge.on_base.lock().unwrap() = Some(Ok(false));
     assert_eq!(
         integrated(&waiting, &forge),
-        WatchVerdict::Failed("pr_closed".into(), evidence("pr_closed", None))
+        WatchVerdict::Blocked("pr_closed".into(), closed_evidence())
     );
 
     *forge.on_base.lock().unwrap() = Some(Err("Could not fetch main".into()));

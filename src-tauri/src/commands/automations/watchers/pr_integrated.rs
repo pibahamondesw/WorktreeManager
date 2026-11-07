@@ -7,12 +7,15 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::{staged, worktree, Github, Polls, Spawn, Target, WatchParams, PR_INTEGRATED};
+use super::{
+    closed, conflict, staged, worktree, Github, Mergeability, Polls, Spawn, Target, WatchParams,
+    PR_INTEGRATED,
+};
 use crate::commands::automations::wait::{Watch, WatchVerdict, Watcher};
 
 const QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) { url number state mergedAt headRefOid baseRefName }
+    pullRequest(number: $number) { url number state mergedAt headRefOid baseRefName mergeable }
   }
   rateLimit { remaining resetAt }
 }";
@@ -31,6 +34,7 @@ struct PullRequest {
     merged_at: Option<String>,
     head_ref_oid: String,
     base_ref_name: String,
+    mergeable: Mergeability,
 }
 
 pub(super) struct Integration {
@@ -96,18 +100,24 @@ impl Integration {
     fn verdict(&self) -> WatchVerdict {
         let pr = &self.pr;
         let evidence = |verdict: &str| {
-            Some(json!({
+            json!({
                 "verdict": verdict,
                 "pr": pr.url,
                 "head": pr.head_ref_oid,
                 "base": pr.base_ref_name,
                 "merged_at": pr.merged_at,
-            }))
+            })
         };
         match (pr.merged_at.is_some(), pr.state.as_str(), self.on_base) {
-            (true, _, _) => WatchVerdict::Succeeded(evidence("merged")),
-            (false, "CLOSED", Some(true)) => WatchVerdict::Succeeded(evidence("integrated")),
-            (false, "CLOSED", _) => WatchVerdict::Failed("pr_closed".into(), evidence("pr_closed")),
+            (true, _, _) => WatchVerdict::Succeeded(Some(evidence("merged"))),
+            (false, "CLOSED", Some(true)) => WatchVerdict::Succeeded(Some(evidence("integrated"))),
+            (false, "CLOSED", _) => closed(
+                evidence("pr_closed"),
+                &format!("closed without its changes on {}", pr.base_ref_name),
+            ),
+            (false, "OPEN", _) if pr.mergeable == Mergeability::Conflicting => {
+                conflict(evidence("conflict"), &pr.base_ref_name)
+            }
             _ => WatchVerdict::Pending,
         }
     }

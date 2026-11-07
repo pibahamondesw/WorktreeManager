@@ -33,7 +33,7 @@ use super::definition::{
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
-use super::publish::{CliForge, Forge, PublishScope, Publisher};
+use super::publish::{pushed_commits, CliForge, Forge, PublishScope, Publisher};
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::selector::OpenPullRequests;
 use super::store::events::{
@@ -718,12 +718,13 @@ impl ItemSteps<'_> {
         let stale: BTreeMap<&str, Result<Vec<String>, String>> = effects
             .iter()
             .filter_map(|effect| match effect {
-                Effect::GitPush { repo } => Some(repo.as_str()),
+                Effect::GitPush { repo, .. } => Some(repo.as_str()),
                 _ => None,
             })
             .map(|repo| (repo, self.stale_receipts(request, repo)))
             .collect();
         let stale_receipts = |repo: &str| stale[repo].clone();
+        let pushed = self.pushed(request);
         let definition = self.definition;
         let repo_names: BTreeMap<_, _> = definition
             .target
@@ -745,10 +746,21 @@ impl ItemSteps<'_> {
             variables: self.commands.context().variables(),
             stale_receipts: &stale_receipts,
             lease_env,
+            pushed: &pushed,
         };
         let report = self.publisher.publish(request, effects, &scope);
         self.evidence.extend(self.publisher.drain_events());
         Execution::Finished(report)
+    }
+
+    /// What the item pushed so far as the run log has it; nothing to force over if unreadable.
+    fn pushed(&self, request: &StepRequest) -> Vec<String> {
+        let history = self
+            .log
+            .store
+            .events(&self.request.automation, &self.request.run_id)
+            .unwrap_or_default();
+        pushed_commits(history.iter().map(|logged| &logged.event), request.item)
     }
 
     /// Bound command steps of `repo` whose latest receipt no longer matches its worktree.
@@ -1056,7 +1068,11 @@ fn grant_of(verb: Verb) -> Option<Grant> {
         Verb::PrComment => Some(Grant::PrComment),
         Verb::PrReply => Some(Grant::PrReply),
         Verb::PrReady => Some(Grant::PrReady),
-        Verb::LinearWrite | Verb::TaskCreate | Verb::TaskDelete | Verb::TaskLog => None,
+        Verb::ForcePush
+        | Verb::LinearWrite
+        | Verb::TaskCreate
+        | Verb::TaskDelete
+        | Verb::TaskLog => None,
     }
 }
 

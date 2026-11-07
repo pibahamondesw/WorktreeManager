@@ -509,3 +509,62 @@ fn a_test_run_follows_the_success_route_of_its_staged_pr_waits() {
         .collect();
     assert_eq!(verdicts, [Some(json!("staged")), Some(json!("staged"))]);
 }
+
+/// GitHub with one PR its owner closed without merging.
+struct ClosedPullRequest;
+
+impl WatchForge for ClosedPullRequest {
+    fn graphql(&self, _: &str, _: Value) -> Result<Value, String> {
+        let pr = json!({
+            "url": "https://github.com/o/r/pull/7", "number": 7, "state": "CLOSED",
+            "mergedAt": null, "headRefOid": "abc", "baseRefName": "main", "mergeable": "MERGEABLE",
+            "commits": { "nodes": [] }, "reviews": { "nodes": [] },
+            "reviewThreads": { "nodes": [] }, "comments": { "nodes": [] },
+        });
+        Ok(json!({ "data": { "repository": { "pullRequest": pr } } }))
+    }
+    fn branch_pull_request(&self, _: &Path, _: &str) -> Result<Option<String>, String> {
+        Ok(Some("https://github.com/o/r/pull/7".into()))
+    }
+    fn comment(&self, _: &str, _: &str) -> Result<(), String> {
+        unreachable!("no review is requested")
+    }
+    fn integrated(&self, _: &Path, _: u64, _: &str, _: &str) -> Result<bool, String> {
+        Ok(false)
+    }
+}
+
+#[test]
+fn a_closed_pr_blocks_the_item_instead_of_following_on_fail() {
+    for watcher in ["pr_checks", "pr_integrated"] {
+        let steps = format!(
+            "steps:
+  - id: implement
+    agent: {{}}
+  - id: human
+    wait: {{ event: {{ watcher: {watcher} }} }}
+    on_fail: {{ goto: implement, max: 2 }}
+"
+        );
+        let mut harness = Harness::routine(&steps, FakeSessions::default());
+        harness.executor = harness
+            .executor
+            .clone()
+            .with_watchers(registry(Arc::new(ClosedPullRequest)));
+
+        let run = harness.run();
+        wait_until(|| {
+            harness.executor.wake_ready();
+            item(&harness.state(&run.id), "routine").status == ItemStatus::Blocked
+        });
+
+        let item = &harness.state(&run.id).items[0];
+        assert_eq!(attempts(item), ["implement#1:Succeeded", "human#1:Failed"]);
+        assert_eq!(item.cause.as_deref(), Some("pr_closed"), "{watcher}");
+        let summary = &item.steps[1].result.as_ref().unwrap()["summary"];
+        assert!(summary
+            .as_str()
+            .unwrap()
+            .starts_with("The PR https://github.com/o/r/pull/7 was"));
+    }
+}

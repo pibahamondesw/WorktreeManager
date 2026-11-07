@@ -106,6 +106,7 @@ fn ended(outcome: StepOutcome, cause: Option<&str>, output: Option<Value>) -> Op
         outcome,
         cause: cause.map(String::from),
         output,
+        verdict: None,
     })
 }
 
@@ -190,6 +191,17 @@ fn event_waits_follow_their_watcher() {
             Some(failed.clone())
         )),
         ended(StepOutcome::Failure, Some("ci_failed"), Some(failed))
+    );
+    let closed = json!({ "verdict": "pr_closed" });
+    assert_eq!(
+        decide(WatchVerdict::Blocked(
+            "pr_closed".into(),
+            Some(closed.clone())
+        )),
+        Some(Ended {
+            verdict: Some(Verdict::Blocked),
+            ..ended(StepOutcome::Failure, Some("pr_closed"), Some(closed)).unwrap()
+        })
     );
     assert_eq!(
         resolved(&event, &log, 0),

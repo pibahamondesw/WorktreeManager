@@ -1630,7 +1630,14 @@ fn effect(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Opt
         .unwrap_or(&no_params);
     let mut fields = Fields::of(report, params, &params_field)?;
     let effect = match name {
-        "git.push" => effect_repo(report, scope, &mut fields).map(|repo| Effect::GitPush { repo }),
+        "git.push" => {
+            let repo = effect_repo(report, scope, &mut fields);
+            let force_with_lease = fields.or(report, "force_with_lease", false, boolean);
+            Some(Effect::GitPush {
+                repo: repo?,
+                force_with_lease: force_with_lease?,
+            })
+        }
         "github.pr_create" => {
             pull_request_effect(report, scope, &mut fields, true).map(Effect::PrCreate)
         }
@@ -1760,25 +1767,26 @@ fn check_effects(
         };
         let field = format!("{}.publish", index("steps", position));
         for effect in effects {
-            let verb = effect.verb();
-            let name = verb.name();
-            if authorization.deny.contains(&verb) {
-                report.error(
-                    IssueKind::Invalid,
-                    &field,
-                    format!(
-                        "{} needs {name}, which authorization.deny lists",
-                        effect.name()
-                    ),
-                );
-            } else if !authorization.allow.contains(&verb) {
-                report.error(
-                    IssueKind::Invalid,
-                    &field,
-                    format!("{} needs {name} in authorization.allow", effect.name()),
-                );
+            for verb in effect.verbs() {
+                let name = verb.name();
+                if authorization.deny.contains(&verb) {
+                    report.error(
+                        IssueKind::Invalid,
+                        &field,
+                        format!(
+                            "{} needs {name}, which authorization.deny lists",
+                            effect.name()
+                        ),
+                    );
+                } else if !authorization.allow.contains(&verb) {
+                    report.error(
+                        IssueKind::Invalid,
+                        &field,
+                        format!("{} needs {name} in authorization.allow", effect.name()),
+                    );
+                }
             }
-            if verb == Verb::LinearWrite && !tracked {
+            if effect.verb() == Verb::LinearWrite && !tracked {
                 report.error(
                     IssueKind::Missing,
                     &field,
