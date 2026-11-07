@@ -130,7 +130,7 @@ fn thread(resolved: bool) -> Value {
 fn open_pr(head: &str, contexts: Vec<Value>) -> Value {
     json!({
         "url": PR_URL, "number": 7, "state": "OPEN", "mergedAt": null, "headRefOid": head,
-        "baseRefName": "main",
+        "baseRefName": "main", "mergeable": "MERGEABLE",
         "commits": { "nodes": [{ "commit": { "committedDate": "2026-11-05T12:00:00Z",
             "statusCheckRollup": { "contexts": { "nodes": contexts } } } }] },
         "reviews": { "nodes": [] },
@@ -570,7 +570,7 @@ fn a_new_head_invalidates_what_was_watched_and_gets_its_own_budget() {
 }
 
 #[test]
-fn a_closed_pr_fails_the_checks() {
+fn a_closed_pr_blocks_the_checks_for_its_owner() {
     let mut pr = open_pr(HEAD, vec![passed("tests")]);
     pr["state"] = json!("MERGED");
     let forge = FakeForge::answering(pr);
@@ -578,10 +578,61 @@ fn a_closed_pr_fails_the_checks() {
 
     assert_eq!(
         Waiting::published().checks(&watchers, json!({}), NOW),
-        WatchVerdict::Failed(
+        WatchVerdict::Blocked(
             "pr_closed".into(),
-            Some(json!({ "verdict": "pr_closed", "pr": PR_URL, "head": HEAD, "state": "merged" }))
+            Some(
+                json!({ "verdict": "pr_closed", "pr": PR_URL, "head": HEAD, "state": "merged",
+                "summary": format!("The PR {PR_URL} was merged before its checks passed") })
+            )
         )
+    );
+}
+
+/// `pr` as GitHub answers once it computed, or not yet, whether it merges into its base.
+fn mergeable(pr: Value, mergeable: &str) -> Value {
+    let mut pr = pr;
+    pr["mergeable"] = json!(mergeable);
+    pr
+}
+
+fn conflicting() -> WatchVerdict {
+    WatchVerdict::Failed(
+        "conflict".into(),
+        Some(json!({ "verdict": "conflict", "pr": PR_URL, "head": HEAD,
+            "conflict": "The PR conflicts with main: rebase it onto origin/main and resolve the conflicts" })),
+    )
+}
+
+#[test]
+fn a_pr_that_conflicts_with_its_base_fails_the_checks_whatever_they_say() {
+    let running = vec![check_run("tests", "IN_PROGRESS", None)];
+    let forge = FakeForge::answering(mergeable(open_pr(HEAD, running), "CONFLICTING"));
+    let watchers = inline_registry(&forge);
+
+    assert_eq!(
+        Waiting::published().checks(&watchers, json!({ "required": ["tests"] }), NOW),
+        conflicting()
+    );
+}
+
+#[test]
+fn checks_are_green_only_once_github_knows_the_pr_merges() {
+    let forge = FakeForge::answering(mergeable(open_pr(HEAD, vec![passed("tests")]), "UNKNOWN"));
+    let watchers = inline_registry(&forge);
+    let waiting = Waiting::published();
+
+    assert_eq!(
+        waiting.checks(&watchers, json!({}), NOW),
+        WatchVerdict::Pending
+    );
+    assert_eq!(
+        waiting.checks(&watchers, json!({}), COMMITTED_MS + HOUR_MS),
+        expired(json!(["mergeable"]))
+    );
+    forge.set(open_pr(HEAD, vec![passed("tests")]));
+    assert_eq!(
+        waiting.checks(&watchers, json!({}), COMMITTED_MS + 2 * HOUR_MS),
+        green()
     );
 }
 

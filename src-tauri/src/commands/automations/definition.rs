@@ -305,7 +305,12 @@ pub enum ApprovalDefault {
 #[serde(tag = "effect")]
 pub enum Effect {
     #[serde(rename = "git.push")]
-    GitPush { repo: String },
+    GitPush {
+        repo: String,
+        /// Forces over a commit the item pushed, with `--force-with-lease`; never a bare force.
+        #[serde(rename = "forceWithLease")]
+        force_with_lease: bool,
+    },
     #[serde(rename = "github.pr_create")]
     PrCreate(PullRequestEffect),
     #[serde(rename = "github.pr_update")]
@@ -353,6 +358,17 @@ impl Effect {
             Self::TaskCreate => Verb::TaskCreate,
             Self::TaskLog { .. } => Verb::TaskLog,
             Self::TaskDeleteClean => Verb::TaskDelete,
+        }
+    }
+
+    /// Every verb the effect needs allowed: its own, and `force_push` for a forced push.
+    pub fn verbs(&self) -> Vec<Verb> {
+        match self {
+            Self::GitPush {
+                force_with_lease: true,
+                ..
+            } => vec![Verb::Push, Verb::ForcePush],
+            _ => vec![self.verb()],
         }
     }
 }
@@ -450,6 +466,7 @@ pub struct Budgets {
 pub enum Verb {
     Commit,
     Push,
+    ForcePush,
     PrCreate,
     PrUpdate,
     PrComment,
@@ -462,9 +479,10 @@ pub enum Verb {
 }
 
 impl Verb {
-    pub const ALL: [Verb; 11] = [
+    pub const ALL: [Verb; 12] = [
         Self::Commit,
         Self::Push,
+        Self::ForcePush,
         Self::PrCreate,
         Self::PrUpdate,
         Self::PrComment,
@@ -481,6 +499,7 @@ impl Verb {
         match self {
             Self::Commit => "commit",
             Self::Push => "push",
+            Self::ForcePush => "force_push",
             Self::PrCreate => "pr_create",
             Self::PrUpdate => "pr_update",
             Self::PrComment => "pr_comment",

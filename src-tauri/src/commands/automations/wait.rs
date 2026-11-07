@@ -18,7 +18,7 @@ use super::definition::{
 };
 use super::routine::ResolvedTask;
 use super::scheduler::{is_active, Executor};
-use super::store::events::{ArmedWait, LoggedEvent, RunEvent, StepOutcome, StepStatus};
+use super::store::events::{ArmedWait, LoggedEvent, RunEvent, StepOutcome, StepStatus, Verdict};
 use super::store::{Actor, RunStore};
 
 const TIMEOUT: &str = "timeout";
@@ -32,6 +32,8 @@ pub enum WatchVerdict {
     Succeeded(Option<Value>),
     /// Fails the attempt with this cause and result, which the steps that follow see.
     Failed(String, Option<Value>),
+    /// Fails the attempt and blocks the item for its owner, whatever `on_fail` says.
+    Blocked(String, Option<Value>),
 }
 
 /// The attempt a watcher is asked about.
@@ -127,6 +129,8 @@ pub struct Ended {
     pub cause: Option<String>,
     /// Recorded as the attempt's result, for the steps that follow.
     pub output: Option<Value>,
+    /// `blocked` rests the item instead of following `on_fail`.
+    pub verdict: Option<Verdict>,
 }
 
 impl Ended {
@@ -135,6 +139,7 @@ impl Ended {
             outcome: StepOutcome::Success,
             cause: None,
             output,
+            verdict: None,
         })
     }
 
@@ -143,6 +148,7 @@ impl Ended {
             outcome: StepOutcome::Failure,
             cause: Some(cause.into()),
             output: None,
+            verdict: None,
         })
     }
 
@@ -229,6 +235,13 @@ pub fn resolve(
                     outcome: StepOutcome::Failure,
                     cause: Some(cause),
                     output,
+                    verdict: None,
+                }),
+                WatchVerdict::Blocked(cause, output) => Some(Ended {
+                    outcome: StepOutcome::Failure,
+                    cause: Some(cause),
+                    output,
+                    verdict: Some(Verdict::Blocked),
                 }),
             }
         }
@@ -254,6 +267,7 @@ fn answered(payload: &Value) -> Option<Ended> {
             outcome: StepOutcome::Reject,
             cause: Some(REJECTED.into()),
             output: Some(payload.clone()),
+            verdict: None,
         }),
         Err(error) => Ended::failure(error),
     }
@@ -269,6 +283,7 @@ fn by_default(approval: &ApprovalStep) -> Option<Ended> {
         outcome,
         cause: Some(TIMEOUT.into()),
         output: Some(json!({ "decision": decision, "default": true })),
+        verdict: None,
     })
 }
 

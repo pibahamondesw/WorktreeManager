@@ -1779,7 +1779,7 @@ mod commands {
 }
 
 const ALL_VERBS: &str = "authorization:
-  allow: [push, pr_create, pr_update, pr_comment, pr_ready, linear_write, task_create, task_log, task_delete]
+  allow: [push, force_push, pr_create, pr_update, pr_comment, pr_ready, linear_write, task_create, task_log, task_delete]
 tracker: { linear: { team: DX } }
 ";
 
@@ -1790,6 +1790,7 @@ fn publish_steps_list_effects_with_their_params() {
   - id: ship
     publish:
       - git.push
+      - git.push: {{ force_with_lease: true }}
       - github.pr_create: {{ draft: false, lang: pt-BR, title: \"[{{tracker.issue}}] Lint\", body_template: templates/pr.md, assignee: octocat }}
       - github.pr_update: {{ draft: true }}
       - github.pr_comment: {{ body: fin review }}
@@ -1815,7 +1816,8 @@ fn publish_steps_list_effects_with_their_params() {
     assert_eq!(
         kind(step),
         json!({ "publish": [
-            { "effect": "git.push", "repo": "r1" },
+            { "effect": "git.push", "repo": "r1", "forceWithLease": false },
+            { "effect": "git.push", "repo": "r1", "forceWithLease": true },
             { "effect": "github.pr_create", "repo": "r1", "title": "[{tracker.issue}] Lint",
               "bodyTemplate": "templates/pr.md", "lang": "pt-BR", "draft": false, "assignee": "octocat" },
             { "effect": "github.pr_update", "repo": "r1", "title": null, "bodyTemplate": null,
@@ -1833,7 +1835,7 @@ fn publish_steps_list_effects_with_their_params() {
     );
     assert_issue(
         &frontmatter,
-        "steps[0].publish[1].github.pr_create.body_template",
+        "steps[0].publish[2].github.pr_create.body_template",
         IssueKind::Invalid,
     );
 }
@@ -1864,6 +1866,73 @@ steps:
                 "wtm.task_create needs task_create in authorization.allow"
             ),
         ]
+    );
+}
+
+#[test]
+fn forced_pushes_need_force_push_allowed_and_not_denied() {
+    let forced = |authorization: &str| {
+        routine(&format!(
+            "authorization: {authorization}
+steps:
+  - id: ship
+    publish: {{ git.push: {{ force_with_lease: true }} }}
+"
+        ))
+    };
+    assert_eq!(
+        message(&forced("{ allow: [push] }"), "steps[0].publish"),
+        "git.push needs force_push in authorization.allow"
+    );
+    assert_eq!(
+        message(
+            &forced("{ allow: [push, force_push], deny: [force_push] }"),
+            "steps[0].publish"
+        ),
+        "git.push needs force_push, which authorization.deny lists"
+    );
+    valid(&forced("{ allow: [push, force_push] }"));
+    assert_issue(
+        &routine(
+            "authorization: { allow: [push] }
+steps:
+  - id: ship
+    publish: { git.push: { force_with_lease: yes please } }
+",
+        ),
+        "steps[0].publish.git.push.force_with_lease",
+        IssueKind::Invalid,
+    );
+}
+
+#[test]
+fn a_waiting_pr_routes_its_failures_through_on_fail() {
+    let definition = valid(&routine(
+        "steps:
+  - id: repair
+    wait: { signal: rebased }
+  - id: human
+    on_fail: { goto: repair, max: repair_rounds }
+    wait: { event: { watcher: pr_integrated } }
+",
+    ));
+    assert_eq!(
+        definition.steps[1].on_fail,
+        Transition::Goto {
+            step: "repair".into(),
+            max: Some(GotoLimit::Budget("repair_rounds".into())),
+        }
+    );
+    assert_issue(
+        &routine(
+            "steps:
+  - id: human
+    on_fail: { goto: rebase, max: 2 }
+    wait: { event: { watcher: pr_integrated } }
+",
+        ),
+        "steps[0].on_fail.goto",
+        IssueKind::Invalid,
     );
 }
 

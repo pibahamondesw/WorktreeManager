@@ -64,11 +64,13 @@ pub trait Forge: Send + Sync {
     fn head(&self, worktree: &Path) -> Result<String, String>;
     /// The commit `branch` points at on `origin`, `None` when it does not exist there.
     fn remote_head(&self, worktree: &Path, branch: &str) -> Result<Option<String>, String>;
-    /// Pushes HEAD to `branch` on `origin`, hooks included, with `env` added to theirs.
+    /// Pushes HEAD to `branch` on `origin`, hooks included, with `env` added to theirs. With
+    /// `lease`, forces it as long as `origin` still has `branch` at that commit.
     fn push(
         &self,
         worktree: &Path,
         branch: &str,
+        lease: Option<&str>,
         env: &[(String, String)],
         timeout: Duration,
     ) -> Result<(), String>;
@@ -119,6 +121,8 @@ pub struct PublishScope<'a> {
     pub stale_receipts: &'a dyn Fn(&str) -> Result<Vec<String>, String>,
     /// The environment of the leases held for the attempt, which pushes and their hooks see.
     pub lease_env: &'a [(String, String)],
+    /// The commits the item's `git.push` effects recorded in the run log so far.
+    pub pushed: &'a [String],
 }
 
 enum Stop {
@@ -227,9 +231,12 @@ impl Publisher {
     }
 
     fn effect(&mut self, request: &StepRequest, effect: &Effect, scope: &PublishScope) -> Outcome {
-        let verb = effect.verb();
         let authorization = scope.authorization;
-        if authorization.deny.contains(&verb) || !authorization.allow.contains(&verb) {
+        let denied = effect
+            .verbs()
+            .into_iter()
+            .find(|verb| authorization.deny.contains(verb) || !authorization.allow.contains(verb));
+        if let Some(verb) = denied {
             let cause = format!("unauthorized:{}", verb.name());
             return Outcome::of(
                 EffectStatus::Denied,
@@ -237,6 +244,7 @@ impl Publisher {
             )
             .stopping(Stop::Block(cause));
         }
+        let verb = effect.verb();
         let cap = authorization
             .caps
             .get(&verb)
@@ -280,9 +288,17 @@ impl Publisher {
                 .transpose()
         };
         Ok(match effect {
-            Effect::GitPush { repo } => {
+            Effect::GitPush {
+                repo,
+                force_with_lease,
+            } => {
                 let repo = scope.repo_names.get(repo).unwrap_or(repo);
-                format!("Push {branch} of {repo} to origin")
+                let lease = if *force_with_lease {
+                    ", forcing with a lease over a commit the item pushed"
+                } else {
+                    ""
+                };
+                format!("Push {branch} of {repo} to origin{lease}")
             }
             Effect::PrCreate(pr) => format!(
                 "Open a {} PR for {branch}: {}",
@@ -345,12 +361,15 @@ impl Publisher {
         scope: &PublishScope,
     ) -> Result<Outcome, String> {
         match effect {
-            Effect::GitPush { repo } => {
+            Effect::GitPush {
+                repo,
+                force_with_lease,
+            } => {
                 let timeout = request
                     .step
                     .timeout_secs
                     .map_or(PUSH_TIMEOUT, Duration::from_secs);
-                self.push(scope, repo, timeout)
+                self.push(scope, repo, *force_with_lease, timeout)
             }
             Effect::PrCreate(pr) => self.create_pull_request(scope, pr),
             Effect::PrUpdate(pr) => self.update_pull_request(scope, pr),
@@ -377,7 +396,13 @@ impl Publisher {
         render(template, &variables)
     }
 
-    fn push(&self, scope: &PublishScope, repo: &str, timeout: Duration) -> Result<Outcome, String> {
+    fn push(
+        &self,
+        scope: &PublishScope,
+        repo: &str,
+        force_with_lease: bool,
+        timeout: Duration,
+    ) -> Result<Outcome, String> {
         let stale = (scope.stale_receipts)(repo)?;
         if let Some(step) = stale.first() {
             return Ok(Outcome::of(
@@ -392,16 +417,29 @@ impl Publisher {
         let worktree = worktree(scope, repo)?;
         let branch = &scope.task.branch;
         let head = self.forge.head(&worktree)?;
-        if self.forge.remote_head(&worktree, branch)?.as_deref() == Some(head.as_str()) {
+        let remote = self.forge.remote_head(&worktree, branch)?;
+        if remote.as_deref() == Some(head.as_str()) {
             return Ok(Outcome::of(
                 EffectStatus::Reconciled,
                 format!("origin/{branch} is at HEAD"),
             )
             .referencing(head));
         }
-        self.forge
-            .push(&worktree, branch, scope.lease_env, timeout)?;
-        Ok(Outcome::of(EffectStatus::Executed, format!("Pushed {branch}")).referencing(head))
+        let lease = remote
+            .filter(|_| force_with_lease)
+            .filter(|remote| scope.pushed.contains(remote));
+        self.forge.push(
+            &worktree,
+            branch,
+            lease.as_deref(),
+            scope.lease_env,
+            timeout,
+        )?;
+        let detail = match &lease {
+            Some(lease) => format!("Pushed {branch} with a lease on {lease}"),
+            None => format!("Pushed {branch}"),
+        };
+        Ok(Outcome::of(EffectStatus::Executed, detail).referencing(head))
     }
 
     fn open_pull_request(
@@ -853,5 +891,25 @@ fn warnings(response: &Value) -> Vec<String> {
     let warnings = response["warnings"].as_array().into_iter().flatten();
     warnings
         .filter_map(|warning| warning["message"].as_str().map(String::from))
+        .collect()
+}
+
+/// The commits `item`'s `git.push` effects pushed or found on `origin`, oldest first.
+pub fn pushed_commits<'a>(
+    events: impl IntoIterator<Item = &'a RunEvent>,
+    item: &str,
+) -> Vec<String> {
+    events
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::EffectRecorded {
+                item: recorded,
+                effect,
+                status: EffectStatus::Executed | EffectStatus::Reconciled,
+                reference,
+                ..
+            } if recorded == item && effect == "git.push" => reference.clone(),
+            _ => None,
+        })
         .collect()
 }

@@ -415,6 +415,52 @@ fn repairing_until_the_budget_runs_out_blocks_the_item_with_the_cause() {
 }
 
 #[test]
+fn a_pr_that_conflicts_while_awaiting_review_goes_back_to_repair() {
+    let mut harness = Harness::new(vec![
+        agent("repair", None),
+        on_fail(wait("human"), repair_goto("repair")),
+    ])
+    .script("human", vec![failed("conflict")]);
+
+    assert_eq!(harness.drive(), ItemStatus::Completed);
+
+    assert_eq!(
+        harness.attempts(),
+        [
+            "repair#1:succeeded",
+            "human#1:failed",
+            "repair#2:succeeded",
+            "human#2:succeeded",
+        ]
+    );
+    assert_eq!(
+        harness.item().counters,
+        BTreeMap::from([(REPAIR_ROUNDS.into(), 1)])
+    );
+}
+
+#[test]
+fn a_pr_closed_while_awaiting_review_blocks_the_item_despite_on_fail() {
+    let mut harness = Harness::new(vec![
+        agent("repair", None),
+        on_fail(wait("human"), repair_goto("repair")),
+    ])
+    .script(
+        "human",
+        vec![verdict(
+            Verdict::Blocked,
+            StepOutcome::Failure,
+            Some("pr_closed"),
+        )],
+    );
+
+    assert_eq!(harness.drive(), ItemStatus::Blocked);
+
+    assert_eq!(harness.attempts(), ["repair#1:succeeded", "human#1:failed"]);
+    assert_eq!(harness.item().cause.as_deref(), Some("pr_closed"));
+}
+
+#[test]
 fn a_counted_goto_blocks_with_the_retries_of_its_step() {
     let mut harness = Harness::new(vec![on_fail(
         command("verify"),

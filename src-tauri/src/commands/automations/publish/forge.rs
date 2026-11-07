@@ -101,11 +101,15 @@ impl Forge for CliForge {
         &self,
         worktree: &Path,
         branch: &str,
+        lease: Option<&str>,
         env: &[(String, String)],
         timeout: Duration,
     ) -> Result<(), String> {
         let refspec = format!("HEAD:refs/heads/{branch}");
-        let args = ["push", "--set-upstream", "origin", refspec.as_str()];
+        let lease = lease.map(|commit| format!("--force-with-lease=refs/heads/{branch}:{commit}"));
+        let mut args = vec!["push", "--set-upstream"];
+        args.extend(lease.as_deref());
+        args.extend(["origin", refspec.as_str()]);
         let spec = self
             .login("git", &args, worktree)
             .envs(env.iter().cloned())

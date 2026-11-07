@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::{epoch_ms, pushed_head, staged, Github, Polls, Spawn, Target, WatchParams, PR_CHECKS};
+use super::{
+    closed, conflict, epoch_ms, pushed_head, staged, Github, Mergeability, Polls, Spawn, Target,
+    WatchParams, PR_CHECKS,
+};
 use crate::commands::automations::wait::{Watch, WatchVerdict, Watcher};
 
 /// The longest review or thread text kept as evidence.
@@ -16,7 +19,7 @@ const MAX_EVIDENCE_TEXT: usize = 2_000;
 const QUERY: &str = "query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      url state headRefOid
+      url state headRefOid baseRefName mergeable
       commits(last: 1) { nodes { commit { committedDate statusCheckRollup { contexts(first: 100) { nodes {
         __typename
         ... on CheckRun { name status conclusion detailsUrl checkSuite { app { databaseId } } }
@@ -163,6 +166,8 @@ pub(super) struct PullRequest {
     url: String,
     state: String,
     head_ref_oid: String,
+    base_ref_name: String,
+    mergeable: Mergeability,
     commits: Nodes<CommitNode>,
     reviews: Nodes<Review>,
     review_threads: Nodes<Thread>,
@@ -437,13 +442,19 @@ impl PullRequest {
         })
     }
 
-    /// `ci_green`, `ci_failed` or `review_findings`, or what is still awaited.
+    /// `ci_green`, `ci_failed`, `review_findings` or `conflict`, or what is still awaited.
     fn verdict(&self, params: &WatchParams, evidence: Value) -> Result<WatchVerdict, Vec<String>> {
         let mut evidence = evidence;
         if self.state != "OPEN" {
-            evidence["verdict"] = json!("pr_closed");
-            evidence["state"] = json!(self.state.to_lowercase());
-            return Ok(WatchVerdict::Failed("pr_closed".into(), Some(evidence)));
+            let state = self.state.to_lowercase();
+            evidence["state"] = json!(state);
+            return Ok(closed(
+                evidence,
+                &format!("{state} before its checks passed"),
+            ));
+        }
+        if self.mergeable == Mergeability::Conflicting {
+            return Ok(conflict(evidence, &self.base_ref_name));
         }
         let checks: Vec<Check> = self
             .checks()
@@ -538,6 +549,9 @@ impl PullRequest {
                 "review_findings".into(),
                 Some(evidence),
             ));
+        }
+        if self.mergeable == Mergeability::Unknown {
+            return Err(vec!["mergeable".into()]);
         }
         evidence["verdict"] = json!("ci_green");
         Ok(WatchVerdict::Succeeded(Some(evidence)))

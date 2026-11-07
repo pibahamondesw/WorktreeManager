@@ -164,7 +164,7 @@ impl ItemSteps<'_> {
             process_end,
             exit_code: None,
             outcome: ended.outcome,
-            verdict: None,
+            verdict: ended.verdict,
             cause: ended.cause,
             head: None,
         })

@@ -87,6 +87,7 @@ impl Forge for FakeForge {
         &self,
         worktree: &Path,
         branch: &str,
+        lease: Option<&str>,
         env: &[(String, String)],
         timeout: Duration,
     ) -> Result<(), String> {
@@ -94,8 +95,9 @@ impl Forge for FakeForge {
             .iter()
             .map(|(key, value)| format!(" {key}={value}"))
             .collect();
+        let lease = lease.map_or(String::new(), |lease| format!(" lease={lease}"));
         self.call(format!(
-            "push {} {branch} {}{env}",
+            "push {} {branch} {}{lease}{env}",
             worktree.display(),
             timeout.as_secs()
         ));
@@ -253,6 +255,7 @@ struct Run {
     stale: Vec<String>,
     bases: BTreeMap<String, String>,
     lease_env: Vec<(String, String)>,
+    pushed: Vec<String>,
 }
 
 impl Run {
@@ -266,6 +269,7 @@ impl Run {
             stale: Vec::new(),
             bases: BTreeMap::new(),
             lease_env: Vec::new(),
+            pushed: Vec::new(),
         }
     }
 
@@ -312,6 +316,7 @@ impl Run {
             variables: &variables,
             stale_receipts: &stale_receipts,
             lease_env: &self.lease_env,
+            pushed: &self.pushed,
         };
         let report = publisher.publish(&request, &effects, &scope);
         let mut events = vec![
@@ -355,7 +360,10 @@ fn statuses(effects: &[StepEffect]) -> Vec<EffectStatus> {
 }
 
 fn push() -> Effect {
-    Effect::GitPush { repo: "r1".into() }
+    Effect::GitPush {
+        repo: "r1".into(),
+        force_with_lease: false,
+    }
 }
 
 #[test]
@@ -422,6 +430,7 @@ fn test_runs_stage_every_effect_without_running_any() {
     update.draft = Some(false);
     let effects = vec![
         push(),
+        forced_push(),
         Effect::PrCreate(pr_effect(None)),
         Effect::PrCreate(PullRequestEffect {
             draft: Some(false),
@@ -458,6 +467,7 @@ fn test_runs_stage_every_effect_without_running_any() {
         details,
         [
             "Push wtm/demo/1 of api to origin",
+            "Push wtm/demo/1 of api to origin, forcing with a lease over a commit the item pushed",
             "Open a draft PR for wtm/demo/1: the last commit's subject",
             "Open a ready PR for wtm/demo/1: Ready <PR URL>",
             "Update the PR for wtm/demo/1: title [<issue id>] Lint, body from templates/pr.md, draft false",
@@ -526,9 +536,63 @@ fn pushes_reconcile_with_the_remote_and_never_run_on_stale_receipts() {
 
     let broken = Effect::GitPush {
         repo: "broken".into(),
+        force_with_lease: false,
     };
     let (report, _) = run.publish(&mut publisher(&forge, &bridge), 3, vec![broken]);
     assert_eq!(report.cause.as_deref(), Some("receipts unreadable"));
+}
+
+fn forced_push() -> Effect {
+    Effect::GitPush {
+        repo: "r1".into(),
+        force_with_lease: true,
+    }
+}
+
+#[test]
+fn forced_pushes_lease_only_over_a_commit_the_item_pushed() {
+    let bridge = Arc::new(silent());
+    let mut run = Run::allowing(&[Verb::Push, Verb::ForcePush]);
+    let forge = Arc::new(FakeForge {
+        remote_head: Some("old".into()),
+        ..FakeForge::at("abc")
+    });
+    let worktree = run.worktree.0.display().to_string();
+    let last_push = || forge.calls().last().unwrap().clone();
+
+    let (report, effects) = run.publish(&mut publisher(&forge, &bridge), 1, vec![forced_push()]);
+    assert_eq!(report.outcome, StepOutcome::Success);
+    assert_eq!(last_push(), format!("push {worktree} wtm/demo/1 90"));
+    assert_eq!(effects[0].detail.as_deref(), Some("Pushed wtm/demo/1"));
+
+    run.pushed = vec!["first".into(), "old".into()];
+    let (_, effects) = run.publish(&mut publisher(&forge, &bridge), 2, vec![forced_push()]);
+    assert_eq!(
+        last_push(),
+        format!("push {worktree} wtm/demo/1 90 lease=old")
+    );
+    assert_eq!(
+        effects[0].detail.as_deref(),
+        Some("Pushed wtm/demo/1 with a lease on old")
+    );
+
+    run.publish(&mut publisher(&forge, &bridge), 3, vec![push()]);
+    assert_eq!(last_push(), format!("push {worktree} wtm/demo/1 90"));
+}
+
+#[test]
+fn forced_pushes_need_force_push_allowed() {
+    let bridge = Arc::new(silent());
+    let mut run = Run::allowing(&[Verb::Push, Verb::ForcePush]);
+    run.authorization.deny = vec![Verb::ForcePush];
+    let forge = Arc::new(FakeForge::at("abc"));
+
+    let (report, effects) = run.publish(&mut publisher(&forge, &bridge), 1, vec![forced_push()]);
+
+    assert_eq!(report.verdict, Some(Verdict::Blocked));
+    assert_eq!(report.cause.as_deref(), Some("unauthorized:force_push"));
+    assert_eq!(statuses(&effects), [EffectStatus::Denied]);
+    assert!(forge.calls().is_empty());
 }
 
 #[test]
@@ -1215,14 +1279,14 @@ fn cli_forge_reads_and_pushes_the_worktree_with_its_hooks() {
     );
 
     let rejected = forge
-        .push(&clone.0, "wtm/x", &[], Duration::from_secs(60))
+        .push(&clone.0, "wtm/x", None, &[], Duration::from_secs(60))
         .unwrap_err();
     assert!(rejected.contains("hook ran"), "{rejected}");
 
     hook(&clone.0, &format!("#!/bin/sh\n{record_env}\n"));
     let lease_env = [("TEST_ENV_NUMBER".to_string(), "13".to_string())];
     forge
-        .push(&clone.0, "wtm/x", &lease_env, Duration::from_secs(60))
+        .push(&clone.0, "wtm/x", None, &lease_env, Duration::from_secs(60))
         .unwrap();
     assert_eq!(
         fs::read_to_string(clone.0.join(".git/hook-env")).unwrap(),
@@ -1240,13 +1304,45 @@ fn cli_forge_reads_and_pushes_the_worktree_with_its_hooks() {
 }
 
 #[test]
+fn cli_forge_forces_a_rewritten_branch_only_while_origin_holds_the_lease() {
+    let (remote, clone) = clone_with_remote();
+    let forge = CliForge::with("gh", isolated_git());
+    let timeout = Duration::from_secs(60);
+    forge.push(&clone.0, "wtm/x", None, &[], timeout).unwrap();
+    let pushed = forge.head(&clone.0).unwrap();
+    git(
+        &clone.0,
+        &["commit", "-q", "--allow-empty", "-m", "Someone else's"],
+    );
+    git(&clone.0, &["push", "-q", "origin", "HEAD:refs/heads/wtm/x"]);
+    let theirs = forge.head(&clone.0).unwrap();
+    git(&clone.0, &["reset", "-q", "--hard", &pushed]);
+    git(
+        &clone.0,
+        &["commit", "-q", "--amend", "-m", "Rebased change"],
+    );
+    let rebased = forge.head(&clone.0).unwrap();
+
+    let unforced = forge.push(&clone.0, "wtm/x", None, &[], timeout);
+    assert!(unforced.unwrap_err().contains("rejected"));
+    let stale = forge.push(&clone.0, "wtm/x", Some(&pushed), &[], timeout);
+    assert!(stale.unwrap_err().contains("stale info"));
+    assert_eq!(git(&remote.0, &["rev-parse", "wtm/x"]), theirs);
+
+    forge
+        .push(&clone.0, "wtm/x", Some(&theirs), &[], timeout)
+        .unwrap();
+    assert_eq!(git(&remote.0, &["rev-parse", "wtm/x"]), rebased);
+}
+
+#[test]
 fn cli_forge_stops_a_push_whose_hooks_outlast_the_timeout() {
     let (_remote, clone) = clone_with_remote();
     hook(&clone.0, "#!/bin/sh\nsleep 30\n");
     let forge = CliForge::with("gh", isolated_git());
 
     let error = forge
-        .push(&clone.0, "wtm/x", &[], Duration::from_millis(1500))
+        .push(&clone.0, "wtm/x", None, &[], Duration::from_millis(1500))
         .unwrap_err();
 
     assert!(error.starts_with("git push timed out"), "{error}");
