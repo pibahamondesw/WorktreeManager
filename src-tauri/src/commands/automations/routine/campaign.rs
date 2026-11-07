@@ -338,7 +338,7 @@ fn selector_env(target: &Target, request: &RunRequest) -> Vec<(String, String)> 
     env
 }
 
-/// `fintoc-rails` → `FINTOC_RAILS`.
+/// `my-api` → `MY_API`.
 fn env_name(repo: &str) -> String {
     repo.chars()
         .map(|c| match c {
@@ -352,6 +352,6 @@ fn env_name(repo: &str) -> String {
 mod tests {
     #[test]
     fn repository_names_become_env_names() {
-        assert_eq!(super::env_name("fintoc-rails.v2"), "FINTOC_RAILS_V2");
+        assert_eq!(super::env_name("my-api.v2"), "MY_API_V2");
     }
 }

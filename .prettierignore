@@ -3,9 +3,3 @@ dist
 src-tauri/target
 src-tauri/gen
 package-lock.json
-
-# local worktrees and external repos under this folder
-fintoc-rails
-cowry
-wizard-web
-hackathon-ai-caramba

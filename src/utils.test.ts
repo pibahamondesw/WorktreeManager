@@ -80,7 +80,7 @@ describe("timeAgo", () => {
 
 describe("linearIssueUrl", () => {
   it("includes the org slug when known", () => {
-    expect(linearIssueUrl("WOR-84", "fintoc")).toBe("https://linear.app/fintoc/issue/WOR-84");
+    expect(linearIssueUrl("WOR-84", "acme")).toBe("https://linear.app/acme/issue/WOR-84");
   });
 
   it("falls back to the slugless link when the org is unknown", () => {
@@ -478,8 +478,8 @@ describe("persisted input validation", () => {
 });
 
 it("normalizes GitHub SSH and HTTPS remotes and rejects other hosts", () => {
-  expect(githubSlugFromRemote("git@github.com:Fintoc/Rails.git")).toBe("fintoc/rails");
-  expect(githubSlugFromRemote("https://github.com/fintoc/rails")).toBe("fintoc/rails");
-  expect(githubSlugFromRemote("https://github.com/fintoc/fintoc.js")).toBe("fintoc/fintoc.js");
+  expect(githubSlugFromRemote("git@github.com:Acme/Web.git")).toBe("acme/web");
+  expect(githubSlugFromRemote("https://github.com/acme/web")).toBe("acme/web");
+  expect(githubSlugFromRemote("https://github.com/acme/acme.js")).toBe("acme/acme.js");
   expect(githubSlugFromRemote("https://gitlab.com/x/y")).toBeNull();
 });

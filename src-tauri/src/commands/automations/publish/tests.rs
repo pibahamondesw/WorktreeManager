@@ -795,18 +795,18 @@ fn pr_comments_are_posted_once_per_head() {
     let run = Run::all();
     let comment = || Effect::PrComment {
         repo: "r1".into(),
-        body: "fin review".into(),
+        body: "review please".into(),
     };
     let fresh = Arc::new(FakeForge::with_pr(false));
     let (_, effects) = run.publish(&mut publisher(&fresh, &bridge), 1, vec![comment()]);
     assert_eq!(effects[0].status, EffectStatus::Executed);
     assert_eq!(
         fresh.calls()[1],
-        "comment 7 fin review\n\n<!-- wtm:demo:routine:publish:abc -->"
+        "comment 7 review please\n\n<!-- wtm:demo:routine:publish:abc -->"
     );
 
     let commented = Arc::new(FakeForge {
-        commented: vec!["fin review\n\n<!-- wtm:demo:routine:publish:abc -->".into()],
+        commented: vec!["review please\n\n<!-- wtm:demo:routine:publish:abc -->".into()],
         ..FakeForge::with_pr(false)
     });
     let (_, effects) = run.publish(&mut publisher(&commented, &bridge), 2, vec![comment()]);

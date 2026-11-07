@@ -1010,12 +1010,12 @@ fn attempts_clock_the_time_from_their_last_opening_to_their_end() {
 fn overrides_are_typed_state_fields_older_states_do_without() {
     let scratch = Scratch::new();
     let store = scratch.store();
-    let dir = scratch.0.join("automations/rubocop");
+    let dir = scratch.0.join("automations/lint-sweep");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("state.json"), json!({"enabled": true}).to_string()).unwrap();
-    let mut state = store.state("rubocop").unwrap();
+    let mut state = store.state("lint-sweep").unwrap();
     assert_eq!(state.overrides, Overrides::default());
-    let writer = store.writer("rubocop").unwrap();
+    let writer = store.writer("lint-sweep").unwrap();
     writer.save_state(&state).unwrap();
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("state.json")).unwrap()).unwrap();
@@ -1034,7 +1034,7 @@ fn overrides_are_typed_state_fields_older_states_do_without() {
         json!({"mode": "next", "remaining": 1})
     );
     assert!(saved["overrides"].get("batch_size").is_none());
-    assert_eq!(store.state("rubocop").unwrap(), state);
+    assert_eq!(store.state("lint-sweep").unwrap(), state);
 }
 
 #[test]
@@ -1042,7 +1042,7 @@ fn the_board_lists_the_newest_item_of_each_id_with_test_items_apart() {
     let scratch = Scratch::new();
     let app_data = scratch.0.join("app-data");
     let store = RunStore::new(&app_data);
-    let writer = store.writer("rubocop").unwrap();
+    let writer = store.writer("lint-sweep").unwrap();
     let item_created = |item: &str, version: &str| RunEvent::ItemCreated {
         item: item.into(),
         version: version.into(),
@@ -1064,7 +1064,7 @@ fn the_board_lists_the_newest_item_of_each_id_with_test_items_apart() {
     let second = created(writer.claim(trigger("manual:2")).unwrap());
     writer.append(&second, &item_created("a", "2")).unwrap();
     let broken = new_run_id();
-    let broken_dir = app_data.join("automations/rubocop/runs").join(&broken);
+    let broken_dir = app_data.join("automations/lint-sweep/runs").join(&broken);
     fs::create_dir_all(&broken_dir).unwrap();
     fs::write(broken_dir.join("events.jsonl"), "not json\n").unwrap();
     drop(writer);
@@ -1074,7 +1074,7 @@ fn the_board_lists_the_newest_item_of_each_id_with_test_items_apart() {
     let app = mock_builder().build(context).unwrap();
     let items = tauri::async_runtime::block_on(automation_items_list(
         app.handle().clone(),
-        "rubocop".into(),
+        "lint-sweep".into(),
     ))
     .unwrap();
 

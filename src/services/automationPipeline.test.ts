@@ -205,8 +205,8 @@ describe("labels", () => {
       publish: [{ effect: "git.push", repo: "r1" }, { effect: "github.pr_create" }],
     });
     expect(stepSummary(publish)).toBe("git.push · github.pr_create");
-    const titled = { ...attempt("ship", 1, "waiting"), wait: { title: "Ship rubocop?" } };
-    expect(stepSummary(CAMPAIGN[6], titled)).toBe("Ship rubocop?");
+    const titled = { ...attempt("ship", 1, "waiting"), wait: { title: "Ship lint-sweep?" } };
+    expect(stepSummary(CAMPAIGN[6], titled)).toBe("Ship lint-sweep?");
     expect(stepSummary(CAMPAIGN[6], attempt("ship", 1, "waiting"))).toBe("Ship it?");
     expect(onReject(CAMPAIGN[6])).toBe("block");
     expect(onReject(CAMPAIGN[1])).toBeNull();

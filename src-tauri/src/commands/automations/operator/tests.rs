@@ -12,9 +12,8 @@ use crate::commands::automations::definition;
 use crate::commands::automations::scheduler::{Executor, RunRequest};
 use crate::commands::automations::store::events::RunStatus;
 
-const CAMPAIGN: &str = "target: { workspace: Fintoc, repos: [fintoc-rails], task: per-item }\nagent: { id: claude }\nselector: { run: [scripts/select.sh], max_new_items: 3 }\npools: { active: 2, open_prs: 4 }\n";
-const ROUTINE: &str =
-    "target: { workspace: Fintoc, repos: [fintoc-rails] }\nagent: { id: claude }\n";
+const CAMPAIGN: &str = "target: { workspace: Acme, repos: [api], task: per-item }\nagent: { id: claude }\nselector: { run: [scripts/select.sh], max_new_items: 3 }\npools: { active: 2, open_prs: 4 }\n";
+const ROUTINE: &str = "target: { workspace: Acme, repos: [api] }\nagent: { id: claude }\n";
 
 #[derive(Default)]
 struct FakeExecutor(Mutex<Vec<RunRequest>>);
@@ -48,8 +47,8 @@ impl Harness {
                 "automationsDir": dir.join("definitions"),
                 "workspaces": [{
                     "id": "w1",
-                    "name": "Fintoc",
-                    "repos": [{ "id": "r1", "name": "fintoc-rails" }]
+                    "name": "Acme",
+                    "repos": [{ "id": "r1", "name": "api" }]
                 }]
             })
             .to_string(),

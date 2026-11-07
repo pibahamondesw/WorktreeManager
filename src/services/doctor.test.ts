@@ -339,7 +339,7 @@ describe("runDoctor — Linear keys", () => {
   });
 
   it("names the viewer when the single configured key is valid", async () => {
-    const report = await runDoctor(config({ linearKeys: [{ label: "Fintoc", key: "lin_abc" }] }), {
+    const report = await runDoctor(config({ linearKeys: [{ label: "Acme", key: "lin_abc" }] }), {
       probe: () => Promise.resolve(healthyProbe()),
       validateKey: () => Promise.resolve({ valid: true, name: "Ada Lovelace" }),
       online: () => true,
@@ -370,7 +370,7 @@ describe("runDoctor — Linear keys", () => {
     const report = await runDoctor(
       config({
         linearKeys: [
-          { label: "Fintoc", key: "good" },
+          { label: "Acme", key: "good" },
           { label: "Acme", key: "revoked" },
         ],
       }),
@@ -396,7 +396,7 @@ describe("runDoctor — Linear keys", () => {
     const report = await runDoctor(
       config({
         linearKeys: [
-          { label: "Fintoc", key: "good" },
+          { label: "Acme", key: "good" },
           { label: "Acme", key: null },
           { label: "Blank", key: "   " },
         ],
@@ -415,7 +415,7 @@ describe("runDoctor — Linear keys", () => {
 
   it("does not call a revoked key when the machine is offline", async () => {
     const validateKey = vi.fn(() => Promise.resolve({ valid: false, error: "nope" }));
-    const report = await runDoctor(config({ linearKeys: [{ label: "Fintoc", key: "lin_abc" }] }), {
+    const report = await runDoctor(config({ linearKeys: [{ label: "Acme", key: "lin_abc" }] }), {
       probe: () => Promise.resolve(healthyProbe()),
       validateKey,
       online: () => false,
@@ -425,11 +425,11 @@ describe("runDoctor — Linear keys", () => {
     expect(validateKey).not.toHaveBeenCalled();
     expect(linear?.status).toBe("unknown");
     expect(linear?.severity).toBe("warning");
-    expect(linear?.detail).toBe("Could not reach Linear to verify Fintoc");
+    expect(linear?.detail).toBe("Could not reach Linear to verify Acme");
   });
 
   it("does not blame the key for a transport failure", async () => {
-    const report = await runDoctor(config({ linearKeys: [{ label: "Fintoc", key: "lin_abc" }] }), {
+    const report = await runDoctor(config({ linearKeys: [{ label: "Acme", key: "lin_abc" }] }), {
       probe: () => Promise.resolve(healthyProbe()),
       validateKey: () => Promise.resolve({ valid: false, error: "fetch failed: ENOTFOUND" }),
       online: () => true,

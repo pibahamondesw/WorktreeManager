@@ -10,8 +10,7 @@ use tauri::{App, Manager};
 use super::*;
 use crate::commands::agents::{claude, codex, Agents};
 
-const TARGET: &str =
-    "target: { workspace: Fintoc, repos: [fintoc-rails] }\nagent: { id: claude }\n";
+const TARGET: &str = "target: { workspace: Acme, repos: [api] }\nagent: { id: claude }\n";
 
 struct Scratch(PathBuf);
 
@@ -43,8 +42,8 @@ impl Scratch {
                 "automationsDir": self.0.join("definitions"),
                 "workspaces": [{
                     "id": "w1",
-                    "name": "Fintoc",
-                    "repos": [{ "id": "r1", "name": "fintoc-rails" }]
+                    "name": "Acme",
+                    "repos": [{ "id": "r1", "name": "api" }]
                 }]
             })
             .to_string(),
