@@ -200,10 +200,17 @@ async function agentEvent(params: Record<string, unknown>): Promise<AgentEvent> 
 /** Operations only the automation engine in this process may run, never a socket client. */
 const ENGINE_METHODS = ["linear.issue-upsert", "linear.issue-state", "task.log-append"];
 
+/** A rendered template, which may be blank: the upsert skips blank labels and milestones. */
+function renderedText(value: unknown): string {
+  if (typeof value !== "string")
+    throw new OperationError("invalid_params", "A rendered field must be a string.");
+  return value;
+}
+
 function labelList(value: unknown): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new OperationError("invalid_params", "labels must be a list.");
-  return value.map(text);
+  return value.map(renderedText);
 }
 
 function markedIssueInput(params: Record<string, unknown>): MarkedIssueInput {
@@ -214,6 +221,7 @@ function markedIssueInput(params: Record<string, unknown>): MarkedIssueInput {
     project: params.project == null ? null : text(params.project),
     assignee: params.assignee === undefined ? "me" : text(params.assignee),
     labels: labelList(params.labels),
+    milestone: params.milestone == null ? null : renderedText(params.milestone),
   };
 }
 
@@ -328,6 +336,7 @@ export async function dispatchCliBridge(
         "project",
         "assignee",
         "labels",
+        "milestone",
       ],
       "linear.issue-state": ["workspaceId", "marker", "state"],
       "task.log-append": ["id", "entry", "key"],

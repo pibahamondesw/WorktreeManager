@@ -259,6 +259,14 @@ pub(super) fn string_list(report: &mut Report, value: &Value, field: &str) -> Op
     each(report, value, field, string)
 }
 
+pub(super) fn template_list(
+    report: &mut Report,
+    value: &Value,
+    field: &str,
+) -> Option<Vec<String>> {
+    each(report, value, field, template)
+}
+
 pub(super) fn duration_secs(text: &str) -> Option<u64> {
     let factor = match text.chars().last()? {
         's' => 1,

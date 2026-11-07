@@ -226,6 +226,7 @@ fn tracker() -> LinearTracker {
         project: Some("Lint".into()),
         assignee: "me".into(),
         labels: vec!["Code quality".into()],
+        milestone: None,
         title: "Lint: {item.id}".into(),
         marker: "lint:{item.id}".into(),
         states: BTreeMap::from([("review".into(), "In Review".into())]),
@@ -462,7 +463,7 @@ fn test_runs_stage_every_effect_without_running_any() {
             "Update the PR for wtm/demo/1: title [<issue id>] Lint, body from templates/pr.md, draft false",
             "Comment on the PR for wtm/demo/1: See <PR URL>",
             "Mark the PR for wtm/demo/1 ready for review",
-            "Create or update the DX issue marked lint:routine: Lint: routine",
+            "Create or update the DX issue marked lint:routine: Lint: routine (labels Code quality)",
             "Move the issue marked lint:routine to In Review",
             "Create or reuse the task on wtm/demo/1",
             "Append to the task log: Opened <PR URL>",
@@ -818,6 +819,7 @@ fn linear_upsert_merges_the_tracker_and_names_the_issue_for_later_effects() {
             "project": "Lint",
             "assignee": "me",
             "labels": [],
+            "milestone": null,
             "title": "Override routine",
             "marker": "custom:routine",
         })
@@ -827,6 +829,84 @@ fn linear_upsert_merges_the_tracker_and_names_the_issue_for_later_effects() {
         json!({ "workspaceId": "w1", "marker": "custom:routine", "state": "In Review" })
     );
     assert!(forge.calls()[1].contains("title: \"[DX-9] Lint\""));
+}
+
+#[test]
+fn linear_upsert_renders_labels_and_milestone_and_keeps_what_did_not_resolve_as_warnings() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(FakeBridge::answering(|_, _| {
+        ok(json!({
+            "identifier": "DX-9",
+            "created": true,
+            "updated": false,
+            "warnings": ["Linear label lint:routine not found in team DX; skipped it"],
+        }))
+    }));
+    let mut run = Run::all();
+    run.tracker = Some(LinearTracker {
+        labels: vec!["Code quality".into(), "lint:{item.id}".into()],
+        milestone: Some("M {item.id}".into()),
+        ..tracker()
+    });
+
+    let (report, effects) = run.publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![Effect::LinearUpsert(LinearOverrides::default())],
+    );
+
+    assert_eq!(report.outcome, StepOutcome::Success);
+    assert_eq!(statuses(&effects), [EffectStatus::Executed]);
+    assert_eq!(
+        effects[0].warnings,
+        ["Linear label lint:routine not found in team DX; skipped it"]
+    );
+    let params = &bridge.calls()[0].1;
+    assert_eq!(params["labels"], json!(["Code quality", "lint:routine"]));
+    assert_eq!(params["milestone"], "M routine");
+
+    run.staged = true;
+    let overrides = LinearOverrides {
+        labels: Some(Vec::new()),
+        milestone: Some("M2".into()),
+        ..LinearOverrides::default()
+    };
+    let staged_detail = |effect| {
+        let (_, effects) = run.publish(&mut publisher(&forge, &bridge), 1, vec![effect]);
+        effects[0].detail.clone().unwrap()
+    };
+    assert_eq!(
+        staged_detail(Effect::LinearUpsert(LinearOverrides::default())),
+        "Create or update the DX issue marked lint:routine: Lint: routine (labels Code quality, lint:routine; milestone M routine)"
+    );
+    assert_eq!(
+        staged_detail(Effect::LinearUpsert(overrides)),
+        "Create or update the DX issue marked lint:routine: Lint: routine (milestone M2)"
+    );
+    assert_eq!(bridge.calls().len(), 1);
+}
+
+#[test]
+fn a_staged_upsert_without_labels_or_milestone_names_only_the_issue() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(silent());
+    let mut run = Run::all();
+    run.staged = true;
+    let unclassified = LinearOverrides {
+        labels: Some(Vec::new()),
+        ..LinearOverrides::default()
+    };
+
+    let (_, effects) = run.publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![Effect::LinearUpsert(unclassified)],
+    );
+
+    assert_eq!(
+        effects[0].detail.as_deref(),
+        Some("Create or update the DX issue marked lint:routine: Lint: routine")
+    );
 }
 
 #[test]

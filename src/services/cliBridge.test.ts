@@ -430,6 +430,7 @@ describe("engine-only operations", () => {
       branchName: "me/dx-1",
       created: true,
       updated: false,
+      warnings: [],
     });
     const moveIssue = vi
       .spyOn(LinearService.prototype, "moveMarkedIssue")
@@ -447,6 +448,7 @@ describe("engine-only operations", () => {
       project: null,
       assignee: "me",
       labels: ["Lint"],
+      milestone: null,
     });
     await engineCall("linear.issue-upsert", {
       ...upsert,
@@ -457,6 +459,14 @@ describe("engine-only operations", () => {
     expect(upsertIssue).toHaveBeenLastCalledWith(
       expect.objectContaining({ project: "P", assignee: "ana", labels: [] })
     );
+    await engineCall("linear.issue-upsert", { ...upsert, labels: ["Lint", ""], milestone: "" });
+    expect(upsertIssue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ labels: ["Lint", ""], milestone: "" })
+    );
+    expect(await engineCall("linear.issue-upsert", { ...upsert, milestone: 1 })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
     expect(await engineCall("linear.issue-upsert", { ...upsert, labels: "Lint" })).toMatchObject({
       ok: false,
       error: { code: "invalid_params" },

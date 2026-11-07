@@ -379,6 +379,7 @@ pub struct LinearOverrides {
     pub project: Option<String>,
     pub assignee: Option<String>,
     pub labels: Option<Vec<String>>,
+    pub milestone: Option<String>,
     pub title: Option<String>,
     pub marker: Option<String>,
 }
@@ -395,7 +396,10 @@ pub struct LinearTracker {
     pub team: String,
     pub project: Option<String>,
     pub assignee: String,
+    /// Label name templates.
     pub labels: Vec<String>,
+    /// Template of a milestone name in `project`.
+    pub milestone: Option<String>,
     pub title: String,
     pub marker: String,
     pub states: BTreeMap<String, String>,
