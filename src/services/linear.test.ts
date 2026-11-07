@@ -400,7 +400,7 @@ describe("Linear issue suggestions", () => {
 });
 
 describe("marked issues", () => {
-  const marker = "lint:fintoc-rails:unit-1";
+  const marker = "lint:api:unit-1";
   const input = {
     marker,
     team: "dx",

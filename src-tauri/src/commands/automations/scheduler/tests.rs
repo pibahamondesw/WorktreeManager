@@ -711,8 +711,8 @@ fn app(data_dir: &Path, automations_dir: &Path) -> App<MockRuntime> {
             "automationsDir": automations_dir,
             "workspaces": [{
                 "id": "w1",
-                "name": "Fintoc",
-                "repos": [{ "id": "r1", "name": "fintoc-rails" }]
+                "name": "Acme",
+                "repos": [{ "id": "r1", "name": "api" }]
             }]
         })
         .to_string(),
@@ -744,7 +744,7 @@ fn the_app_scheduler_fires_due_slots_of_loaded_definitions() {
     fs::create_dir_all(automations.join("demo")).unwrap();
     fs::write(
         automations.join("demo/AUTOMATION.md"),
-        "---\nschema: 1\nname: demo\ntarget:\n  workspace: Fintoc\n  repos: [fintoc-rails]\nagent: { id: claude }\ntrigger:\n  schedule: { cron: '*/15 * * * *', tz: UTC }\n---\nDo the work.",
+        "---\nschema: 1\nname: demo\ntarget:\n  workspace: Acme\n  repos: [api]\nagent: { id: claude }\ntrigger:\n  schedule: { cron: '*/15 * * * *', tz: UTC }\n---\nDo the work.",
     )
     .unwrap();
     let app = app(&scratch.0, &automations);

@@ -1124,25 +1124,25 @@ mod tests {
     #[test]
     fn parses_campaign_operator_verbs_and_live_limits() {
         for verb in ["items", "next", "continuous"] {
-            let parsed = parse(&args(&format!("automation {verb} rubocop"))).unwrap();
+            let parsed = parse(&args(&format!("automation {verb} lint-sweep"))).unwrap();
             assert_eq!(parsed.method, format!("automation.{verb}"));
-            assert_eq!(parsed.params["name"], "rubocop");
+            assert_eq!(parsed.params["name"], "lint-sweep");
         }
-        let limit = parse(&args("automation limit rubocop max_active 3")).unwrap();
+        let limit = parse(&args("automation limit lint-sweep max_active 3")).unwrap();
         assert_eq!(limit.method, "automation.limit");
         assert_eq!(
             limit.params,
-            *json!({ "name": "rubocop", "limit": "max_active", "value": 3 })
+            *json!({ "name": "lint-sweep", "limit": "max_active", "value": 3 })
                 .as_object()
                 .unwrap()
         );
-        let reset = parse(&args("automation limit rubocop batch_size default")).unwrap();
+        let reset = parse(&args("automation limit lint-sweep batch_size default")).unwrap();
         assert_eq!(reset.params["value"], Value::Null);
         for invalid in [
-            "automation limit rubocop max_active 0",
-            "automation limit rubocop max_active many",
-            "automation limit rubocop pools 2",
-            "automation limit rubocop max_active",
+            "automation limit lint-sweep max_active 0",
+            "automation limit lint-sweep max_active many",
+            "automation limit lint-sweep pools 2",
+            "automation limit lint-sweep max_active",
             "automation next",
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");

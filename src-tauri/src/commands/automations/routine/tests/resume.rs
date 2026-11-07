@@ -293,7 +293,7 @@ fn a_task_creation_the_quit_broke_leaves_the_run_to_restart() {
 
 #[test]
 fn a_restarted_routine_finds_the_task_it_created_without_recording_it() {
-    let frontmatter = "target: { workspace: Fintoc, repos: [rails], branch: wtm/demo/branch }\nagent: { id: claude }\n";
+    let frontmatter = "target: { workspace: Acme, repos: [rails], branch: wtm/demo/branch }\nagent: { id: claude }\n";
     let tasks = FakeTasks {
         existing: vec![task("t0")],
         ..FakeTasks::default()
@@ -324,7 +324,7 @@ fn a_restarted_routine_creates_the_task_it_never_got_to_create() {
 
 #[test]
 fn a_restarted_routine_on_an_existing_task_looks_it_up_again() {
-    let frontmatter = "target: { workspace: Fintoc, repos: [rails], task: existing, existing_task: t9 }\nagent: { id: claude }\n";
+    let frontmatter = "target: { workspace: Acme, repos: [rails], task: existing, existing_task: t9 }\nagent: { id: claude }\n";
     let harness = Harness::new(frontmatter, FakeTasks::default(), FakeSessions::default());
     let request = harness.quit_before_first_item(Vec::new(), 1);
 

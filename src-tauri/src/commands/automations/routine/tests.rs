@@ -21,7 +21,7 @@ use crate::commands::automations::store::events::{
 use crate::commands::automations::store::{AutomationState, Claim, PauseReason};
 use crate::commands::git::git_command;
 
-const TARGET: &str = "target: { workspace: Fintoc, repos: [rails] }\nagent: { id: claude }\n";
+const TARGET: &str = "target: { workspace: Acme, repos: [rails] }\nagent: { id: claude }\n";
 const INSTRUCTIONS: &str = "List my open PRs.";
 
 fn now() -> DateTime<Utc> {
@@ -86,7 +86,7 @@ fn environment() -> Environment {
             },
         }],
         workspaces: serde_json::from_value(json!([
-            { "id": "w1", "name": "Fintoc", "repos": [{ "id": "r1", "name": "rails", "localPath": "/repos/rails" }] }
+            { "id": "w1", "name": "Acme", "repos": [{ "id": "r1", "name": "rails", "localPath": "/repos/rails" }] }
         ]))
         .unwrap(),
         now: now(),
@@ -565,7 +565,7 @@ fn a_failed_task_creation_records_the_worktrees_it_left() {
 
 #[test]
 fn a_branch_template_without_a_value_fails_task_creation() {
-    let frontmatter = "target: { workspace: Fintoc, repos: [rails], branch: \"wtm/{task.id}\" }\nagent: { id: claude }\n";
+    let frontmatter = "target: { workspace: Acme, repos: [rails], branch: \"wtm/{task.id}\" }\nagent: { id: claude }\n";
     let harness = Harness::new(frontmatter, FakeTasks::default(), FakeSessions::default());
     let run = harness.run();
     assert_eq!(run.failure_reason, Some(FailureReason::TaskCreateFailed));
@@ -577,7 +577,7 @@ fn a_branch_template_without_a_value_fails_task_creation() {
 
 #[test]
 fn existing_tasks_are_looked_up_instead_of_created() {
-    let frontmatter = "target: { workspace: Fintoc, repos: [rails], task: existing, existing_task: t9 }\nagent: { id: claude }\n";
+    let frontmatter = "target: { workspace: Acme, repos: [rails], task: existing, existing_task: t9 }\nagent: { id: claude }\n";
     let harness = Harness::new(frontmatter, FakeTasks::default(), FakeSessions::default());
     let run = harness.run();
     assert_eq!(run.task_id.as_deref(), Some("t9"));
@@ -854,7 +854,7 @@ fn agent_turns_end_with_the_active_time_left() {
 #[test]
 fn per_run_tasks_start_from_the_target_base() {
     let harness = Harness::new(
-        "target: { workspace: Fintoc, repos: [rails], base: origin/develop }\nagent: { id: claude }\n",
+        "target: { workspace: Acme, repos: [rails], base: origin/develop }\nagent: { id: claude }\n",
         FakeTasks::default(),
         FakeSessions::default(),
     );

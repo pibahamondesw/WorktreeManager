@@ -88,7 +88,7 @@ const TASK: Task = {
 };
 
 const definition = (overrides: Partial<AutomationDefinition> = {}): AutomationDefinition => ({
-  name: "rubocop",
+  name: "lint-sweep",
   description: null,
   trigger: { manual: true, schedule: null },
   steps: STEPS,
@@ -180,7 +180,7 @@ describe("boardCard", () => {
           attempt: 3,
           status: "failed",
           verdict: "blocked",
-          cause: "rubocop exited 1",
+          cause: "lint-sweep exited 1",
           reply: "app/models/user.rb:3 Style/Foo",
         }),
       ],
@@ -195,7 +195,8 @@ describe("boardCard", () => {
       branch: "pedro/wor-9-fix-cops",
       repairRounds: 3,
       reason: "budget:repair_rounds",
-      evidence: "verifying #3 (failed · blocked): rubocop exited 1\napp/models/user.rb:3 Style/Foo",
+      evidence:
+        "verifying #3 (failed · blocked): lint-sweep exited 1\napp/models/user.rb:3 Style/Foo",
       target: { taskId: "t-a", agent: "claude", conversationId: "c1" },
     });
   });

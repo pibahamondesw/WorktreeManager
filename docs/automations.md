@@ -208,7 +208,7 @@ Runs a deterministic command in a worktree of the item's task through a headless
 | `repo`    | string            | the only repo | Worktree to run in. Required when `target.repos` has more than one.                                                                                                                                                                                                                    |
 | `env`     | map of templates  | `{}`          | Extra environment.                                                                                                                                                                                                                                                                     |
 | `bind`    | `git_fingerprint` | none          | The receipt binds to the fingerprint (HEAD, branch, index, modified and untracked files). A later `git.push` of the same repository fails with `stale_receipt:<step>` while a bound step that ran has a latest receipt that no longer matches; route that step's `on_fail` back to it. |
-| `after`   | list of argv      | `[]`          | Hygiene commands run after the attempt whatever its result (for example a verified `spring stop`). Their failure is recorded, never fails the step.                                                                                                                                    |
+| `after`   | list of argv      | `[]`          | Hygiene commands run after the attempt whatever its result (for example stopping a dev server). Their failure is recorded, never fails the step.                                                                                                                                       |
 | `timeout` |                   | `30m`         |                                                                                                                                                                                                                                                                                        |
 
 Exit code 0 is success, anything else is failure. The engine exports `WTM_AUTOMATION`, `WTM_RUN_ID`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION`, `WTM_ITEM_DATA` (path to a JSON file), `WTM_TASK_ID`, `WTM_WORKTREE` and the environment of held leases. Templates get the run, item and task variables; `{tracker.issue}` and `{pr.*}` only have values in publish effects (below), and a command that uses them fails.
@@ -288,7 +288,7 @@ Before retrying an interrupted effect, the engine reconciles Linear, GitHub and 
 - `continue`: go to `next` as if it succeeded, recording the failure.
 - `{goto: <step id>, max: <integer or budget name>}`: jump back or forward. The counter is per item and per transition and carries across resumes. When it is exhausted the item becomes `blocked` with cause `budget:<name>` or `retries:<step id>`.
 
-A verdict `blocked` blocks the item, `defer` defers it and `noop` counts as success. Validation rejects unknown step ids and cycles without a `max`. `foreach` stages (one sub-pipeline per value, such as Sorbet sigils `false → true → strict`) are **Deferred (WOR-254/WOR-268)**.
+A verdict `blocked` blocks the item, `defer` defers it and `noop` counts as success. Validation rejects unknown step ids and cycles without a `max`. `foreach` stages (one sub-pipeline per value, such as strictness levels `loose → standard → strict`) are **Deferred (WOR-254/WOR-268)**.
 
 ### Selector
 
@@ -299,7 +299,7 @@ Present only in campaigns. A deterministic script decides what to work on. Its a
 | `run`           | list of templates | required       | argv, as in `command`. Runs in the automation folder with each repository's main checkout as `WTM_BASE_<REPO>` (the name uppercased, other characters as `_`); it never runs in an item worktree. |
 | `timeout`       | duration          | `5m`           |                                                                                                                                                                                                   |
 | `max_new_items` | integer ≥ 1       | `pools.active` | New items per run.                                                                                                                                                                                |
-| `exclusive_on`  | list of keys      | `[]`           | `item.data` keys whose values may not overlap between active items (for example `files`, `cops`). An overlapping candidate is skipped with `capped`.                                              |
+| `exclusive_on`  | list of keys      | `[]`           | `item.data` keys whose values may not overlap between active items (for example `files`, `rules`). An overlapping candidate is skipped with `capped`.                                             |
 
 Input on stdin: `{free, active: [{id, version, data}], busy_files: [path], cursor, run: {id, source, scheduled_for}}`. `busy_files` are files touched by open PRs of this automation.
 
@@ -517,18 +517,18 @@ A weekday morning pass over the owner's open PRs. It works in a scratch task and
 ---
 schema: 1
 name: pr-babysitter
-description: Weekday triage of my open fintoc-rails PRs.
+description: Weekday triage of my open api PRs.
 trigger:
   schedule: { cron: "0 9 * * 1-5", tz: America/Santiago }
 target:
-  workspace: Fintoc
-  repos: [fintoc-rails]
+  workspace: Acme
+  repos: [api]
   task: per-run
 agent: { id: claude, model: default, effort: medium }
 steps:
   - id: triage
     agent:
-      skill: prepare-pr-for-human-review
+      skill: pr-triage
       readonly: true
       fresh_session: true
       result: verdict
@@ -536,41 +536,41 @@ budgets: { run_deadline: 45m }
 report: { inbox: on_findings, archive_noop: true }
 ---
 
-List my open PRs in fintoc-com/fintoc-rails with `gh pr list --author @me`. For each one, check CI on the current HEAD, the automated reviewer's verdict on that HEAD and unresolved threads. Do not change code, push or reply.
+List my open PRs in acme/api with `gh pr list --author @me`. For each one, check CI on the current HEAD, the automated reviewer's verdict on that HEAD and unresolved threads. Do not change code, push or reply.
 
 Return verdict `noop` when every PR is green and has nothing unresolved. Otherwise return `pass` with one finding per PR that needs me: the PR link, what is blocking it, and the WTM task that owns its branch (`wtm task list`).
 ```
 
-### Campaign: RuboCop baseline
+### Campaign: lint sweep
 
-Ports the `improvement-loop` RuboCop baseline recipe. `scripts/queue.sh` adapts `rubocop_baseline_queue.py` to the selector contract (reads stdin, passes `--busy-files`, `--active` and `--limit`, prints `{items}` with `data.cops`, `data.files`, `data.label`, `data.milestone` and `data.milestone_name`, and `version` as a hash of the unit's baseline entries). Gated milestones stay out of the selector; weekly tightening is a separate routine.
+Drains a linter's baseline file (`lint/baseline.json`, the offenses tolerated so far) in small units. `scripts/queue.sh` implements the selector contract: it reads the request from stdin (busy files, active items and limit), groups baseline entries into units and prints `{items}` with `data.rules`, `data.files`, `data.label` and `data.milestone_name`, and `version` as a hash of the unit's baseline entries. Tightening the baseline is a separate routine.
 
 ```markdown
 ---
 schema: 1
-name: rubocop-baseline
-description: Drain fintoc-rails' .rubocop_baseline.json, one draft PR per unit.
+name: lint-sweep
+description: Drain api's lint/baseline.json, one draft PR per unit.
 trigger:
   manual: true
   schedule: { cron: "*/30 9-19 * * 1-5", tz: America/Santiago }
 target:
-  workspace: Fixes de linting
-  repos: [fintoc-rails]
+  workspace: Acme
+  repos: [api]
   base: origin/main
   task: per-item
 agent: { id: codex, effort: high }
 selector:
   run: [scripts/queue.sh]
   max_new_items: 3
-  exclusive_on: [files, cops]
+  exclusive_on: [files, rules]
 tracker:
   linear:
-    team: DX
-    project: P-DX-1448
-    labels: [Code quality, fintoc-rails, "{item.data.label}"]
+    team: ENG
+    project: P-ENG-12
+    labels: [Code quality, api, "{item.data.label}"]
     milestone: "{item.data.milestone_name}"
     title: "Lint: {item.title}"
-    marker: "lint-baseline:fintoc-com/fintoc-rails:{item.id}"
+    marker: "lint-sweep:acme/api:{item.id}"
     states: { started: In Progress, review: In Review, done: Done }
 pools:
   active: 5
@@ -594,17 +594,17 @@ authorization:
   deny: [pr_ready]
 steps:
   - id: implement
-    agent: { skill: fix-rubocop-offenses }
+    agent: { skill: fix-lint }
   - id: verify
     command: [scripts/verify.sh, "{item.id}"]
     uses: [heavy_checks]
     bind: git_fingerprint
-    after: [[scripts/stop_spring.sh]]
+    after: [[scripts/stop_dev_server.sh]]
     on_fail: { goto: implement, max: repair_rounds }
   - id: review
     agent:
       id: claude
-      skill: review-pr
+      skill: code-review
       fresh_session: true
       readonly: true
       result: verdict
@@ -620,23 +620,19 @@ steps:
       event:
         watcher: pr_checks
         required:
-          - check_model_rbis
-          - tests
-          - verify_openapi_spec
-          - lint
-          - rubyfmt
-          - sorbet
-          - verify_billing_catalog
-          - verify_migration_consistency
-          - coverage
-        bot_lgtm: fin-review[bot]
-        request_review_comment: fin review
+          - ci/test
+          - ci/lint
+          - ci/typecheck
+          - ci/build
+          - ci/coverage
+        bot_lgtm: review-bot[bot]
+        request_review_comment: review please
         unresolved_threads: 0
     next: human
     on_fail: { goto: repair, max: repair_rounds }
   - id: repair
     agent:
-      skill: prepare-pr-for-human-review
+      skill: pr-repair
       prompt: Fix the failing checks and review findings in the context; on a conflict, rebase onto the base it names. Commit; do not push, the pipeline verifies and publishes.
     next: verify
   - id: human
@@ -651,10 +647,10 @@ steps:
 completion: { selector_empty: true }
 ---
 
-Fix the unit's offenses following the implementation skill and the cop's intent. Run scoped checks through `wtm lease run --pool heavy_checks -- <command>` using the test slot in `TEST_ENV_NUMBER`; never run the full suite. Commit in English Conventional Commits, one commit per cop. Do not push or open PRs: the pipeline does.
+Fix the unit's offenses following the implementation skill and each rule's intent. Run scoped checks through `wtm lease run --pool heavy_checks -- <command>` using the test slot in `TEST_ENV_NUMBER`; never run the full suite. Commit in English Conventional Commits, one commit per rule. Do not push or open PRs: the pipeline does.
 ```
 
-Flow: the selector proposes units; each gets a Linear issue (marker) and a task on the issue's branch, then implement → verify (receipt bound to HEAD) → clean-context review → push and draft PR → CI and bot LGTM on the exact HEAD, looping through `repair` → `verify` → `review` → `publish` (which updates the existing PR) within five rounds → `awaiting_review` until the change is on `origin/main`, back to `repair` to rebase if the PR conflicts with it meanwhile → cleanup. The PowerTypes DAG campaign differs in its selector (`dependency_graph.py frontier`, dependencies unlocked by verified integration), ready PRs and `foreach` stages.
+Flow: the selector proposes units; each gets a Linear issue (marker) and a task on the issue's branch, then implement → verify (receipt bound to HEAD) → clean-context review → push and draft PR → CI and bot LGTM on the exact HEAD, looping through `repair` → `verify` → `review` → `publish` (which updates the existing PR) within five rounds → `awaiting_review` until the change is on `origin/main`, back to `repair` to rebase if the PR conflicts with it meanwhile → cleanup. A dependency-ordered migration campaign differs in its selector (the frontier of a dependency graph, dependencies unlocked by verified integration), ready PRs and `foreach` stages.
 
 ## Deferred
 

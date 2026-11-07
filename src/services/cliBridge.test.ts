@@ -356,38 +356,41 @@ it("starts, pauses and resumes automations for the CLI", async () => {
 
 it("lists campaign items and applies operator verbs for the CLI", async () => {
   invokeCommand.mockImplementation((command) => Promise.resolve({ command }));
-  expect(await call("automation.items", { name: " rubocop " })).toMatchObject({
+  expect(await call("automation.items", { name: " lint-sweep " })).toMatchObject({
     ok: true,
     data: { command: "automation_items_list" },
   });
-  expect(invokeCommand).toHaveBeenLastCalledWith("automation_items_list", { name: "rubocop" });
-  await call("automation.next", { name: "rubocop" });
-  expect(invokeCommand).toHaveBeenLastCalledWith("automation_next", { name: "rubocop", by: "cli" });
-  await call("automation.continuous", { name: "rubocop" });
-  expect(invokeCommand).toHaveBeenLastCalledWith("automation_continuous", {
-    name: "rubocop",
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_items_list", { name: "lint-sweep" });
+  await call("automation.next", { name: "lint-sweep" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_next", {
+    name: "lint-sweep",
     by: "cli",
   });
-  await call("automation.limit", { name: "rubocop", limit: "max_active", value: 3 });
+  await call("automation.continuous", { name: "lint-sweep" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_continuous", {
+    name: "lint-sweep",
+    by: "cli",
+  });
+  await call("automation.limit", { name: "lint-sweep", limit: "max_active", value: 3 });
   expect(invokeCommand).toHaveBeenLastCalledWith("automation_set_limit", {
-    name: "rubocop",
+    name: "lint-sweep",
     by: "cli",
     limit: "max_active",
     value: 3,
   });
-  await call("automation.limit", { name: "rubocop", limit: "batch_size", value: null });
+  await call("automation.limit", { name: "lint-sweep", limit: "batch_size", value: null });
   expect(invokeCommand).toHaveBeenLastCalledWith("automation_set_limit", {
-    name: "rubocop",
+    name: "lint-sweep",
     by: "cli",
     limit: "batch_size",
     value: null,
   });
   const calls = invokeCommand.mock.calls.length;
   for (const params of [
-    { name: "rubocop", limit: "max_active", value: 0 },
-    { name: "rubocop", limit: "max_active", value: "3" },
-    { name: "rubocop", limit: "max_active" },
-    { name: "rubocop", value: 2 },
+    { name: "lint-sweep", limit: "max_active", value: 0 },
+    { name: "lint-sweep", limit: "max_active", value: "3" },
+    { name: "lint-sweep", limit: "max_active" },
+    { name: "lint-sweep", value: 2 },
   ])
     expect(await call("automation.limit", params)).toMatchObject({
       ok: false,

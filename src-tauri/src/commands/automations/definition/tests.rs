@@ -10,7 +10,7 @@ use crate::commands::agents::{
     claude, codex, permission::PermissionMode, AgentCapabilities, AgentDescriptor,
 };
 
-const TARGET: &str = "target:\n  workspace: Fintoc\n  repos: [fintoc-rails]\n";
+const TARGET: &str = "target:\n  workspace: Acme\n  repos: [app]\n";
 const AGENT: &str = "agent: { id: claude }\n";
 const BODY: &str = "Do the work.";
 
@@ -65,9 +65,9 @@ fn workspaces() -> Value {
     json!([
         {
             "id": "w1",
-            "name": "Fintoc",
+            "name": "Acme",
             "repos": [
-                { "id": "r1", "name": "fintoc-rails", "localPath": "/repos/rails" },
+                { "id": "r1", "name": "app", "localPath": "/repos/rails" },
                 { "id": "r2", "name": "api", "localPath": "/repos/api" }
             ]
         },
@@ -236,18 +236,18 @@ fn pr_babysitter_example_from_the_spec_is_valid() {
     let definition = valid(
         "schema: 1
 name: demo
-description: Weekday triage of my open fintoc-rails PRs.
+description: Weekday triage of my open app PRs.
 trigger:
   schedule: { cron: \"0 9 * * 1-5\", tz: America/Santiago }
 target:
-  workspace: Fintoc
-  repos: [fintoc-rails]
+  workspace: Acme
+  repos: [app]
   task: per-run
 agent: { id: claude, model: default, effort: medium }
 steps:
   - id: triage
     agent:
-      skill: prepare-pr-for-human-review
+      skill: pr-triage
       readonly: true
       fresh_session: true
       result: verdict
@@ -266,7 +266,7 @@ report: { inbox: on_findings, archive_noop: true }
         (&step["readonly"], &step["freshSession"]),
         (&json!(true), &json!(true))
     );
-    assert_eq!(step["skill"], "prepare-pr-for-human-review");
+    assert_eq!(step["skill"], "pr-triage");
 }
 
 #[test]
@@ -384,7 +384,7 @@ fn unknown_fields_are_errors_except_extensions() {
     assert_issue(&routine("color: blue\n"), "color", IssueKind::UnknownField);
     assert_issue(
         &format!(
-            "schema: 1\nname: demo\n{AGENT}target:\n  workspace: Fintoc\n  repos: [api]\n  extra: 1\n"
+            "schema: 1\nname: demo\n{AGENT}target:\n  workspace: Acme\n  repos: [api]\n  extra: 1\n"
         ),
         "target.extra",
         IssueKind::UnknownField,
@@ -547,7 +547,7 @@ fn concurrency_keys_are_templates() {
 #[test]
 fn targets_resolve_workspaces_and_repos_by_name_or_id() {
     let definition = valid(&format!(
-        "schema: 1\nname: demo\n{AGENT}target:\n  workspace: w1\n  repos: [r2, fintoc-rails]\n  base: {{ api: origin/dev }}\n  branch: \"bot/{{run.id}}\"\nsteps:\n  - id: check\n    command: [/bin/echo]\n    repo: api\n"
+        "schema: 1\nname: demo\n{AGENT}target:\n  workspace: w1\n  repos: [r2, app]\n  base: {{ api: origin/dev }}\n  branch: \"bot/{{run.id}}\"\nsteps:\n  - id: check\n    command: [/bin/echo]\n    repo: api\n"
     ));
     let repos: Vec<_> = definition
         .target
@@ -555,14 +555,12 @@ fn targets_resolve_workspaces_and_repos_by_name_or_id() {
         .iter()
         .map(|repo| (repo.name.as_str(), repo.base.as_deref()))
         .collect();
-    assert_eq!(repos, [("api", Some("origin/dev")), ("fintoc-rails", None)]);
+    assert_eq!(repos, [("api", Some("origin/dev")), ("app", None)]);
     assert_eq!(definition.target.branch.as_deref(), Some("bot/{run.id}"));
     assert_eq!(kind(only_step(&definition))["command"]["repo"], "r2");
 
-    let definition = valid(&routine("").replace(
-        "repos: [fintoc-rails]",
-        "repos: [fintoc-rails]\n  base: origin/main",
-    ));
+    let definition =
+        valid(&routine("").replace("repos: [app]", "repos: [app]\n  base: origin/main"));
     assert_eq!(
         definition.target.repos[0].base.as_deref(),
         Some("origin/main")
@@ -572,36 +570,30 @@ fn targets_resolve_workspaces_and_repos_by_name_or_id() {
 #[test]
 fn targets_report_unknown_workspaces_and_repos() {
     assert_issue(
-        &routine("").replace("workspace: Fintoc", "workspace: Personal"),
+        &routine("").replace("workspace: Acme", "workspace: Personal"),
         "target.workspace",
         IssueKind::UnknownWorkspace,
     );
     assert_issue(
-        &routine("").replace("[fintoc-rails]", "[fintoc-rails, web]"),
+        &routine("").replace("[app]", "[app, web]"),
         "target.repos[1]",
         IssueKind::UnknownRepo,
     );
     assert_issue(
-        &routine("").replace("[fintoc-rails]", "[fintoc-rails, r1]"),
+        &routine("").replace("[app]", "[app, r1]"),
         "target.repos[1]",
         IssueKind::Invalid,
     );
     assert_issue(
-        &routine("").replace("[fintoc-rails]", "[]"),
+        &routine("").replace("[app]", "[]"),
         "target.repos",
         IssueKind::Invalid,
     );
-    let bad_bases = routine("").replace(
-        "[fintoc-rails]",
-        "[fintoc-rails]\n  base: { web: main, fintoc-rails: 1 }",
-    );
+    let bad_bases = routine("").replace("[app]", "[app]\n  base: { web: main, app: 1 }");
     assert_issue(&bad_bases, "target.base.web", IssueKind::UnknownRepo);
-    assert_issue(&bad_bases, "target.base.fintoc-rails", IssueKind::Invalid);
+    assert_issue(&bad_bases, "target.base.app", IssueKind::Invalid);
     assert_issue(
-        &routine("").replace(
-            "[fintoc-rails]",
-            "[fintoc-rails]\n  branch: \"{task.nope}\"",
-        ),
+        &routine("").replace("[app]", "[app]\n  branch: \"{task.nope}\""),
         "target.branch",
         IssueKind::Invalid,
     );
@@ -628,19 +620,15 @@ fn an_invalid_workspace_skips_checks_that_depend_on_its_repos() {
 #[test]
 fn task_modes_other_than_per_run_have_their_own_rules() {
     let definition = valid(&routine("").replace(
-        "repos: [fintoc-rails]",
-        "repos: [fintoc-rails]\n  task: existing\n  existing_task: t1",
+        "repos: [app]",
+        "repos: [app]\n  task: existing\n  existing_task: t1",
     ));
     assert_eq!(definition.target.task, TaskMode::Existing);
     assert_eq!(definition.target.existing_task.as_deref(), Some("t1"));
     assert_eq!(definition.target.branch, None);
     assert_eq!(definition.concurrency.key, "task:{task.id}");
-    let with_task = |task: &str| {
-        routine("").replace(
-            "repos: [fintoc-rails]",
-            &format!("repos: [fintoc-rails]\n  task: {task}"),
-        )
-    };
+    let with_task =
+        |task: &str| routine("").replace("repos: [app]", &format!("repos: [app]\n  task: {task}"));
     assert_issue(
         &with_task("existing"),
         "target.existing_task",
@@ -863,7 +851,7 @@ fn command_steps_run_scripts_paths_or_programs_on_path() {
     after: [[/usr/bin/true], [make, clean]]
     timeout: 10m
   - id: lint
-    command: [/usr/bin/env, rubocop]
+    command: [/usr/bin/env, linter]
     capacity: release
     label: linting
 ",
@@ -912,8 +900,8 @@ fn command_steps_report_bad_programs_and_repos() {
         "steps[0].command[1]",
         IssueKind::Invalid,
     );
-    let two_repos = routine("steps:\n  - id: run\n    command: [/bin/echo]\n")
-        .replace("[fintoc-rails]", "[fintoc-rails, api]");
+    let two_repos =
+        routine("steps:\n  - id: run\n    command: [/bin/echo]\n").replace("[app]", "[app, api]");
     assert_issue(&two_repos, "steps[0].repo", IssueKind::Missing);
 }
 
@@ -976,14 +964,14 @@ fn pr_checks_accepts_all_checks_but_ignored_ones_and_a_bot_lgtm_rule() {
         watcher: pr_checks
         required: all
         ignore: [\"bors*\", approval-gate]
-        bot_lgtm: { login: \"fin-review[bot]\", pattern: \"LGTM ✅\", app_id: 3106567 }
+        bot_lgtm: { login: \"review-bot[bot]\", pattern: \"LGTM ✅\", app_id: 1234567 }
 ",
     ));
     assert_eq!(
         kind(&definition.steps[0]),
         json!({ "wait": { "event": { "watcher": "pr_checks", "params": {
             "ignore": ["bors*", "approval-gate"],
-            "bot_lgtm": { "login": "fin-review[bot]", "pattern": "LGTM ✅", "app_id": 3_106_567 },
+            "bot_lgtm": { "login": "review-bot[bot]", "pattern": "LGTM ✅", "app_id": 1_234_567 },
             "repo": "r1",
         } } } })
     );
@@ -1045,12 +1033,12 @@ steps:
       event:
         watcher: pr_checks
         required: [tests, \"lint*\"]
-        bot_lgtm: fin-review[bot]
+        bot_lgtm: review-bot[bot]
         unresolved_threads: 0
-        request_review_comment: fin review
+        request_review_comment: review please
         interval: 2m
   - id: human
-    wait: { event: { watcher: pr_integrated, repo: fintoc-rails } }
+    wait: { event: { watcher: pr_integrated, repo: app } }
 ",
     ));
     let waits: Vec<_> = definition.steps.iter().map(kind).collect();
@@ -1059,9 +1047,9 @@ steps:
         [
             json!({ "wait": { "event": { "watcher": "pr_checks", "params": {
                 "required": ["tests", "lint*"],
-                "bot_lgtm": "fin-review[bot]",
+                "bot_lgtm": "review-bot[bot]",
                 "unresolved_threads": 0,
-                "request_review_comment": "fin review",
+                "request_review_comment": "review please",
                 "interval_secs": 120,
                 "repo": "r1",
             } } } }),
@@ -1295,7 +1283,7 @@ fn trackers_describe_the_linear_issue_per_item() {
         "tracker:
   linear:
     team: DX
-    project: P-DX-1
+    project: P-ENG-1
     labels: [Lint, \"lint:{item.data.cop}\"]
     milestone: \"{item.data.milestone_name}\"
     title: \"Lint: {item.title}\"
@@ -1304,7 +1292,7 @@ fn trackers_describe_the_linear_issue_per_item() {
     ));
     let linear = definition.tracker.unwrap().linear;
     assert_eq!(linear.team, "DX");
-    assert_eq!(linear.project.as_deref(), Some("P-DX-1"));
+    assert_eq!(linear.project.as_deref(), Some("P-ENG-1"));
     assert_eq!(linear.assignee, "me");
     assert_eq!(linear.marker, "wtm:{automation}:{item.id}");
     assert_eq!(linear.labels, ["Lint", "lint:{item.data.cop}"]);
@@ -1552,10 +1540,7 @@ fn completion_stops_after_an_instant_a_duration_or_a_run_count() {
 }
 
 fn campaign(extra: &str) -> String {
-    let target = TARGET.replace(
-        "repos: [fintoc-rails]",
-        "repos: [fintoc-rails]\n  task: per-item",
-    );
+    let target = TARGET.replace("repos: [app]", "repos: [app]\n  task: per-item");
     format!("schema: 1\nname: demo\n{target}{AGENT}{extra}")
 }
 
@@ -1793,7 +1778,7 @@ fn publish_steps_list_effects_with_their_params() {
       - git.push: {{ force_with_lease: true }}
       - github.pr_create: {{ draft: false, lang: pt-BR, title: \"[{{tracker.issue}}] Lint\", body_template: templates/pr.md, assignee: octocat }}
       - github.pr_update: {{ draft: true }}
-      - github.pr_comment: {{ body: fin review }}
+      - github.pr_comment: {{ body: review please }}
       - github.pr_ready
       - linear.upsert: {{ team: API, labels: [Lint], milestone: \"{{item.data.milestone}}\", title: \"Lint {{item.id}}\", marker: \"m:{{item.id}}\", project: P, assignee: me }}
       - linear.state: {{ state: review }}
@@ -1822,7 +1807,7 @@ fn publish_steps_list_effects_with_their_params() {
               "bodyTemplate": "templates/pr.md", "lang": "pt-BR", "draft": false, "assignee": "octocat" },
             { "effect": "github.pr_update", "repo": "r1", "title": null, "bodyTemplate": null,
               "lang": null, "draft": true, "assignee": null },
-            { "effect": "github.pr_comment", "repo": "r1", "body": "fin review" },
+            { "effect": "github.pr_comment", "repo": "r1", "body": "review please" },
             { "effect": "github.pr_ready", "repo": "r1" },
             { "effect": "linear.upsert", "team": "API", "project": "P", "assignee": "me",
               "labels": ["Lint"], "milestone": "{item.data.milestone}", "title": "Lint {item.id}",
@@ -2043,7 +2028,7 @@ fn publish_steps_report_malformed_effects() {
         IssueKind::Missing,
     );
     let two_repos = format!(
-        "schema: 1\nname: demo\ntarget: {{ workspace: Fintoc, repos: [fintoc-rails, api] }}\n{AGENT}{ALL_VERBS}steps:\n  - id: ship\n    publish: git.push\n"
+        "schema: 1\nname: demo\ntarget: {{ workspace: Acme, repos: [app, api] }}\n{AGENT}{ALL_VERBS}steps:\n  - id: ship\n    publish: git.push\n"
     );
     assert_issue(&two_repos, "steps[0].publish.repo", IssueKind::Missing);
 }

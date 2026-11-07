@@ -288,7 +288,7 @@ fn write_definition(data_dir: &Path, automations: &Path) {
     fs::create_dir_all(&folder).unwrap();
     fs::write(
         folder.join("AUTOMATION.md"),
-        "---\nschema: 1\nname: demo\ntarget: { workspace: Fintoc, repos: [rails] }\nagent: { id: claude }\n---\nDo it.\n",
+        "---\nschema: 1\nname: demo\ntarget: { workspace: Acme, repos: [rails] }\nagent: { id: claude }\n---\nDo it.\n",
     )
     .unwrap();
     fs::create_dir_all(data_dir).unwrap();
@@ -296,7 +296,7 @@ fn write_definition(data_dir: &Path, automations: &Path) {
         data_dir.join("store.json"),
         json!({
             "automationsDir": automations,
-            "workspaces": [{ "id": "w1", "name": "Fintoc", "repos": [{ "id": "r1", "name": "rails" }] }],
+            "workspaces": [{ "id": "w1", "name": "Acme", "repos": [{ "id": "r1", "name": "rails" }] }],
         })
         .to_string(),
     )

@@ -44,14 +44,14 @@ fn cli_forge_asks_gh_for_graphql_branch_prs_and_comments() {
         fs::read_to_string(dir.0.join("cwd")).unwrap().trim(),
         dir.0.to_string_lossy()
     );
-    forge.comment(PR_URL, "fin review").unwrap();
+    forge.comment(PR_URL, "review please").unwrap();
     let calls = fs::read_to_string(dir.0.join("calls")).unwrap();
     assert_eq!(
         calls.lines().collect::<Vec<_>>(),
         [
             "api graphql --hostname github.com --input -",
             "pr list --head wtm/unit --state all --limit 1 --json url",
-            &format!("pr comment {PR_URL} --body fin review"),
+            &format!("pr comment {PR_URL} --body review please"),
         ]
     );
 }

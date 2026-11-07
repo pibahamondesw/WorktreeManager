@@ -122,7 +122,7 @@ fn review(login: &str, state: &str, body: &str, commit: &str) -> Value {
 
 fn thread(resolved: bool) -> Value {
     json!({ "isResolved": resolved, "path": "src/a.rs", "line": 3, "comments": { "nodes": [
-        { "author": { "login": "fin-review" }, "body": "Rename this", "url": "https://github.com/o/r/pull/7#t" }
+        { "author": { "login": "review-bot" }, "body": "Rename this", "url": "https://github.com/o/r/pull/7#t" }
     ] } })
 }
 
@@ -336,11 +336,11 @@ fn without_required_contexts_every_reported_check_counts() {
 #[test]
 fn the_bot_lgtm_counts_only_on_the_exact_head() {
     let mut pr = open_pr(HEAD, vec![passed("tests")]);
-    pr["reviews"]["nodes"] = json!([review("fin-review", "APPROVED", "LGTM", "old999")]);
+    pr["reviews"]["nodes"] = json!([review("review-bot", "APPROVED", "LGTM", "old999")]);
     let forge = FakeForge::answering(pr.clone());
     let watchers = inline_registry(&forge);
     let waiting = Waiting::published();
-    let params = json!({ "required": ["tests"], "bot_lgtm": "fin-review[bot]" });
+    let params = json!({ "required": ["tests"], "bot_lgtm": "review-bot[bot]" });
 
     assert_eq!(
         waiting.checks(&watchers, params.clone(), NOW),
@@ -348,11 +348,11 @@ fn the_bot_lgtm_counts_only_on_the_exact_head() {
     );
     assert_eq!(
         waiting.checks(&watchers, params.clone(), NOW + HOUR_MS),
-        expired(json!(["bot_lgtm:fin-review[bot]"]))
+        expired(json!(["bot_lgtm:review-bot[bot]"]))
     );
 
     pr["reviews"]["nodes"] = json!([
-        review("fin-review", "COMMENTED", "Looks good to me: lgtm", HEAD),
+        review("review-bot", "COMMENTED", "Looks good to me: lgtm", HEAD),
         review("someone", "CHANGES_REQUESTED", "No", HEAD),
     ]);
     forge.set(pr.clone());
@@ -361,10 +361,10 @@ fn the_bot_lgtm_counts_only_on_the_exact_head() {
         green()
     );
 
-    pr["reviews"]["nodes"] = json!([review("Fin-Review[bot]", "COMMENTED", "Two findings", HEAD)]);
+    pr["reviews"]["nodes"] = json!([review("Review-Bot[bot]", "COMMENTED", "Two findings", HEAD)]);
     forge.set(pr);
     let findings = json!({ "verdict": "review_findings", "pr": PR_URL, "head": HEAD,
-        "bot_review": { "author": "fin-review[bot]", "state": "COMMENTED", "body": "Two findings",
+        "bot_review": { "author": "review-bot[bot]", "state": "COMMENTED", "body": "Two findings",
             "url": "https://github.com/o/r/pull/7#review" } });
     assert_eq!(
         waiting.checks(&watchers, params, NOW + HOUR_MS + 120_000),
@@ -373,14 +373,14 @@ fn the_bot_lgtm_counts_only_on_the_exact_head() {
 }
 
 fn bot_account_review(kind: &str, state: &str, body: &str, commit: &str) -> Value {
-    let mut review = review("fin-review", state, body, commit);
+    let mut review = review("review-bot", state, body, commit);
     review["author"]["__typename"] = json!(kind);
     review
 }
 
 fn app_check(status: &str, conclusion: Option<&str>) -> Value {
-    let mut check = check_run("fin review", status, conclusion);
-    check["checkSuite"] = json!({ "app": { "databaseId": 3_106_567 } });
+    let mut check = check_run("bot review", status, conclusion);
+    check["checkSuite"] = json!({ "app": { "databaseId": 1_234_567 } });
     check
 }
 
@@ -395,17 +395,17 @@ fn a_bot_lgtm_rule_counts_only_its_pattern_from_the_bot_account_on_the_head() {
     let watchers = inline_registry(&forge);
     let waiting = Waiting::published();
     let params = json!({ "required": ["tests"],
-        "bot_lgtm": { "login": "fin-review[bot]", "pattern": "LGTM ✅" } });
+        "bot_lgtm": { "login": "review-bot[bot]", "pattern": "LGTM ✅" } });
 
     assert_eq!(
         waiting.checks(&watchers, params.clone(), NOW + HOUR_MS),
-        expired(json!(["bot_lgtm:fin-review[bot]"]))
+        expired(json!(["bot_lgtm:review-bot[bot]"]))
     );
 
     pr["reviews"]["nodes"] = json!([bot_account_review("Bot", "APPROVED", "lgtm", HEAD)]);
     forge.set(pr.clone());
     let findings = json!({ "verdict": "review_findings", "pr": PR_URL, "head": HEAD,
-        "bot_review": { "author": "fin-review[bot]", "state": "APPROVED", "body": "lgtm",
+        "bot_review": { "author": "review-bot[bot]", "state": "APPROVED", "body": "lgtm",
             "url": "https://github.com/o/r/pull/7#review" } });
     assert_eq!(
         waiting.checks(&watchers, params.clone(), NOW + HOUR_MS + 60_000),
@@ -433,7 +433,7 @@ fn a_bot_lgtm_rule_with_an_app_id_needs_the_app_checks_to_pass() {
     let watchers = inline_registry(&forge);
     let waiting = Waiting::published();
     let params = json!({ "required": ["tests"], "bot_lgtm":
-        { "login": "fin-review[bot]", "pattern": "LGTM ✅", "app_id": 3_106_567 } });
+        { "login": "review-bot[bot]", "pattern": "LGTM ✅", "app_id": 1_234_567 } });
     let mut now = NOW + HOUR_MS;
     let mut verdict = |contexts: Vec<Value>| {
         now += 60_000;
@@ -445,14 +445,14 @@ fn a_bot_lgtm_rule_with_an_app_id_needs_the_app_checks_to_pass() {
 
     assert_eq!(
         verdict(vec![passed("tests")]),
-        expired(json!(["bot_app:3106567"]))
+        expired(json!(["bot_app:1234567"]))
     );
     assert_eq!(
         verdict(vec![passed("tests"), app_check("IN_PROGRESS", None)]),
-        expired(json!(["bot_app:3106567"]))
+        expired(json!(["bot_app:1234567"]))
     );
     let findings = json!({ "verdict": "review_findings", "pr": PR_URL, "head": HEAD,
-        "bot_app_checks": ["fin review"] });
+        "bot_app_checks": ["bot review"] });
     assert_eq!(
         verdict(vec![
             passed("tests"),
@@ -524,7 +524,7 @@ fn unresolved_threads_beyond_the_allowed_are_findings() {
         green()
     );
     let findings = json!({ "verdict": "review_findings", "pr": PR_URL, "head": HEAD,
-        "unresolved_threads": [{ "path": "src/a.rs", "line": 3, "author": "fin-review",
+        "unresolved_threads": [{ "path": "src/a.rs", "line": 3, "author": "review-bot",
             "body": "Rename this", "url": "https://github.com/o/r/pull/7#t" }] });
     assert_eq!(
         waiting.checks(&watchers, json!({}), NOW),
@@ -842,8 +842,8 @@ fn the_review_request_is_posted_once_per_head() {
     let forge = FakeForge::answering(open_pr(HEAD, vec![passed("tests")]));
     let watchers = inline_registry(&forge);
     let mut waiting = Waiting::published();
-    let params = json!({ "required": ["tests"], "bot_lgtm": "fin-review",
-        "request_review_comment": "fin review" });
+    let params = json!({ "required": ["tests"], "bot_lgtm": "review-bot",
+        "request_review_comment": "review please" });
     let posted = |forge: &FakeForge| forge.comments.lock().unwrap().len();
 
     *forge.comment_failure.lock().unwrap() = Some("gh: forbidden".into());
@@ -854,12 +854,12 @@ fn the_review_request_is_posted_once_per_head() {
     waiting.checks(&watchers, params.clone(), NOW);
     assert_eq!(
         *forge.comments.lock().unwrap(),
-        [(PR_URL.to_string(), "fin review".to_string())]
+        [(PR_URL.to_string(), "review please".to_string())]
     );
 
     let mut requested = open_pr(HEAD, vec![passed("tests")]);
     requested["comments"]["nodes"] =
-        json!([{ "body": " fin review\n", "createdAt": "2026-11-05T12:01:00Z" }]);
+        json!([{ "body": " review please\n", "createdAt": "2026-11-05T12:01:00Z" }]);
     forge.set(requested);
     let fresh = Watchers::default().with(
         PR_CHECKS,
@@ -870,7 +870,7 @@ fn the_review_request_is_posted_once_per_head() {
     );
     waiting.checks(&fresh, params.clone(), NOW);
     let mut reviewed = open_pr(HEAD, vec![passed("tests")]);
-    reviewed["reviews"]["nodes"] = json!([review("fin-review", "APPROVED", "", HEAD)]);
+    reviewed["reviews"]["nodes"] = json!([review("review-bot", "APPROVED", "", HEAD)]);
     forge.set(reviewed);
     let fresh = registry_with(forge.clone(), inline());
     assert_eq!(waiting.checks(&fresh, params.clone(), NOW), green());
@@ -891,7 +891,7 @@ fn a_test_run_stages_both_pr_watchers_without_asking_github() {
         test: true,
         ..Waiting::published()
     };
-    let params = json!({ "required": ["tests"], "request_review_comment": "fin review" });
+    let params = json!({ "required": ["tests"], "request_review_comment": "review please" });
     let staged = |watcher: &str| {
         WatchVerdict::Succeeded(Some(json!({ "verdict": "staged",
             "detail": format!("{watcher} not watched: a Test run stages its PR") })))

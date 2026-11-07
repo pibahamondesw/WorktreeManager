@@ -51,10 +51,10 @@ const state = (overrides: AutomationState["overrides"] = {}): AutomationState =>
 
 const summary = (overrides: AutomationState["overrides"] = {}): AutomationSummary => ({
   entry: {
-    name: "rubocop",
-    path: "/automations/rubocop/AUTOMATION.md",
+    name: "lint-sweep",
+    path: "/automations/lint-sweep/AUTOMATION.md",
     definition: {
-      name: "rubocop",
+      name: "lint-sweep",
       description: null,
       trigger: { manual: true, schedule: null },
       steps: STEPS,
@@ -177,7 +177,7 @@ it("opens campaigns on a board of their items by phase", async () => {
   await renderDetail();
 
   expect(screen.getByRole("tab", { name: "Items" })).toHaveAttribute("aria-selected", "true");
-  expect(invoke).toHaveBeenCalledWith("automation_items_list", { name: "rubocop" });
+  expect(invoke).toHaveBeenCalledWith("automation_items_list", { name: "lint-sweep" });
   const implementing = within(column("implementing"));
   expect(implementing.getByText("Style/A")).toBeInTheDocument();
   expect(implementing.getByText("Style/B")).toBeInTheDocument();
@@ -254,7 +254,7 @@ it("grants one more item with Next and goes back to Continuous", async () => {
 
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Next" })));
 
-  expect(invoke).toHaveBeenCalledWith("automation_next", { name: "rubocop", by: "user" });
+  expect(invoke).toHaveBeenCalledWith("automation_next", { name: "lint-sweep", by: "user" });
   expect(screen.getByText("One more item granted; run r9 started")).toBeInTheDocument();
   expect(onChanged).toHaveBeenCalled();
 
@@ -274,7 +274,7 @@ it("grants one more item with Next and goes back to Continuous", async () => {
     screen.getByText("One more item granted; run skipped: already running")
   ).toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Continuous" })));
-  expect(invoke).toHaveBeenCalledWith("automation_continuous", { name: "rubocop", by: "user" });
+  expect(invoke).toHaveBeenCalledWith("automation_continuous", { name: "lint-sweep", by: "user" });
 
   cleanup();
   answer({ automation_items_list: [], automation_next: { state: state(), run: null } });
@@ -302,7 +302,7 @@ it("edits the limits live and resets them to the definition", async () => {
   fireEvent.change(maxActive, { target: { value: "3" } });
   await act(async () => fireEvent.keyDown(maxActive, { key: "Enter" }));
   expect(invoke).toHaveBeenCalledWith("automation_set_limit", {
-    name: "rubocop",
+    name: "lint-sweep",
     by: "user",
     limit: "max_active",
     value: 3,
@@ -311,7 +311,7 @@ it("edits the limits live and resets them to the definition", async () => {
   fireEvent.change(screen.getByLabelText("Batch size"), { target: { value: "5" } });
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Set" })));
   expect(invoke).toHaveBeenCalledWith("automation_set_limit", {
-    name: "rubocop",
+    name: "lint-sweep",
     by: "user",
     limit: "batch_size",
     value: 5,
@@ -319,7 +319,7 @@ it("edits the limits live and resets them to the definition", async () => {
 
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reset" })));
   expect(invoke).toHaveBeenCalledWith("automation_set_limit", {
-    name: "rubocop",
+    name: "lint-sweep",
     by: "user",
     limit: "max_open_prs",
     value: null,
