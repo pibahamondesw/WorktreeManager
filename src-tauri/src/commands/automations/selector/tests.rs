@@ -159,7 +159,20 @@ fn pass<'a>(
 
 /// Claims a run, selects with `selector` and completes the run when it dispatched items.
 fn run_pass(store: &RunStore, policy: &SelectionPolicy, selector: &FakeSelector) -> String {
-    let run_id = claim(store, false);
+    claimed_pass(store, policy, selector, false)
+}
+
+fn test_run_pass(store: &RunStore, policy: &SelectionPolicy, selector: &FakeSelector) -> String {
+    claimed_pass(store, policy, selector, true)
+}
+
+fn claimed_pass(
+    store: &RunStore,
+    policy: &SelectionPolicy,
+    selector: &FakeSelector,
+    test: bool,
+) -> String {
+    let run_id = claim(store, test);
     let pass = pass(store, &run_id, policy);
     if let Selection::Dispatch(dispatch) = select(&pass, selector, &no_busy_files()).unwrap() {
         complete(&pass, dispatch).unwrap();
@@ -628,6 +641,60 @@ fn an_empty_selector_leaves_the_campaign_running_without_selector_empty() {
     run_pass(&store, &policy, &FakeSelector::items(Vec::new()));
 
     assert_eq!(store.state(NAME).unwrap(), enabled);
+}
+
+#[test]
+fn an_item_a_test_run_completed_is_selected_again_by_a_real_run() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let policy = policy();
+    let selector = FakeSelector::items(vec![candidate("a", "1")]);
+    let test_run = test_run_pass(&store, &policy, &selector);
+    set_item_status(&store, &test_run, "a", ItemStatus::Completed);
+
+    let real = run_pass(&store, &policy, &selector);
+    set_item_status(&store, &real, "a", ItemStatus::Completed);
+    let after_real = run_pass(&store, &policy, &selector);
+
+    assert_eq!(item_ids(&store, &real), ["a@1"]);
+    assert!(item_ids(&store, &after_real).is_empty());
+    assert_eq!(
+        skipped_candidates(&scratch, &after_real),
+        [("a@1".to_string(), SkipReason::Deduped)]
+    );
+}
+
+#[test]
+fn active_test_run_items_hold_no_capacity_ids_or_exclusive_values() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let policy = SelectionPolicy {
+        active_pool: 1,
+        exclusive_on: vec!["files".into()],
+        ..policy()
+    };
+    test_run_pass(
+        &store,
+        &policy,
+        &FakeSelector::items(vec![with_data("a", json!({"files": ["x.rb"]}))]),
+    );
+    let selector = FakeSelector::items(vec![
+        Candidate {
+            version: "2".into(),
+            ..with_data("a", json!({"files": ["x.rb"]}))
+        },
+        candidate("b", "1"),
+    ]);
+
+    let real = run_pass(&store, &policy, &selector);
+
+    assert_eq!(selector.input().free, 1);
+    assert!(selector.input().active.is_empty());
+    assert_eq!(item_ids(&store, &real), ["a@2"]);
+    assert_eq!(
+        skipped_candidates(&scratch, &real),
+        [("b@1".to_string(), SkipReason::Capped)]
+    );
 }
 
 #[test]
