@@ -20,7 +20,7 @@ use super::super::selector::{
     SelectorOutput,
 };
 use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, RunState, SkipReason};
-use super::commands::Item;
+use super::commands::{item_data_variable, Item};
 use super::{
     bases, render, run_variables, ItemDrive, NewTask, ResolvedTask, RoutineExecutor, TaskFailure,
     WriterLog,
@@ -235,7 +235,7 @@ impl RoutineExecutor {
         &self,
         definition: &AutomationDefinition,
         request: &RunRequest,
-        variables: &[(&'static str, String)],
+        variables: &[(String, String)],
     ) -> Result<String, TaskFailure> {
         let render = |template: &str| render(template, variables);
         let Some(tracker) = definition.tracker.as_ref().filter(|_| !request.test) else {
@@ -288,13 +288,17 @@ fn recorded_selection(run: &RunState) -> Option<Dispatch> {
     .filter(|dispatch| !dispatch.items.is_empty())
 }
 
-fn item_variables(request: &RunRequest, item: &Item) -> Vec<(&'static str, String)> {
-    let mut variables = run_variables(request);
+fn item_variables(request: &RunRequest, item: &Item) -> Vec<(String, String)> {
+    let mut variables: Vec<(String, String)> = run_variables(request)
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect();
     variables.extend([
-        ("item.id", item.id.clone()),
-        ("item.version", item.version.clone()),
+        ("item.id".into(), item.id.clone()),
+        ("item.version".into(), item.version.clone()),
     ]);
-    variables.extend(item.title.clone().map(|title| ("item.title", title)));
+    variables.extend(item.title.clone().map(|title| ("item.title".into(), title)));
+    variables.extend(item.data.iter().map(item_data_variable));
     variables
 }
 

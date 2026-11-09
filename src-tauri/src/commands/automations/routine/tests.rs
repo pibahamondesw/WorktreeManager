@@ -1182,12 +1182,12 @@ fn the_inbox_hears_of_newly_settled_requests_and_of_the_run_end() {
 /// Answers every Operations call as a task log append.
 struct LoggingBridge;
 
-/// Appends task logs, and upserts tracker issues whose branch follows their marker unless the
-/// title asks for a failure.
+/// Appends task logs, and upserts tracker issues whose branch follows their marker, labels and
+/// milestone unless the title asks for a failure.
 impl OperationsBridge for LoggingBridge {
     fn call(&self, method: &str, params: Value) -> Value {
         if method == "linear.issue-upsert" {
-            let branch = params["marker"].as_str().unwrap().replace(':', "-");
+            let branch = issue_branch(&params);
             return match params["title"].as_str().unwrap() {
                 "Offline" => json!({ "ok": false, "error": { "message": "Linear is offline" } }),
                 "Unbranched" => json!({ "ok": true, "data": { "identifier": "DX-2" } }),
@@ -1199,6 +1199,23 @@ impl OperationsBridge for LoggingBridge {
         assert_eq!(method, "task.log-append");
         json!({ "ok": true, "data": { "status": "appended", "path": params["id"] } })
     }
+}
+
+fn issue_branch(params: &Value) -> String {
+    let mut branch = params["marker"].as_str().unwrap().replace(':', "-");
+    let labels: Vec<_> = params["labels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|label| label.as_str().unwrap())
+        .collect();
+    if !labels.is_empty() {
+        branch.push_str(&format!("/{}", labels.join("+")));
+    }
+    if let Some(milestone) = params["milestone"].as_str() {
+        branch.push_str(&format!("@{milestone}"));
+    }
+    branch
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) -> String {

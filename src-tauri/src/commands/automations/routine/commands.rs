@@ -140,7 +140,7 @@ impl CommandContext for TaskCommands {
     }
 }
 
-fn item_data_variable((key, value): (&String, &Value)) -> (String, String) {
+pub(super) fn item_data_variable((key, value): (&String, &Value)) -> (String, String) {
     let text = value
         .as_str()
         .map_or_else(|| value.to_string(), str::to_string);

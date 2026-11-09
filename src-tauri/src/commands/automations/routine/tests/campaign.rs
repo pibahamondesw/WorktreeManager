@@ -527,6 +527,27 @@ fn tracked_items_work_on_their_issue_branch_and_fail_without_one() {
 }
 
 #[test]
+fn a_tracked_item_classifies_its_issue_with_its_data() {
+    let tracker = concat!(
+        "tracker:\n  linear:\n    team: ENG\n",
+        "    labels: [lint, \"{item.data.area}\"]\n    milestone: \"{item.data.milestone}\"\n"
+    );
+    let harness = Harness::campaign(tracker, by_branch(None), FakeSessions::default());
+    harness.selector_printing(concat!(
+        r#"{"items":[{"id":"a","version":"1","title":"A","#,
+        r#""data":{"area":"api","milestone":"Q4"}}]}"#
+    ));
+
+    let run = harness.run();
+
+    assert_eq!(item(&run, "a").status, ItemStatus::Completed, "{run:?}");
+    assert_eq!(
+        item(&run, "a").task_id.as_deref(),
+        Some("t-me/wtm-demo-a/lint+api@Q4")
+    );
+}
+
+#[test]
 fn a_published_push_runs_with_the_lease_environment_the_item_keeps() {
     let (remote, worktree) = pushable();
     let hook = worktree.0.join(".git/hooks/pre-push");
