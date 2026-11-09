@@ -241,8 +241,7 @@ fn record_selection(
 }
 
 fn is_test(pass: &SelectionPass) -> Result<bool, String> {
-    let run = pass.store.run(pass.automation, pass.run_id)?;
-    Ok(run.trigger.is_some_and(|trigger| trigger.test))
+    Ok(is_test_run(&pass.store.run(pass.automation, pass.run_id)?))
 }
 
 /// Keeps candidates in the selector's order: new `id` + `version` pairs whose id is not already
@@ -305,10 +304,23 @@ fn exclusive_values(data: &Map<String, Value>, keys: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The automation's real runs: test runs leave its state intact, so their items neither dedupe
+/// nor hold capacity, ids or `exclusive_on` values.
 fn history(store: &RunStore, automation: &str) -> Result<Vec<RunState>, String> {
     let mut ids = store.run_ids(automation)?;
     ids.sort_unstable();
-    ids.iter().map(|id| store.run(automation, id)).collect()
+    let mut runs = Vec::new();
+    for id in ids {
+        let run = store.run(automation, &id)?;
+        if !is_test_run(&run) {
+            runs.push(run);
+        }
+    }
+    Ok(runs)
+}
+
+fn is_test_run(run: &RunState) -> bool {
+    run.trigger.as_ref().is_some_and(|trigger| trigger.test)
 }
 
 /// Items of runs that did not fail: a failed run releases its items for the next selection.
