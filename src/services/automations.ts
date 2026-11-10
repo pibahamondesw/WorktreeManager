@@ -145,6 +145,14 @@ export type Limit = "max_active" | "max_open_prs" | "batch_size";
 /** Operator overrides of a campaign; an absent field keeps the definition's value. */
 type Overrides = Partial<Record<Limit, Override<number>>> & { pace?: Override<Pace> };
 
+/** A standing rule the owner recorded; later agent steps follow it. */
+export interface Decision {
+  id: string;
+  text: string;
+  by: Actor;
+  at: string;
+}
+
 /** The run store's `state.json`, serialized in snake_case. */
 export interface AutomationState {
   enabled: boolean;
@@ -153,6 +161,8 @@ export interface AutomationState {
   consecutive_failures: number;
   last_toggle?: Toggle | null;
   overrides?: Overrides;
+  /** Oldest first. */
+  decisions?: Decision[];
 }
 
 export type StepStatus =
@@ -320,6 +330,17 @@ export const setAutomationLimit = (
   limit: Limit,
   value: number | null
 ) => invoke<AutomationState>("automation_set_limit", { name, by, limit, value });
+/** `steered` counts the turns in progress that took the decision at once. */
+export const decideForAutomation = (name: string, text: string) =>
+  invoke<{ state: AutomationState; decision: Decision; steered: number }>("automation_decide", {
+    name,
+    text,
+    by: "user",
+  });
+
+export const revokeAutomationDecision = (name: string, id: string) =>
+  invoke<AutomationState>("automation_revoke_decision", { name, id });
+
 interface StepSignal {
   name: string;
   runId: string;

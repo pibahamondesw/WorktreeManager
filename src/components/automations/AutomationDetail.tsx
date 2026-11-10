@@ -13,13 +13,15 @@ import { AutomationDefinition } from "./AutomationDefinition";
 import { AutomationPipeline } from "./AutomationPipeline";
 import { AutomationActions } from "./AutomationActions";
 import { AutomationItems } from "./AutomationItems";
+import { AutomationDecisions } from "./AutomationDecisions";
 import { isCampaign } from "../../services/automationBoard";
 
-type Tab = "items" | "runs" | "pipeline" | "definition";
+type Tab = "items" | "runs" | "pipeline" | "decisions" | "definition";
 const ITEMS_TAB: { id: Tab; label: string } = { id: "items", label: "Items" };
 const TABS: { id: Tab; label: string }[] = [
   { id: "runs", label: "Runs" },
   { id: "pipeline", label: "Pipeline" },
+  { id: "decisions", label: "Decisions" },
   { id: "definition", label: "Definition" },
 ];
 
@@ -118,6 +120,7 @@ export function AutomationDetail({ summary, editorApp, onChanged }: AutomationDe
           ) : (
             <p className="text-sm text-text-muted">Unavailable until the definition is valid</p>
           ))}
+        {tab === "decisions" && <AutomationDecisions summary={summary} onChanged={changed} />}
         {tab === "definition" && <AutomationDefinition entry={entry} editorApp={editorApp} />}
       </div>
     </div>

@@ -1,5 +1,5 @@
 //! The prompt of an agent step: skill invocation, the owner's instructions, the step prompt, the
-//! engine context and, wrapped as untrusted data, the item, the trigger payload, what earlier
+//! decisions in force, the engine context and, wrapped as untrusted data, the item, the trigger payload, what earlier
 //! steps produced and the findings that led here.
 
 use chrono::SecondsFormat;
@@ -10,6 +10,7 @@ use super::super::definition::{AgentStep, AutomationDefinition};
 use super::super::pipeline::StepRequest;
 use super::super::scheduler::RunRequest;
 use super::super::store::events::{StepOutcome, Verdict};
+use super::super::store::Decision;
 use super::commands::Item;
 use super::ResolvedTask;
 
@@ -50,6 +51,8 @@ pub(super) struct PromptInput<'a> {
     pub item: &'a Item,
     pub payload: Option<&'a Value>,
     pub prior: &'a [PriorStep],
+    /// Trusted: recorded by the owner.
+    pub decisions: &'a [Decision],
 }
 
 pub(super) fn agent_prompt(input: &PromptInput) -> String {
@@ -67,6 +70,7 @@ pub(super) fn agent_prompt(input: &PromptInput) -> String {
         .filter(|text| !text.trim().is_empty())
         .cloned(),
     );
+    sections.extend(decisions_in_force(input.decisions));
     sections.push(context(input));
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let untrusted_blocks = untrusted_data(input)
@@ -74,6 +78,23 @@ pub(super) fn agent_prompt(input: &PromptInput) -> String {
         .map(|(label, content)| untrusted(label, &content, &suffix[..8]));
     sections.extend(untrusted_blocks);
     sections.join("\n\n")
+}
+
+fn decisions_in_force(decisions: &[Decision]) -> Option<String> {
+    let rules: String = decisions
+        .iter()
+        .map(|decision| format!("\n- {} (recorded {})", decision.text, decision.at))
+        .collect();
+    (!decisions.is_empty())
+        .then(|| format!("Decisions the owner recorded for this automation; follow them:{rules}"))
+}
+
+/// What a session in the middle of a turn is told when the owner records a decision.
+pub(super) fn steered_decision(decision: &Decision) -> String {
+    format!(
+        "The owner recorded a decision for this automation; follow it from now on:\n- {}",
+        decision.text
+    )
 }
 
 fn untrusted_data(input: &PromptInput) -> Vec<(&'static str, String)> {
@@ -143,6 +164,29 @@ fn untrusted(label: &str, content: &str, suffix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decisions_are_listed_oldest_first_and_absent_without_any() {
+        assert_eq!(decisions_in_force(&[]), None);
+        let decision = |text: &str, at: &str| Decision {
+            id: "d1".into(),
+            text: text.into(),
+            by: crate::commands::automations::store::Actor::User,
+            at: at.into(),
+        };
+        assert_eq!(
+            decisions_in_force(&[
+                decision("No define_method", "2026-11-01T10:00:00Z"),
+                decision("At most 10 open PRs", "2026-11-02T10:00:00Z"),
+            ])
+            .as_deref(),
+            Some("Decisions the owner recorded for this automation; follow them:\n- No define_method (recorded 2026-11-01T10:00:00Z)\n- At most 10 open PRs (recorded 2026-11-02T10:00:00Z)")
+        );
+        assert_eq!(
+            steered_decision(&decision("No define_method", "")),
+            "The owner recorded a decision for this automation; follow it from now on:\n- No define_method"
+        );
+    }
 
     #[test]
     fn items_are_described_by_their_title_and_data() {

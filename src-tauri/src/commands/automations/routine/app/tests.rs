@@ -8,9 +8,11 @@ use tauri::{App, Listener};
 
 use super::*;
 use crate::commands::agents::claude::Claude;
+use crate::commands::agents::codex::Codex;
 use crate::commands::agents::permission::{Grant, UnattendedPolicy};
 use crate::commands::automations::definition::AgentSettings;
-use crate::commands::automations::routine::LinkedIssue;
+use crate::commands::automations::routine::{LinkedIssue, LiveTurns};
+use crate::commands::chat::tests::{insert_live_session, set_turn};
 use crate::commands::login_shell::remember_availability;
 
 /// Answers every user message like Claude Code's stream-json mode, except messages asking it to
@@ -316,6 +318,31 @@ fn app_definitions_read_the_valid_definitions_of_the_directory() {
     assert_eq!(definitions.current("demo").unwrap().name, "demo");
     assert!(definitions.current("absent").is_none());
     assert!(RoutineExecutor::of(app.handle(), Arc::new(FakeBridge(|_| Value::Null))).is_ok());
+    assert!(app.try_state::<LiveTurns>().is_some());
+}
+
+#[test]
+fn chat_sessions_steer_only_turns_in_progress_of_agents_that_steer() {
+    let agents = Agents::with_adapters(vec![
+        Arc::new(Claude::new("claude-missing", None)),
+        Arc::new(Codex::new("codex-missing", None, None)),
+    ]);
+    let app = mock_builder()
+        .manage(agents)
+        .manage(ChatRegistry::default())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let registry = app.state::<ChatRegistry>();
+    insert_live_session(&registry, "t1", "codex", None);
+    insert_live_session(&registry, "t1", "claude", None);
+    let sessions = ChatSessions(app.handle().clone());
+
+    assert!(!sessions.steer("codex", "t1:codex", "Use rebase"));
+    set_turn(&registry, "t1", "codex", true);
+    set_turn(&registry, "t1", "claude", true);
+    assert!(sessions.steer("codex", "t1:codex", "Use rebase"));
+    assert!(!sessions.steer("claude", "t1:claude", "Use rebase"));
+    assert!(!sessions.steer("codex", "missing", "Use rebase"));
 }
 
 #[test]

@@ -109,6 +109,27 @@ impl Overrides {
     }
 }
 
+/// A standing rule the owner recorded for the automation's agent steps, with who recorded it and
+/// when.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Decision {
+    pub id: String,
+    pub text: String,
+    pub by: Actor,
+    pub at: String,
+}
+
+impl Decision {
+    pub fn now(text: String, by: Actor) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().simple().to_string()[..8].to_string(),
+            text,
+            by,
+            at: utc_now(),
+        }
+    }
+}
+
 /// Fields this version does not know are kept in `other` so an older app never drops them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -121,6 +142,9 @@ pub struct AutomationState {
     pub last_toggle: Option<Toggle>,
     #[serde(skip_serializing_if = "Overrides::is_empty")]
     pub overrides: Overrides,
+    /// Oldest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<Decision>,
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
 }
@@ -135,6 +159,7 @@ impl Default for AutomationState {
             cursor: None,
             last_toggle: None,
             overrides: Overrides::default(),
+            decisions: Vec::new(),
             other: serde_json::Map::new(),
         }
     }
