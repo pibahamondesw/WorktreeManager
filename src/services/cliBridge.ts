@@ -19,6 +19,7 @@ import {
   EMBEDDED_SURFACES,
   AgentSurfaceKind,
 } from "./agentActivity";
+import { AutomationState } from "./automations";
 
 export interface CliBridgeRequest {
   id: string;
@@ -327,6 +328,9 @@ export async function dispatchCliBridge(
       "automation.next": ["name"],
       "automation.continuous": ["name"],
       "automation.limit": ["name", "limit", "value"],
+      "automation.decide": ["name", "text"],
+      "automation.decisions": ["name"],
+      "automation.revoke": ["name", "id"],
       "automation.signal": ["runId", "step", "payload", "item"],
       "linear.issue-upsert": [
         "workspaceId",
@@ -485,6 +489,26 @@ export async function dispatchCliBridge(
           by: "cli",
           limit: text(params.limit),
           value: limitValue(params.value),
+        });
+        break;
+      case "automation.decide":
+        result = await invokeAutomations("automation_decide", {
+          name: text(params.name),
+          text: text(params.text),
+          by: "cli",
+        });
+        break;
+      case "automation.decisions": {
+        const state = (await invokeAutomations("automation_state", {
+          name: text(params.name),
+        })) as AutomationState;
+        result = state.decisions ?? [];
+        break;
+      }
+      case "automation.revoke":
+        result = await invokeAutomations("automation_revoke_decision", {
+          name: text(params.name),
+          id: text(params.id),
         });
         break;
       case "automation.signal":

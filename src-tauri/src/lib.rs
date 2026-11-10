@@ -100,6 +100,8 @@ pub fn run() {
                 commands::automations::operator::automation_next,
                 commands::automations::operator::automation_continuous,
                 commands::automations::operator::automation_set_limit,
+                commands::automations::decisions::automation_decide,
+                commands::automations::decisions::automation_revoke_decision,
                 commands::automations::actions::fire::automation_fire,
                 commands::automations::actions::automation_signal,
                 commands::automations::command::view::automation_step_receipt,

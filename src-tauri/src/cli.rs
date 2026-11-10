@@ -55,6 +55,13 @@ automation continuous <name>         Campaigns: take new items as capacity allow
 automation limit <name> <max_active|max_open_prs|batch_size> <n|default>
                                      Campaigns: override a limit live, or go back
                                      to the definition's value.
+automation decide <name> --text <text>
+                                     Records a standing rule for the automation's
+                                     agent steps: later steps follow it and turns in
+                                     progress of agents that steer take it at once.
+automation decisions <name>          The decisions in force, oldest first.
+automation revoke <name> <decision_id>
+                                     Later steps no longer follow the decision.
 automation signal <run_id> <step> <payload> [--item <id>]
                                      Resolves a waiting signal step with the JSON
                                      object, or answers an approval step with
@@ -170,6 +177,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     json!(args.next().ok_or("--reason requires a text")?),
                 );
             }
+            "--text" if !params.contains_key("text") => {
+                params.insert(
+                    "text".into(),
+                    json!(args.next().ok_or("--text requires a text")?),
+                );
+            }
             "--item" if !params.contains_key("item") => {
                 params.insert(
                     "item".into(),
@@ -223,7 +236,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.run" => (&["name"], false, &["payload", "test"]),
         "automation.fire" => (&["name"], false, &["key", "payload"]),
         "automation.pause" | "automation.resume" => (&["name"], false, &["reason"]),
-        "automation.items" | "automation.next" | "automation.continuous" => (&["name"], false, &[]),
+        "automation.items"
+        | "automation.next"
+        | "automation.continuous"
+        | "automation.decisions" => (&["name"], false, &[]),
+        "automation.decide" => (&["name"], false, &["text"]),
+        "automation.revoke" => (&["name", "id"], false, &[]),
         "automation.limit" => (&["name", "limit", "value"], false, &[]),
         "automation.signal" => (&["runId", "step", "payload"], false, &["item"]),
         _ => return Err("Unknown operation; see --help".into()),
@@ -253,6 +271,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
     if method == "automation.limit" {
         let value = limit_value(&params["limit"], &params["value"])?;
         params.insert("value".into(), value);
+    }
+    if method == "automation.decide" && !params.contains_key("text") {
+        return Err("Provide --text with the decision".into());
     }
     if method == "automation.fire" && !params.contains_key("key") {
         return Err("Provide --key with the trigger key".into());
@@ -1144,6 +1165,45 @@ mod tests {
             "automation limit lint-sweep pools 2",
             "automation limit lint-sweep max_active",
             "automation next",
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn parses_decisions_with_their_text_and_revokes_them_by_id() {
+        let decide = [
+            "automation",
+            "decide",
+            "lint-sweep",
+            "--text",
+            "Never use define_method",
+        ];
+        let decided = parse(&decide.map(String::from)).unwrap();
+        assert_eq!(decided.method, "automation.decide");
+        assert_eq!(
+            decided.params,
+            *json!({ "name": "lint-sweep", "text": "Never use define_method" })
+                .as_object()
+                .unwrap()
+        );
+        let listed = parse(&args("automation decisions lint-sweep")).unwrap();
+        assert_eq!(listed.method, "automation.decisions");
+        let revoked = parse(&args("automation revoke lint-sweep 1a2b3c4d")).unwrap();
+        assert_eq!(
+            revoked.params,
+            *json!({ "name": "lint-sweep", "id": "1a2b3c4d" })
+                .as_object()
+                .unwrap()
+        );
+        assert_eq!(
+            parse(&args("automation decide lint-sweep")).err(),
+            Some("Provide --text with the decision".into())
+        );
+        for invalid in [
+            "automation decide lint-sweep --text",
+            "automation decisions lint-sweep --text x",
+            "automation revoke lint-sweep",
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");
         }

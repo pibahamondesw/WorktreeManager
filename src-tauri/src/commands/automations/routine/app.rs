@@ -24,13 +24,13 @@ pub(crate) const RUNS_CHANGED_EVENT: &str = "automation-runs-changed";
 
 impl RoutineExecutor {
     /// Tasks, Linear and task log effects go through `bridge`, the frontend Operations the CLI
-    /// also uses.
+    /// also uses. Its live turns become app state, where recorded decisions are steered into.
     pub fn of<R: Runtime>(
         app: &AppHandle<R>,
         bridge: Arc<dyn OperationsBridge>,
     ) -> Result<Self, String> {
         let handle = app.clone();
-        Ok(Self::new(
+        let executor = Self::new(
             RunStore::of(app)?,
             Arc::new(AppDefinitions(app.clone())),
             Arc::new(BridgeTasks(bridge.clone())),
@@ -40,7 +40,9 @@ impl RoutineExecutor {
         )
         .on_runs_changed(Arc::new(move |name| {
             let _ = handle.emit_to("main", RUNS_CHANGED_EVENT, name);
-        })))
+        }));
+        app.manage(executor.live_turns().clone());
+        Ok(executor)
     }
 }
 
@@ -200,6 +202,18 @@ impl<R: Runtime> Sessions for ChatSessions<R> {
 
     fn settled_requests(&self, session_id: &str) -> Vec<SettledRequest> {
         self.0.state::<ChatRegistry>().settled_requests(session_id)
+    }
+
+    fn steer(&self, agent: &str, session_id: &str, message: &str) -> bool {
+        let steers = Agents::of(&self.0)
+            .get(agent)
+            .is_ok_and(|adapter| adapter.capabilities().steer);
+        steers
+            && self
+                .0
+                .state::<ChatRegistry>()
+                .steer(session_id, message)
+                .unwrap_or(false)
     }
 }
 

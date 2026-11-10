@@ -527,6 +527,20 @@ impl ChatSession {
         if state.history_busy || !state.snapshot.status.is_live() {
             return Err("The chat is unavailable during a conversation action".into());
         }
+        self.deliver(&mut state, text, images)
+    }
+
+    /// Adds `text` to the turn in progress; `false` without one, since steering never starts a
+    /// turn.
+    fn steer(&self, text: &str) -> Result<bool, String> {
+        let mut state = self.shared.lock().unwrap();
+        if state.history_busy || state.snapshot.status != ChatStatus::Busy {
+            return Ok(false);
+        }
+        self.deliver(&mut state, text, &[]).map(|()| true)
+    }
+
+    fn deliver(&self, state: &mut Shared, text: &str, images: &[ChatImage]) -> Result<(), String> {
         let mut out = ProviderOutput::default();
         state.provider.send(text, images, &mut out)?;
         state.commit(out, &*self.remember, &self.notify);

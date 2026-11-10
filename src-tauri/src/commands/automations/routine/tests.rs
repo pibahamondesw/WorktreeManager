@@ -186,6 +186,8 @@ struct FakeSessions {
     settled: Vec<SettledRequest>,
     /// Holds every turn until it receives.
     gate: Mutex<Option<mpsc::Receiver<()>>>,
+    /// Messages steered into turns, with the agent and session.
+    steered: Mutex<Vec<(String, String, String)>>,
 }
 
 impl FakeSessions {
@@ -244,6 +246,14 @@ impl Sessions for FakeSessions {
 
     fn settled_requests(&self, _: &str) -> Vec<SettledRequest> {
         self.settled.clone()
+    }
+
+    fn steer(&self, agent: &str, session_id: &str, message: &str) -> bool {
+        self.steered
+            .lock()
+            .unwrap()
+            .push((agent.into(), session_id.into(), message.into()));
+        true
     }
 }
 
@@ -1377,6 +1387,7 @@ steps:
 }
 
 mod campaign;
+mod decisions;
 mod operator;
 mod resume;
 mod waits;

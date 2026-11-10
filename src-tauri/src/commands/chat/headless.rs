@@ -167,6 +167,11 @@ impl ChatRegistry {
         self.with_session_id(session_id, |session| session.send(text, images))
     }
 
+    /// Adds `text` to the session's turn in progress; `false` when no turn is running.
+    pub(crate) fn steer(&self, session_id: &str, text: &str) -> Result<bool, String> {
+        self.with_session_id(session_id, |session| session.steer(text))
+    }
+
     #[cfg_attr(
         not(test),
         allow(dead_code, reason = "canceling a run mid-turn is not wired yet")
@@ -417,5 +422,14 @@ mod tests {
         registry.close(SESSION);
         registry.close(SESSION);
         assert!(registry.send(SESSION, "hello", &[]).is_err());
+    }
+
+    #[test]
+    fn steering_reaches_only_a_turn_in_progress() {
+        let registry = live_registry();
+        assert_eq!(registry.steer(SESSION, "use rebase"), Ok(false));
+        set_turn(&registry, "t1", "claude", true);
+        assert_eq!(registry.steer(SESSION, "use rebase"), Ok(true));
+        assert!(registry.steer("missing", "use rebase").is_err());
     }
 }

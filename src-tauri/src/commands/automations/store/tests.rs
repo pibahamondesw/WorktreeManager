@@ -453,7 +453,7 @@ fn state_defaults_to_paused_as_new_and_round_trips_unknown_fields() {
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join("state.json"),
-        json!({"enabled": true, "consecutive_failures": 2, "decisions": ["keep"]}).to_string(),
+        json!({"enabled": true, "consecutive_failures": 2, "grants": ["keep"]}).to_string(),
     )
     .unwrap();
     let mut state = store.state("babysitter").unwrap();
@@ -468,7 +468,7 @@ fn state_defaults_to_paused_as_new_and_round_trips_unknown_fields() {
 
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(dir.join("state.json")).unwrap()).unwrap();
-    assert_eq!(saved["decisions"], json!(["keep"]));
+    assert_eq!(saved["grants"], json!(["keep"]));
     assert_eq!(saved["cursor"], json!({"page": 3}));
     assert_eq!(store.state("babysitter").unwrap(), state);
     let leftovers: Vec<_> = fs::read_dir(&dir)

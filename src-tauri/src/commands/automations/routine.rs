@@ -8,6 +8,7 @@ mod app;
 mod campaign;
 mod commands;
 mod leases;
+mod live_turns;
 mod prompt;
 mod result;
 mod resume;
@@ -52,6 +53,7 @@ use crate::commands::chat::{SettledRequest, TurnEnd};
 use commands::{Item, TaskCommands};
 pub use leases::LeasePools;
 use leases::{NoLeasePools, Quotas, StepLeases};
+pub use live_turns::LiveTurns;
 use prompt::{PriorStep, PromptInput};
 
 const ROUTINE_ITEM: &str = "routine";
@@ -147,6 +149,9 @@ pub trait Sessions: Send + Sync {
     fn close(&self, session_id: &str);
     /// Requests the session settled without anyone so far, oldest first.
     fn settled_requests(&self, session_id: &str) -> Vec<SettledRequest>;
+    /// Adds `message` to the session's turn in progress; `false` when `agent` cannot steer or no
+    /// turn is running.
+    fn steer(&self, agent: &str, session_id: &str, message: &str) -> bool;
 }
 
 /// Runs a frontend operation as the CLI does and returns its response.
@@ -183,6 +188,7 @@ pub struct RoutineExecutor {
     /// Items resting on a wait, with the request of their run, until it can end.
     parked: Arc<Mutex<HashMap<DrivenItem, RunRequest>>>,
     watchers: Watchers,
+    live_turns: LiveTurns,
 }
 
 type DrivenItem = (String, String, String);
@@ -254,6 +260,7 @@ impl RoutineExecutor {
             store: Arc::new(store),
             definitions,
             tasks,
+            live_turns: LiveTurns::new(sessions.clone()),
             sessions,
             forge,
             bridge,
@@ -272,6 +279,11 @@ impl RoutineExecutor {
     #[cfg(test)]
     pub(crate) fn with_watchers(self, watchers: Watchers) -> Self {
         Self { watchers, ..self }
+    }
+
+    /// The agent turns this executor is running, to steer decisions into.
+    pub fn live_turns(&self) -> &LiveTurns {
+        &self.live_turns
     }
 
     pub fn with_lease_pools(self, lease_pools: Arc<dyn LeasePools>) -> Self {
@@ -469,6 +481,7 @@ impl RoutineExecutor {
             interrupted_conversation: None,
             watchers: &self.watchers,
             parked: false,
+            live_turns: &self.live_turns,
         };
         steps.resume_from(history);
         let pipeline = Pipeline {
@@ -619,6 +632,7 @@ struct ItemSteps<'a> {
     watchers: &'a Watchers,
     /// Set when the item rests on a wait that has not ended.
     parked: bool,
+    live_turns: &'a LiveTurns,
 }
 
 impl StepExecutor for ItemSteps<'_> {
@@ -684,6 +698,10 @@ impl ItemSteps<'_> {
             Ok(schema) => schema,
             Err(error) => return failed(ProcessEnd::Crashed, format!("result_schema: {error}")),
         };
+        let decisions = match self.log.store.state(&self.request.automation) {
+            Ok(state) => state.decisions,
+            Err(error) => return failed(ProcessEnd::Crashed, format!("decisions: {error}")),
+        };
         let launch = SessionLaunch {
             agent: step.agent.clone(),
             grants: self.grants.clone(),
@@ -706,8 +724,13 @@ impl ItemSteps<'_> {
             item: self.item,
             payload: self.payload,
             prior: &self.prior,
+            decisions: &decisions,
         });
+        let live = self
+            .live_turns
+            .running(&session_id, &self.request.automation, &step.agent.id);
         let end = self.sessions.run_turn(&session_id, &prompt, timeout);
+        drop(live);
         if conversation.is_none() && self.sessions.conversation(&session_id).is_some() {
             self.record_session(request, &session_id);
         }

@@ -399,6 +399,39 @@ it("lists campaign items and applies operator verbs for the CLI", async () => {
   expect(invokeCommand).toHaveBeenCalledTimes(calls);
 });
 
+it("records, lists and revokes decisions for the CLI", async () => {
+  invokeCommand.mockResolvedValueOnce({ steered: 1 });
+  expect(
+    await call("automation.decide", { name: "lint-sweep", text: " Never use define_method " })
+  ).toMatchObject({ ok: true, data: { steered: 1 } });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_decide", {
+    name: "lint-sweep",
+    text: "Never use define_method",
+    by: "cli",
+  });
+  const decision = { id: "1a2b3c4d", text: "Rebase", by: "user", at: "2026-11-01T10:00:00Z" };
+  invokeCommand.mockResolvedValueOnce({ enabled: true, decisions: [decision] });
+  expect(await call("automation.decisions", { name: "lint-sweep" })).toMatchObject({
+    ok: true,
+    data: [decision],
+  });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_state", { name: "lint-sweep" });
+  invokeCommand.mockResolvedValueOnce({ enabled: true });
+  expect(await call("automation.decisions", { name: "lint-sweep" })).toMatchObject({
+    ok: true,
+    data: [],
+  });
+  await call("automation.revoke", { name: "lint-sweep", id: "1a2b3c4d" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_revoke_decision", {
+    name: "lint-sweep",
+    id: "1a2b3c4d",
+  });
+  expect(await call("automation.decide", { name: "lint-sweep", text: " " })).toMatchObject({
+    ok: false,
+    error: { code: "invalid_params" },
+  });
+});
+
 describe("engine-only operations", () => {
   const engineCall = (method: string, params: Record<string, unknown>) =>
     dispatchCliBridge(

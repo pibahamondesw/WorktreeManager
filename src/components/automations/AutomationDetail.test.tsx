@@ -260,3 +260,68 @@ it("resumes an automation paused by WTM and keeps invalid ones from running", ()
   expect(screen.getByRole("button", { name: "Test run" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Enable" })).toBeDisabled();
 });
+
+it("records decisions, says whether live turns took them and revokes them", async () => {
+  const decision = {
+    id: "1a2b3c4d",
+    text: "Never use define_method",
+    by: "cli" as const,
+    at: "2026-11-01T10:00:00Z",
+  };
+  vi.mocked(invoke).mockImplementation((command) =>
+    Promise.resolve(
+      command === "automation_decide"
+        ? { state: summary.state, decision, steered: 2 }
+        : command === "automation_revoke_decision"
+          ? Promise.reject("demo has no decision 1a2b3c4d")
+          : { runs: [], next_before: null }
+    )
+  );
+  renderView({ ...summary, state: { ...summary.state!, decisions: [decision] } });
+  fireEvent.click(screen.getByRole("tab", { name: "Decisions" }));
+  expect(screen.getByText("Never use define_method")).toHaveClass("whitespace-pre-wrap");
+  expect(screen.getByText(/^Recorded by /)).toBeInTheDocument();
+
+  const record = screen.getByRole("button", { name: "Record decision" });
+  expect(record).toBeDisabled();
+  const field = screen.getByRole("textbox", { name: "New decision" });
+  fireEvent.change(field, { target: { value: "  At most 10 open PRs " } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(invoke).not.toHaveBeenCalledWith("automation_decide", expect.anything());
+  fireEvent.keyDown(field, { key: "Enter", metaKey: true });
+  expect(await screen.findByText("Recorded; 2 turns in progress took it")).toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("automation_decide", {
+    name: "pr-babysitter",
+    text: "At most 10 open PRs",
+    by: "user",
+  });
+  expect(field).toHaveValue("");
+  expect(onChanged).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("demo has no decision 1a2b3c4d");
+  expect(invoke).toHaveBeenCalledWith("automation_revoke_decision", {
+    name: "pr-babysitter",
+    id: "1a2b3c4d",
+  });
+});
+
+it("records a decision no live turn took and shows when there are none", async () => {
+  vi.mocked(invoke).mockImplementation((command) =>
+    Promise.resolve(
+      command === "automation_decide"
+        ? { state: summary.state, decision: {}, steered: 0 }
+        : command === "automation_revoke_decision"
+          ? summary.state
+          : { runs: [], next_before: null }
+    )
+  );
+  renderView();
+  fireEvent.click(screen.getByRole("tab", { name: "Decisions" }));
+  expect(screen.getByText("No decisions yet")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "New decision" }), {
+    target: { value: "Rebase" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Record decision" }));
+  expect(await screen.findByText("Recorded; the next agent steps follow it")).toBeInTheDocument();
+});
