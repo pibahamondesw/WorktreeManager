@@ -2412,3 +2412,88 @@ fn github_event_triggers_declare_a_type_and_conditions() {
             .replace("repos: [app]", "repos: [app]\n  task: existing");
     assert_issue(&existing, "target.existing_task", IssueKind::Missing);
 }
+
+#[test]
+fn circleci_event_triggers_declare_a_type_and_conditions() {
+    let definition = valid(&routine(
+        "trigger:\n  manual: false\n  event:\n    - { source: circleci, type: workflow.failed, where: { project: gh/acme/api, branch: \" main \", author: me } }\n    - { source: circleci, type: job.finished }\n    - { source: app, type: task.created }\n",
+    ));
+    assert_eq!(
+        serde_json::to_value(&definition.trigger.circleci_events).unwrap(),
+        json!([
+            { "type": "workflow.failed", "project": "gh/acme/api", "branch": "main", "author": "me" },
+            { "type": "job.finished", "project": null, "branch": null, "author": null }
+        ])
+    );
+    assert_eq!(definition.trigger.events.len(), 1);
+    let kinds = [
+        CircleciEventKind::WorkflowFailed,
+        CircleciEventKind::WorkflowFinished,
+        CircleciEventKind::JobFailed,
+        CircleciEventKind::JobFinished,
+    ];
+    let names: Vec<_> = kinds.iter().map(|kind| kind.name()).collect();
+    assert_eq!(
+        names,
+        [
+            "workflow.failed",
+            "workflow.finished",
+            "job.failed",
+            "job.finished"
+        ]
+    );
+    let jobs: Vec<_> = kinds.iter().map(|kind| kind.is_job()).collect();
+    assert_eq!(jobs, [false, false, true, true]);
+    let failures: Vec<_> = kinds.iter().map(|kind| kind.only_failures()).collect();
+    assert_eq!(failures, [true, false, true, false]);
+    let only = valid(&routine(
+        "trigger: { manual: false, event: [{ source: circleci, type: job.failed }] }\n",
+    ));
+    assert_eq!(only.trigger.circleci_events.len(), 1);
+
+    let event = |entry: &str| routine(&format!("trigger:\n  event: [{entry}]\n"));
+    for (entry, field, kind) in [
+        (
+            "{ source: circleci, type: issue.created }",
+            "trigger.event[0].type",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: circleci }",
+            "trigger.event[0].type",
+            IssueKind::Missing,
+        ),
+        (
+            "{ source: circleci, type: job.failed, where: { label: x } }",
+            "trigger.event[0].where.label",
+            IssueKind::UnknownField,
+        ),
+        (
+            "{ source: circleci, type: job.failed, where: { branch: \" \" } }",
+            "trigger.event[0].where.branch",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: circleci, type: job.failed, where: { author: [a] } }",
+            "trigger.event[0].where.author",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: circleci, type: job.failed, where: { project: acme/api } }",
+            "trigger.event[0].where.project",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: circleci, type: job.failed, where: { project: \"gh/acme/a?b\" } }",
+            "trigger.event[0].where.project",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: circleci, type: job.failed, where: [] }",
+            "trigger.event[0].where",
+            IssueKind::Invalid,
+        ),
+    ] {
+        assert_issue(&event(entry), field, kind);
+    }
+}

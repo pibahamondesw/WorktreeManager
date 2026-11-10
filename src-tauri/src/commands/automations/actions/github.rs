@@ -25,6 +25,7 @@ use crate::commands::automations::definition::{
 use crate::commands::automations::scheduler::pool_skip;
 use crate::commands::automations::store::GithubCursor;
 use crate::commands::automations::watchers::backoff_ms;
+pub(super) use api::github_slug;
 use api::{Activity, ActivityReader, Comment, PullRequest, Review, WorkflowRun};
 pub use api::{CliGithub, GithubActivity};
 

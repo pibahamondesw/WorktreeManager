@@ -146,6 +146,10 @@ pub struct AutomationState {
     /// How far GitHub event triggers have seen each `owner/name` repository.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub github_cursor: BTreeMap<String, GithubCursor>,
+    /// When CircleCI event triggers started listening: workflows and jobs that stopped after it
+    /// fire.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circleci_cursor: Option<String>,
     pub last_toggle: Option<Toggle>,
     #[serde(skip_serializing_if = "Overrides::is_empty")]
     pub overrides: Overrides,
@@ -176,6 +180,7 @@ impl Default for AutomationState {
             cursor: None,
             linear_cursor: None,
             github_cursor: BTreeMap::new(),
+            circleci_cursor: None,
             last_toggle: None,
             overrides: Overrides::default(),
             decisions: Vec::new(),

@@ -3,6 +3,8 @@ use tauri::Manager;
 #[cfg(unix)]
 use std::sync::Arc;
 
+use commands::automations::actions::circleci;
+
 #[cfg(unix)]
 pub mod cli;
 #[cfg(unix)]
@@ -34,6 +36,10 @@ pub fn run() {
                 )?;
             }
             std::thread::spawn(commands::chat::purge_stale_chat_images);
+            app.manage(circleci::CircleciToken(std::sync::Arc::new(KeychainItem {
+                service: app.config().identifier.clone(),
+                account: CIRCLECI_TOKEN_ACCOUNT,
+            })));
             #[cfg(unix)]
             app.manage(
                 cli_bridge::CliBridge::start(cli_bridge::socket_path(&app.config().identifier))
@@ -117,6 +123,8 @@ pub fn run() {
                 commands::agent_alerts::agent_dismiss_notifications,
                 commands::keychain::keychain_get,
                 commands::keychain::keychain_set,
+                circleci::token::circleci_token_saved,
+                circleci::token::circleci_token_save,
                 commands::terminal::terminal_open,
                 commands::terminal::terminal_write,
                 commands::terminal::terminal_resize,
@@ -196,6 +204,7 @@ fn start_automations(app: &tauri::AppHandle) -> Result<(), String> {
     app.manage(actions::AutomationEngine(executor.clone()));
     start_linear_triggers(app, executor.clone())?;
     start_github_triggers(app, executor.clone())?;
+    start_circleci_triggers(app, executor.clone())?;
     scheduler::start_scheduler(app.clone(), executor)
 }
 
@@ -255,6 +264,74 @@ fn start_linear_triggers(
                     triggers.poll(&store, executor.as_ref(), &definitions, now);
                 }
                 Err(error) => log::warn!("Linear triggers could not load the automations: {error}"),
+            }
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+    });
+    Ok(())
+}
+
+const CIRCLECI_TOKEN_ACCOUNT: &str = "circleci-token";
+
+/// A Keychain item of the app's own service, apart from the Linear keys the frontend owns.
+struct KeychainItem {
+    service: String,
+    account: &'static str,
+}
+
+impl circleci::SecretItem for KeychainItem {
+    fn read(&self) -> Result<Option<String>, String> {
+        let entry = keyring::Entry::new(&self.service, self.account)
+            .map_err(|e| format!("Failed to open keychain entry: {e}"))?;
+        match entry.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(format!("Failed to read from keychain: {e}")),
+        }
+    }
+
+    fn write(&self, value: Option<&str>) -> Result<(), String> {
+        let entry = keyring::Entry::new(&self.service, self.account)
+            .map_err(|e| format!("Failed to open keychain entry: {e}"))?;
+        let written = match value {
+            Some(value) => entry.set_password(value),
+            None => match entry.delete_credential() {
+                Err(keyring::Error::NoEntry) => Ok(()),
+                deleted => deleted,
+            },
+        };
+        written.map_err(|e| format!("Failed to write to keychain: {e}"))
+    }
+}
+
+/// Polls CircleCI once a minute for the automations with CircleCI event triggers.
+#[cfg(unix)]
+fn start_circleci_triggers(
+    app: &tauri::AppHandle,
+    executor: Arc<dyn commands::automations::scheduler::Executor>,
+) -> Result<(), String> {
+    use commands::automations::{definition, store::RunStore};
+    let store = RunStore::of(app)?;
+    let saved = app.state::<circleci::CircleciToken>().inner().clone();
+    let token: circleci::TokenReader = Arc::new(move || saved.read());
+    let mut triggers =
+        circleci::CircleciTriggers::new(Arc::new(circleci::RestCircleci::new(token)));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        log::info!("CircleCI triggers poll every minute");
+        loop {
+            match definition::load_current(&app) {
+                Ok(entries) => {
+                    let definitions: Vec<_> = entries
+                        .iter()
+                        .filter_map(|e| e.definition.as_ref())
+                        .collect();
+                    let now = std::time::SystemTime::now().into();
+                    triggers.poll(&store, executor.as_ref(), &definitions, now);
+                }
+                Err(error) => {
+                    log::warn!("CircleCI triggers could not load the automations: {error}")
+                }
             }
             std::thread::sleep(std::time::Duration::from_secs(60));
         }
