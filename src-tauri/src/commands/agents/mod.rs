@@ -321,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_forks_by_relaunching_and_queues_messages_during_a_turn() {
+    fn claude_forks_by_relaunching_and_steers_by_interrupting() {
         assert_eq!(
             missing_agents().get("claude").unwrap().capabilities(),
             AgentCapabilities {
@@ -333,7 +333,7 @@ mod tests {
                 effort: true,
                 permission_modes: &[PermissionMode::Interactive, PermissionMode::Unattended],
                 interrupt: true,
-                steer: false,
+                steer: true,
                 compact: true,
                 images: true,
                 headless: true,

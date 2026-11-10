@@ -341,7 +341,8 @@ fn chat_sessions_steer_only_turns_in_progress_of_agents_that_steer() {
     set_turn(&registry, "t1", "codex", true);
     set_turn(&registry, "t1", "claude", true);
     assert!(sessions.steer("codex", "t1:codex", "Use rebase"));
-    assert!(!sessions.steer("claude", "t1:claude", "Use rebase"));
+    assert!(sessions.steer("claude", "t1:claude", "Use rebase"));
+    assert!(!sessions.steer("unknown", "t1:claude", "Use rebase"));
     assert!(!sessions.steer("codex", "missing", "Use rebase"));
 }
 

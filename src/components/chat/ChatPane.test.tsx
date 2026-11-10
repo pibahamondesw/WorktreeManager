@@ -549,8 +549,8 @@ describe("ChatPane", () => {
   });
 
   it.each([
-    ["claude", "Claude Code is working — messages you send now run after this turn (Esc to stop)"],
-    ["codex", "Codex is working — messages you send now are added to this turn (Esc to stop)"],
+    ["claude", "Claude Code is working — send a message to redirect it (Esc to stop)"],
+    ["codex", "Codex is working — send a message to redirect it (Esc to stop)"],
   ] as const)("tells how %s handles messages sent mid-turn", async (agent, placeholder) => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"
@@ -560,6 +560,26 @@ describe("ChatPane", () => {
     render(<ChatPane taskId="t1" agent={agent} folders={["/wt/a"]} />);
     const box = screen.getByRole("textbox", { name: `Message ${describeAgent(agent).label}` });
     await waitFor(() => expect(box).toHaveAttribute("aria-placeholder", placeholder));
+  });
+
+  it("tells that messages sent mid-turn wait when the agent cannot steer", async () => {
+    mocks.catalog = AGENT_CATALOG.map((agent) => ({
+      ...agent,
+      capabilities: { ...agent.capabilities, steer: false },
+    }));
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open"
+        ? Promise.resolve(snapshot({ status: { kind: "busy" } }))
+        : Promise.resolve(undefined)
+    );
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    const box = screen.getByRole("textbox", { name: "Message Claude Code" });
+    await waitFor(() =>
+      expect(box).toHaveAttribute(
+        "aria-placeholder",
+        "Claude Code is working — messages you send now run after this turn (Esc to stop)"
+      )
+    );
   });
 
   it("shows why a session failed and restarts it", async () => {

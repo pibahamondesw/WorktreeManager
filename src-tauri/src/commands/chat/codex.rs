@@ -713,6 +713,7 @@ impl CodexProvider {
             }
             "turn/completed" => {
                 out.completes_turn = true;
+                out.interrupted = params["turn"]["status"] == "interrupted";
                 self.turn_id = None;
                 self.busy = false;
                 if let Some(message) = params["turn"]["error"]["message"].as_str() {
@@ -2042,11 +2043,12 @@ mod tests {
             &mut snapshot,
             json!({ "method": "item/completed", "params": { "threadId": "th1", "item": { "type": "agentMessage", "id": "a1", "text": "Done." } } }),
         );
-        feed(
+        let stopped = feed(
             &mut provider,
             &mut snapshot,
             json!({ "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t1", "status": "interrupted", "error": null } } }),
         );
+        assert!(stopped.interrupted);
         assert_eq!(snapshot.item("a1").unwrap().text, "Done.");
         assert_eq!(snapshot.status, ChatStatus::Idle);
     }

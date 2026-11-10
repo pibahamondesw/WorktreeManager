@@ -194,6 +194,7 @@ impl Shared {
 
     fn commit(&mut self, mut out: ProviderOutput, conversation: &dyn Fn(String), notify: &Notify) {
         if out.completes_turn {
+            self.snapshot.interrupted = out.interrupted;
             self.turns.complete_turn();
             let unfinished_reasoning = self
                 .snapshot
@@ -210,6 +211,7 @@ impl Shared {
             out.events.splice(0..0, unfinished_reasoning);
         }
         if out.starts_turn {
+            self.snapshot.interrupted = false;
             self.turns.start_turn();
         }
         for line in out.writes {
@@ -530,8 +532,8 @@ impl ChatSession {
         self.deliver(&mut state, text, images)
     }
 
-    /// Adds `text` to the turn in progress; `false` without one, since steering never starts a
-    /// turn.
+    /// Redirects the turn in progress with `text`; `false` without one, since steering never
+    /// starts a turn.
     fn steer(&self, text: &str) -> Result<bool, String> {
         let mut state = self.shared.lock().unwrap();
         if state.history_busy || state.snapshot.status != ChatStatus::Busy {

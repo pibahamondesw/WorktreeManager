@@ -13,7 +13,7 @@ interface AgentCapabilities {
   effort: boolean;
   permissionModes: string[];
   interrupt: boolean;
-  /** A message sent during a turn steers it instead of waiting in a queue. */
+  /** A message sent during a turn redirects it instead of waiting in a queue. */
   steer: boolean;
   compact: boolean;
   images: boolean;

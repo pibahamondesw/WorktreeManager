@@ -29,6 +29,7 @@ enum Control {
     ContextUsage,
     Usage,
     SessionCost,
+    Interrupt,
     Ignore,
 }
 
@@ -36,7 +37,9 @@ pub struct ClaudeProvider {
     fork_start: bool,
     session_id: String,
     turns: u32,
+    /// Messages sent mid-turn; the turn is interrupted so they run next, as a steer.
     queued: VecDeque<QueuedMessage>,
+    interrupting: bool,
     controls: ChatControls,
     calls: HashMap<String, Control>,
     blocks: HashMap<u64, String>,
@@ -61,9 +64,17 @@ pub struct ClaudeProvider {
 struct QueuedMessage {
     item: ChatItem,
     content: Value,
+    /// Slash commands wait for the turn instead: context ahead of them would hide the command.
+    steers: bool,
 }
 
 const UNANSWERED_MESSAGE: &str = "No one answered in time, so this was denied.";
+/// Leads a message that steered a turn; transcripts hide it since it starts with `<`.
+const STEER_CONTEXT: &str = "<steer>The user interrupted your previous turn to send the message \
+below. A tool may have been cut off midway: check the current state of the work first, then \
+resume it following the message.</steer>";
+/// Claude's own trace of an interrupted turn, kept out of the errors it reports.
+const DIAGNOSTIC_PREFIX: &str = "[ede_diagnostic]";
 const UNSUPPORTED_CONTROL: &str = "Unsupported control request";
 const EVENT_USAGE_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -109,6 +120,7 @@ impl ClaudeProvider {
             session_id,
             turns: 0,
             queued: VecDeque::new(),
+            interrupting: false,
             controls: ChatControls::default(),
             calls: HashMap::new(),
             blocks: HashMap::new(),
@@ -195,6 +207,9 @@ impl ClaudeProvider {
                 out.history_result = Some(Err(message.clone()));
                 out.status(ChatStatus::Failed { message });
                 return;
+            }
+            if let Control::Interrupt = call {
+                self.interrupting = false;
             }
             if let Control::Usage = call {
                 self.usage_in_flight = false;
@@ -318,7 +333,7 @@ impl ClaudeProvider {
                 self.select_mode(&mode);
                 out.controls(&self.controls);
             }
-            Control::Rename | Control::Ignore => {}
+            Control::Rename | Control::Interrupt | Control::Ignore => {}
         }
     }
 
@@ -395,6 +410,34 @@ impl ClaudeProvider {
                 })
                 .collect();
             out.controls(&self.controls);
+        }
+    }
+
+    fn request_interrupt(&mut self, out: &mut ProviderOutput) {
+        if self.turns > 0 && !self.interrupting {
+            self.interrupting = true;
+            self.control(out, Control::Interrupt, json!({ "subtype": "interrupt" }));
+        }
+    }
+
+    /// The next queued message starts the following turn, told to resume the work if the steer cut
+    /// this one; any still queued steer that turn in turn.
+    fn begin_next_turn(&mut self, interrupted: bool, out: &mut ProviderOutput) {
+        self.interrupting = false;
+        let Some(mut message) = self.queued.pop_front() else {
+            out.status(ChatStatus::Idle);
+            return;
+        };
+        if interrupted && message.steers {
+            message.content = with_context(STEER_CONTEXT.to_string(), message.content);
+        }
+        self.begin_turn(message, out);
+        self.steer_queued(out);
+    }
+
+    fn steer_queued(&mut self, out: &mut ProviderOutput) {
+        if self.queued.iter().any(|message| message.steers) {
+            self.request_interrupt(out);
         }
     }
 
@@ -637,14 +680,16 @@ impl ChatProvider for ClaudeProvider {
                 self.request_usage(out)
             }
             Some("result") => {
+                let interrupted = interrupted_result(&message);
                 out.completes_turn = true;
+                out.interrupted = interrupted;
                 out.denials.extend(permission_denials(&message));
                 out.background_agents = Some(self.background_agents);
                 self.turns = self.turns.saturating_sub(1);
                 if let Some(item) = structured_reply(&message) {
                     out.upsert(item);
                 }
-                if message["is_error"] == true {
+                if message["is_error"] == true && !interrupted {
                     let text = message["result"]
                         .as_str()
                         .map(String::from)
@@ -653,6 +698,7 @@ impl ChatProvider for ClaudeProvider {
                                 errors
                                     .iter()
                                     .filter_map(Value::as_str)
+                                    .filter(|error| !error.starts_with(DIAGNOSTIC_PREFIX))
                                     .collect::<Vec<_>>()
                                     .join("\n")
                             })
@@ -668,18 +714,15 @@ impl ChatProvider for ClaudeProvider {
                     json!({ "subtype": "get_context_usage", "detail": "summary" }),
                 );
                 if self.turns == 0 {
-                    if let Some(message) = self.queued.pop_front() {
-                        self.begin_turn(message, out);
-                    } else {
-                        out.status(ChatStatus::Idle);
-                    }
+                    self.begin_next_turn(interrupted, out);
                 }
             }
             _ => {}
         }
     }
 
-    /// Messages sent mid-turn are queued by WorktreeManager and run after the current turn.
+    /// A message sent mid-turn steers it: Claude is interrupted and the message runs once it
+    /// confirms the turn ended.
     fn send(
         &mut self,
         text: &str,
@@ -699,10 +742,12 @@ impl ChatProvider for ClaudeProvider {
                 Some(handoff) => with_context(handoff, content),
                 None => content,
             },
+            steers: !text.starts_with('/'),
         };
         if self.turns > 0 {
             out.upsert(message.item.clone().with_status("queued"));
             self.queued.push_back(message);
+            self.steer_queued(out);
         } else {
             self.begin_turn(message, out);
         }
@@ -710,9 +755,7 @@ impl ChatProvider for ClaudeProvider {
     }
 
     fn interrupt(&mut self, out: &mut ProviderOutput) {
-        if self.turns > 0 {
-            self.control(out, Control::Ignore, json!({ "subtype": "interrupt" }));
-        }
+        self.request_interrupt(out);
     }
 
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String> {
@@ -1569,6 +1612,15 @@ fn finish_notified_agent(
     }
 }
 
+/// Claude ends a turn it was interrupted in with an error result that only carries its own
+/// diagnostic; the turn was stopped, not failed.
+fn interrupted_result(result: &Value) -> bool {
+    matches!(
+        result["terminal_reason"].as_str(),
+        Some("aborted_streaming" | "aborted_tools")
+    )
+}
+
 /// Context goes in its own leading block; transcripts hide blocks that start with `<`.
 fn with_context(context: String, content: Value) -> Value {
     let rest = match content {
@@ -1819,7 +1871,7 @@ mod tests {
 
         let mut out = ProviderOutput::default();
         provider.send("next", &[], &mut out).unwrap();
-        assert!(out.writes.is_empty());
+        assert_eq!(written(&out)[0]["request"]["subtype"], "interrupt");
         let woke = feed(&mut provider, &mut snapshot, result.clone());
         assert_eq!(snapshot.status, ChatStatus::Busy);
         assert!(written(&woke).iter().any(|line| line["type"] == "user"));
@@ -2007,7 +2059,7 @@ mod tests {
         }
         let mut queued = ProviderOutput::default();
         provider.send("again", &[], &mut queued).unwrap();
-        assert!(queued.writes.is_empty());
+        assert_eq!(written(&queued)[0]["request"]["subtype"], "interrupt");
         assert!(!queued.starts_turn);
         for event in &queued.events {
             snapshot.apply(event);
@@ -2167,6 +2219,188 @@ mod tests {
         assert!(provider
             .send("next", &[], &mut ProviderOutput::default())
             .is_ok());
+    }
+
+    /// What Claude Code 2.1.319 prints after an interrupt cuts a turn waiting on a tool call.
+    fn interrupted_turn() -> [Value; 3] {
+        [
+            json!({ "type": "assistant", "aborted": true, "parent_tool_use_id": null, "message": {
+                "id": "m2", "role": "assistant", "content": [{ "type": "text", "text": "The" }], "stop_reason": null,
+            } }),
+            json!({ "type": "user", "parent_tool_use_id": null, "message": {
+                "role": "user", "content": [{ "type": "text", "text": "[Request interrupted by user]" }],
+            } }),
+            json!({
+                "type": "result", "subtype": "error_during_execution", "is_error": true, "num_turns": 3,
+                "stop_reason": "tool_use", "terminal_reason": "aborted_streaming", "permission_denials": [],
+                "errors": ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"],
+            }),
+        ]
+    }
+
+    fn feed_all(
+        provider: &mut ClaudeProvider,
+        snapshot: &mut ChatSnapshot,
+        lines: impl IntoIterator<Item = Value>,
+    ) -> ProviderOutput {
+        let mut last = ProviderOutput::default();
+        for line in lines {
+            last = feed(provider, snapshot, line);
+        }
+        last
+    }
+
+    fn sent(provider: &mut ClaudeProvider, snapshot: &mut ChatSnapshot, text: &str) -> Vec<Value> {
+        let mut out = ProviderOutput::default();
+        provider.send(text, &[], &mut out).unwrap();
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        written(&out)
+    }
+
+    #[test]
+    fn a_stopped_turn_ends_without_an_error_and_the_chat_continues() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        let mut stop = ProviderOutput::default();
+        provider.interrupt(&mut stop);
+        provider.interrupt(&mut stop);
+        let requests = written(&stop);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["request"]["subtype"], "interrupt");
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": {
+                "subtype": "success", "request_id": requests[0]["request_id"], "response": { "still_queued": [] },
+            } }),
+        );
+
+        let end = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        assert!(end.completes_turn && end.interrupted);
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        assert!(!snapshot.has_error());
+        assert!(!snapshot
+            .items
+            .iter()
+            .any(|item| item.text.contains(DIAGNOSTIC_PREFIX)));
+
+        let next = sent(&mut provider, &mut snapshot, "next");
+        assert_eq!(next[0]["message"]["content"], "next");
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+    }
+
+    #[test]
+    fn a_message_sent_mid_turn_interrupts_it_and_runs_next_told_to_resume() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        let steer = sent(&mut provider, &mut snapshot, "use rebase");
+        assert_eq!(steer.len(), 1);
+        assert_eq!(steer[0]["request"]["subtype"], "interrupt");
+        assert!(sent(&mut provider, &mut snapshot, "and squash").is_empty());
+
+        let resumed = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        assert!(resumed.completes_turn && resumed.starts_turn && resumed.interrupted);
+        let writes = written(&resumed);
+        let user = writes.iter().find(|line| line["type"] == "user").unwrap();
+        assert_eq!(user["message"]["content"][0]["text"], STEER_CONTEXT);
+        assert_eq!(user["message"]["content"][1]["text"], "use rebase");
+        assert!(writes
+            .iter()
+            .any(|line| line["request"]["subtype"] == "interrupt"));
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+        assert!(!snapshot.has_error());
+
+        let last = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        let writes = written(&last);
+        let user = writes.iter().find(|line| line["type"] == "user").unwrap();
+        assert_eq!(user["message"]["content"][1]["text"], "and squash");
+        assert!(!writes
+            .iter()
+            .any(|line| line["request"]["subtype"] == "interrupt"));
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "result", "subtype": "success", "is_error": false, "terminal_reason": "completed" }),
+        );
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+    }
+
+    #[test]
+    fn a_steer_that_lands_after_the_turn_finished_runs_as_a_plain_message() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        sent(&mut provider, &mut snapshot, "use rebase");
+        let next = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "result", "subtype": "success", "is_error": false, "terminal_reason": "completed" }),
+        );
+        assert!(!next.interrupted);
+        let user = written(&next)
+            .into_iter()
+            .find(|line| line["type"] == "user");
+        assert_eq!(user.unwrap()["message"]["content"], "use rebase");
+    }
+
+    #[test]
+    fn slash_commands_sent_mid_turn_wait_for_it_unchanged() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        assert!(sent(&mut provider, &mut snapshot, "/compact").is_empty());
+        let mut stop = ProviderOutput::default();
+        provider.interrupt(&mut stop);
+        let next = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        let writes = written(&next);
+        let user = writes.iter().find(|line| line["type"] == "user").unwrap();
+        assert_eq!(user["message"]["content"], "/compact");
+        assert!(!writes
+            .iter()
+            .any(|line| line["request"]["subtype"] == "interrupt"));
+    }
+
+    #[test]
+    fn a_failed_interrupt_can_be_requested_again() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        let mut stop = ProviderOutput::default();
+        provider.interrupt(&mut stop);
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": {
+                "subtype": "error", "request_id": written(&stop)[0]["request_id"], "error": "busy",
+            } }),
+        );
+        let mut again = ProviderOutput::default();
+        provider.interrupt(&mut again);
+        assert_eq!(written(&again)[0]["request"]["subtype"], "interrupt");
+    }
+
+    #[test]
+    fn claude_diagnostics_stay_out_of_reported_errors() {
+        let (mut provider, mut snapshot) = started();
+        let failed = |errors: Value| json!({ "type": "result", "subtype": "error_during_execution", "is_error": true, "errors": errors });
+        feed(
+            &mut provider,
+            &mut snapshot,
+            failed(json!([
+                "[ede_diagnostic] result_type=assistant",
+                "API overloaded"
+            ])),
+        );
+        assert_eq!(snapshot.items.last().unwrap().text, "API overloaded");
+        feed(
+            &mut provider,
+            &mut snapshot,
+            failed(json!(["[ede_diagnostic] result_type=assistant"])),
+        );
+        assert_eq!(
+            snapshot.items.last().unwrap().text,
+            "Claude stopped with an error"
+        );
     }
 
     #[test]

@@ -435,6 +435,9 @@ pub struct ChatSnapshot {
     pub controls: ChatControls,
     #[serde(skip)]
     pub background_agents: bool,
+    /// The last turn was stopped before it finished.
+    #[serde(skip)]
+    pub interrupted: bool,
 }
 
 impl ChatSnapshot {
@@ -448,6 +451,7 @@ impl ChatSnapshot {
             denied: Vec::new(),
             controls: ChatControls::default(),
             background_agents: false,
+            interrupted: false,
         }
     }
 
@@ -526,6 +530,8 @@ pub struct ProviderOutput {
     pub history_result: Option<Result<(), String>>,
     pub starts_turn: bool,
     pub completes_turn: bool,
+    /// The turn it completes was stopped before it finished.
+    pub interrupted: bool,
     /// Whether background subagents keep the session working after its turn ends.
     pub background_agents: Option<bool>,
     pub denials: Vec<PermissionDenial>,

@@ -213,7 +213,7 @@ impl AgentAdapter for Claude {
             effort: true,
             permission_modes: &[PermissionMode::Interactive, PermissionMode::Unattended],
             interrupt: true,
-            steer: false,
+            steer: true,
             compact: true,
             images: true,
             headless: true,
