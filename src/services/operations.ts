@@ -24,6 +24,7 @@ import {
 import { compareTaskPins } from "../utils";
 import { LinearService, MarkedIssueInput } from "./linear";
 import { taskLinearStore } from "./taskLinear";
+import { emitAppEvent, taskAppEvent } from "./automationEvents";
 import { persist } from "./store";
 import { persistedEntries } from "./preferences";
 import { appendTaskNoteEntry, archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
@@ -649,6 +650,7 @@ export class Operations {
       return { data: this.task(task.id), warnings, setup };
     } finally {
       endSetupRun(task.id, warnings);
+      emitAppEvent(taskAppEvent("task.created", task));
     }
   }
 
@@ -1149,6 +1151,7 @@ export class Operations {
       await this.removeResources([task], options, warnings);
       await this.write({ tasks: this.getState().tasks.filter((item) => item.id !== id) });
       clearTaskSetup(id);
+      emitAppEvent(taskAppEvent("task.deleted", task));
       await this.archiveNotes([task], warnings);
       return { data: { id }, warnings };
     });
@@ -1175,7 +1178,10 @@ export class Operations {
             ? (workspaces[0]?.id ?? null)
             : state.selectedWorkspaceId,
       });
-      tasks.forEach((task) => clearTaskSetup(task.id));
+      tasks.forEach((task) => {
+        clearTaskSetup(task.id);
+        emitAppEvent(taskAppEvent("task.deleted", task));
+      });
       await this.archiveNotes(tasks, warnings);
       return { data: { id }, warnings };
     });

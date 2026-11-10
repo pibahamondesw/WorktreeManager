@@ -1,6 +1,7 @@
 //! What the owner does to an automation from the app or the CLI: run it now, test it, pause it
 //! and resume it. Runs are claimed here and handed to the executor the scheduler also uses.
 
+pub mod events;
 pub mod fire;
 #[cfg(test)]
 mod tests;
@@ -64,6 +65,7 @@ pub fn start_run(
         scheduled_for: None,
         definition_hash: Some(definition.hash.clone()),
         test,
+        task_id: None,
     };
     let (Claim::Created(run_id) | Claim::Existing(run_id)) = writer.claim(trigger)?;
     let skip = capacity_skip(&Automation::of(definition), &active);

@@ -112,6 +112,7 @@ export interface GithubPrStatus {
   isDraft: boolean;
   ci: "passing" | "failing" | "running" | "none" | "unknown";
   review: "approved" | "changes_requested" | "pending";
+  headSha?: string;
 }
 
 export interface PullRequestInfo {

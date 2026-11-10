@@ -110,7 +110,80 @@ pub struct SelectorSettings {
 pub struct Trigger {
     pub manual: bool,
     pub schedule: Option<Schedule>,
+    pub events: Vec<EventTrigger>,
     pub cli: bool,
+}
+
+/// An app event that fires the automation when every condition matches.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventTrigger {
+    #[serde(rename = "type")]
+    pub kind: AppEventKind,
+    /// Resolved from the workspace name or id.
+    pub workspace_id: Option<String>,
+    /// Only for `agent.*` events.
+    pub agent: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AppEventKind {
+    #[serde(rename = "task.created")]
+    TaskCreated,
+    #[serde(rename = "task.deleted")]
+    TaskDeleted,
+    #[serde(rename = "agent.done")]
+    AgentDone,
+    #[serde(rename = "agent.waiting")]
+    AgentWaiting,
+    #[serde(rename = "pr.merged")]
+    PrMerged,
+    #[serde(rename = "pr.closed")]
+    PrClosed,
+    #[serde(rename = "pr.reopened")]
+    PrReopened,
+    #[serde(rename = "pr.ready")]
+    PrReady,
+    #[serde(rename = "pr.checks_passed")]
+    PrChecksPassed,
+    #[serde(rename = "pr.checks_failed")]
+    PrChecksFailed,
+    #[serde(rename = "pr.approved")]
+    PrApproved,
+    #[serde(rename = "pr.changes_requested")]
+    PrChangesRequested,
+}
+
+pub const APP_EVENT_KINDS: [(&str, AppEventKind); 12] = [
+    ("task.created", AppEventKind::TaskCreated),
+    ("task.deleted", AppEventKind::TaskDeleted),
+    ("agent.done", AppEventKind::AgentDone),
+    ("agent.waiting", AppEventKind::AgentWaiting),
+    ("pr.merged", AppEventKind::PrMerged),
+    ("pr.closed", AppEventKind::PrClosed),
+    ("pr.reopened", AppEventKind::PrReopened),
+    ("pr.ready", AppEventKind::PrReady),
+    ("pr.checks_passed", AppEventKind::PrChecksPassed),
+    ("pr.checks_failed", AppEventKind::PrChecksFailed),
+    ("pr.approved", AppEventKind::PrApproved),
+    ("pr.changes_requested", AppEventKind::PrChangesRequested),
+];
+
+impl AppEventKind {
+    pub fn name(self) -> &'static str {
+        APP_EVENT_KINDS
+            .iter()
+            .find(|(_, kind)| *kind == self)
+            .map_or("", |(name, _)| name)
+    }
+
+    pub fn is_agent(self) -> bool {
+        matches!(self, Self::AgentDone | Self::AgentWaiting)
+    }
+
+    pub fn is_pr(self) -> bool {
+        self.name().starts_with("pr.")
+    }
 }
 
 #[derive(Debug, Serialize)]

@@ -15,12 +15,12 @@ use super::fields::{
     Report,
 };
 use super::{
-    AgentSettings, AgentStep, ApprovalDefault, ApprovalStep, Authorization, AutomationDefinition,
-    Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency, Effect, Environment,
-    GotoLimit, InboxPolicy, IssueKind, LeaseHold, LinearOverrides, LinearTracker, Pools,
-    PullRequestEffect, RepoRef, ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step,
-    StepKind, StopAfter, Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, ValuedPool,
-    Verb, WaitStep, WorkspaceRef,
+    AgentSettings, AgentStep, AppEventKind, ApprovalDefault, ApprovalStep, Authorization,
+    AutomationDefinition, Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency,
+    Effect, Environment, EventTrigger, GotoLimit, InboxPolicy, IssueKind, LeaseHold,
+    LinearOverrides, LinearTracker, Pools, PullRequestEffect, RepoRef, ReportPolicy, ResultSchema,
+    Schedule, SelectorSettings, Step, StepKind, StopAfter, Target, TargetRepo, TaskMode, Tracker,
+    Transition, Trigger, ValuedPool, Verb, WaitStep, WorkspaceRef, APP_EVENT_KINDS,
 };
 use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
@@ -116,10 +116,11 @@ pub(super) fn definition(
         report,
         "trigger",
         manual_trigger(),
-        |report, value, field| trigger(report, context.env.now, value, field),
+        |report, value, field| trigger(report, context.env, value, field),
     );
+    let events_supply_task = frontmatter["trigger"].get("event").is_some();
     let target = fields.require(report, "target", |report, value, field| {
-        target(report, context.env, value, field)
+        target(report, context.env, value, field, events_supply_task)
     });
     let task_mode = target
         .as_ref()
@@ -281,32 +282,31 @@ fn manual_trigger() -> Trigger {
     Trigger {
         manual: true,
         schedule: None,
+        events: Vec::new(),
         cli: false,
     }
 }
 
-fn trigger(report: &mut Report, now: DateTime<Utc>, value: &Value, field: &str) -> Option<Trigger> {
+fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -> Option<Trigger> {
     let mut fields = Fields::of(report, value, field)?;
     let manual = fields.or(report, "manual", true, boolean);
     let schedule = fields.optional(report, "schedule", |report, value, field| {
-        schedule(report, now, value, field)
+        schedule(report, env.now, value, field)
     });
-    let event = fields.get("event").is_some();
-    if event {
-        report.error(
-            IssueKind::Unsupported,
-            &fields.path("event"),
-            "event triggers are not supported yet (WOR-270)",
-        );
-    }
+    let events = fields.or(report, "event", Vec::new(), |report, value, field| {
+        each(report, value, field, |report, value, field| {
+            event_trigger(report, env, value, field)
+        })
+    });
     let cli = fields.or(report, "cli", false, boolean);
     fields.finish(report);
     let trigger = Trigger {
         manual: manual?,
         schedule: schedule?,
+        events: events?,
         cli: cli?,
     };
-    if !trigger.manual && trigger.schedule.is_none() && !event && !trigger.cli {
+    if !trigger.manual && trigger.schedule.is_none() && trigger.events.is_empty() && !trigger.cli {
         report.error(
             IssueKind::Invalid,
             field,
@@ -315,6 +315,71 @@ fn trigger(report: &mut Report, now: DateTime<Utc>, value: &Value, field: &str) 
         return None;
     }
     Some(trigger)
+}
+
+fn event_trigger(
+    report: &mut Report,
+    env: &Environment,
+    value: &Value,
+    field: &str,
+) -> Option<EventTrigger> {
+    let mut fields = Fields::of(report, value, field)?;
+    let source = fields.require(report, "source", |report, value, field| {
+        event_source(report, value, field)
+    });
+    let kind = fields.require(report, "type", |report, value, field| {
+        choice(report, value, field, &APP_EVENT_KINDS)
+    });
+    let conditions = fields.or(report, "where", (None, None), |report, value, field| {
+        event_conditions(report, env, kind, value, field)
+    });
+    fields.finish(report);
+    source?;
+    let (workspace_id, agent) = conditions?;
+    Some(EventTrigger {
+        kind: kind?,
+        workspace_id,
+        agent,
+    })
+}
+
+fn event_source(report: &mut Report, value: &Value, field: &str) -> Option<()> {
+    match value.as_str() {
+        Some("app") => Some(()),
+        Some(source @ ("linear" | "github")) => {
+            report.error(
+                IssueKind::Unsupported,
+                field,
+                format!("{source} events are not supported yet"),
+            );
+            None
+        }
+        _ => choice(report, value, field, &[("app", ())]),
+    }
+}
+
+/// The workspace and agent an event must come from. `agent` is a condition of `agent.*` events
+/// only; elsewhere it is an unknown field.
+fn event_conditions(
+    report: &mut Report,
+    env: &Environment,
+    kind: Option<AppEventKind>,
+    value: &Value,
+    field: &str,
+) -> Option<(Option<String>, Option<String>)> {
+    let mut fields = Fields::of(report, value, field)?;
+    let workspace = fields.optional(report, "workspace", |report, value, field| {
+        workspace(report, env, value, field).map(|workspace| workspace.id.clone())
+    });
+    let agent = if kind.map_or(true, AppEventKind::is_agent) {
+        fields.optional(report, "agent", |report, value, field| {
+            agent_id(report, env, value, field)
+        })
+    } else {
+        Some(None)
+    };
+    fields.finish(report);
+    Some((workspace?, agent?))
 }
 
 fn schedule(
@@ -449,7 +514,14 @@ fn concurrency(
     })
 }
 
-fn target(report: &mut Report, env: &Environment, value: &Value, field: &str) -> Option<Target> {
+/// App events supply the task a `task: existing` target works in when it names none.
+fn target(
+    report: &mut Report,
+    env: &Environment,
+    value: &Value,
+    field: &str,
+    events_supply_task: bool,
+) -> Option<Target> {
     let mut fields = Fields::of(report, value, field)?;
     let workspace = fields.require(report, "workspace", |report, value, field| {
         workspace(report, env, value, field)
@@ -466,11 +538,11 @@ fn target(report: &mut Report, env: &Environment, value: &Value, field: &str) ->
     let existing_task_field = fields.path("existing_task");
     fields.finish(report);
     let (task, existing_task) = (task?, existing_task?);
-    if task == TaskMode::Existing && existing_task.is_none() {
+    if task == TaskMode::Existing && existing_task.is_none() && !events_supply_task {
         report.error(
             IssueKind::Missing,
             &existing_task_field,
-            "is required when task is existing",
+            "is required when task is existing, unless an event trigger supplies the task",
         );
         return None;
     }

@@ -137,6 +137,7 @@ fn claim(store: &RunStore, test: bool) -> String {
         scheduled_for: None,
         definition_hash: None,
         test,
+        task_id: None,
     };
     match store.writer(NAME).unwrap().claim(trigger).unwrap() {
         Claim::Created(id) => id,

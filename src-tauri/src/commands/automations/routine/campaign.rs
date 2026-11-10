@@ -209,8 +209,7 @@ impl RoutineExecutor {
     ) -> Result<(ResolvedTask, bool), TaskFailure> {
         let target = &definition.target;
         if target.task == TaskMode::Existing {
-            let task_id = target.existing_task.as_deref().unwrap_or_default();
-            return Ok((self.tasks.get(task_id)?, false));
+            return Ok((self.existing_task(definition, request)?, false));
         }
         let variables = item_variables(request, item);
         let (branch, issue) = match target.branch.as_deref() {

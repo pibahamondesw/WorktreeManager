@@ -539,6 +539,7 @@ fn record_asleep(
         scheduled_for: None,
         definition_hash: Some(automation.definition_hash.clone()),
         test: false,
+        task_id: None,
     };
     let (Claim::Created(id) | Claim::Existing(id)) = writer.claim(trigger)?;
     writer.append(
@@ -567,6 +568,7 @@ fn claim_slot(
         scheduled_for: Some(scheduled_for),
         definition_hash: Some(automation.definition_hash.clone()),
         test: false,
+        task_id: None,
     };
     let Claim::Created(run_id) = writer.claim(trigger)? else {
         return Ok(None);
@@ -603,18 +605,21 @@ fn skip_reason(
 
 /// Why a run may not start beside the `active` ones, paused or not.
 pub(super) fn capacity_skip(automation: &Automation, active: &[RunState]) -> Option<SkipReason> {
+    if active.len() as u64 >= automation.max_runs {
+        Some(SkipReason::AlreadyRunning)
+    } else {
+        pool_skip(automation, active)
+    }
+}
+
+/// Whether the automation's `active` pool has no room for another item.
+pub(super) fn pool_skip(automation: &Automation, active: &[RunState]) -> Option<SkipReason> {
     let busy_items = active
         .iter()
         .flat_map(|run| &run.items)
         .filter(|item| matches!(item.status, ItemStatus::Queued | ItemStatus::Active))
         .count() as u64;
-    if active.len() as u64 >= automation.max_runs {
-        Some(SkipReason::AlreadyRunning)
-    } else if busy_items >= automation.active_pool {
-        Some(SkipReason::Capped)
-    } else {
-        None
-    }
+    (busy_items >= automation.active_pool).then_some(SkipReason::Capped)
 }
 
 fn overdue(

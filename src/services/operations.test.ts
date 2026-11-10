@@ -251,7 +251,9 @@ describe("shared operations", () => {
     expect(result.warnings).toEqual([]);
     const steps = lifecycle.calls.map((call) => call.step);
     expect(steps.indexOf("validateWorktrees")).toBeLessThan(steps.indexOf("addWorktree"));
-    expect(invoke).not.toHaveBeenCalled();
+    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+      "automation_app_event",
+    ]);
   });
 
   it("marks the tasks an automation creates", async () => {
@@ -265,6 +267,34 @@ describe("shared operations", () => {
       automationId: "pr-babysitter",
     });
     expect(operations.task(created.id).automationId).toBe("pr-babysitter");
+  });
+
+  it("reports created and deleted tasks to the automation engine", async () => {
+    const { operations } = fixture([task]);
+    const appEvents = () =>
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "automation_app_event")
+        .map(([, args]) => (args as { event: { type: string; task: { id: string } } }).event);
+    const { data: created } = await operations.createTask({ ...input, automationId: "reviewer" });
+    await operations.deleteTask(created.id, { deleteWorktrees: false });
+    await operations.deleteWorkspace("w1", { deleteWorktrees: false });
+    await vi.waitFor(() => expect(appEvents()).toHaveLength(3));
+    expect(appEvents()[0]).toEqual({
+      type: "task.created",
+      task: {
+        id: created.id,
+        workspaceId: "w1",
+        branch: "pedro/wor-80",
+        automationId: "reviewer",
+        linearIssue: "WOR-80",
+      },
+    });
+    expect(appEvents().map(({ type, task }) => [type, task.id])).toEqual([
+      ["task.created", created.id],
+      ["task.deleted", created.id],
+      ["task.deleted", "t1"],
+    ]);
   });
 
   it("starts each repository's branch from the base the caller asks for", async () => {
