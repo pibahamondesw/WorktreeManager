@@ -509,8 +509,18 @@ fn write_marker(ctx: &LaunchContext, slug: &str) -> Result<(), String> {
     fs::write(&path, body.to_string()).map_err(|e| format!("write session marker: {e}"))
 }
 
-/// Rules no grant ever allows: merging and skipping hooks.
-const ALWAYS_DENIED: [&str; 2] = ["Bash(gh pr merge *)", "Bash(git * --no-verify*)"];
+/// Rules no grant ever allows: merging, skipping hooks and force pushing (`--force`,
+/// `--force-with-lease`, `--force-if-includes`, `-f` and `+refspec`), which only the engine's
+/// `git.push` effect may do.
+const ALWAYS_DENIED: [&str; 7] = [
+    "Bash(gh pr merge *)",
+    "Bash(git * --no-verify*)",
+    "Bash(git push *--force*)",
+    "Bash(git push -f*)",
+    "Bash(git push * -f*)",
+    "Bash(git push +*)",
+    "Bash(git push * +*)",
+];
 /// Tools a read-only session must not use.
 const EDITING_TOOLS: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
 
@@ -942,7 +952,7 @@ mod tests {
         );
     }
 
-    const REFUSED: [&str; 10] = [
+    const REFUSED: [&str; 15] = [
         "Bash(git add *)",
         "Bash(git commit *)",
         "Bash(git push *)",
@@ -953,6 +963,11 @@ mod tests {
         "Bash(gh pr ready *)",
         "Bash(gh pr merge *)",
         "Bash(git * --no-verify*)",
+        "Bash(git push *--force*)",
+        "Bash(git push -f*)",
+        "Bash(git push * -f*)",
+        "Bash(git push +*)",
+        "Bash(git push * +*)",
     ];
 
     fn unattended(allow: &[&str], deny: &[&str], grants: &[Grant]) -> PermissionPolicy {
@@ -1051,6 +1066,57 @@ mod tests {
         assert!(deny.contains(&"Bash(git push *)".to_string()));
         assert!(!deny.contains(&"Bash(git commit *)".to_string()));
         assert!(deny.contains(&"Bash(gh pr merge *)".to_string()));
+    }
+
+    fn wildcard_matches(pattern: &str, text: &str) -> bool {
+        match pattern.split_once('*') {
+            None => pattern == text,
+            Some((head, tail)) => text.strip_prefix(head).is_some_and(|rest| {
+                (0..=rest.len())
+                    .filter_map(|start| rest.get(start..))
+                    .any(|suffix| wildcard_matches(tail, suffix))
+            }),
+        }
+    }
+
+    fn bash_rule_matches(rule: &str, command: &str) -> bool {
+        rule.strip_prefix("Bash(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .is_some_and(|pattern| wildcard_matches(pattern, command))
+    }
+
+    #[test]
+    fn pushing_agents_cannot_force_push_even_behind_a_prefix() {
+        let args = permission_args(&unattended(&[], &[], &[Grant::Push]));
+        let split = args
+            .iter()
+            .position(|arg| arg == "--disallowedTools")
+            .unwrap();
+        let (allow, deny) = (&args[..split], &args[split + 1..]);
+        assert!(allow.contains(&"Bash(git push *)".to_string()));
+        let denied = |command: &str| deny.iter().any(|rule| bash_rule_matches(rule, command));
+        for force in [
+            "git push --force origin main",
+            "git push origin main --force",
+            "git push --force-with-lease origin main",
+            "git push --force-with-lease=main:abc origin main",
+            "git push --force-with-lease --force-if-includes origin main",
+            "git push -f origin main",
+            "git push origin main -f",
+            "git push origin +main",
+            "git push +main",
+        ] {
+            assert!(denied(force), "{force}");
+            assert!(denied(&format!("rtk {force}")), "rtk {force}");
+        }
+        for plain in [
+            "git push origin main",
+            "git push -u origin feature",
+            "git push --set-upstream origin fix-force",
+            "rtk git push origin main",
+        ] {
+            assert!(!denied(plain), "{plain}");
+        }
     }
 
     #[test]
