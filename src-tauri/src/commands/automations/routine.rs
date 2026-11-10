@@ -23,6 +23,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::command::{CommandContext, CommandExecutor};
@@ -64,6 +65,7 @@ pub struct ResolvedTask {
     pub folders: Vec<String>,
     /// The repository of each folder, in the same order.
     pub repo_ids: Vec<String>,
+    pub linear_issue_id: Option<String>,
 }
 
 impl ResolvedTask {
@@ -97,6 +99,15 @@ pub struct NewTask {
     /// Ref each repository's new branch starts from, by repository id; others use the default.
     pub bases: BTreeMap<String, String>,
     pub automation: String,
+    pub linear_issue: Option<LinkedIssue>,
+}
+
+/// The Linear issue a task is linked to, as `wtm task create` takes it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkedIssue {
+    pub id: String,
+    pub identifier: String,
+    pub title: String,
 }
 
 /// How an agent step's session starts. A step continues the item's shared session when it asks
@@ -120,6 +131,8 @@ pub trait Tasks: Send + Sync {
     fn get(&self, task_id: &str) -> Result<ResolvedTask, TaskFailure>;
     /// The workspace's task on `branch`, if there is one.
     fn find(&self, workspace_id: &str, branch: &str) -> Result<Option<ResolvedTask>, TaskFailure>;
+    /// Links the task to the Linear issue `identifier`, as `wtm task link-issue` does.
+    fn link_issue(&self, task_id: &str, identifier: &str) -> Result<ResolvedTask, TaskFailure>;
 }
 
 /// Headless agent sessions.
@@ -500,6 +513,7 @@ impl RoutineExecutor {
                     repo_ids: target.repos.iter().map(|repo| repo.id.clone()).collect(),
                     bases: bases(target),
                     automation: definition.name.clone(),
+                    linear_issue: None,
                 })
             }
             TaskMode::PerItem | TaskMode::Existing => self

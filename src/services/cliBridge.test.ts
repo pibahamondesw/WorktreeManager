@@ -411,7 +411,7 @@ describe("engine-only operations", () => {
   const upsert = {
     workspaceId: "w1",
     marker: "m:1",
-    team: "DX",
+    team: "ENG",
     title: " Lint ",
     project: null,
     labels: ["Lint"],
@@ -428,7 +428,8 @@ describe("engine-only operations", () => {
   it("upsert and move marked Linear issues with the workspace credential", async () => {
     const upsertIssue = vi.spyOn(LinearService.prototype, "upsertMarkedIssue").mockResolvedValue({
       id: "i",
-      identifier: "DX-1",
+      identifier: "ENG-1",
+      title: "Lint",
       url: "u",
       branchName: "me/dx-1",
       created: true,
@@ -442,11 +443,11 @@ describe("engine-only operations", () => {
 
     expect(await engineCall("linear.issue-upsert", upsert)).toMatchObject({
       ok: true,
-      data: { identifier: "DX-1", created: true },
+      data: { identifier: "ENG-1", title: "Lint", created: true },
     });
     expect(upsertIssue).toHaveBeenCalledWith({
       marker: "m:1",
-      team: "DX",
+      team: "ENG",
       title: "Lint",
       project: null,
       assignee: "me",

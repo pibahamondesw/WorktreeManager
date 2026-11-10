@@ -1282,7 +1282,7 @@ fn trackers_describe_the_linear_issue_per_item() {
     let definition = valid(&routine(
         "tracker:
   linear:
-    team: DX
+    team: ENG
     project: P-ENG-1
     labels: [Lint, \"lint:{item.data.cop}\"]
     milestone: \"{item.data.milestone_name}\"
@@ -1291,7 +1291,7 @@ fn trackers_describe_the_linear_issue_per_item() {
 ",
     ));
     let linear = definition.tracker.unwrap().linear;
-    assert_eq!(linear.team, "DX");
+    assert_eq!(linear.team, "ENG");
     assert_eq!(linear.project.as_deref(), Some("P-ENG-1"));
     assert_eq!(linear.assignee, "me");
     assert_eq!(linear.marker, "wtm:{automation}:{item.id}");
@@ -1307,17 +1307,17 @@ fn trackers_describe_the_linear_issue_per_item() {
         IssueKind::Missing,
     );
     assert_issue(
-        &routine("tracker:\n  linear: { team: DX, states: { review: [x] } }\n"),
+        &routine("tracker:\n  linear: { team: ENG, states: { review: [x] } }\n"),
         "tracker.linear.states.review",
         IssueKind::Invalid,
     );
     assert_issue(
-        &routine("tracker:\n  linear: { team: DX, labels: [\"{{x}\"] }\n"),
+        &routine("tracker:\n  linear: { team: ENG, labels: [\"{{x}\"] }\n"),
         "tracker.linear.labels[0]",
         IssueKind::Invalid,
     );
     assert_issue(
-        &routine("tracker:\n  linear: { team: DX, milestone: \"{item.nope}\" }\n"),
+        &routine("tracker:\n  linear: { team: ENG, milestone: \"{item.nope}\" }\n"),
         "tracker.linear.milestone",
         IssueKind::Invalid,
     );
@@ -1605,7 +1605,7 @@ fn campaigns_check_their_selector_and_task_mode() {
         issues_of(&routine("selector: { run: [scripts/queue.sh] }\n"))
             .contains(&("target.task".into(), IssueKind::Invalid))
     );
-    let tracked = "selector: { run: [scripts/queue.sh] }\ntracker: { linear: { team: DX } }\n";
+    let tracked = "selector: { run: [scripts/queue.sh] }\ntracker: { linear: { team: ENG } }\n";
     let on_issue_branch = load_campaign(&campaign(tracked)).definition.unwrap();
     assert_eq!(on_issue_branch.target.branch, None);
     let branched =
@@ -1765,7 +1765,7 @@ mod commands {
 
 const ALL_VERBS: &str = "authorization:
   allow: [push, force_push, pr_create, pr_update, pr_comment, pr_ready, linear_write, task_create, task_log, task_delete]
-tracker: { linear: { team: DX } }
+tracker: { linear: { team: ENG } }
 ";
 
 #[test]

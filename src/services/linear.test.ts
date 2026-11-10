@@ -403,7 +403,7 @@ describe("marked issues", () => {
   const marker = "lint:api:unit-1";
   const input = {
     marker,
-    team: "dx",
+    team: "eng",
     title: "Lint: unit 1",
     project: "Code quality",
     assignee: "me",
@@ -414,16 +414,16 @@ describe("marked issues", () => {
       nodes: [
         {
           id: "issue",
-          identifier: "DX-9",
-          url: "https://linear.app/x/DX-9",
-          branchName: "me/dx-9-lint-unit-1",
+          identifier: "ENG-9",
+          url: "https://linear.app/x/ENG-9",
+          branchName: "me/eng-9-lint-unit-1",
           title,
           state: { id: "s-todo", name: state },
           labels: { nodes: labels },
           projectMilestone: null,
           team: {
             id: "team",
-            key: "DX",
+            key: "ENG",
             states: {
               nodes: [
                 { id: "s-todo", name: "Todo" },
@@ -437,7 +437,7 @@ describe("marked issues", () => {
   });
   const context = {
     viewer: { id: "viewer" },
-    teams: { nodes: [{ id: "team", key: "DX", name: "Developer Experience" }] },
+    teams: { nodes: [{ id: "team", key: "ENG", name: "Engineering" }] },
     issueLabels: {
       nodes: [
         { id: "other-team-label", name: "Lint", team: { id: "other" } },
@@ -457,9 +457,10 @@ describe("marked issues", () => {
     const same = service(marked("Lint: unit 1"), context);
     await expect(same.linear.upsertMarkedIssue(input)).resolves.toEqual({
       id: "issue",
-      identifier: "DX-9",
-      url: "https://linear.app/x/DX-9",
-      branchName: "me/dx-9-lint-unit-1",
+      identifier: "ENG-9",
+      title: "Lint: unit 1",
+      url: "https://linear.app/x/ENG-9",
+      branchName: "me/eng-9-lint-unit-1",
       created: false,
       updated: false,
       warnings: [],
@@ -470,6 +471,7 @@ describe("marked issues", () => {
     const renamed = service(marked("Old"), context, { issueUpdate: { success: true } });
     await expect(renamed.linear.upsertMarkedIssue(input)).resolves.toMatchObject({
       updated: true,
+      title: "Lint: unit 1",
     });
     expect(renamed.request.mock.calls[2][1]).toEqual({
       id: "issue",
@@ -485,9 +487,9 @@ describe("marked issues", () => {
   it("creates the issue with the marker as its description", async () => {
     const created = {
       id: "new",
-      identifier: "DX-10",
-      url: "https://linear.app/x/DX-10",
-      branchName: "me/dx-10-lint-unit-1",
+      identifier: "ENG-10",
+      url: "https://linear.app/x/ENG-10",
+      branchName: "me/eng-10-lint-unit-1",
     };
     const { linear, request } = service(
       { issues: { nodes: [] } },
@@ -497,6 +499,7 @@ describe("marked issues", () => {
     );
     await expect(linear.upsertMarkedIssue(input)).resolves.toEqual({
       ...created,
+      title: "Lint: unit 1",
       created: true,
       updated: false,
       warnings: [],
@@ -520,7 +523,7 @@ describe("marked issues", () => {
       { issues: { nodes: [] } },
       context,
       { users: { nodes: [{ id: "user" }] } },
-      { issueCreate: { success: true, issue: { id: "n", identifier: "DX-1", url: "u" } } }
+      { issueCreate: { success: true, issue: { id: "n", identifier: "ENG-1", url: "u" } } }
     );
     await linear.upsertMarkedIssue({
       ...input,
@@ -562,7 +565,7 @@ describe("marked issues", () => {
 
   it("creates the issue with the labels and milestone that resolve and warns about the rest", async () => {
     const { linear, request } = service({ issues: { nodes: [] } }, context, milestones, {
-      issueCreate: { success: true, issue: { id: "n", identifier: "DX-1", url: "u" } },
+      issueCreate: { success: true, issue: { id: "n", identifier: "ENG-1", url: "u" } },
     });
     const result = await linear.upsertMarkedIssue({
       ...input,
@@ -571,7 +574,7 @@ describe("marked issues", () => {
     });
     expect(result.warnings).toEqual([
       "A Linear label rendered empty; skipped it",
-      "Linear label lint:missing not found in team DX; skipped it",
+      "Linear label lint:missing not found in team ENG; skipped it",
     ]);
     expect(request.mock.calls[1][1]).toEqual({ labels: ["Lint", "lint:missing"] });
     expect(request.mock.calls[3][1]).toMatchObject({
@@ -588,7 +591,7 @@ describe("marked issues", () => {
     async (overrides, warning) => {
       const lookups = "project" in overrides ? [] : [milestones];
       const { linear, request } = service({ issues: { nodes: [] } }, context, ...lookups, {
-        issueCreate: { success: true, issue: { id: "n", identifier: "DX-1", url: "u" } },
+        issueCreate: { success: true, issue: { id: "n", identifier: "ENG-1", url: "u" } },
       });
       const result = await linear.upsertMarkedIssue({ ...input, ...overrides });
       expect(result.warnings).toEqual([warning]);
@@ -607,7 +610,7 @@ describe("marked issues", () => {
     });
     expect(result).toMatchObject({
       updated: true,
-      warnings: ["Linear label Missing not found in team DX; skipped it"],
+      warnings: ["Linear label Missing not found in team ENG; skipped it"],
     });
     expect(request.mock.calls[2][1]).toEqual({ project: "Code quality" });
     expect(request.mock.calls[3][1]).toEqual({
@@ -619,14 +622,14 @@ describe("marked issues", () => {
   it("moves the marked issue to a state of its team by name", async () => {
     const moved = service(marked("t"), { issueUpdate: { success: true } });
     await expect(moved.linear.moveMarkedIssue(marker, "in review")).resolves.toEqual({
-      identifier: "DX-9",
+      identifier: "ENG-9",
       changed: true,
     });
     expect(moved.request.mock.calls[1][1]).toEqual({ id: "issue", input: { stateId: "s-review" } });
 
     const already = service(marked("t", "In Review"));
     await expect(already.linear.moveMarkedIssue(marker, "In Review")).resolves.toEqual({
-      identifier: "DX-9",
+      identifier: "ENG-9",
       changed: false,
     });
 

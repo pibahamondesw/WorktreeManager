@@ -10,6 +10,7 @@ use super::*;
 use crate::commands::agents::claude::Claude;
 use crate::commands::agents::permission::{Grant, UnattendedPolicy};
 use crate::commands::automations::definition::AgentSettings;
+use crate::commands::automations::routine::LinkedIssue;
 use crate::commands::login_shell::remember_availability;
 
 /// Answers every user message like Claude Code's stream-json mode, except messages asking it to
@@ -83,6 +84,7 @@ fn worktree_task(scratch: &Scratch) -> ResolvedTask {
         branch: "wtm/demo/1a2b3c4d".into(),
         folders: vec![scratch.0.join("worktree").to_string_lossy().into_owned()],
         repo_ids: vec!["r1".into()],
+        linear_issue_id: None,
     }
 }
 
@@ -223,6 +225,7 @@ fn new_task() -> NewTask {
         repo_ids: vec!["r1".into(), "r2".into()],
         bases: BTreeMap::from([("r2".into(), "origin/develop".into())]),
         automation: "demo".into(),
+        linear_issue: None,
     }
 }
 
@@ -251,6 +254,7 @@ fn bridge_tasks_go_through_the_frontend_operations() {
             branch: "wtm/demo/1a2b3c4d".into(),
             folders: vec!["/w/rails".into(), "/w/api".into()],
             repo_ids: vec!["r1".into(), "r2".into()],
+            linear_issue_id: None,
         })
     );
     assert_eq!(
@@ -364,6 +368,7 @@ fn bridge_tasks_find_the_workspace_task_on_a_branch() {
             branch: "wtm/demo/a".into(),
             folders: vec!["/w/a".into()],
             repo_ids: vec!["r1".into()],
+            linear_issue_id: None,
         }))
     );
     assert_eq!(tasks.find("w1", "wtm/demo/b"), Ok(None));
@@ -371,4 +376,55 @@ fn bridge_tasks_find_the_workspace_task_on_a_branch() {
         tasks.find("w9", "wtm/demo/a"),
         Err(TaskFailure::new("No workspace"))
     );
+}
+
+fn issue() -> LinkedIssue {
+    LinkedIssue {
+        id: "i1".into(),
+        identifier: "ENG-1".into(),
+        title: "Lint: unit 1".into(),
+    }
+}
+
+#[test]
+fn bridge_tasks_link_the_linear_issue_as_the_cli_does() {
+    let tasks = BridgeTasks(Arc::new(ScriptedBridge(|method, params| {
+        let expected = match method {
+            "task.create" => json!({ "input": {
+                "workspaceId": "w1",
+                "branchName": "me/eng-1",
+                "repoIds": ["r1"],
+                "automationId": "demo",
+                "linearIssue": { "id": "i1", "identifier": "ENG-1", "title": "Lint: unit 1" },
+            } }),
+            "task.link-issue" => json!({ "id": "t2", "issue": "ENG-1" }),
+            _ => panic!("unexpected {method}"),
+        };
+        assert_eq!(params, &expected);
+        json!({ "ok": true, "data": {
+            "id": "t2",
+            "branchName": "me/eng-1",
+            "members": [{ "repoId": "r1", "path": "/w/a" }],
+            "linearIssueId": "i1",
+        } })
+    })));
+    let linked = ResolvedTask {
+        id: "t2".into(),
+        branch: "me/eng-1".into(),
+        folders: vec!["/w/a".into()],
+        repo_ids: vec!["r1".into()],
+        linear_issue_id: Some("i1".into()),
+    };
+
+    let created = tasks.create(&NewTask {
+        workspace_id: "w1".into(),
+        branch: "me/eng-1".into(),
+        repo_ids: vec!["r1".into()],
+        bases: BTreeMap::new(),
+        automation: "demo".into(),
+        linear_issue: Some(issue()),
+    });
+
+    assert_eq!(created, Ok(linked.clone()));
+    assert_eq!(tasks.link_issue("t2", "ENG-1"), Ok(linked));
 }

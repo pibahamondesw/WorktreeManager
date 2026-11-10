@@ -108,6 +108,8 @@ struct FakeTasks {
     worktree: Option<PathBuf>,
     created: Mutex<Vec<NewTask>>,
     fetched: Mutex<Vec<String>>,
+    /// Tasks linked to an issue, with the issue's identifier.
+    linked: Mutex<Vec<(String, String)>>,
     /// Tasks `find` answers, by branch.
     existing: Vec<ResolvedTask>,
     /// Created tasks are named after their branch, for runs that create several.
@@ -122,6 +124,7 @@ fn task(id: &str) -> ResolvedTask {
         branch: "wtm/demo/branch".into(),
         folders: vec!["/worktrees/rails".into()],
         repo_ids: vec!["r1".into()],
+        linear_issue_id: None,
     }
 }
 
@@ -155,6 +158,18 @@ impl Tasks for FakeTasks {
         assert_eq!(workspace_id, "w1");
         let found = self.existing.iter().find(|task| task.branch == branch);
         Ok(found.cloned())
+    }
+
+    fn link_issue(&self, task_id: &str, identifier: &str) -> Result<ResolvedTask, TaskFailure> {
+        self.linked
+            .lock()
+            .unwrap()
+            .push((task_id.into(), identifier.into()));
+        let existing = self.existing.iter().find(|task| task.id == task_id);
+        Ok(ResolvedTask {
+            linear_issue_id: Some(identifier.into()),
+            ..existing.unwrap().clone()
+        })
     }
 }
 
@@ -389,6 +404,7 @@ fn a_manual_run_creates_its_task_and_records_the_session_and_outcome() {
             repo_ids: vec!["r1".into()],
             bases: BTreeMap::new(),
             automation: "demo".into(),
+            linear_issue: None,
         }]
     );
     let item = &run.items[0];
@@ -1183,17 +1199,23 @@ fn the_inbox_hears_of_newly_settled_requests_and_of_the_run_end() {
 struct LoggingBridge;
 
 /// Appends task logs, and upserts tracker issues whose branch follows their marker, labels and
-/// milestone unless the title asks for a failure.
+/// milestone unless the title asks for a failure. An issue's id is its branch's.
 impl OperationsBridge for LoggingBridge {
     fn call(&self, method: &str, params: Value) -> Value {
         if method == "linear.issue-upsert" {
             let branch = issue_branch(&params);
             return match params["title"].as_str().unwrap() {
                 "Offline" => json!({ "ok": false, "error": { "message": "Linear is offline" } }),
-                "Unbranched" => json!({ "ok": true, "data": { "identifier": "DX-2" } }),
-                _ => {
-                    json!({ "ok": true, "data": { "identifier": "DX-1", "branchName": format!("me/{branch}") } })
+                "Unbranched" => json!({ "ok": true, "data": { "identifier": "ENG-2" } }),
+                "Unidentified" => {
+                    json!({ "ok": true, "data": { "branchName": format!("me/{branch}") } })
                 }
+                title => json!({ "ok": true, "data": {
+                    "id": format!("issue-me/{branch}"),
+                    "identifier": "ENG-1",
+                    "title": title,
+                    "branchName": format!("me/{branch}"),
+                } }),
             };
         }
         assert_eq!(method, "task.log-append");

@@ -69,6 +69,9 @@ impl Tasks for BridgeTasks {
         if !task.bases.is_empty() {
             input["baseRefs"] = json!(task.bases);
         }
+        if let Some(issue) = &task.linear_issue {
+            input["linearIssue"] = json!(issue);
+        }
         resolved(self.0.call("task.create", json!({ "input": input })))
     }
 
@@ -88,6 +91,13 @@ impl Tasks for BridgeTasks {
             .filter(|task| task["branchName"] == branch)
             .find_map(|task| task["id"].as_str());
         found.map(|task_id| self.get(task_id)).transpose()
+    }
+
+    fn link_issue(&self, task_id: &str, identifier: &str) -> Result<ResolvedTask, TaskFailure> {
+        resolved(self.0.call(
+            "task.link-issue",
+            json!({ "id": task_id, "issue": identifier }),
+        ))
     }
 }
 
@@ -126,6 +136,7 @@ fn task_of(task: &Value) -> Option<ResolvedTask> {
         branch: task["branchName"].as_str()?.to_string(),
         folders: Some(paths(members)).filter(|folders| !folders.is_empty())?,
         repo_ids,
+        linear_issue_id: task["linearIssueId"].as_str().map(String::from),
     })
 }
 

@@ -211,6 +211,7 @@ fn task(worktree: &Path) -> ResolvedTask {
         branch: "wtm/demo/1".into(),
         folders: vec![worktree.to_string_lossy().into_owned()],
         repo_ids: vec!["r1".into()],
+        linear_issue_id: None,
     }
 }
 
@@ -224,7 +225,7 @@ fn allowing(verbs: &[Verb]) -> Authorization {
 
 fn tracker() -> LinearTracker {
     LinearTracker {
-        team: "DX".into(),
+        team: "ENG".into(),
         project: Some("Lint".into()),
         assignee: "me".into(),
         labels: vec!["Code quality".into()],
@@ -473,7 +474,7 @@ fn test_runs_stage_every_effect_without_running_any() {
             "Update the PR for wtm/demo/1: title [<issue id>] Lint, body from templates/pr.md, draft false",
             "Comment on the PR for wtm/demo/1: See <PR URL>",
             "Mark the PR for wtm/demo/1 ready for review",
-            "Create or update the DX issue marked lint:routine: Lint: routine (labels Code quality)",
+            "Create or update the ENG issue marked lint:routine: Lint: routine (labels Code quality)",
             "Move the issue marked lint:routine to In Review",
             "Create or reuse the task on wtm/demo/1",
             "Append to the task log: Opened <PR URL>",
@@ -832,9 +833,9 @@ fn pr_ready_marks_drafts_only() {
 fn linear_bridge(created: bool, updated: bool, changed: bool) -> FakeBridge {
     FakeBridge::answering(move |method, _| {
         if method == "linear.issue-upsert" {
-            ok(json!({ "identifier": "DX-9", "created": created, "updated": updated }))
+            ok(json!({ "identifier": "ENG-9", "created": created, "updated": updated }))
         } else {
-            ok(json!({ "identifier": "DX-9", "changed": changed }))
+            ok(json!({ "identifier": "ENG-9", "changed": changed }))
         }
     })
 }
@@ -869,17 +870,17 @@ fn linear_upsert_merges_the_tracker_and_names_the_issue_for_later_effects() {
             EffectStatus::Executed
         ]
     );
-    assert_eq!(effects[0].detail.as_deref(), Some("Created DX-9"));
+    assert_eq!(effects[0].detail.as_deref(), Some("Created ENG-9"));
     assert_eq!(
         effects[1].detail.as_deref(),
-        Some("Moved DX-9 to In Review")
+        Some("Moved ENG-9 to In Review")
     );
     let calls = bridge.calls();
     assert_eq!(
         calls[0].1,
         json!({
             "workspaceId": "w1",
-            "team": "DX",
+            "team": "ENG",
             "project": "Lint",
             "assignee": "me",
             "labels": [],
@@ -892,7 +893,7 @@ fn linear_upsert_merges_the_tracker_and_names_the_issue_for_later_effects() {
         calls[1].1,
         json!({ "workspaceId": "w1", "marker": "custom:routine", "state": "In Review" })
     );
-    assert!(forge.calls()[1].contains("title: \"[DX-9] Lint\""));
+    assert!(forge.calls()[1].contains("title: \"[ENG-9] Lint\""));
 }
 
 #[test]
@@ -900,10 +901,10 @@ fn linear_upsert_renders_labels_and_milestone_and_keeps_what_did_not_resolve_as_
     let forge = Arc::new(FakeForge::at("abc"));
     let bridge = Arc::new(FakeBridge::answering(|_, _| {
         ok(json!({
-            "identifier": "DX-9",
+            "identifier": "ENG-9",
             "created": true,
             "updated": false,
-            "warnings": ["Linear label lint:routine not found in team DX; skipped it"],
+            "warnings": ["Linear label lint:routine not found in team ENG; skipped it"],
         }))
     }));
     let mut run = Run::all();
@@ -923,7 +924,7 @@ fn linear_upsert_renders_labels_and_milestone_and_keeps_what_did_not_resolve_as_
     assert_eq!(statuses(&effects), [EffectStatus::Executed]);
     assert_eq!(
         effects[0].warnings,
-        ["Linear label lint:routine not found in team DX; skipped it"]
+        ["Linear label lint:routine not found in team ENG; skipped it"]
     );
     let params = &bridge.calls()[0].1;
     assert_eq!(params["labels"], json!(["Code quality", "lint:routine"]));
@@ -941,11 +942,11 @@ fn linear_upsert_renders_labels_and_milestone_and_keeps_what_did_not_resolve_as_
     };
     assert_eq!(
         staged_detail(Effect::LinearUpsert(LinearOverrides::default())),
-        "Create or update the DX issue marked lint:routine: Lint: routine (labels Code quality, lint:routine; milestone M routine)"
+        "Create or update the ENG issue marked lint:routine: Lint: routine (labels Code quality, lint:routine; milestone M routine)"
     );
     assert_eq!(
         staged_detail(Effect::LinearUpsert(overrides)),
-        "Create or update the DX issue marked lint:routine: Lint: routine (milestone M2)"
+        "Create or update the ENG issue marked lint:routine: Lint: routine (milestone M2)"
     );
     assert_eq!(bridge.calls().len(), 1);
 }
@@ -969,7 +970,7 @@ fn a_staged_upsert_without_labels_or_milestone_names_only_the_issue() {
 
     assert_eq!(
         effects[0].detail.as_deref(),
-        Some("Create or update the DX issue marked lint:routine: Lint: routine")
+        Some("Create or update the ENG issue marked lint:routine: Lint: routine")
     );
 }
 
@@ -989,12 +990,12 @@ fn linear_effects_reconcile_with_the_issue_the_marker_finds() {
     let unchanged = Arc::new(linear_bridge(false, false, false));
     let (_, effects_run) = run.publish(&mut publisher(&forge, &unchanged), 1, effects());
     assert_eq!(statuses(&effects_run), [EffectStatus::Reconciled; 2]);
-    assert_eq!(effects_run[1].detail.as_deref(), Some("DX-9 is in Done"));
+    assert_eq!(effects_run[1].detail.as_deref(), Some("ENG-9 is in Done"));
     assert_eq!(unchanged.calls()[1].1["marker"], "lint:routine");
 
     let retitled = Arc::new(linear_bridge(false, true, false));
     let (_, effects_run) = run.publish(&mut publisher(&forge, &retitled), 1, effects());
-    assert_eq!(effects_run[0].detail.as_deref(), Some("Updated DX-9"));
+    assert_eq!(effects_run[0].detail.as_deref(), Some("Updated ENG-9"));
 }
 
 #[test]

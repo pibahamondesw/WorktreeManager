@@ -112,6 +112,8 @@ export interface MarkedIssueInput {
 export interface MarkedIssue {
   id: string;
   identifier: string;
+  /** The title the upsert leaves on the issue. */
+  title: string;
   url: string;
   /** The branch Linear suggests for the issue; per-item tasks of a tracked campaign use it. */
   branchName: string;
@@ -576,7 +578,7 @@ export class LinearService {
     );
     const created = res.data?.issueCreate;
     if (!created?.success || !created.issue) throw new Error("Linear rejected the issue creation");
-    return { ...created.issue, created: true, updated: false, warnings };
+    return { ...created.issue, title: input.title, created: true, updated: false, warnings };
   }
 
   private async reconcileMarkedIssue(
@@ -603,7 +605,16 @@ export class LinearService {
     const updated = Object.keys(changes).length > 0;
     if (updated) await this.updateMarkedIssue(existing.id, changes);
     const { id, identifier, url, branchName } = existing;
-    return { id, identifier, url, branchName, created: false, updated, warnings };
+    return {
+      id,
+      identifier,
+      title: input.title,
+      url,
+      branchName,
+      created: false,
+      updated,
+      warnings,
+    };
   }
 
   /** Moves the issue whose description carries the marker to the team's state named `state`. */

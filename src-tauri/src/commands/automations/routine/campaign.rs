@@ -22,8 +22,8 @@ use super::super::selector::{
 use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, RunState, SkipReason};
 use super::commands::{item_data_variable, Item};
 use super::{
-    bases, render, run_variables, ItemDrive, NewTask, ResolvedTask, RoutineExecutor, TaskFailure,
-    WriterLog,
+    bases, render, run_variables, ItemDrive, LinkedIssue, NewTask, ResolvedTask, RoutineExecutor,
+    TaskFailure, WriterLog,
 };
 
 const SCRIPTS_DIR: &str = "scripts/";
@@ -199,7 +199,8 @@ impl RoutineExecutor {
         }
     }
 
-    /// A `per-item` task is the workspace's task on the item's branch, created when missing.
+    /// A `per-item` task is the workspace's task on the item's branch, created when missing and
+    /// linked to the item's tracker issue unless it has another.
     fn resolve_item_task(
         &self,
         definition: &AutomationDefinition,
@@ -212,12 +213,18 @@ impl RoutineExecutor {
             return Ok((self.tasks.get(task_id)?, false));
         }
         let variables = item_variables(request, item);
-        let branch = match target.branch.as_deref() {
-            Some(template) => render(template, &variables).map_err(TaskFailure::new)?,
+        let (branch, issue) = match target.branch.as_deref() {
+            Some(template) => (
+                render(template, &variables).map_err(TaskFailure::new)?,
+                None,
+            ),
             None => self.tracker_branch(definition, request, &variables)?,
         };
         if let Some(task) = self.tasks.find(&target.workspace_id, &branch)? {
-            return Ok((task, false));
+            return match issue.filter(|_| task.linear_issue_id.is_none()) {
+                Some(issue) => Ok((self.tasks.link_issue(&task.id, &issue.identifier)?, false)),
+                None => Ok((task, false)),
+            };
         }
         let task = self.tasks.create(&NewTask {
             workspace_id: target.workspace_id.clone(),
@@ -225,21 +232,23 @@ impl RoutineExecutor {
             repo_ids: target.repos.iter().map(|repo| repo.id.clone()).collect(),
             bases: bases(target),
             automation: definition.name.clone(),
+            linear_issue: issue,
         })?;
         Ok((task, true))
     }
 
-    /// The branch of the item's tracker issue, which the marker makes the same issue on every
-    /// try. A Test run stages Linear writes, so its item works on the default branch instead.
+    /// The branch of the item's tracker issue and the issue, which the marker makes the same on
+    /// every try. A Test run stages Linear writes, so its item works on the default branch
+    /// instead, without an issue.
     fn tracker_branch(
         &self,
         definition: &AutomationDefinition,
         request: &RunRequest,
         variables: &[(String, String)],
-    ) -> Result<String, TaskFailure> {
+    ) -> Result<(String, Option<LinkedIssue>), TaskFailure> {
         let render = |template: &str| render(template, variables);
         let Some(tracker) = definition.tracker.as_ref().filter(|_| !request.test) else {
-            return render(UNTRACKED_BRANCH).map_err(TaskFailure::new);
+            return Ok((render(UNTRACKED_BRANCH).map_err(TaskFailure::new)?, None));
         };
         let issue = marked_issue(
             &definition.target.workspace_id,
@@ -249,11 +258,14 @@ impl RoutineExecutor {
         )
         .and_then(|params| operation(self.bridge.call("linear.issue-upsert", params)))
         .map_err(|error| TaskFailure::new(format!("tracker issue: {error}")))?;
-        issue["branchName"]
+        let branch = issue["branchName"]
             .as_str()
             .filter(|branch| !branch.is_empty())
             .map(String::from)
-            .ok_or_else(|| TaskFailure::new("tracker issue: Linear answered without a branch"))
+            .ok_or_else(|| TaskFailure::new("tracker issue: Linear answered without a branch"))?;
+        let linked = serde_json::from_value(issue)
+            .map_err(|error| TaskFailure::new(format!("tracker issue: {error}")))?;
+        Ok((branch, Some(linked)))
     }
 
     /// A completed item resets the failure count and a failed one counts, as runs do.
