@@ -3,12 +3,14 @@
 
 use std::time::SystemTime;
 
-use super::super::definition::{StepKind, WaitStep};
+use super::super::command::CommandContext;
+use super::super::definition::{AutomationDefinition, Step, StepKind, WaitStep};
 use super::super::pipeline::{Execution, StepReport, StepRequest};
 use super::super::scheduler::{is_active, RunRequest};
-use super::super::store::events::{ProcessEnd, RunEvent, RunState, StepOutcome};
-use super::super::wait::{self, parked_on, Ended, WaitLog, Watch};
-use super::{failed, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor};
+use super::super::store::events::{LoggedEvent, ProcessEnd, RunEvent, RunState, StepOutcome};
+use super::super::wait::{self, parked_on, Ended, WaitLog, Watch, WatchScripts};
+use super::commands::{Item, ItemScope};
+use super::{failed, run_variables, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor};
 
 impl RoutineExecutor {
     /// Drives again each parked item whose wait can end now.
@@ -54,6 +56,13 @@ impl RoutineExecutor {
             StepKind::Wait(WaitStep::Event { .. }) => self.waiting_task(&run, item),
             _ => None,
         };
+        let scripts = match &task {
+            Some(task) => {
+                let scope = self.resting_scope(&definition, request, &run, &history, item, task)?;
+                Some(scripts(&definition, request, item, step, attempt, scope))
+            }
+            None => None,
+        };
         let now = now_ms();
         let watch = Watch {
             item,
@@ -63,8 +72,30 @@ impl RoutineExecutor {
             task: task.as_ref(),
             test: request.test,
             wait_per_head_secs: definition.budgets.wait_per_head_secs,
+            scripts,
         };
         Ok(wait::resolve(step, &log, now, &self.watchers, &watch).is_some())
+    }
+
+    /// What the parked item's steps would see, from the log, without writing its data file.
+    fn resting_scope(
+        &self,
+        definition: &AutomationDefinition,
+        request: &RunRequest,
+        run: &RunState,
+        history: &[LoggedEvent],
+        item: &str,
+        task: &ResolvedTask,
+    ) -> Result<ItemScope, String> {
+        let state = run
+            .items
+            .iter()
+            .find(|state| state.id == item)
+            .ok_or("it is not in its run")?;
+        let run_dir = self.store.run_dir(&request.automation, &request.run_id)?;
+        let mut scope = ItemScope::new(&run_dir, run_variables(request), task, &Item::from(state));
+        scope.edit(&wait::approved_params(history, item, &definition.steps));
+        Ok(scope)
     }
 
     /// The task the item works in: its own in a campaign, the run's in a routine.
@@ -121,12 +152,29 @@ impl ItemSteps<'_> {
             task: Some(self.task),
             test: self.request.test,
             wait_per_head_secs: self.definition.budgets.wait_per_head_secs,
+            scripts: Some(self.scripts(request)),
         };
         let Some(ended) = wait::resolve(request.step, &log, now, self.watchers, &watch) else {
             self.parked = true;
             return Ok(Execution::Parked);
         };
         Ok(Execution::Finished(self.ended(request, ended)?))
+    }
+
+    fn scripts(&self, request: &StepRequest) -> WatchScripts<'_> {
+        let context = self.commands.context();
+        let scope = ItemScope {
+            variables: context.variables().to_vec(),
+            env: context.env(request),
+        };
+        scripts(
+            self.definition,
+            self.request,
+            request.item,
+            request.step,
+            request.attempt,
+            scope,
+        )
     }
 
     fn approval_title(&self, request: &StepRequest) -> Option<String> {
@@ -168,6 +216,31 @@ impl ItemSteps<'_> {
             cause: ended.cause,
             head: None,
         })
+    }
+}
+
+fn scripts<'a>(
+    definition: &'a AutomationDefinition,
+    request: &RunRequest,
+    item: &str,
+    step: &Step,
+    attempt: u32,
+    scope: ItemScope,
+) -> WatchScripts<'a> {
+    WatchScripts {
+        folder: &definition.folder,
+        attempt: format!(
+            "{:?}",
+            (
+                &request.automation,
+                &request.run_id,
+                item,
+                &step.id,
+                attempt
+            )
+        ),
+        variables: scope.variables,
+        env: scope.env,
     }
 }
 

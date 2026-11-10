@@ -26,7 +26,7 @@ use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
 };
 use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
-use crate::commands::automations::watchers::{PR_CHECKS, PR_INTEGRATED};
+use crate::commands::automations::watchers::{COMMAND, PR_CHECKS, PR_INTEGRATED};
 
 const SUPPORTED_SCHEMA: u64 = 1;
 const MAX_DESCRIPTION_CHARS: usize = 500;
@@ -45,6 +45,7 @@ const PUBLISH_STEP_TIMEOUT_SECS: u64 = 30 * 60;
 const SELECTOR_TIMEOUT_SECS: u64 = 5 * 60;
 /// The scheduler's tick re-checks waits once a minute.
 const MIN_WATCH_INTERVAL_SECS: u64 = 60;
+const MAX_SCRIPT_WATCH_INTERVAL_SECS: u64 = 5 * 60;
 const EFFECTS: [&str; 10] = [
     "git.push",
     "github.pr_create",
@@ -1055,7 +1056,7 @@ fn step_kind(
     match kind {
         "agent" => agent_step(report, scope, value, &field).map(StepKind::Agent),
         "command" => command_step(report, scope, fields, value).map(StepKind::Command),
-        "wait" => wait_step(report, scope.repos, value, &field).map(StepKind::Wait),
+        "wait" => wait_step(report, scope, value, &field).map(StepKind::Wait),
         "approval" => approval_step(report, value, &field, timeout).map(StepKind::Approval),
         _ => publish_step(report, scope, value, &field).map(StepKind::Publish),
     }
@@ -1327,12 +1328,7 @@ fn moment(report: &mut Report, value: &Value, field: &str) -> Option<Moment> {
     None
 }
 
-fn wait_step(
-    report: &mut Report,
-    repos: Option<&[TargetRepo]>,
-    value: &Value,
-    field: &str,
-) -> Option<WaitStep> {
+fn wait_step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Option<WaitStep> {
     let mut fields = Fields::of(report, value, field)?;
     let time = fields.optional(report, "time", |report, value, field| {
         Some(match moment(report, value, field)? {
@@ -1342,7 +1338,7 @@ fn wait_step(
     });
     let signal = fields.optional(report, "signal", string);
     let event = fields.optional(report, "event", |report, value, field| {
-        event_wait(report, repos, value, field)
+        event_wait(report, scope, value, field)
     });
     fields.finish(report);
     match (time?, signal?, event?) {
@@ -1362,19 +1358,18 @@ fn wait_step(
 
 /// `{watcher, …params}`, its params normalized for the watcher: `interval` in seconds and `repo`
 /// as the target repository's id.
-fn event_wait(
-    report: &mut Report,
-    repos: Option<&[TargetRepo]>,
-    value: &Value,
-    field: &str,
-) -> Option<WaitStep> {
+fn event_wait(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Option<WaitStep> {
     let mut fields = Fields::of(report, value, field)?;
     let watcher = fields.require(report, "watcher", |report, value, field| {
         choice(
             report,
             value,
             field,
-            &[(PR_CHECKS, PR_CHECKS), (PR_INTEGRATED, PR_INTEGRATED)],
+            &[
+                (PR_CHECKS, PR_CHECKS),
+                (PR_INTEGRATED, PR_INTEGRATED),
+                (COMMAND, COMMAND),
+            ],
         )
     });
     let mut params = Map::new();
@@ -1422,17 +1417,52 @@ fn event_wait(
         let request = fields.optional(report, "request_review_comment", non_empty_string);
         keep("request_review_comment", request.map(json_of));
     }
+    if watcher == Some(COMMAND) {
+        let command_field = fields.path("command");
+        let command = fields.require(report, "command", argv);
+        let runnable = command.as_ref().and_then(|command| {
+            executable(
+                report,
+                scope.context.folder,
+                &command[0],
+                &index(&command_field, 0),
+            )
+        });
+        keep(
+            "command",
+            runnable.and(command).map(|argv| Some(argv.into())),
+        );
+        let env = fields.optional(report, "env", |report, value, field| {
+            let entries = each_entry(report, value, field, |report, name, item, field| {
+                Some((
+                    name.to_string(),
+                    Value::from(template(report, item, field)?),
+                ))
+            })?;
+            Some(Value::Object(entries.into_iter().collect()))
+        });
+        keep("env", env);
+        keep(
+            "run_in_test",
+            fields.optional(report, "run_in_test", boolean).map(json_of),
+        );
+    }
+    let max_interval_secs = (watcher == Some(COMMAND)).then_some(MAX_SCRIPT_WATCH_INTERVAL_SECS);
     let interval = fields.optional(report, "interval", |report, value, field| {
         let secs = duration(report, value, field)?;
         if secs < MIN_WATCH_INTERVAL_SECS {
             report.error(IssueKind::Invalid, field, "must be at least 1m");
             return None;
         }
+        if max_interval_secs.is_some_and(|max| secs > max) {
+            report.error(IssueKind::Invalid, field, "must be at most 5m");
+            return None;
+        }
         Some(secs)
     });
     keep("interval_secs", interval.map(json_of));
     let repo_field = fields.path("repo");
-    let repo = command_repo(report, fields.get("repo"), repos, &repo_field);
+    let repo = command_repo(report, fields.get("repo"), scope.repos, &repo_field);
     fields.finish(report);
     params.insert("repo".into(), Value::from(repo?));
     valid.then_some(())?;

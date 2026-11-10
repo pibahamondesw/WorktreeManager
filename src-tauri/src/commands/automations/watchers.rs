@@ -1,11 +1,14 @@
 //! The watchers `event` waits name: `pr_checks` decides a PR's checks and review on its exact
-//! HEAD, `pr_integrated` whether its changes reached the base branch. GitHub is read in the
-//! background, one fetch at a time per PR and backing off after failures, so a scheduler tick
-//! never blocks on the network; a verdict only uses what was fetched since the attempt was armed.
+//! HEAD, `pr_integrated` whether its changes reached the base branch, `command` what a script of
+//! the automation answers. GitHub and scripts are polled in the background, one at a time per
+//! key and backing off after failures, so a scheduler tick never blocks on them; a verdict only
+//! uses what was polled since the attempt was armed.
 
+mod command;
 mod forge;
 mod pr_checks;
 mod pr_integrated;
+mod script;
 #[cfg(test)]
 mod tests;
 
@@ -19,9 +22,11 @@ use chrono::DateTime;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
+use command::CommandWatcher;
 pub use forge::{CliWatchForge, WatchForge};
 use pr_checks::{BotLgtm, PrChecks};
 use pr_integrated::PrIntegrated;
+use script::ShellScripts;
 
 use super::publish::pushed_commits;
 use super::store::events::{EffectStatus, RunEvent};
@@ -29,6 +34,7 @@ use super::wait::{Watch, WatchVerdict, Watchers};
 
 pub const PR_CHECKS: &str = "pr_checks";
 pub const PR_INTEGRATED: &str = "pr_integrated";
+pub const COMMAND: &str = "command";
 const CONFLICT: &str = "conflict";
 const PR_CLOSED: &str = "pr_closed";
 /// Below this many GraphQL points left, GitHub is not asked again until the limit resets.
@@ -50,7 +56,14 @@ fn registry_with(forge: Arc<dyn WatchForge>, spawn: Spawn) -> Watchers {
             PR_CHECKS,
             Arc::new(PrChecks::new(github.clone(), spawn.clone())),
         )
-        .with(PR_INTEGRATED, Arc::new(PrIntegrated::new(github, spawn)))
+        .with(
+            PR_INTEGRATED,
+            Arc::new(PrIntegrated::new(github, spawn.clone())),
+        )
+        .with(
+            COMMAND,
+            Arc::new(CommandWatcher::new(Arc::new(ShellScripts), spawn)),
+        )
 }
 
 /// Runs a fetch off the caller's thread.
@@ -125,7 +138,8 @@ impl Target {
             return Ok(Self::Published(pr));
         }
         let task = watch.task.ok_or_else(|| failed("no_task"))?;
-        let worktree = worktree(watch, params).ok_or_else(|| failed("no_worktree"))?;
+        let worktree =
+            worktree(watch, params.repo.as_deref()).ok_or_else(|| failed("no_worktree"))?;
         Ok(Self::Branch {
             worktree,
             branch: task.branch.clone(),
@@ -155,9 +169,13 @@ impl Target {
 /// A Test run stages its push and PR, so there is no PR to watch: the wait follows its success
 /// route at once, recording that it was staged.
 fn staged(watcher: &str) -> WatchVerdict {
+    staged_because(watcher, "a Test run stages its PR")
+}
+
+fn staged_because(watcher: &str, reason: &str) -> WatchVerdict {
     WatchVerdict::Succeeded(Some(json!({
         "verdict": "staged",
-        "detail": format!("{watcher} not watched: a Test run stages its PR"),
+        "detail": format!("{watcher} not watched: {reason}"),
     })))
 }
 
@@ -223,9 +241,9 @@ fn conflict(evidence: Value, base: &str) -> WatchVerdict {
     WatchVerdict::Failed(CONFLICT.into(), Some(evidence))
 }
 
-fn worktree(watch: &Watch, params: &WatchParams) -> Option<PathBuf> {
+fn worktree(watch: &Watch, repo: Option<&str>) -> Option<PathBuf> {
     let task = watch.task?;
-    let folder = match &params.repo {
+    let folder = match repo {
         Some(repo) => task.worktree(repo)?,
         None => task.folders.first()?,
     };
@@ -291,13 +309,26 @@ impl Github {
 struct Polls<T> {
     entries: Mutex<HashMap<String, Poll<T>>>,
     spawn: Spawn,
+    pace: Pace<T>,
+}
+
+/// How long after a fetch started the next one is due, given the interval asked for and the
+/// fetches and failures in a row under the key, this one included.
+type Pace<T> = fn(&Result<T, String>, u64, &Streak) -> u64;
+
+#[derive(Default)]
+struct Streak {
+    fetches: u32,
+    failures: u32,
 }
 
 struct Poll<T> {
     /// The latest fetch and when it started.
     latest: Option<(u64, Arc<T>)>,
     due_at_ms: u64,
-    failures: u32,
+    streak: Streak,
+    /// Why the latest fetch failed, while it is among `streak.failures`.
+    error: Option<String>,
     fetching: bool,
     asked_at_ms: u64,
 }
@@ -307,18 +338,32 @@ impl<T> Poll<T> {
         Self {
             latest: None,
             due_at_ms: 0,
-            failures: 0,
+            streak: Streak::default(),
+            error: None,
             fetching: false,
             asked_at_ms: 0,
         }
     }
 }
 
+/// Every `interval` while fetches succeed, backing off up to 15 minutes after failures.
+fn steady<T>(fetched: &Result<T, String>, interval_ms: u64, streak: &Streak) -> u64 {
+    match fetched {
+        Ok(_) => interval_ms,
+        Err(_) => backoff_ms(interval_ms, streak.failures, MAX_BACKOFF_MS),
+    }
+}
+
 impl<T: Send + Sync + 'static> Polls<T> {
     fn new(spawn: Spawn) -> Arc<Self> {
+        Self::paced(spawn, steady)
+    }
+
+    fn paced(spawn: Spawn, pace: Pace<T>) -> Arc<Self> {
         Arc::new(Self {
             entries: Mutex::default(),
             spawn,
+            pace,
         })
     }
 
@@ -341,7 +386,7 @@ impl<T: Send + Sync + 'static> Polls<T> {
             });
             let poll = entries.entry(key.to_string()).or_insert_with(Poll::new);
             poll.asked_at_ms = now_ms;
-            let stale = poll.failures == 0 && poll.latest.is_some() && !fresh(poll);
+            let stale = poll.streak.failures == 0 && poll.latest.is_some() && !fresh(poll);
             let due = !poll.fetching && (now_ms >= poll.due_at_ms || stale);
             poll.fetching |= due;
             due
@@ -359,26 +404,38 @@ impl<T: Send + Sync + 'static> Polls<T> {
         poll.latest.as_ref().map(|(_, latest)| latest.clone())
     }
 
+    /// The failures in a row under `key` and the latest one's error, if its last fetch failed.
+    fn failures(&self, key: &str) -> Option<(u32, String)> {
+        let entries = self.entries.lock().unwrap();
+        let poll = entries.get(key)?;
+        Some((poll.streak.failures, poll.error.clone()?))
+    }
+
     fn fetched(&self, key: &str, fetched: Result<T, String>, started_ms: u64, interval_ms: u64) {
         let mut entries = self.entries.lock().unwrap();
         let poll = entries.entry(key.to_string()).or_insert_with(Poll::new);
         poll.fetching = false;
-        match fetched {
-            Ok(latest) => {
-                poll.latest = Some((started_ms, Arc::new(latest)));
-                poll.failures = 0;
-                poll.due_at_ms = started_ms + interval_ms;
+        poll.streak.fetches += 1;
+        match &fetched {
+            Ok(_) => {
+                poll.streak.failures = 0;
+                poll.error = None;
             }
             Err(error) => {
-                poll.failures += 1;
-                poll.due_at_ms = started_ms + backoff_ms(interval_ms, poll.failures);
+                poll.streak.failures += 1;
+                poll.error = Some(error.clone());
                 log::warn!("Watching {key} failed: {error}");
             }
+        }
+        poll.due_at_ms = started_ms + (self.pace)(&fetched, interval_ms, &poll.streak);
+        if let Ok(latest) = fetched {
+            poll.latest = Some((started_ms, Arc::new(latest)));
         }
     }
 }
 
-fn backoff_ms(interval_ms: u64, failures: u32) -> u64 {
-    let doubled = interval_ms.saturating_mul(1 << failures.min(16));
-    doubled.min(MAX_BACKOFF_MS).max(interval_ms)
+/// `interval_ms` doubled for each of `times`, at most `max_ms` and never less than `interval_ms`.
+fn backoff_ms(interval_ms: u64, times: u32, max_ms: u64) -> u64 {
+    let doubled = interval_ms.saturating_mul(1 << times.min(16));
+    doubled.min(max_ms).max(interval_ms)
 }

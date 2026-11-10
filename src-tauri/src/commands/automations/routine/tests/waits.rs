@@ -511,6 +511,87 @@ fn a_test_run_follows_the_success_route_of_its_staged_pr_waits() {
     assert_eq!(verdicts, [Some(json!("staged")), Some(json!("staged"))]);
 }
 
+/// A script watcher's attempt, folder, variables and env.
+type ScriptScope = (
+    String,
+    PathBuf,
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+);
+
+/// What a script watcher was given on each check, pending until opened.
+#[derive(Default)]
+struct ScriptScopes {
+    seen: Mutex<Vec<ScriptScope>>,
+    open: AtomicBool,
+}
+
+impl Watcher for ScriptScopes {
+    fn check(&self, params: &serde_json::Map<String, Value>, watch: &Watch) -> WatchVerdict {
+        assert_eq!(params["command"], json!(["check-deploy", "{item.id}"]));
+        let scripts = watch.scripts.as_ref().expect("the item's scripts");
+        self.seen.lock().unwrap().push((
+            scripts.attempt.clone(),
+            scripts.folder.to_path_buf(),
+            scripts.variables.clone(),
+            scripts.env.clone(),
+        ));
+        match self.open.load(Ordering::SeqCst) {
+            true => WatchVerdict::Succeeded(Some(json!({ "verdict": "success" }))),
+            false => WatchVerdict::Pending,
+        }
+    }
+}
+
+#[test]
+fn a_script_watcher_sees_the_item_as_its_commands_do_whether_driven_or_parked() {
+    let steps = "steps:\n  - id: deployed\n    wait: { event: { watcher: command, command: [check-deploy, \"{item.id}\"] } }\n";
+    let mut harness = Harness::routine(steps, FakeSessions::default());
+    let scopes = Arc::new(ScriptScopes::default());
+    let watchers = Watchers::default().with("command", scopes.clone());
+    harness.executor = harness.executor.clone().with_watchers(watchers);
+
+    let run = harness.run();
+    harness.executor.wake_ready();
+    scopes.open.store(true, Ordering::SeqCst);
+    harness.executor.wake_ready();
+    settles(&harness, &run.id, RunStatus::Completed);
+
+    let seen = scopes.seen.lock().unwrap();
+    assert!(seen.len() >= 3, "{seen:?}");
+    assert!(seen.iter().all(|scope| *scope == seen[0]), "{seen:?}");
+    let (attempt, folder, variables, env) = &seen[0];
+    assert_eq!(
+        *attempt,
+        format!("{:?}", ("demo", &run.id, "routine", "deployed", 1))
+    );
+    assert_eq!(*folder, harness.definition().folder);
+    assert!(variables.contains(&("item.id".into(), "routine".into())));
+    let env: BTreeMap<_, _> = env.iter().cloned().collect();
+    assert_eq!(env["WTM_AUTOMATION"], "demo");
+    assert_eq!(env["WTM_RUN_ID"], run.id);
+    assert_eq!(env["WTM_TASK_ID"], "t1");
+    assert_eq!(env["WTM_ITEM_ID"], "routine");
+    assert!(Path::new(&env["WTM_ITEM_DATA"]).is_file());
+}
+
+#[test]
+fn a_test_run_stages_a_script_watcher_without_running_it() {
+    let steps = "steps:\n  - id: deployed\n    wait: { event: { watcher: command, command: [check-deploy] } }\n";
+    let mut harness = Harness::routine(steps, FakeSessions::default());
+    harness.executor = harness
+        .executor
+        .clone()
+        .with_watchers(registry(Arc::new(Unreachable)));
+
+    let run = harness.run_with(true, None);
+    settles(&harness, &run.id, RunStatus::Completed);
+
+    let item = &harness.state(&run.id).items[0];
+    assert_eq!(attempts(item), ["deployed#1:Succeeded"]);
+    assert_eq!(item.steps[0].result.as_ref().unwrap()["verdict"], "staged");
+}
+
 /// GitHub with one PR its owner closed without merging.
 struct ClosedPullRequest;
 

@@ -9,6 +9,7 @@ use crate::commands::automations::routine::ResolvedTask;
 use crate::commands::automations::store::events::LoggedEvent;
 use crate::commands::git::git_command;
 
+mod command;
 mod forge;
 mod integrated;
 
@@ -196,6 +197,7 @@ impl Waiting {
             task: self.task.as_ref(),
             test: self.test,
             wait_per_head_secs: 3_600,
+            scripts: None,
         };
         let Value::Object(params) = params else {
             panic!("params must be an object")
@@ -787,9 +789,12 @@ fn failed_fetches_back_off_and_keep_the_wait_pending() {
     assert_eq!(forge.queries(), 2);
     *forge.failure.lock().unwrap() = None;
     assert_eq!(waiting.checks(&watchers, json!({}), NOW + 360_000), green());
-    assert_eq!(backoff_ms(60_000, 1), 120_000);
-    assert_eq!(backoff_ms(60_000, 40), MAX_BACKOFF_MS);
-    assert_eq!(backoff_ms(MAX_BACKOFF_MS * 2, 1), MAX_BACKOFF_MS * 2);
+    assert_eq!(backoff_ms(60_000, 1, MAX_BACKOFF_MS), 120_000);
+    assert_eq!(backoff_ms(60_000, 40, MAX_BACKOFF_MS), MAX_BACKOFF_MS);
+    assert_eq!(
+        backoff_ms(MAX_BACKOFF_MS * 2, 1, MAX_BACKOFF_MS),
+        MAX_BACKOFF_MS * 2
+    );
 }
 
 #[test]
