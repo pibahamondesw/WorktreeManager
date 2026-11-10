@@ -287,18 +287,11 @@ fn retry_step(chosen: &AutomationDefinition, item: &ItemState) -> Result<String,
     step.map(|step| step.id.clone()).ok_or_else(missing)
 }
 
+const OPEN: [ItemStatus; 3] = [ItemStatus::Queued, ItemStatus::Active, ItemStatus::Waiting];
+
 fn others_open(run: &RunState, item: &ItemState) -> bool {
-    let open = |other: &&ItemState| {
-        let status = other.status;
-        matches!(
-            status,
-            ItemStatus::Queued | ItemStatus::Active | ItemStatus::Waiting
-        )
-    };
-    run.items
-        .iter()
-        .filter(|other| other.id != item.id)
-        .any(|other| open(&other))
+    let open = |other: &ItemState| other.id != item.id && OPEN.contains(&other.status);
+    run.items.iter().any(open)
 }
 
 fn drive_again(
