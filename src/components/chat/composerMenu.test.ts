@@ -44,6 +44,17 @@ describe("menuTrigger", () => {
     expect(menuTrigger("fix @src/ch", 11)).toEqual({ kind: "mention", query: "src/ch", start: 4 });
     expect(menuTrigger("mail a@b", 8)).toBeNull();
   });
+
+  it("keeps an unclosed quoted @ token open across spaces", () => {
+    expect(menuTrigger('see @"~/App Support/Co', 22)).toEqual({
+      kind: "mention",
+      query: "~/App Support/Co",
+      start: 4,
+    });
+    expect(menuTrigger('see @"~/App Support/x.md" ', 26)).toBeNull();
+    expect(menuTrigger('see @"~/x.md"', 13)).toBeNull();
+    expect(menuTrigger("see @", 5)).toEqual({ kind: "mention", query: "", start: 4 });
+  });
 });
 
 describe("filterCommands", () => {
@@ -88,6 +99,21 @@ describe("insertMention", () => {
     expect(insertMention("fix @ch now", 4, 7, "src/chat.ts")).toEqual({
       text: "fix @src/chat.ts  now",
       caret: 17,
+    });
+  });
+
+  it("keeps the token open on directories and quotes paths with spaces", () => {
+    expect(insertMention("@~/Do", 0, 5, "~/Documents/")).toEqual({
+      text: "@~/Documents/",
+      caret: 13,
+    });
+    expect(insertMention("@~/Li", 0, 5, "~/Library/App Support/")).toEqual({
+      text: '@"~/Library/App Support/',
+      caret: 24,
+    });
+    expect(insertMention("@~/Documents/my", 0, 15, "~/Documents/My File.pdf")).toEqual({
+      text: '@"~/Documents/My File.pdf" ',
+      caret: 27,
     });
   });
 });

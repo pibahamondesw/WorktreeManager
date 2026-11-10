@@ -1216,9 +1216,12 @@ pub async fn chat_file_search(
     folders: Vec<String>,
     query: String,
 ) -> Result<Vec<files::FileMatch>, String> {
-    tauri::async_runtime::spawn_blocking(move || files::search(&folders, &query))
-        .await
-        .map_err(|e| format!("Task failed: {e}"))
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        files::search(&folders, &query, home.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))
 }
 
 #[tauri::command]
