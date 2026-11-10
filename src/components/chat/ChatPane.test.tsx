@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   catalog: [] as unknown[],
   channels: [] as { onmessage?: (m: unknown) => void }[],
+  dropHandlers: new Set<(event: { payload: unknown }) => void>(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -23,6 +24,26 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: (handler: (event: { payload: unknown }) => void) => {
+      mocks.dropHandlers.add(handler);
+      return Promise.resolve(() => mocks.dropHandlers.delete(handler));
+    },
+  }),
+}));
+
+const dropFiles = async (paths: string[], position = { x: 0, y: 0 }) => {
+  const box = screen.getByRole("textbox");
+  await waitFor(() => expect(box).toHaveAttribute("contenteditable", "true"));
+  document.elementFromPoint = (x: number, y: number) => (x === 0 && y === 0 ? box : document.body);
+  await act(() => {
+    for (const handler of mocks.dropHandlers) {
+      handler({ payload: { type: "enter", paths, position } });
+      handler({ payload: { type: "drop", paths, position } });
+    }
+  });
+};
 
 import { ChatPane } from "./ChatPane";
 import { describeAgent, loadAgentCatalog } from "../../services/agents";
@@ -413,10 +434,15 @@ describe("ChatPane", () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
     const png = (name: string) => new File(["hi"], name, { type: "image/png" });
-    fireEvent.paste(box, { clipboardData: { files: [png("one.png")] } });
-    fireEvent.drop(box.parentElement!, {
-      dataTransfer: { types: ["Files"], files: [png("two.png"), new File(["x"], "a.txt")] },
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_read_image")
+        return Promise.resolve({ name: "two.png", mediaType: "image/png", data: "aGk=" });
+      return Promise.resolve(undefined);
     });
+    fireEvent.paste(box, { clipboardData: { files: [png("one.png")] } });
+    await dropFiles(["/shots/two.png"]);
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_read_image", { path: "/shots/two.png" });
     const thumbnails = await screen.findByRole("list", { name: "Attached images" });
     await waitFor(() => expect(within(thumbnails).getAllByRole("img")).toHaveLength(2));
     fireEvent.click(screen.getByRole("button", { name: "Remove one.png" }));
@@ -429,6 +455,32 @@ describe("ChatPane", () => {
         images: [{ mediaType: "image/png", data: "aGk=" }],
       })
     );
+    expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
+  });
+
+  it("inserts dropped non-image files as quoted @ mentions at the caret", async () => {
+    render(<ChatPane taskId="drop-mentions" agent="claude" folders={["/wt/a"]} />);
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await typeInto(box, "read");
+    await dropFiles(["/docs/My Notes.md", "/wt/a/spec.pdf"]);
+    expect(composerText(box)).toBe('read @"/docs/My Notes.md" @/wt/a/spec.pdf ');
+
+    await dropFiles(["/elsewhere.txt"], { x: 50, y: 50 });
+    expect(composerText(box)).toBe('read @"/docs/My Notes.md" @/wt/a/spec.pdf ');
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_read_image", expect.anything());
+  });
+
+  it("reports dropped images that cannot be read", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_read_image")
+        return Promise.reject("Images must be 10 MB or smaller: huge.png");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await dropFiles(["/shots/huge.png"]);
+    expect(await screen.findByRole("alert")).toHaveTextContent("10 MB or smaller: huge.png");
     expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
   });
 
@@ -458,8 +510,10 @@ describe("ChatPane", () => {
     fireEvent.paste(box, {
       clipboardData: { files: [new File(["hi"], "one.png", { type: "image/png" })] },
     });
+    await dropFiles(["/shots/two.png"]);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
+    expect(composerText(box)).toBe("@/shots/two.png ");
   });
 
   it("answers approvals and questions through chat_respond", async () => {

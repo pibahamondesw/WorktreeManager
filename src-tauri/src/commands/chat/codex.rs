@@ -10,6 +10,7 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use super::codex_hooks;
+use super::files;
 use super::model::*;
 use crate::commands::agents::permission::PendingDefault;
 
@@ -237,12 +238,18 @@ impl CodexProvider {
         if !text.is_empty() || input.is_empty() {
             input.push(json!({ "type": "text", "text": text, "text_elements": [] }));
         }
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        for path in files::mentioned_paths(text) {
+            let absolute = files::resolve_mention(&path, Path::new(&self.cwd), home.as_deref());
+            let name = path
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(&path);
+            input.push(json!({ "type": "mention", "name": name, "path": absolute }));
+        }
         for token in text.split_whitespace() {
-            if let Some(path) = token.strip_prefix('@').filter(|path| !path.is_empty()) {
-                let absolute = std::path::Path::new(&self.cwd).join(path);
-                let name = path.rsplit('/').next().unwrap_or(path);
-                input.push(json!({ "type": "mention", "name": name, "path": absolute }));
-            } else if let Some((name, path)) = token
+            if let Some((name, path)) = token
                 .strip_prefix('$')
                 .and_then(|name| self.skills.get_key_value(name))
             {

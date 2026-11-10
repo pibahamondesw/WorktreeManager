@@ -4,13 +4,16 @@ export type MenuTrigger =
   | { kind: "slash"; query: string; start: number }
   | { kind: "mention"; query: string; start: number };
 
-/** Which completion menu the caret is in: a `/command` or an `@path` token. */
+/** Which completion menu the caret is in: a `/command`, an `@path` or an unclosed `@"path` token. */
 export function menuTrigger(text: string, caret: number): MenuTrigger | null {
   const before = text.slice(0, caret);
   const slash = /(^|\s)\/(\S*)$/.exec(before);
   if (slash) return { kind: "slash", query: slash[2], start: caret - slash[2].length - 1 };
-  const mention = /(^|\s)@(\S*)$/.exec(before);
-  if (mention) return { kind: "mention", query: mention[2], start: caret - mention[2].length - 1 };
+  const mention = /(^|\s)@(?:"([^"]*)|([^"\s]\S*)?)$/.exec(before);
+  if (mention) {
+    const token = mention[0].length - mention[1].length;
+    return { kind: "mention", query: mention[2] ?? mention[3] ?? "", start: caret - token };
+  }
   return null;
 }
 
@@ -50,9 +53,25 @@ export function insertCommand(text: string, start: number, caret: number, insert
   return { text: `${text.slice(0, start)}${inserted}${rest}`, caret: start + inserted.length };
 }
 
+const mentionToken = (path: string) => (/\s/.test(path) ? `@"${path}"` : `@${path}`);
+
+/** A chosen directory leaves its token open so the menu lists its contents. */
 export function insertMention(text: string, start: number, caret: number, path: string) {
-  const next = `${text.slice(0, start)}@${path} ${text.slice(caret)}`;
-  return { text: next, caret: start + path.length + 2 };
+  const directory = path.endsWith("/");
+  const quoted = /\s/.test(path);
+  const insertion =
+    directory && quoted ? `@"${path}` : directory ? `@${path}` : `${mentionToken(path)} `;
+  return {
+    text: `${text.slice(0, start)}${insertion}${text.slice(caret)}`,
+    caret: start + insertion.length,
+  };
+}
+
+export function insertPaths(text: string, caret: number, paths: string[]) {
+  const before = text.slice(0, caret);
+  const lead = before && !/\s$/.test(before) ? " " : "";
+  const insertion = `${lead}${paths.map(mentionToken).join(" ")} `;
+  return { text: `${before}${insertion}${text.slice(caret)}`, caret: caret + insertion.length };
 }
 
 export type LocalCommand =

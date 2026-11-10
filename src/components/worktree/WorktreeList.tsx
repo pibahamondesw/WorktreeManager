@@ -1,6 +1,7 @@
 import { ProjectFilter } from "../ui/ProjectFilter";
 import { matchesProject } from "../../search/projects";
 import { useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useMouseReorder } from "../../hooks/useMouseReorder";
 import { LinearProvider } from "../../contexts/LinearContext";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { useRevealRing } from "../../hooks/useRevealRing";
@@ -219,8 +220,11 @@ export function WorktreeList({
   );
   const { toast, showToast } = useEphemeralToast();
   const { ring, ringTask, clearRing } = useRevealRing();
-  const draggedTaskId = useRef<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const reorder = useMouseReorder((source, target) => {
+    void onPinnedTasksReordered(source, target)
+      .then(() => setSelectedIndex(-1))
+      .catch((error) => showToast(String(error)));
+  });
   const listRef = useRef<HTMLDivElement>(null);
 
   const { linearInfo, gitStatuses, refreshing, handleRefresh } = useWorktreeData(
@@ -491,40 +495,15 @@ export function WorktreeList({
                   ) : (
                     <div
                       key={task.id}
-                      draggable={task.pinOrder !== undefined}
-                      onDragStart={(event) => {
-                        draggedTaskId.current = task.id;
-                        event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setData("text/plain", task.id);
-                      }}
-                      onDragOver={(event) => {
-                        if (!draggedTaskId.current || task.pinOrder === undefined) return;
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = "move";
-                        setDragOverId(task.id);
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        const source = draggedTaskId.current;
-                        draggedTaskId.current = null;
-                        setDragOverId(null);
-                        if (!source || source === task.id || task.pinOrder === undefined) return;
-                        void onPinnedTasksReordered(source, task.id)
-                          .then(() => setSelectedIndex(-1))
-                          .catch((error) => showToast(String(error)));
-                      }}
-                      onDragEnd={() => {
-                        draggedTaskId.current = null;
-                        setDragOverId(null);
-                      }}
+                      {...reorder.itemProps(task.id, task.pinOrder !== undefined && !exit)}
                       inert={!!exit}
                       className={`relative transition-opacity ${
                         exit ? "opacity-50 saturate-50" : ""
                       } ${
-                        dragOverId === task.id && draggedTaskId.current !== task.id
+                        reorder.over === task.id && reorder.dragging !== task.id
                           ? "rounded-xl outline outline-2 outline-accent"
                           : ""
-                      }`}
+                      } ${reorder.dragging === task.id ? "opacity-50" : ""}`}
                     >
                       {ring?.taskId === task.id && (
                         <span
