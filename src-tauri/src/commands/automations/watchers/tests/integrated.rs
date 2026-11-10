@@ -111,7 +111,7 @@ fn a_pr_closed_without_merged_at_is_integrated_when_its_changes_are_on_the_base(
     assert_eq!(forge.integration_checks.lock().unwrap().len(), 3);
     assert_eq!(
         without_task.at(&inline_registry(&forge), PR_INTEGRATED, json!({ "x": 1 }), NOW),
-        WatchVerdict::Failed("invalid_params: unknown field `x`, expected one of `required`, `ignore`, `bot_lgtm`, `unresolved_threads`, `request_review_comment`, `interval_secs`, `repo`".into(), None)
+        WatchVerdict::Failed("invalid_params: unknown field `x`, expected one of `required`, `ignore`, `expect`, `bot_lgtm`, `unresolved_threads`, `request_review_comment`, `interval_secs`, `repo`".into(), None)
     );
     let unpublished = Waiting {
         history: Vec::new(),

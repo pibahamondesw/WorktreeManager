@@ -64,6 +64,8 @@ struct WatchParams {
     required: Vec<String>,
     /// Context names, or prefixes ending in `*`, that do not count when `required` is empty.
     ignore: Vec<String>,
+    /// Context names, or prefixes ending in `*`, that must appear when `required` is empty.
+    expect: Vec<String>,
     bot_lgtm: Option<BotLgtm>,
     unresolved_threads: u64,
     request_review_comment: Option<String>,

@@ -513,6 +513,42 @@ fn every_check_but_the_ignored_ones_counts() {
 }
 
 #[test]
+fn expected_checks_must_appear_besides_every_reported_one() {
+    let forge = FakeForge::answering(open_pr(HEAD, Vec::new()));
+    let watchers = inline_registry(&forge);
+    let waiting = Waiting::published();
+    let params = json!({ "ignore": ["bors*"], "expect": ["coverage", "deploy-*"] });
+    let verdict = |contexts: Vec<Value>, now_ms: u64| {
+        forge.set(open_pr(HEAD, contexts));
+        waiting.checks(&watchers, params.clone(), now_ms)
+    };
+    let before_coverage = || vec![passed("tests"), passed("deploy-preview")];
+
+    assert_eq!(verdict(before_coverage(), NOW), WatchVerdict::Pending);
+    let mut covered = before_coverage();
+    covered.push(check_run("coverage", "IN_PROGRESS", None));
+    assert_eq!(
+        verdict(covered.clone(), NOW + 60_000),
+        WatchVerdict::Pending
+    );
+    covered.push(passed("coverage"));
+    assert_eq!(verdict(covered, NOW + 120_000), green());
+    let mut coverage_failed = before_coverage();
+    coverage_failed.push(check_run("coverage", "COMPLETED", Some("FAILURE")));
+    let failed = json!({ "verdict": "ci_failed", "pr": PR_URL, "head": HEAD, "failed_checks": [
+        { "name": "coverage", "conclusion": "FAILURE", "url": "https://ci/coverage" },
+    ] });
+    assert_eq!(
+        verdict(coverage_failed, NOW + 180_000),
+        WatchVerdict::Failed("ci_failed".into(), Some(failed))
+    );
+    assert_eq!(
+        verdict(vec![passed("tests")], NOW + HOUR_MS),
+        expired(json!(["missing:coverage", "missing:deploy-*"]))
+    );
+}
+
+#[test]
 fn unresolved_threads_beyond_the_allowed_are_findings() {
     let mut pr = open_pr(HEAD, vec![passed("tests")]);
     pr["reviewThreads"]["nodes"] = json!([thread(true), thread(false)]);
