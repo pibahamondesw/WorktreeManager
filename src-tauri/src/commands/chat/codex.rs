@@ -122,7 +122,13 @@ pub struct CodexProvider {
 
 struct QueuedInput {
     item: ChatItem,
-    input: Vec<Value>,
+    action: QueuedAction,
+}
+
+enum QueuedAction {
+    Message(Vec<Value>),
+    /// Codex compacts by cutting the turn in progress, so a compaction asked mid-turn waits too.
+    Compact,
 }
 
 impl Drop for CodexProvider {
@@ -466,6 +472,18 @@ impl CodexProvider {
         out.status(ChatStatus::Busy);
     }
 
+    /// Compaction runs as a turn of its own; until it starts, nothing else may start one.
+    fn start_compaction(&mut self, out: &mut ProviderOutput) {
+        self.call(
+            out,
+            Call::Ignore,
+            "thread/compact/start",
+            json!({ "threadId": self.thread_id }),
+        );
+        self.busy = true;
+        out.status(ChatStatus::Busy);
+    }
+
     fn steer_input(&mut self, input: Vec<Value>, out: &mut ProviderOutput) -> Result<(), String> {
         let (Some(thread_id), Some(turn_id)) = (self.thread_id.clone(), self.turn_id.clone())
         else {
@@ -791,7 +809,10 @@ impl CodexProvider {
                 self.steered_echoes = 0;
                 if let Some(next) = self.queued.pop_front() {
                     out.event(ChatEvent::Remove { id: next.item.id });
-                    self.start_turn(next.input, out);
+                    match next.action {
+                        QueuedAction::Message(input) => self.start_turn(input, out),
+                        QueuedAction::Compact => self.start_compaction(out),
+                    }
                 }
             }
             "item/started" | "item/completed" => {
@@ -1101,7 +1122,10 @@ impl ChatProvider for CodexProvider {
             let display = user_display_text(text, images.len());
             let item = ChatItem::new(id, ItemKind::User, display).with_status(QUEUED);
             out.upsert(item.clone());
-            self.queued.push_back(QueuedInput { item, input });
+            self.queued.push_back(QueuedInput {
+                item,
+                action: QueuedAction::Message(input),
+            });
             return Ok(());
         }
         self.start_turn(input, out);
@@ -1118,7 +1142,10 @@ impl ChatProvider for CodexProvider {
 
     fn steer_queued(&mut self, item_id: &str, out: &mut ProviderOutput) -> Result<(), String> {
         let index = self.queued_index(item_id)?;
-        self.steer_input(self.queued[index].input.clone(), out)?;
+        match &self.queued[index].action {
+            QueuedAction::Message(input) => self.steer_input(input.clone(), out)?,
+            QueuedAction::Compact => self.start_compaction(out),
+        }
         let queued = self.queued.remove(index).unwrap();
         out.event(ChatEvent::Remove { id: queued.item.id });
         Ok(())
@@ -1195,16 +1222,20 @@ impl ChatProvider for CodexProvider {
     }
 
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String> {
-        let thread_id = self
-            .thread_id
-            .clone()
-            .ok_or("Codex conversation is not ready yet")?;
-        self.call(
-            out,
-            Call::Ignore,
-            "thread/compact/start",
-            json!({ "threadId": thread_id }),
-        );
+        if self.thread_id.is_none() {
+            return Err("Codex conversation is not ready yet".into());
+        }
+        if self.busy {
+            let id = format!("queued-{}", uuid::Uuid::new_v4());
+            let item = ChatItem::new(id, ItemKind::User, "/compact").with_status(QUEUED);
+            out.upsert(item.clone());
+            self.queued.push_back(QueuedInput {
+                item,
+                action: QueuedAction::Compact,
+            });
+            return Ok(());
+        }
+        self.start_compaction(out);
         Ok(())
     }
 
@@ -2186,6 +2217,10 @@ mod tests {
         let (mut provider, mut snapshot) = busy();
         let first = queue(&mut provider, &mut snapshot, "use rebase");
         let second = queue(&mut provider, &mut snapshot, "and squash");
+        assert!(!snapshot
+            .items
+            .iter()
+            .any(|item| item.text == INTERRUPTED_NOTICE));
         let mut out = ProviderOutput::default();
         provider.unqueue(&second, &mut out).unwrap();
         assert_eq!(out.events, [ChatEvent::Remove { id: second.clone() }]);
@@ -2203,6 +2238,83 @@ mod tests {
         );
         assert!(snapshot.item(&first).is_none());
         assert_eq!(snapshot.status, ChatStatus::Busy);
+    }
+
+    fn compacted_mid_turn(provider: &mut CodexProvider, snapshot: &mut ChatSnapshot) -> String {
+        let mut out = ProviderOutput::default();
+        provider.compact(&mut out).unwrap();
+        assert!(out.writes.is_empty());
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        let item = snapshot.items.last().unwrap();
+        assert_eq!(
+            (item.text.as_str(), item.status.as_deref()),
+            ("/compact", Some(QUEUED))
+        );
+        item.id.clone()
+    }
+
+    #[test]
+    fn compaction_asked_mid_turn_waits_for_the_turn_with_the_messages_behind_it() {
+        let (mut provider, mut snapshot) = busy();
+        let compact = compacted_mid_turn(&mut provider, &mut snapshot);
+        queue(&mut provider, &mut snapshot, "then continue");
+
+        let compaction = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t1", "status": "completed" } } }),
+        );
+        assert_eq!(
+            request(&compaction, "thread/compact/start")["params"]["threadId"],
+            "th1"
+        );
+        assert!(compaction
+            .events
+            .contains(&ChatEvent::Remove { id: compact }));
+        assert!(!compaction
+            .writes
+            .iter()
+            .any(|line| line.contains("turn/start") || line.contains("turn/interrupt")));
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+        let mut out = ProviderOutput::default();
+        provider.send("meanwhile", &[], &mut out).unwrap();
+        assert!(out.writes.is_empty());
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "turn/started", "params": { "threadId": "th1", "turn": { "id": "t2" } } }),
+        );
+        let next = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t2", "status": "completed" } } }),
+        );
+        assert_eq!(
+            request(&next, "turn/start")["params"]["input"][0]["text"],
+            "then continue"
+        );
+    }
+
+    #[test]
+    fn steering_a_queued_compaction_compacts_now() {
+        let (mut provider, mut snapshot) = busy();
+        let compact = compacted_mid_turn(&mut provider, &mut snapshot);
+        let mut out = ProviderOutput::default();
+        provider.steer_queued(&compact, &mut out).unwrap();
+        assert_eq!(
+            request(&out, "thread/compact/start")["params"]["threadId"],
+            "th1"
+        );
+        assert!(out.events.contains(&ChatEvent::Remove { id: compact }));
+        let end = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t1", "status": "interrupted" } } }),
+        );
+        assert!(end.writes.is_empty());
     }
 
     #[test]
