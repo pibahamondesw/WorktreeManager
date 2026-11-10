@@ -494,7 +494,7 @@ fn schedules_that_never_fire_are_invalid() {
 }
 
 #[test]
-fn triggers_need_one_enabled_source_and_reject_deferred_ones() {
+fn triggers_need_one_enabled_source_and_reject_unknown_ones() {
     assert_issue(
         &routine("trigger:\n  manual: false\n"),
         "trigger",
@@ -506,9 +506,9 @@ fn triggers_need_one_enabled_source_and_reject_deferred_ones() {
         IssueKind::Invalid,
     );
     assert_issue(
-        &routine("trigger:\n  event: [{ source: github, type: pr.merged }]\n"),
+        &routine("trigger:\n  event: [{ source: gitlab, type: pr.merged }]\n"),
         "trigger.event[0].source",
-        IssueKind::Unsupported,
+        IssueKind::Invalid,
     );
     assert_issue(
         &routine("trigger:\n  cli: \"yes\"\n"),
@@ -2349,4 +2349,66 @@ fn linear_events_supply_no_task_to_an_existing_target() {
             IssueKind::Missing,
         );
     }
+}
+
+#[test]
+fn github_event_triggers_declare_a_type_and_conditions() {
+    let definition = valid(&routine(
+        "trigger:\n  manual: false\n  event:\n    - { source: github, type: pr.ci_failed, where: { repo: app, author: Ada, branch: \"fix/*\", label: \" bug \" } }\n    - { source: github, type: pr.mentioned }\n    - { source: github, type: pr.opened, where: { author: ANY } }\n    - { source: github, type: pr.review_received }\n",
+    ));
+    assert!(definition.trigger.events.is_empty());
+    assert_eq!(
+        serde_json::to_value(&definition.trigger.github_events).unwrap(),
+        json!([
+            { "type": "pr.ci_failed", "repo": "r1", "author": "Ada", "branch": "fix/*", "label": "bug" },
+            { "type": "pr.mentioned", "repo": null, "author": null, "branch": null, "label": null },
+            { "type": "pr.opened", "repo": null, "author": null, "branch": null, "label": null },
+            { "type": "pr.review_received", "repo": null, "author": "me", "branch": null, "label": null }
+        ])
+    );
+    assert_eq!(GithubEventKind::ReviewReceived.action(), "review_received");
+    let event = |entry: &str| routine(&format!("trigger:\n  event: [{entry}]\n"));
+    for (entry, field, kind) in [
+        (
+            "{ source: github, type: issue.created }",
+            "trigger.event[0].type",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: github }",
+            "trigger.event[0].type",
+            IssueKind::Missing,
+        ),
+        (
+            "{ source: github, type: pr.opened, where: { workspace: Acme } }",
+            "trigger.event[0].where.workspace",
+            IssueKind::UnknownField,
+        ),
+        (
+            "{ source: github, type: pr.opened, where: { author: \" \" } }",
+            "trigger.event[0].where.author",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: github, type: pr.opened, where: { repo: api } }",
+            "trigger.event[0].where.repo",
+            IssueKind::UnknownRepo,
+        ),
+        (
+            "{ source: github, type: pr.opened, where: [] }",
+            "trigger.event[0].where",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: github, type: pr.opened, extra: 1 }",
+            "trigger.event[0].extra",
+            IssueKind::UnknownField,
+        ),
+    ] {
+        assert_issue(&event(entry), field, kind);
+    }
+    let existing =
+        routine("trigger: { manual: false, event: [{ source: github, type: pr.opened }] }\n")
+            .replace("repos: [app]", "repos: [app]\n  task: existing");
+    assert_issue(&existing, "target.existing_task", IssueKind::Missing);
 }

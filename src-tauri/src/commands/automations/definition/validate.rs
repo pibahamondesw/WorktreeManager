@@ -14,6 +14,7 @@ use super::fields::{
     is_instant, is_step_id, join, map, string, string_list, template, template_list, Fields,
     Report,
 };
+use super::github_trigger::{github_event_trigger, resolve_repos};
 use super::linear_trigger::linear_event_trigger;
 use super::{
     AgentSettings, AgentStep, AppEventKind, ApprovalDefault, ApprovalStep, Authorization,
@@ -124,6 +125,10 @@ pub(super) fn definition(
     let target = fields.require(report, "target", |report, value, field| {
         target(report, context.env, value, field, events_supply_task)
     });
+    let mut trigger = trigger;
+    if let (Some(trigger), Some(target)) = (&mut trigger, &target) {
+        resolve_repos(report, &mut trigger.github_events, &target.repos);
+    }
     let task_mode = target
         .as_ref()
         .map_or(TaskMode::PerRun, |target| target.task);
@@ -293,6 +298,7 @@ fn manual_trigger() -> Trigger {
         schedule: None,
         events: Vec::new(),
         linear_events: Vec::new(),
+        github_events: Vec::new(),
         cli: false,
     }
 }
@@ -304,10 +310,15 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
         schedule(report, env.now, value, field)
     });
     let mut linear_events = Vec::new();
+    let mut github_events = Vec::new();
     let events = fields.or(report, "event", Vec::new(), |report, value, field| {
         each(report, value, field, |report, value, field| {
             if value["source"] == "linear" {
                 linear_events.push(linear_event_trigger(report, value, field)?);
+                return Some(None);
+            }
+            if value["source"] == "github" {
+                github_events.push(github_event_trigger(report, value, field)?);
                 return Some(None);
             }
             event_trigger(report, env, value, field).map(Some)
@@ -321,9 +332,12 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
         schedule: schedule?,
         events: events?,
         linear_events,
+        github_events,
         cli: cli?,
     };
-    let no_events = trigger.events.is_empty() && trigger.linear_events.is_empty();
+    let no_events = trigger.events.is_empty()
+        && trigger.linear_events.is_empty()
+        && trigger.github_events.is_empty();
     if !trigger.manual && trigger.schedule.is_none() && no_events && !trigger.cli {
         report.error(
             IssueKind::Invalid,
@@ -362,18 +376,12 @@ fn event_trigger(
 }
 
 fn event_source(report: &mut Report, value: &Value, field: &str) -> Option<()> {
-    match value.as_str() {
-        Some("app") => Some(()),
-        Some("github") => {
-            report.error(
-                IssueKind::Unsupported,
-                field,
-                "github events are not supported yet",
-            );
-            None
-        }
-        _ => choice(report, value, field, &[("app", ()), ("linear", ())]),
-    }
+    choice(
+        report,
+        value,
+        field,
+        &[("app", ()), ("linear", ()), ("github", ())],
+    )
 }
 
 /// The workspace and agent an event must come from. `agent` is a condition of `agent.*` events
@@ -664,7 +672,7 @@ fn target_repos(
     valid.then_some(repos)
 }
 
-fn target_repo(
+pub(super) fn target_repo(
     report: &mut Report,
     repos: &[TargetRepo],
     reference: &str,

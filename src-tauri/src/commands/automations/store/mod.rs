@@ -1,5 +1,6 @@
 pub mod events;
 
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
@@ -142,6 +143,9 @@ pub struct AutomationState {
     /// The `updatedAt` up to which Linear event triggers have seen issue changes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub linear_cursor: Option<String>,
+    /// How far GitHub event triggers have seen each `owner/name` repository.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub github_cursor: BTreeMap<String, GithubCursor>,
     pub last_toggle: Option<Toggle>,
     #[serde(skip_serializing_if = "Overrides::is_empty")]
     pub overrides: Overrides,
@@ -150,6 +154,16 @@ pub struct AutomationState {
     pub decisions: Vec<Decision>,
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
+}
+
+/// What GitHub event triggers have seen of one repository.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubCursor {
+    /// GitHub's newest instant seen: pull requests, reviews, comments and runs after it are new.
+    pub since: String,
+    /// The head commit of each open pull request seen, by number.
+    pub heads: BTreeMap<u64, String>,
 }
 
 impl Default for AutomationState {
@@ -161,6 +175,7 @@ impl Default for AutomationState {
             consecutive_failures: 0,
             cursor: None,
             linear_cursor: None,
+            github_cursor: BTreeMap::new(),
             last_toggle: None,
             overrides: Overrides::default(),
             decisions: Vec::new(),
