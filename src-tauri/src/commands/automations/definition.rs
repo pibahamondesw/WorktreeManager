@@ -3,6 +3,7 @@
 //! call. A definition with errors is still listed, with its errors and without a definition.
 
 mod fields;
+mod linear_trigger;
 mod validate;
 
 #[cfg(test)]
@@ -111,6 +112,7 @@ pub struct Trigger {
     pub manual: bool,
     pub schedule: Option<Schedule>,
     pub events: Vec<EventTrigger>,
+    pub linear_events: Vec<LinearEventTrigger>,
     pub cli: bool,
 }
 
@@ -183,6 +185,53 @@ impl AppEventKind {
 
     pub fn is_pr(self) -> bool {
         self.name().starts_with("pr.")
+    }
+}
+
+/// A Linear issue change that fires the automation when every condition matches. The issues are
+/// read with the Linear key of the target workspace.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinearEventTrigger {
+    #[serde(rename = "type")]
+    pub kind: LinearEventKind,
+    /// A team key or name.
+    pub team: Option<String>,
+    /// A label name; for `issue.label_added`, one of the labels added.
+    pub label: Option<String>,
+    /// An email, name or display name, or `me` for the owner of the key.
+    pub assignee: Option<String>,
+    /// Only for `issue.state_changed`: the state the issue entered.
+    pub state: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LinearEventKind {
+    #[serde(rename = "issue.created")]
+    Created,
+    #[serde(rename = "issue.label_added")]
+    LabelAdded,
+    #[serde(rename = "issue.state_changed")]
+    StateChanged,
+}
+
+pub const LINEAR_EVENT_KINDS: [(&str, LinearEventKind); 3] = [
+    ("issue.created", LinearEventKind::Created),
+    ("issue.label_added", LinearEventKind::LabelAdded),
+    ("issue.state_changed", LinearEventKind::StateChanged),
+];
+
+impl LinearEventKind {
+    pub fn name(self) -> &'static str {
+        LINEAR_EVENT_KINDS
+            .iter()
+            .find(|(_, kind)| *kind == self)
+            .map_or("", |(name, _)| name)
+    }
+
+    /// The `<event>` of `issue:<id>:<event>:<at>` trigger keys.
+    pub fn action(self) -> &'static str {
+        self.name().trim_start_matches("issue.")
     }
 }
 

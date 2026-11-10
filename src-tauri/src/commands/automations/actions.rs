@@ -3,6 +3,7 @@
 
 pub mod events;
 pub mod fire;
+pub mod linear;
 #[cfg(test)]
 mod tests;
 

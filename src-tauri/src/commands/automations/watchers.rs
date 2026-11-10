@@ -435,7 +435,7 @@ impl<T: Send + Sync + 'static> Polls<T> {
 }
 
 /// `interval_ms` doubled for each of `times`, at most `max_ms` and never less than `interval_ms`.
-fn backoff_ms(interval_ms: u64, times: u32, max_ms: u64) -> u64 {
+pub(super) fn backoff_ms(interval_ms: u64, times: u32, max_ms: u64) -> u64 {
     let doubled = interval_ms.saturating_mul(1 << times.min(16));
     doubled.min(max_ms).max(interval_ms)
 }

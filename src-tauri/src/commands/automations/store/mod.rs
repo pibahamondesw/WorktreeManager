@@ -139,6 +139,9 @@ pub struct AutomationState {
     pub next_run_at: Option<String>,
     pub consecutive_failures: u32,
     pub cursor: Option<serde_json::Value>,
+    /// The `updatedAt` up to which Linear event triggers have seen issue changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linear_cursor: Option<String>,
     pub last_toggle: Option<Toggle>,
     #[serde(skip_serializing_if = "Overrides::is_empty")]
     pub overrides: Overrides,
@@ -157,6 +160,7 @@ impl Default for AutomationState {
             next_run_at: None,
             consecutive_failures: 0,
             cursor: None,
+            linear_cursor: None,
             last_toggle: None,
             overrides: Overrides::default(),
             decisions: Vec::new(),
