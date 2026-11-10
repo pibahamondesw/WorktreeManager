@@ -34,7 +34,9 @@ use super::definition::{
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
-use super::publish::{pushed_commits, CliForge, Forge, PublishScope, Publisher};
+use super::publish::{
+    published_pull_request, pushed_commits, CliForge, Forge, PublishScope, Publisher,
+};
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::selector::OpenPullRequests;
 use super::store::events::{
@@ -738,7 +740,10 @@ impl ItemSteps<'_> {
             .map(|repo| (repo, self.stale_receipts(request, repo)))
             .collect();
         let stale_receipts = |repo: &str| stale[repo].clone();
-        let pushed = self.pushed(request);
+        let history = self.run_history();
+        let events = || history.iter().map(|logged| &logged.event);
+        let pushed = pushed_commits(events(), request.item);
+        let published = published_pull_request(events(), request.item);
         let definition = self.definition;
         let repo_names: BTreeMap<_, _> = definition
             .target
@@ -761,20 +766,19 @@ impl ItemSteps<'_> {
             stale_receipts: &stale_receipts,
             lease_env,
             pushed: &pushed,
+            published: &published,
         };
         let report = self.publisher.publish(request, effects, &scope);
         self.evidence.extend(self.publisher.drain_events());
         Execution::Finished(report)
     }
 
-    /// What the item pushed so far as the run log has it; nothing to force over if unreadable.
-    fn pushed(&self, request: &StepRequest) -> Vec<String> {
-        let history = self
-            .log
+    /// The run log so far; empty if unreadable, so nothing to force over and no PR yet.
+    fn run_history(&self) -> Vec<LoggedEvent> {
+        self.log
             .store
             .events(&self.request.automation, &self.request.run_id)
-            .unwrap_or_default();
-        pushed_commits(history.iter().map(|logged| &logged.event), request.item)
+            .unwrap_or_default()
     }
 
     /// Bound command steps of `repo` whose latest receipt no longer matches its worktree.

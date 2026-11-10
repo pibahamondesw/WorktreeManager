@@ -1,3 +1,4 @@
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use super::campaign::{by_branch, item, wait_until};
@@ -567,4 +568,66 @@ fn a_closed_pr_blocks_the_item_instead_of_following_on_fail() {
             .unwrap()
             .starts_with("The PR https://github.com/o/r/pull/7 was"));
     }
+}
+
+/// A `gh` whose branch has a PR once `gh pr create` ran.
+fn fake_gh(dir: &Path) -> String {
+    let gh = dir.join("gh");
+    let created = dir.join("created");
+    let script = format!(
+        r#"#!/bin/sh
+case "$2" in
+  create) touch '{created}' ;;
+  list) if [ -f '{created}' ]; then echo '[{{"number":7,"url":"https://github.com/acme/api/pull/7","title":"Lint","body":"","isDraft":true}}]'; else echo '[]'; fi ;;
+esac
+"#,
+        created = created.display()
+    );
+    fs::write(&gh, script).unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    gh.to_string_lossy().into_owned()
+}
+
+#[test]
+fn steps_after_a_wait_render_the_pr_the_item_published() {
+    let worktree = Scratch::new();
+    let tasks = FakeTasks {
+        worktree: Some(worktree.0.clone()),
+        ..FakeTasks::default()
+    };
+    let steps = r#"authorization: { allow: [pr_create, task_log] }
+steps:
+  - id: publish
+    publish:
+      - github.pr_create: { title: Lint }
+  - id: human
+    wait: { signal: integrated }
+  - id: cleanup
+    publish:
+      - wtm.task_log: { entry: "Integrated {pr.url} (#{pr.number})" }
+"#;
+    let mut harness = Harness::new(&format!("{TARGET}{steps}"), tasks, FakeSessions::default());
+    let gh = fake_gh(&harness.scratch.0);
+    harness.executor = executor_with_gh(
+        &harness.scratch,
+        harness.tasks.clone(),
+        harness.sessions.clone(),
+        &gh,
+    );
+    let run = harness.run();
+    harness.signal(&run.id, "human", None, json!({})).unwrap();
+
+    harness.executor.wake_ready();
+    settles(&harness, &run.id, RunStatus::Completed);
+
+    let run = harness.state(&run.id);
+    assert_eq!(
+        attempts(&run.items[0]),
+        [
+            "publish#1:Succeeded",
+            "human#1:Succeeded",
+            "cleanup#1:Succeeded"
+        ]
+    );
+    assert_eq!(effects(&run, "cleanup"), [EffectStatus::Executed]);
 }
