@@ -292,6 +292,32 @@ impl RunStore {
         }
     }
 
+    /// Keeps the text of the definition with `hash`, once, so a retry can go back to it.
+    pub fn keep_definition(&self, name: &str, hash: &str, text: &str) -> Result<(), String> {
+        let path = self.definition_path(name, hash)?;
+        if path.is_file() {
+            return Ok(());
+        }
+        write_atomically(&path, text.as_bytes()).map_err(|e| format!("definition {hash}: {e}"))
+    }
+
+    /// The text kept for the definition with `hash`, if a run kept it.
+    pub fn kept_definition(&self, name: &str, hash: &str) -> Result<Option<String>, String> {
+        match fs::read_to_string(self.definition_path(name, hash)?) {
+            Ok(text) => Ok(Some(text)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("definition {hash}: {error}")),
+        }
+    }
+
+    fn definition_path(&self, name: &str, hash: &str) -> Result<PathBuf, String> {
+        if hash.is_empty() || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("Invalid definition hash: {hash}"));
+        }
+        let file = format!("{hash}.md");
+        Ok(self.automation_dir(name)?.join("definitions").join(file))
+    }
+
     /// The trigger payload of the newest run that carried one.
     pub fn latest_payload(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
         let runs_dir = self.automation_dir(name)?.join("runs");

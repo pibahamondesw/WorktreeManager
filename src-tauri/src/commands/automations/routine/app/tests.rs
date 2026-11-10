@@ -315,8 +315,12 @@ fn app_definitions_read_the_valid_definitions_of_the_directory() {
     write_definition(&scratch.0.join("data"), &scratch.0.join("automations"));
     let app = scratch.app();
     let definitions = AppDefinitions(app.handle().clone());
-    assert_eq!(definitions.current("demo").unwrap().name, "demo");
+    let current = definitions.current("demo").unwrap();
+    assert_eq!(current.name, "demo");
     assert!(definitions.current("absent").is_none());
+    let text = fs::read_to_string(scratch.0.join("automations/demo/AUTOMATION.md")).unwrap();
+    assert_eq!(definitions.kept("demo", &text).unwrap().hash, current.hash);
+    assert!(definitions.kept("demo", "Not a definition").is_none());
     assert!(RoutineExecutor::of(app.handle(), Arc::new(FakeBridge(|_| Value::Null))).is_ok());
     assert!(app.try_state::<LiveTurns>().is_some());
 }
@@ -344,6 +348,7 @@ fn chat_sessions_steer_only_turns_in_progress_of_agents_that_steer() {
     assert!(sessions.steer("claude", "t1:claude", "Use rebase"));
     assert!(!sessions.steer("unknown", "t1:claude", "Use rebase"));
     assert!(!sessions.steer("codex", "missing", "Use rebase"));
+    sessions.interrupt("missing");
 }
 
 #[test]

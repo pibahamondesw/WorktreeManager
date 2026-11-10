@@ -11,7 +11,7 @@ use crate::commands::agents::permission::{Grant, PermissionMode};
 use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
 use crate::commands::automations::command::CommandContext;
 use crate::commands::automations::definition::{
-    load_named, Capacity, Environment, Step, Transition, WaitStep,
+    self, load_named, Capacity, Environment, Step, Transition, WaitStep,
 };
 use crate::commands::automations::publish::CliForge;
 use crate::commands::automations::store::events::EffectStatus;
@@ -98,6 +98,10 @@ impl Definitions for DirectoryDefinitions {
         let entry = load_named(&self.0, name, &environment()).ok()?;
         assert_eq!(entry.errors, Vec::new());
         entry.definition
+    }
+
+    fn kept(&self, name: &str, text: &str) -> Option<AutomationDefinition> {
+        definition::parse_kept(&self.0, name, &environment(), text)
     }
 }
 
@@ -188,6 +192,7 @@ struct FakeSessions {
     gate: Mutex<Option<mpsc::Receiver<()>>>,
     /// Messages steered into turns, with the agent and session.
     steered: Mutex<Vec<(String, String, String)>>,
+    interrupted: Mutex<Vec<String>>,
 }
 
 impl FakeSessions {
@@ -254,6 +259,10 @@ impl Sessions for FakeSessions {
             .unwrap()
             .push((agent.into(), session_id.into(), message.into()));
         true
+    }
+
+    fn interrupt(&self, session_id: &str) {
+        self.interrupted.lock().unwrap().push(session_id.into());
     }
 }
 
@@ -1424,4 +1433,5 @@ mod campaign;
 mod decisions;
 mod operator;
 mod resume;
+mod takeover;
 mod waits;

@@ -7,6 +7,7 @@ import { Button } from "../ui/Button";
 import { useOpenConversation } from "./openConversation";
 import { useAutomationTasks } from "./automationTasks";
 import { AutomationOperator } from "./AutomationOperator";
+import { AutomationItemControls } from "./AutomationItemControls";
 
 const LIVE_REFRESH_MS = 2000;
 
@@ -53,12 +54,19 @@ export function AutomationItems({ summary, steps, onChanged }: AutomationItemsPr
       {items.length === 0 && (
         <p className="text-xs text-text-muted">{loading ? "Loading items…" : "No items yet"}</p>
       )}
-      <ItemBoard columns={columns} />
+      <ItemBoard columns={columns} name={summary.entry.name} steps={steps} onChanged={reload} />
     </div>
   );
 }
 
-function ItemBoard({ columns }: { columns: BoardColumn[] }) {
+interface ItemBoardProps {
+  columns: BoardColumn[];
+  name: string;
+  steps: PipelineStep[];
+  onChanged: () => void;
+}
+
+function ItemBoard({ columns, name, steps, onChanged }: ItemBoardProps) {
   const [focus, setFocus] = useState<[number, number]>([0, 0]);
   const boardRef = useRef<HTMLDivElement>(null);
   const firstFilled = Math.max(
@@ -93,6 +101,9 @@ function ItemBoard({ columns }: { columns: BoardColumn[] }) {
             <ItemCard
               key={card.key}
               card={card}
+              name={name}
+              steps={steps}
+              onChanged={onChanged}
               position={`${columnIndex}:${rowIndex}`}
               focusable={columnIndex === column && rowIndex === row}
               onKeyDown={move}
@@ -124,13 +135,25 @@ function neighbour(
 
 interface ItemCardProps {
   card: BoardCard;
+  name: string;
+  steps: PipelineStep[];
+  onChanged: () => void;
   position: string;
   focusable: boolean;
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   onFocus: () => void;
 }
 
-function ItemCard({ card, position, focusable, onKeyDown, onFocus }: ItemCardProps) {
+function ItemCard({
+  card,
+  name,
+  steps,
+  onChanged,
+  position,
+  focusable,
+  onKeyDown,
+  onFocus,
+}: ItemCardProps) {
   const openConversation = useOpenConversation();
   const { item, taskRemoved } = card;
   const target = taskRemoved ? null : card.target;
@@ -187,6 +210,15 @@ function ItemCard({ card, position, focusable, onKeyDown, onFocus }: ItemCardPro
         >
           {opensConversation ? "Open conversation" : "Open task"}
         </Button>
+      )}
+      {!taskRemoved && (
+        <AutomationItemControls
+          source={{ name, runId: item.run_id, item: item.id }}
+          item={item}
+          run={null}
+          steps={steps}
+          onChanged={onChanged}
+        />
       )}
       {taskRemoved && (
         <p

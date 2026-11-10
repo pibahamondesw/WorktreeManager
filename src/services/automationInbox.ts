@@ -10,6 +10,7 @@ import {
   StepAttempt,
   humanize,
   isRunActive,
+  isTakenOver,
   runResult,
   runStartedAt,
 } from "./automations";
@@ -22,7 +23,8 @@ export type InboxKind =
   | "completed"
   | "question"
   | "permission"
-  | "approval";
+  | "approval"
+  | "taken_over";
 
 /** Where an entry leads: an agent conversation in the run's task. */
 export interface ConversationTarget {
@@ -104,6 +106,7 @@ export function inboxEntries(automations: AutomationRuns[]): InboxEntry[] {
     for (const run of oldestFirst) {
       const entries = [
         ...approvalEntries(entry, run, policy),
+        ...takeoverEntries(entry, run),
         ...(policy.inbox === "never" ? [] : runEntries(entry, run, policy)),
       ];
       for (const inboxEntry of entries) {
@@ -161,6 +164,26 @@ function approvalEntries(
   );
 }
 
+/** Items the owner took over, while they hold them; their own action never notifies. */
+function takeoverEntries(entry: AutomationEntry, run: AutomationRun): InboxEntry[] {
+  const steps = entry.definition?.steps ?? [];
+  return run.items.filter(isTakenOver).map((item) => {
+    const attempts = item.steps.filter((attempt) => attempt.step === item.phase);
+    const conversation = [...attempts].reverse().find((attempt) => attempt.conversation_id);
+    const itemRun = { ...run, task_id: item.task_id ?? run.task_id };
+    return {
+      ...runFacts(entry, run),
+      key: `takeover:${entry.name}:${run.id}:${item.id}:${item.phase}:${attempts.length}`,
+      kind: "taken_over" as const,
+      title: `Taken over: ${item.phase}`,
+      detail: itemLabel(item) ?? "Hand it back from the Pipeline tab or the CLI",
+      target: conversationTarget(steps, itemRun, conversation),
+      autoArchived: false,
+      notify: false,
+    };
+  });
+}
+
 const itemLabel = (item: AutomationItem) => (item.title ? `Item ${item.title}` : null);
 
 /** How an approval attempt was answered, or null while it waits. */
@@ -209,7 +232,8 @@ export function editedParams(
 function outcomeKind(run: AutomationRun, { inbox, archiveNoop }: ReportPolicy): InboxKind | null {
   if (run.status === "failed") return "failed";
   if (run.status !== "completed") return null;
-  if (run.outcome === "needs_attention") return "needs_attention";
+  if (run.outcome === "needs_attention")
+    return run.items.length > 0 && run.items.every(isTakenOver) ? null : "needs_attention";
   if (run.outcome === "noop") return archiveNoop || inbox === "always" ? "noop" : null;
   if (run.outcome === "reported") return inbox === "on_failure" ? null : "findings";
   return inbox === "always" ? "completed" : null;
@@ -226,7 +250,7 @@ function outcomeEntry(
   const autoArchived = kind === "noop" && policy.archiveNoop;
   return {
     ...runFacts(entry, run),
-    key: `run:${entry.name}:${run.id}`,
+    key: `run:${entry.name}:${run.id}${run.reopened_at_ms ? `:${run.reopened_at_ms}` : ""}`,
     kind,
     title: outcomeTitle(kind, run),
     detail: outcomeDetail(run, attempts.at(-1)),
@@ -343,6 +367,14 @@ export function conversationTarget(
   const conversationId = isRunActive(run) ? null : (attempt?.conversation_id ?? null);
   return { taskId: run.task_id, agent, conversationId };
 }
+
+/** Tasks with an automation item the owner took over and has not handed back. */
+export const takenOverTaskIds = (entries: InboxEntry[]): ReadonlySet<string> =>
+  new Set(
+    entries.flatMap((entry) =>
+      entry.kind === "taken_over" && entry.target ? [entry.target.taskId] : []
+    )
+  );
 
 export function withMarks(entries: InboxEntry[], marks: InboxMarks): InboxItem[] {
   const read = new Set(marks.read);

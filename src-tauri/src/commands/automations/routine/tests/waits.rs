@@ -21,7 +21,7 @@ impl Executor for Idle {
 }
 
 impl Harness {
-    fn definition(&self) -> AutomationDefinition {
+    pub(super) fn definition(&self) -> AutomationDefinition {
         DirectoryDefinitions(self.scratch.0.join("automations"))
             .current("demo")
             .unwrap()

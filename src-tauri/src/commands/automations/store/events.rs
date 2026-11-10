@@ -23,6 +23,8 @@ pub enum RunEvent {
     Started,
     Interrupted,
     Resumed,
+    /// A routine's ended run goes on: an item of it was handed back or retried.
+    Reopened,
     Completed {
         outcome: RunOutcome,
     },
@@ -185,6 +187,22 @@ pub enum RunEvent {
         step: String,
         attempt: u32,
         payload: serde_json::Value,
+        by: Actor,
+    },
+    /// The owner hands a taken-over item back: it goes on from the step they took over, and the
+    /// next agent step reads the note.
+    ItemHandedBack {
+        item: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+        by: Actor,
+    },
+    /// The owner retries a failed or blocked item from `step`, on the definition with
+    /// `definition_hash`, which the run pins from then on.
+    ItemRetried {
+        item: String,
+        step: String,
+        definition_hash: String,
         by: Actor,
     },
     #[serde(other)]
@@ -402,6 +420,10 @@ pub struct RunState {
     pub outcome: Option<RunOutcome>,
     pub claimed_at_ms: Option<u64>,
     pub ended_at_ms: Option<u64>,
+    /// When a routine's run last went on after it ended; its deadline counts from then.
+    pub reopened_at_ms: Option<u64>,
+    /// The definition the latest retry pinned, over the one the run was claimed with.
+    pub retried_hash: Option<String>,
     pub items: Vec<ItemState>,
     pub task_id: Option<String>,
     pub task_error: Option<TaskError>,
@@ -518,6 +540,8 @@ pub fn reduce(id: &str, events: impl IntoIterator<Item = LoggedEvent>) -> RunSta
         outcome: None,
         claimed_at_ms: None,
         ended_at_ms: None,
+        reopened_at_ms: None,
+        retried_hash: None,
         items: Vec::new(),
         task_id: None,
         task_error: None,
@@ -545,6 +569,7 @@ impl RunState {
                 RunStatus::Interrupted,
             ),
             RunEvent::Resumed => self.transition(&[RunStatus::Interrupted], RunStatus::Running),
+            RunEvent::Reopened => self.reopen(at_ms),
             RunEvent::Skipped { reason, missed } => {
                 if self.end(at_ms, RunStatus::Skipped) {
                     self.skip_reason = Some(reason);
@@ -737,12 +762,48 @@ impl RunState {
                     attempt.signal = Some(payload);
                 }
             }
+            RunEvent::ItemHandedBack { item, .. } => {
+                if let Some(item) = self.open_item(&item) {
+                    item.status = ItemStatus::Queued;
+                    item.cause = None;
+                }
+            }
+            RunEvent::ItemRetried {
+                item,
+                step,
+                definition_hash,
+                ..
+            } => {
+                if let Some(item) = self.items.iter_mut().find(|state| state.id == item) {
+                    item.status = ItemStatus::Queued;
+                    item.phase = Some(step);
+                    item.cause = None;
+                    self.retried_hash = Some(definition_hash);
+                }
+            }
             RunEvent::CandidateSkipped { .. }
             | RunEvent::ItemInterrupted { .. }
             | RunEvent::TaskFailed { item: Some(_), .. }
             | RunEvent::StepReceipt { .. }
             | RunEvent::Unknown => {}
         }
+    }
+
+    fn reopen(&mut self, at_ms: u64) {
+        if matches!(self.status, RunStatus::Completed | RunStatus::Failed) {
+            self.status = RunStatus::Running;
+            self.outcome = None;
+            self.failure_reason = None;
+            self.ended_at_ms = None;
+            self.reopened_at_ms = Some(at_ms);
+        }
+    }
+
+    /// The definition the run drives its items with now.
+    pub fn pinned_hash(&self) -> Option<&str> {
+        self.retried_hash
+            .as_deref()
+            .or_else(|| self.trigger.as_ref()?.definition_hash.as_deref())
     }
 
     fn transition(&mut self, from: &[RunStatus], to: RunStatus) {

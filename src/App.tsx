@@ -35,7 +35,13 @@ import { useAutomations } from "./hooks/useAutomations";
 import { needsAttention } from "./services/automations";
 import { AutomationsModal } from "./components/automations/AutomationsModal";
 import { useAutomationInbox } from "./hooks/useAutomationInbox";
-import { ConversationTarget, InboxItem, opensInInbox } from "./services/automationInbox";
+import {
+  ConversationTarget,
+  InboxItem,
+  opensInInbox,
+  takenOverTaskIds,
+} from "./services/automationInbox";
+import { TakenOverTasksContext } from "./components/automations/automationTasks";
 import { requestChatIntent } from "./embedded/chatIntents";
 
 function App() {
@@ -283,6 +289,10 @@ function App() {
     [openAutomationConversation]
   );
   const automationInbox = useAutomationInbox(automations.automations, openInboxEntry);
+  const takenOverTasks = useMemo(
+    () => takenOverTaskIds(automationInbox.items),
+    [automationInbox.items]
+  );
   const agentActivity = useAgentActivity({
     tasks: state.tasks,
     sessions: agentSessions,
@@ -549,29 +559,31 @@ function App() {
           </div>
         </ErrorBoundary>
         <ErrorBoundary fallbackClassName="flex-1">
-          <WorktreeList
-            tasks={selectedTasks}
-            agentSessions={agentSessions}
-            agentActivities={agentActivity.activities}
-            workspace={selectedWorkspace}
-            vault={state.vault}
-            taskActions={taskActions}
-            navigation={listNavigation}
-            setupControls={setupControls}
-            editorApp={editorApp}
-            onEditorChange={changeEditorApp}
-            workspaceSwitching={workspaceSwitching}
-            onWorkspaceReady={clearWorkspaceSwitching}
-            searchOpen={search.open}
-            revealTaskId={revealTaskId}
-            onRevealHandled={clearRevealTask}
-            openedTask={openedTask}
-            onOpenTask={openTask}
-            onCloseTask={closeTask}
-            onSwitchSurface={switchTaskSurface}
-            requestNewTask={newTaskRequested}
-            onRequestNewTaskHandled={clearNewTaskRequest}
-          />
+          <TakenOverTasksContext.Provider value={takenOverTasks}>
+            <WorktreeList
+              tasks={selectedTasks}
+              agentSessions={agentSessions}
+              agentActivities={agentActivity.activities}
+              workspace={selectedWorkspace}
+              vault={state.vault}
+              taskActions={taskActions}
+              navigation={listNavigation}
+              setupControls={setupControls}
+              editorApp={editorApp}
+              onEditorChange={changeEditorApp}
+              workspaceSwitching={workspaceSwitching}
+              onWorkspaceReady={clearWorkspaceSwitching}
+              searchOpen={search.open}
+              revealTaskId={revealTaskId}
+              onRevealHandled={clearRevealTask}
+              openedTask={openedTask}
+              onOpenTask={openTask}
+              onCloseTask={closeTask}
+              onSwitchSurface={switchTaskSurface}
+              requestNewTask={newTaskRequested}
+              onRequestNewTaskHandled={clearNewTaskRequest}
+            />
+          </TakenOverTasksContext.Provider>
         </ErrorBoundary>
       </div>
       <QuickSearchModal

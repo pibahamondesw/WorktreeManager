@@ -272,6 +272,8 @@ export interface AutomationRun {
   outcome: string | null;
   claimed_at_ms: number | null;
   ended_at_ms: number | null;
+  /** When a routine's run last went on after it ended, as a hand back or a retry does. */
+  reopened_at_ms?: number | null;
   items: AutomationItem[];
   task_id?: string | null;
   task_error?: { message: string; worktrees: string[] } | null;
@@ -352,6 +354,62 @@ interface StepSignal {
 /** Sends a waiting signal or approval step its payload, as the owner. */
 export const signalAutomationStep = (signal: StepSignal) =>
   invoke("automation_signal", { signal: { ...signal, by: "user" } });
+
+/** The cause of an item paused for the owner to take over. */
+const HUMAN_TAKEOVER = "human_takeover";
+
+export const isTakenOver = (item: AutomationItem) =>
+  item.status === "paused" && item.cause === HUMAN_TAKEOVER;
+
+export type ItemAction = "take_over" | "hand_back" | "retry";
+
+const OPEN_ITEM_STATUSES = ["queued", "active", "waiting"];
+
+/**
+ * What the owner can do to an item now: take over an agent step it runs or is blocked on, hand
+ * back one taken over, retry one that failed or is blocked, or that its routine's failed run
+ * left open.
+ */
+export function itemActions(
+  item: AutomationItem,
+  steps: PipelineStep[],
+  run: AutomationRun | null
+): ItemAction[] {
+  if (isTakenOver(item)) return ["hand_back"];
+  const step = steps.find((candidate) => candidate.id === item.phase);
+  const onAgent = !!step && "agent" in step.kind;
+  const leftOpen =
+    !!run?.task_id && run.status === "failed" && OPEN_ITEM_STATUSES.includes(item.status);
+  const actions: ItemAction[] = [];
+  if (onAgent && (item.status === "active" || item.status === "blocked")) actions.push("take_over");
+  if (item.status === "failed" || item.status === "blocked" || leftOpen) actions.push("retry");
+  return actions;
+}
+
+/** What an item action left: the item, and the conversation to continue after a take over. */
+export interface ItemControl {
+  automation: string;
+  run_id: string;
+  item: string;
+  status: string;
+  step: string | null;
+  cause: string | null;
+  task_id: string | null;
+  conversation_id: string | null;
+}
+
+export type RetryDefinition = "current" | "original";
+
+const itemTarget = (source: AttemptSource) => ({ ...source, by: "user" });
+
+export const takeOverItem = (source: AttemptSource) =>
+  invoke<ItemControl>("automation_take_over", { target: itemTarget(source) });
+
+export const handBackItem = (source: AttemptSource, note: string | null) =>
+  invoke<ItemControl>("automation_hand_back", { target: itemTarget(source), note });
+
+export const retryItem = (source: AttemptSource, definition: RetryDefinition) =>
+  invoke<ItemControl>("automation_retry", { target: itemTarget(source), definition });
 
 interface GitFingerprint {
   head: string | null;

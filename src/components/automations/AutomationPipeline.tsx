@@ -24,6 +24,7 @@ import { Badge } from "../ui/Badge";
 import { useOpenConversation } from "./openConversation";
 import { AutomationStepDetail } from "./AutomationStepDetail";
 import { AutomationPermissions } from "./AutomationPermissions";
+import { AutomationItemControls } from "./AutomationItemControls";
 
 const LIVE_REFRESH_MS = 2000;
 const NODE_HEIGHT = 56;
@@ -111,6 +112,15 @@ export function AutomationPipeline({ name, steps, repos = [] }: AutomationPipeli
         )}
         {live && <span className="text-success">Live</span>}
       </div>
+      {run && item && (
+        <AutomationItemControls
+          source={{ name, runId: run.id, item: item.id }}
+          item={item}
+          run={run}
+          steps={steps}
+          onChanged={reload}
+        />
+      )}
       <PipelineGraph
         steps={steps}
         progress={progress}

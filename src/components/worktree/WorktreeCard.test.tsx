@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { OperationError } from "../../services/operations";
 import { ensureTaskNote, taskNoteUri } from "../../services/notes";
+import { TakenOverTasksContext } from "../automations/automationTasks";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -151,6 +152,15 @@ it("badges tasks created by an automation", () => {
     />
   );
   expect(screen.getByTitle("Created by automation pr-babysitter")).toHaveTextContent("Automation");
+});
+
+it("badges tasks whose automation step the owner took over", () => {
+  render(
+    <TakenOverTasksContext.Provider value={new Set([task.id])}>
+      <Card task={task} workspace={workspace} vault={vault} onDelete={vi.fn()} repoSlugs={{}} />
+    </TakenOverTasksContext.Provider>
+  );
+  expect(screen.getByText("Taken over")).toBeInTheDocument();
 });
 
 it("offers linking only for an unlinked task without opening its editor", () => {

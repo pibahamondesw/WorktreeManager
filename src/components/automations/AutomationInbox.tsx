@@ -17,6 +17,7 @@ const KIND_BADGES: Record<
   question: { label: "Question", variant: "warning" },
   permission: { label: "Permission", variant: "warning" },
   approval: { label: "Approval", variant: "accent" },
+  taken_over: { label: "Taken over", variant: "warning" },
   noop: { label: "No-op", variant: "default" },
   completed: { label: "Completed", variant: "success" },
 };

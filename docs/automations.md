@@ -490,7 +490,7 @@ Outcome of a completed run: routines `noop`, `reported` (has findings) or `needs
 | `queued`    | active   | Created, waiting for capacity or setup.                                                                                                |
 | `active`    | active   | Running a step that holds capacity. Phase = step id.                                                                                   |
 | `waiting`   | resting  | On a `wait` or `approval` step that releases capacity.                                                                                 |
-| `paused`    | resting  | Operator pause or `human_takeover` (WOR-261).                                                                                          |
+| `paused`    | resting  | Operator pause or `human_takeover`; resumed by hand back.                                                                              |
 | `blocked`   | resting  | Needs the human: budget exhausted, `blocked` verdict, cap reached, dirty task on delete. Carries cause and evidence; resumed by retry. |
 | `deferred`  | resting  | Set aside on purpose; resumed by the operator.                                                                                         |
 | `completed` | terminal | The last step succeeded (for campaigns, typically after integration and cleanup).                                                      |
@@ -498,6 +498,12 @@ Outcome of a completed run: routines `noop`, `reported` (has findings) or `needs
 | `canceled`  | terminal | Stopped by the operator.                                                                                                               |
 
 **Items board.** A campaign's Items tab shows the newest item of each `id` across its runs (`automation_items_list`, `wtm automation items <name>`), Test runs' items apart. Columns: `Queued`; one per step label, in pipeline order, for `active` and `waiting` items (for example `awaiting_review` is the label of the step waiting on `pr_integrated`); then `Blocked`, `Deferred` and `Integrated` (`completed`), plus `Paused`, `Failed` and `Canceled` when they hold items. A card shows the tracker issue, the PR, the branch, the active time (agent and command attempts, as the `active_time` budget charges them), the repair rounds (`goto` counters) and, for a stopped item, its cause with the latest attempt's cause and reply as evidence. It opens the item's task, at the conversation of its latest agent attempt once the item no longer runs. Arrow keys move between cards and Enter opens one.
+
+**Take over, hand back and retry.** From the Pipeline tab, an item card or the CLI (`wtm automation take-over|hand-back|retry <run_id> [--item <id>]`):
+
+- _Take over_ an item running or `blocked` on an `agent` step: the engine stops its turn in progress (as the chat's Stop does), records the attempt `canceled` (`killed`, cause `human_takeover`) and pauses the item with cause `human_takeover`; it sends that step's session no more prompts. The owner continues the same conversation in the task's chat. A routine's run completes as `needs_attention`. The item shows as taken over in the Pipeline tab, on the Items board (`Paused`), in the Inbox and on its task's card.
+- _Hand back_ goes on from the step taken over, with a new attempt that continues its conversation; an optional `--note` reaches the next agent step's prompt as trusted owner text. A routine's run goes back to `running` and counts its deadline from then. It needs the definition the run drives its items with.
+- _Retry_ a `failed` or `blocked` item, or the open item of a routine's failed run, from the step it stopped at (the first step if it never started one), on the `current` definition or the `original` one its run started with (`--definition`). Every run keeps the text of the definition it starts with in app data for this. The run pins the chosen definition from then on, also to resume after a quit; a different one needs the run's other items stopped. Budgets and counters carry over. Steps before the retried one do not run again, so their publish effects are not repeated; a retried `publish` step reconciles the effects it already executed (see the publish table).
 
 ### Step attempt
 

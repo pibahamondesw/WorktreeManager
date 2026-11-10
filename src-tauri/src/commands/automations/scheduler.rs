@@ -91,6 +91,15 @@ pub trait Executor: Send + Sync {
 
     /// Drives again the items parked on a wait that can end now.
     fn wake_waiting(&self) {}
+
+    /// Pauses `item` at its step for the owner to take over, interrupting its agent turn in
+    /// progress. `false` when this process is not driving it.
+    fn take_over(&self, _automation: &str, _run_id: &str, _item: &str) -> bool {
+        false
+    }
+
+    /// Drives `items` of the run again from its log, as handing back or retrying them does.
+    fn drive_again(&self, _request: RunRequest, _items: Vec<String>) {}
 }
 
 pub struct Automation {
@@ -331,9 +340,9 @@ impl<C: Clock> Scheduler<C> {
         automation: &Automation,
         run: &RunState,
     ) -> Result<Option<(RunRequest, Vec<String>)>, String> {
-        let Some(request) = interrupted_request(&automation.name, run)
-            .filter(|request| request.definition_hash == automation.definition_hash)
-        else {
+        let Some(request) = recorded_request(&automation.name, run).filter(|request| {
+            request.definition_hash == automation.definition_hash || run.retried_hash.is_some()
+        }) else {
             return Ok(None);
         };
         let history = self.store.events(&automation.name, &run.id)?;
@@ -441,10 +450,11 @@ fn restartable(run: &RunState, history: &[LoggedEvent]) -> bool {
             .all(|item| item.status == ItemStatus::Queued)
 }
 
-/// The request a recorded run started with, its claim standing for when it fired.
-fn interrupted_request(name: &str, run: &RunState) -> Option<RunRequest> {
+/// The request a recorded run goes on with: its claim, or when it was last reopened, stands for
+/// when it fired, and the definition is the one a retry pinned, if any.
+pub(super) fn recorded_request(name: &str, run: &RunState) -> Option<RunRequest> {
     let trigger = run.trigger.as_ref()?;
-    let fired_at = DateTime::from_timestamp_millis(run.claimed_at_ms? as i64)?;
+    let fired_at = DateTime::from_timestamp_millis(started_at_ms(run)? as i64)?;
     let scheduled_for = trigger
         .scheduled_for
         .as_deref()
@@ -453,7 +463,7 @@ fn interrupted_request(name: &str, run: &RunState) -> Option<RunRequest> {
     Some(RunRequest {
         automation: name.to_string(),
         run_id: run.id.clone(),
-        definition_hash: trigger.definition_hash.clone()?,
+        definition_hash: run.pinned_hash()?.to_string(),
         scheduled_for,
         fired_at,
         test: trigger.test,
@@ -628,7 +638,7 @@ fn overdue(
     now: DateTime<Utc>,
     owned: bool,
 ) -> Option<FailureReason> {
-    let claimed = DateTime::from_timestamp_millis(run.claimed_at_ms? as i64)?;
+    let claimed = DateTime::from_timestamp_millis(started_at_ms(run)? as i64)?;
     let age = now - claimed;
     if run.status == RunStatus::Starting && !owned && age >= START_TIMEOUT {
         Some(FailureReason::StartTimeout)
@@ -637,6 +647,11 @@ fn overdue(
     } else {
         None
     }
+}
+
+/// A reopened run counts its deadline from when it went on.
+fn started_at_ms(run: &RunState) -> Option<u64> {
+    run.reopened_at_ms.or(run.claimed_at_ms)
 }
 
 pub(super) fn record_failure(state: &mut AutomationState) {

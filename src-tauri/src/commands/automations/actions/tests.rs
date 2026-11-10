@@ -69,8 +69,14 @@ impl Drop for Scratch {
     }
 }
 
+/// Records what it is asked; `owned` are the runs it says it still works on.
 #[derive(Default)]
-struct FakeExecutor(Mutex<Vec<(RunRequest, Option<Value>)>>, AtomicUsize);
+struct FakeExecutor(
+    Mutex<Vec<(RunRequest, Option<Value>)>>,
+    AtomicUsize,
+    Mutex<Vec<String>>,
+    Mutex<Vec<(RunRequest, Vec<String>)>>,
+);
 
 impl Executor for FakeExecutor {
     fn execute(&self, request: RunRequest, payload: Option<Value>) {
@@ -79,6 +85,14 @@ impl Executor for FakeExecutor {
 
     fn wake_waiting(&self) {
         self.1.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn owns(&self, run_id: &str) -> bool {
+        self.2.lock().unwrap().iter().any(|owned| owned == run_id)
+    }
+
+    fn drive_again(&self, request: RunRequest, items: Vec<String>) {
+        self.3.lock().unwrap().push((request, items));
     }
 }
 
@@ -747,3 +761,5 @@ fn an_automation_that_cannot_fire_does_not_stop_the_others() {
         )]
     );
 }
+
+mod intervene;

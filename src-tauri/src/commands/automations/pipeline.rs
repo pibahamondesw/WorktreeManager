@@ -49,14 +49,17 @@ pub enum Execution {
     Parked,
     /// An earlier result still holds, such as a bound receipt whose fingerprint matches.
     Skipped(StepReport),
+    /// The owner took the item over: the attempt is canceled and the item pauses at its step
+    /// with this cause.
+    Paused(String),
 }
 
 impl Execution {
-    /// `None` while the attempt waits.
+    /// `None` while the attempt waits or once it was taken over.
     pub fn report(&self) -> Option<&StepReport> {
         match self {
             Self::Finished(report) | Self::Skipped(report) => Some(report),
-            Self::Parked => None,
+            Self::Parked | Self::Paused(_) => None,
         }
     }
 }
@@ -110,6 +113,8 @@ pub struct ItemMachine<'a> {
     item: &'a str,
     status: ItemStatus,
     position: Option<Position>,
+    /// Where an item handed back or retried goes on, entered anew.
+    reentry: Option<Position>,
     current: Option<Attempt>,
     open_since_ms: Option<u64>,
     attempts: HashMap<String, u32>,
@@ -126,6 +131,7 @@ impl<'a> ItemMachine<'a> {
             item,
             status: ItemStatus::Queued,
             position: None,
+            reentry: None,
             current: None,
             open_since_ms: None,
             attempts: HashMap::new(),
@@ -186,8 +192,21 @@ impl<'a> ItemMachine<'a> {
                     head: head.clone(),
                 }));
             }
+            RunEvent::ItemHandedBack { item, .. } if item == self.item => {
+                self.reenter(self.position);
+            }
+            RunEvent::ItemRetried { item, step, .. } if item == self.item => {
+                self.reenter(self.position_of(None, Some(step)));
+            }
             _ => {}
         }
+    }
+
+    fn reenter(&mut self, position: Option<Position>) {
+        self.status = ItemStatus::Queued;
+        self.reentry = position;
+        self.position = None;
+        self.current = None;
     }
 
     fn record(&mut self, log: &mut impl RunLog, event: RunEvent) -> Result<(), String> {
@@ -227,7 +246,8 @@ impl<'a> ItemMachine<'a> {
             return Next::Rest(self.status);
         }
         let Some(position) = self.position else {
-            return self.enter(Position { stage: 0, step: 0 }, None);
+            let start = self.reentry.unwrap_or(Position { stage: 0, step: 0 });
+            return self.enter(start, None);
         };
         let steps: &'a [Step] = self.pipeline.steps;
         let step = &steps[position.step];
@@ -393,6 +413,12 @@ impl<'a> ItemMachine<'a> {
         Next::Emit(self.item_event(position, status, None, counter))
     }
 
+    /// Pauses the item where it is, for the owner who took it over.
+    fn paused(&self, cause: String) -> RunEvent {
+        let position = self.position.unwrap_or(Position { stage: 0, step: 0 });
+        self.item_event(position, ItemStatus::Paused, Some(cause), None)
+    }
+
     fn rest(&self, position: Position, status: ItemStatus, cause: Option<String>) -> Next<'a> {
         Next::Emit(self.item_event(position, status, cause, None))
     }
@@ -446,6 +472,10 @@ pub fn drive(
                         step_event(&request, StepStatus::Skipped, Some(report))
                     }
                     Execution::Parked => return Ok(machine.status),
+                    Execution::Paused(cause) => {
+                        machine.record(log, canceled_event(&request, cause.clone()))?;
+                        machine.paused(cause)
+                    }
                 }
             }
         };
@@ -459,6 +489,22 @@ fn start_event(request: &StepRequest) -> RunEvent {
         StepKind::Agent(_) | StepKind::Command(_) | StepKind::Publish(_) => StepStatus::Running,
     };
     step_event(request, status, None)
+}
+
+fn canceled_event(request: &StepRequest, cause: String) -> RunEvent {
+    RunEvent::StepStatus {
+        item: request.item.to_string(),
+        step: request.step.id.clone(),
+        attempt: request.attempt,
+        status: StepStatus::Canceled,
+        process_end: Some(ProcessEnd::Killed),
+        exit_code: None,
+        outcome: None,
+        stage: request.stage.map(str::to_string),
+        verdict: None,
+        cause: Some(cause),
+        head: None,
+    }
 }
 
 fn finish_event(request: &StepRequest, report: StepReport) -> RunEvent {

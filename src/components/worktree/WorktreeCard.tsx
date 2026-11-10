@@ -1,5 +1,5 @@
 import { useShortcutLabels } from "../../shortcuts/runtime";
-import { useState, useEffect, useRef, memo, KeyboardEvent } from "react";
+import { useState, useEffect, useRef, useContext, memo, KeyboardEvent } from "react";
 import { Badge } from "../ui/Badge";
 import {
   SpinnerIcon,
@@ -35,6 +35,7 @@ import { useDeletion } from "../../hooks/useDeletion";
 import { DeleteOutcomeView } from "../ui/DeleteOutcomeView";
 import { stateVariant } from "./cardStyles";
 import { EditableTaskTitle } from "../task/EditableTaskTitle";
+import { TakenOverTasksContext } from "../automations/automationTasks";
 
 interface WorktreeCardProps {
   task: Task;
@@ -186,6 +187,7 @@ export const WorktreeCard = memo(function WorktreeCard({
 
   const age = gitStatus ? timeAgo(gitStatus.last_commit_epoch) : null;
   const indicator = taskIndicator(agentActivity, sessionStatus);
+  const takenOver = useContext(TakenOverTasksContext).has(task.id);
 
   return (
     <div
@@ -254,6 +256,14 @@ export const WorktreeCard = memo(function WorktreeCard({
             {task.automationId && (
               <span className="inline-flex" title={`Created by automation ${task.automationId}`}>
                 <Badge variant="accent">Automation</Badge>
+              </span>
+            )}
+            {takenOver && (
+              <span
+                className="inline-flex"
+                title="You took over its automation step; hand it back from the Automations Pipeline tab or the CLI"
+              >
+                <Badge variant="warning">Taken over</Badge>
               </span>
             )}
             {indicator && <TaskIndicatorDot indicator={indicator} />}

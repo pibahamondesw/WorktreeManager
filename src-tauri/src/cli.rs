@@ -68,6 +68,18 @@ automation signal <run_id> <step> <payload> [--item <id>]
                                      {"decision":"approve|reject","comment":…,
                                      "params":{…}}. --item picks one of several
                                      items of a campaign run waiting on the step.
+automation take-over <run_id> [--item <id>]
+                                     Pauses an item running or blocked on an agent
+                                     step (human_takeover) so you continue its
+                                     conversation in the task's chat.
+automation hand-back <run_id> [--item <id>] [--note <text>]
+                                     Goes on from the step taken over; the next
+                                     agent step reads the note.
+automation retry <run_id> [--item <id>] [--definition <current|original>]
+                                     Runs a failed or blocked item again from the
+                                     step it stopped at, on the current definition
+                                     (default) or the one its run started with.
+                                     Publish effects already done are not repeated.
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
 lease run --pool <name> [--holder <key>] [--values <v,…>] -- <command> [args]
@@ -177,6 +189,20 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     json!(args.next().ok_or("--reason requires a text")?),
                 );
             }
+            "--note" if !params.contains_key("note") => {
+                params.insert(
+                    "note".into(),
+                    json!(args.next().ok_or("--note requires a text")?),
+                );
+            }
+            "--definition" if !params.contains_key("definition") => {
+                params.insert(
+                    "definition".into(),
+                    json!(args
+                        .next()
+                        .ok_or("--definition requires current or original")?),
+                );
+            }
             "--text" if !params.contains_key("text") => {
                 params.insert(
                     "text".into(),
@@ -244,6 +270,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.revoke" => (&["name", "id"], false, &[]),
         "automation.limit" => (&["name", "limit", "value"], false, &[]),
         "automation.signal" => (&["runId", "step", "payload"], false, &["item"]),
+        "automation.take-over" => (&["runId"], false, &["item"]),
+        "automation.hand-back" => (&["runId"], false, &["item", "note"]),
+        "automation.retry" => (&["runId"], false, &["item", "definition"]),
         _ => return Err("Unknown operation; see --help".into()),
     };
     if words.len() != 2 + positional.len()
@@ -283,6 +312,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         let signal =
             payload(Some(&word)).map_err(|_| "The signal payload must be a JSON object")?;
         params.insert("payload".into(), signal);
+    }
+    if method == "automation.retry" {
+        let definition = params.get("definition").and_then(Value::as_str);
+        if !["current", "original"].contains(&definition.unwrap_or("current")) {
+            return Err("--definition takes current or original".into());
+        }
     }
     if method == "task.link-issue" && !params.contains_key("issue") {
         return Err("Provide --issue with a Linear issue identifier".into());
@@ -1053,6 +1088,59 @@ mod tests {
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn parses_automation_item_takeovers_and_retries() {
+        let taken = parse(&args("automation take-over r1 --item unit-1")).unwrap();
+        assert_eq!(taken.method, "automation.take-over");
+        assert_eq!(
+            taken.params,
+            *json!({ "runId": "r1", "item": "unit-1" })
+                .as_object()
+                .unwrap()
+        );
+        let words = [
+            "automation",
+            "hand-back",
+            "r1",
+            "--note",
+            "Use the API client",
+        ];
+        let handed = parse(&words.map(String::from)).unwrap();
+        assert_eq!(
+            handed.params,
+            *json!({ "runId": "r1", "note": "Use the API client" })
+                .as_object()
+                .unwrap()
+        );
+        let retried = parse(&args("automation retry r1 --definition original")).unwrap();
+        assert_eq!(
+            retried.params,
+            *json!({ "runId": "r1", "definition": "original" })
+                .as_object()
+                .unwrap()
+        );
+        assert_eq!(
+            parse(&args("automation retry r1")).unwrap().params,
+            *json!({ "runId": "r1" }).as_object().unwrap()
+        );
+        for invalid in [
+            "automation take-over",
+            "automation take-over r1 --note x",
+            "automation hand-back r1 --note",
+            "automation hand-back r1 --definition current",
+            "automation retry r1 --definition",
+            "automation retry r1 r2",
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "{invalid}");
+        }
+        assert_eq!(
+            parse(&args("automation retry r1 --definition latest"))
+                .err()
+                .as_deref(),
+            Some("--definition takes current or original")
+        );
     }
 
     #[test]

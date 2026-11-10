@@ -5,3 +5,6 @@ import { Task } from "../../types";
 export const AutomationTasksContext = createContext<Task[]>([]);
 
 export const useAutomationTasks = () => useContext(AutomationTasksContext);
+
+/** Tasks with an automation item the owner took over, so their cards say so. */
+export const TakenOverTasksContext = createContext<ReadonlySet<string>>(new Set());
