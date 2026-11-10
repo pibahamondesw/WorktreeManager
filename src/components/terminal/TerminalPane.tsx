@@ -3,6 +3,8 @@ import { useEffect, useRef } from "react";
 import { Button } from "../ui/Button";
 import { useShortcutActions } from "../../shortcuts/runtime";
 import { SessionStatus, useTerminalSession } from "../../hooks/useTerminalSession";
+import { useFileDrop } from "../../hooks/useFileDrop";
+import { droppedPathsText } from "./droppedPaths";
 import { AgentId } from "../../types";
 
 interface TerminalPaneProps {
@@ -21,13 +23,14 @@ export function TerminalPane({
   onStatusChange,
 }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { status, error, restart } = useTerminalSession(containerRef, {
+  const { status, error, restart, paste } = useTerminalSession(containerRef, {
     taskId,
     agent,
     folders,
     branchName,
   });
   const exited = status.kind === "exited";
+  useFileDrop(containerRef, (paths) => paste(droppedPathsText(paths)), !exited);
 
   useEffect(() => {
     onStatusChange?.(status);

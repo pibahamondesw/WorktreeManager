@@ -176,5 +176,10 @@ function useXterm(
 
   const focus = useCallback(() => termRef.current?.focus(), []);
 
-  return { status, error, restart, focus };
+  const paste = useCallback((text: string) => {
+    termRef.current?.paste(text);
+    termRef.current?.focus();
+  }, []);
+
+  return { status, error, restart, focus, paste };
 }
