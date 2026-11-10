@@ -166,6 +166,7 @@ fn task() -> ResolvedTask {
         branch: "wtm/unit".into(),
         folders: vec!["/w/app".into()],
         repo_ids: vec!["app".into()],
+        linear_issue_id: None,
     }
 }
 

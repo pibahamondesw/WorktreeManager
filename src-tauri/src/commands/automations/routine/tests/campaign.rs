@@ -491,18 +491,31 @@ steps:
 
 #[test]
 fn tracked_items_work_on_their_issue_branch_and_fail_without_one() {
-    let tracked = "pools: { active: 4, open_prs: 4 }\ntracker: { linear: { team: DX } }\n";
+    let tracked = "pools: { active: 5, open_prs: 5 }\ntracker: { linear: { team: ENG } }\n";
     let harness = Harness::campaign(tracked, by_branch(None), FakeSessions::default());
     harness.selector_printing(concat!(
         r#"{"items":[{"id":"a","version":"1","title":"A"},{"id":"b","version":"1"},"#,
-        r#"{"id":"c","version":"1","title":"Offline"},{"id":"d","version":"1","title":"Unbranched"}]}"#
+        r#"{"id":"c","version":"1","title":"Offline"},{"id":"d","version":"1","title":"Unbranched"},"#,
+        r#"{"id":"e","version":"1","title":"Unidentified"}]}"#
     ));
 
     let run = harness.run();
 
-    assert_eq!(run.items.len(), 4, "{run:?}");
+    assert_eq!(run.items.len(), 5, "{run:?}");
     assert_eq!(item(&run, "a").status, ItemStatus::Completed);
     assert_eq!(item(&run, "a").task_id.as_deref(), Some("t-me/wtm-demo-a"));
+    let created = harness.tasks.created.lock().unwrap().clone();
+    assert_eq!(
+        created
+            .iter()
+            .map(|task| task.linear_issue.clone())
+            .collect::<Vec<_>>(),
+        [Some(LinkedIssue {
+            id: "issue-me/wtm-demo-a".into(),
+            identifier: "ENG-1".into(),
+            title: "A".into(),
+        })]
+    );
     let cause = |id: &str| item(&run, id).cause.clone().unwrap();
     assert_eq!(
         cause("b"),
@@ -516,6 +529,10 @@ fn tracked_items_work_on_their_issue_branch_and_fail_without_one() {
         cause("d"),
         "task_create_failed: tracker issue: Linear answered without a branch"
     );
+    assert_eq!(
+        cause("e"),
+        "task_create_failed: tracker issue: missing field `id`"
+    );
 
     let staged = Harness::campaign(tracked, by_branch(None), FakeSessions::default());
     staged.selector_printing(r#"{"items":[{"id":"a","version":"1","title":"A"}]}"#);
@@ -524,6 +541,43 @@ fn tracked_items_work_on_their_issue_branch_and_fail_without_one() {
         item(&test_run, "a").task_id.as_deref(),
         Some("t-wtm/demo/a")
     );
+    assert_eq!(staged.tasks.created.lock().unwrap()[0].linear_issue, None);
+}
+
+#[test]
+fn a_tracked_item_links_its_existing_task_unless_it_has_another_issue() {
+    let on_branch = |id: &str, branch: &str, issue: Option<&str>| ResolvedTask {
+        branch: branch.into(),
+        linear_issue_id: issue.map(String::from),
+        ..task(id)
+    };
+    let tasks = FakeTasks {
+        existing: vec![
+            on_branch("t-a", "me/wtm-demo-a", None),
+            on_branch("t-b", "me/wtm-demo-b", Some("other-issue")),
+        ],
+        ..by_branch(None)
+    };
+    let tracked = "pools: { active: 2 }\ntracker: { linear: { team: ENG } }\n";
+    let harness = Harness::campaign(tracked, tasks, FakeSessions::default());
+    harness.selector_printing(concat!(
+        r#"{"items":[{"id":"a","version":"1","title":"A"},"#,
+        r#"{"id":"b","version":"1","title":"B"}]}"#
+    ));
+
+    let run = harness.run();
+
+    assert_eq!(
+        statuses(&run),
+        [("a", ItemStatus::Completed), ("b", ItemStatus::Completed)]
+    );
+    assert_eq!(item(&run, "a").task_id.as_deref(), Some("t-a"));
+    assert_eq!(item(&run, "b").task_id.as_deref(), Some("t-b"));
+    assert_eq!(
+        *harness.tasks.linked.lock().unwrap(),
+        [("t-a".to_string(), "ENG-1".to_string())]
+    );
+    assert!(harness.tasks.created.lock().unwrap().is_empty());
 }
 
 #[test]
