@@ -5,7 +5,9 @@ import {
   AutomationRun,
   AutomationState,
   AutomationSummary,
+  AutomationItem,
   automationStatus,
+  itemActions,
   loadAutomationSummaries,
   needsAttention,
   toggleSummary,
@@ -171,5 +173,57 @@ describe("loadAutomationSummaries", () => {
       before: null,
       limit: 1,
     });
+  });
+});
+
+describe("itemActions", () => {
+  const steps = [
+    {
+      id: "fix",
+      label: "fix",
+      next: null,
+      onFail: "fail" as const,
+      kind: {
+        agent: {
+          agent: { id: "claude", model: "opus", effort: null },
+          skill: null,
+          prompt: null,
+          onReject: null,
+        },
+      },
+    },
+    {
+      id: "check",
+      label: "check",
+      next: null,
+      onFail: "fail" as const,
+      kind: { command: { command: ["make", "check"], repo: "app" } },
+    },
+  ];
+  const item = (status: string, phase: string | null, cause?: string): AutomationItem => ({
+    id: "routine",
+    title: null,
+    status,
+    phase,
+    cause,
+    steps: [],
+  });
+  const failedRun = { ...run({}), status: "failed" as const, task_id: "t1" };
+
+  it("offers taking over an agent step it runs or is blocked on, and handing it back", () => {
+    expect(itemActions(item("active", "fix"), steps, null)).toEqual(["take_over"]);
+    expect(itemActions(item("blocked", "fix"), steps, null)).toEqual(["take_over", "retry"]);
+    expect(itemActions(item("active", "check"), steps, null)).toEqual([]);
+    expect(itemActions(item("paused", "fix", "human_takeover"), steps, null)).toEqual([
+      "hand_back",
+    ]);
+    expect(itemActions(item("paused", "fix"), steps, null)).toEqual([]);
+  });
+
+  it("offers retrying failed and blocked items, and those a routine's failed run left open", () => {
+    expect(itemActions(item("failed", "check"), steps, null)).toEqual(["retry"]);
+    expect(itemActions(item("blocked", "check"), steps, null)).toEqual(["retry"]);
+    expect(itemActions(item("active", "check"), steps, failedRun)).toEqual(["retry"]);
+    expect(itemActions(item("completed", "check"), steps, failedRun)).toEqual([]);
   });
 });

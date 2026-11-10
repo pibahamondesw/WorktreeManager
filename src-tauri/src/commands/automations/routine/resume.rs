@@ -9,9 +9,10 @@ use std::thread;
 use super::super::definition::{AgentStep, AutomationDefinition, StepKind, TaskMode};
 use super::super::pipeline::RunLog;
 use super::super::scheduler::RunRequest;
-use super::super::store::events::{LoggedEvent, RunEvent, RunStatus, StepStatus};
+use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, RunStatus, StepStatus};
 use super::commands::Item;
 use super::prompt::PriorStep;
+use super::takeover::HUMAN_TAKEOVER;
 use super::{
     per_run_branch, run_deadline, ItemDrive, ItemSteps, ResolvedTask, RoutineExecutor, TaskFailure,
     WriterLog, ROUTINE_ITEM,
@@ -102,12 +103,8 @@ impl RoutineExecutor {
         after_quit: bool,
     ) -> Result<(), String> {
         let name = &request.automation;
-        let definition = self
-            .definitions
-            .current(name)
-            .filter(|definition| definition.hash == request.definition_hash)
-            .ok_or("its definition changed")?;
         let run = self.store.run(name, &request.run_id)?;
+        let definition = self.pinned(request, &run).ok_or("its definition changed")?;
         let history = self.store.events(name, &request.run_id)?;
         let payload = self.store.payload(name, &request.run_id)?;
         let resumed = run.items.iter().filter(|item| items.contains(&item.id));
@@ -157,6 +154,7 @@ impl ItemSteps<'_> {
     /// Picks up what the item's finished attempts left in the log, for the prompts that follow,
     /// and the conversations its agent steps held.
     pub(super) fn resume_from(&mut self, history: &[LoggedEvent]) {
+        let mut taken_over = None;
         for logged in history {
             match &logged.event {
                 RunEvent::SessionStarted {
@@ -165,7 +163,26 @@ impl ItemSteps<'_> {
                     attempt,
                     conversation_id: Some(conversation),
                     ..
-                } if *item == self.item.id => self.held_conversation(step, *attempt, conversation),
+                } if *item == self.item.id => {
+                    self.handback_note = None;
+                    self.held_conversation(step, *attempt, conversation);
+                }
+                RunEvent::SessionStarted { item, .. } if *item == self.item.id => {
+                    self.handback_note = None;
+                }
+                RunEvent::ItemStatus {
+                    item,
+                    status: ItemStatus::Paused,
+                    phase,
+                    cause: Some(cause),
+                    ..
+                } if *item == self.item.id && cause == HUMAN_TAKEOVER => {
+                    taken_over = phase.clone();
+                }
+                RunEvent::ItemHandedBack { item, note, .. } if *item == self.item.id => {
+                    self.handback_note = note.clone();
+                    self.continue_taken_over_conversation(taken_over.take());
+                }
                 RunEvent::StepOutput { item, .. } | RunEvent::StepReceipt { item, .. }
                     if *item == self.item.id =>
                 {
@@ -201,6 +218,15 @@ impl ItemSteps<'_> {
             }
         }
         self.evidence.clear();
+    }
+
+    /// A fresh session's step the owner took over goes on in the conversation they continued.
+    fn continue_taken_over_conversation(&mut self, taken_over: Option<String>) {
+        if let Some((step, attempt, _)) = self.interrupted_conversation.as_mut() {
+            if taken_over.as_ref() == Some(step) {
+                *attempt += 1;
+            }
+        }
     }
 
     fn held_conversation(&mut self, step_id: &str, attempt: u32, conversation: &str) {

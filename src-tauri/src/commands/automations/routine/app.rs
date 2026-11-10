@@ -56,6 +56,10 @@ impl<R: Runtime> Definitions for AppDefinitions<R> {
             .find(|entry| entry.name == name)?
             .definition
     }
+
+    fn kept(&self, name: &str, text: &str) -> Option<AutomationDefinition> {
+        definition::load_kept(&self.0, name, text)
+    }
 }
 
 struct BridgeTasks(Arc<dyn OperationsBridge>);
@@ -214,6 +218,12 @@ impl<R: Runtime> Sessions for ChatSessions<R> {
                 .state::<ChatRegistry>()
                 .steer(session_id, message)
                 .unwrap_or(false)
+    }
+
+    fn interrupt(&self, session_id: &str) {
+        if let Err(error) = self.0.state::<ChatRegistry>().interrupt(session_id) {
+            log::warn!("Could not stop automation session {session_id}: {error}");
+        }
     }
 }
 

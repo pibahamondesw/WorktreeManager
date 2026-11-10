@@ -12,6 +12,7 @@ mod live_turns;
 mod prompt;
 mod result;
 mod resume;
+mod takeover;
 #[cfg(test)]
 mod tests;
 mod waits;
@@ -42,7 +43,7 @@ use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::selector::OpenPullRequests;
 use super::store::events::{
     FailureReason, ItemStatus, LoggedEvent, PermissionResolution, ProcessEnd, RequestKind,
-    RunEvent, RunOutcome, StepOutcome,
+    RunEvent, RunOutcome, RunState, StepOutcome,
 };
 use super::store::RunStore;
 use super::wait;
@@ -55,6 +56,8 @@ pub use leases::LeasePools;
 use leases::{NoLeasePools, Quotas, StepLeases};
 pub use live_turns::LiveTurns;
 use prompt::{PriorStep, PromptInput};
+use takeover::Takeovers;
+pub use takeover::HUMAN_TAKEOVER;
 
 const ROUTINE_ITEM: &str = "routine";
 const NOOP_REPLY: &str = "NOOP";
@@ -152,6 +155,8 @@ pub trait Sessions: Send + Sync {
     /// Adds `message` to the session's turn in progress; `false` when `agent` cannot steer or no
     /// turn is running.
     fn steer(&self, agent: &str, session_id: &str, message: &str) -> bool;
+    /// Stops the session's turn in progress, as the chat's Stop does.
+    fn interrupt(&self, session_id: &str);
 }
 
 /// Runs a frontend operation as the CLI does and returns its response.
@@ -162,6 +167,8 @@ pub trait OperationsBridge: Send + Sync {
 pub trait Definitions: Send + Sync {
     /// The valid definition named `name`, as it is on disk now.
     fn current(&self, name: &str) -> Option<AutomationDefinition>;
+    /// `text`, a definition of `name` a run kept, read as it would be on disk now.
+    fn kept(&self, name: &str, text: &str) -> Option<AutomationDefinition>;
 }
 
 /// Told the name of an automation whose runs gained something the Inbox shows.
@@ -189,6 +196,7 @@ pub struct RoutineExecutor {
     parked: Arc<Mutex<HashMap<DrivenItem, RunRequest>>>,
     watchers: Watchers,
     live_turns: LiveTurns,
+    takeovers: Takeovers,
 }
 
 type DrivenItem = (String, String, String);
@@ -228,6 +236,14 @@ impl Executor for RoutineExecutor {
 
     fn wake_waiting(&self) {
         self.wake_ready();
+    }
+
+    fn take_over(&self, automation: &str, run_id: &str, item: &str) -> bool {
+        self.request_takeover(automation, run_id, item)
+    }
+
+    fn drive_again(&self, request: RunRequest, items: Vec<String>) {
+        self.drive_items_again(request, items);
     }
 }
 
@@ -273,6 +289,7 @@ impl RoutineExecutor {
             runs_changed: Arc::new(|_| {}),
             parked: Arc::default(),
             watchers: watchers::registry(Arc::new(CliWatchForge::default())),
+            takeovers: Takeovers::default(),
         }
     }
 
@@ -344,6 +361,7 @@ impl RoutineExecutor {
         else {
             return self.finish(request, Ending::Failed(FailureReason::DefinitionChanged));
         };
+        self.keep(&definition);
         if agent_steps(&definition).any(|step| !self.sessions.available(&step.agent.id)) {
             return self.finish(request, Ending::Failed(FailureReason::AgentUnavailable));
         }
@@ -399,6 +417,38 @@ impl RoutineExecutor {
         self.finish(drive.request, ending)
     }
 
+    /// Keeps the definition's text, so a retry can go back to it once the file changes.
+    fn keep(&self, definition: &AutomationDefinition) {
+        let kept = super::definition::source_text(definition)
+            .ok_or_else(|| "the file changed".to_string())
+            .and_then(|text| {
+                self.store
+                    .keep_definition(&definition.name, &definition.hash, &text)
+            });
+        if let Err(error) = kept {
+            log::warn!(
+                "Automation {} did not keep its definition: {error}",
+                definition.name
+            );
+        }
+    }
+
+    /// The definition the run drives its items with: the file when it still has the pinned hash,
+    /// else the text kept for a run an item of which was retried.
+    fn pinned(&self, request: &RunRequest, run: &RunState) -> Option<AutomationDefinition> {
+        let name = &request.automation;
+        let hash = &request.definition_hash;
+        let current = self.definitions.current(name);
+        if let Some(definition) = current.filter(|definition| definition.hash == *hash) {
+            return Some(definition);
+        }
+        run.retried_hash.as_ref()?;
+        let text = self.store.kept_definition(name, hash).ok()??;
+        self.definitions
+            .kept(name, &text)
+            .filter(|definition| definition.hash == *hash)
+    }
+
     fn task_failed(&self, request: &RunRequest, failure: TaskFailure) -> Result<(), String> {
         WriterLog::of(&self.store, request).append(RunEvent::TaskFailed {
             message: failure.message,
@@ -422,8 +472,11 @@ impl RoutineExecutor {
         );
         let routine = item_drive.definition.selector.is_none();
         self.driven.lock().unwrap().insert(key.clone(), routine);
-        let driven = self.drive_steps(item_drive);
-        self.driven.lock().unwrap().remove(&key);
+        let driven = self.drive_steps(item_drive, &key);
+        let mut items = self.driven.lock().unwrap();
+        items.remove(&key);
+        self.takeovers.clear(&key);
+        drop(items);
         if let Ok((_, Ending::Waiting)) = driven {
             self.parked.lock().unwrap().insert(key, request.clone());
             (self.runs_changed)(&request.automation);
@@ -431,7 +484,11 @@ impl RoutineExecutor {
         driven
     }
 
-    fn drive_steps(&self, item_drive: &ItemDrive) -> Result<(ItemStatus, Ending), String> {
+    fn drive_steps(
+        &self,
+        item_drive: &ItemDrive,
+        key: &DrivenItem,
+    ) -> Result<(ItemStatus, Ending), String> {
         let ItemDrive {
             definition,
             request,
@@ -482,6 +539,9 @@ impl RoutineExecutor {
             watchers: &self.watchers,
             parked: false,
             live_turns: &self.live_turns,
+            takeovers: &self.takeovers,
+            key,
+            handback_note: None,
         };
         steps.resume_from(history);
         let pipeline = Pipeline {
@@ -652,10 +712,43 @@ struct ItemSteps<'a> {
     /// Set when the item rests on a wait that has not ended.
     parked: bool,
     live_turns: &'a LiveTurns,
+    takeovers: &'a Takeovers,
+    key: &'a DrivenItem,
+    /// What the owner wrote handing the item back, for its next agent step.
+    handback_note: Option<String>,
 }
 
 impl StepExecutor for ItemSteps<'_> {
+    /// A step the owner takes over before or while it runs pauses the item instead.
     fn execute(&mut self, request: &StepRequest) -> Execution {
+        let execution = (!self.taken_over()).then(|| self.run_step(request));
+        match execution {
+            Some(execution) if !self.taken_over() => {
+                if let Some(report) = execution.report() {
+                    self.last_outcome = Some(report.outcome);
+                    self.remember(request, report);
+                }
+                execution
+            }
+            _ => Execution::Paused(HUMAN_TAKEOVER.into()),
+        }
+    }
+
+    fn drain_events(&mut self) -> Vec<RunEvent> {
+        std::mem::take(&mut self.evidence)
+    }
+
+    fn halted(&self) -> bool {
+        self.quitting.load(Ordering::SeqCst)
+    }
+}
+
+impl ItemSteps<'_> {
+    fn taken_over(&self) -> bool {
+        self.takeovers.requested(self.key)
+    }
+
+    fn run_step(&mut self, request: &StepRequest) -> Execution {
         let Some(remaining) = self.deadline.checked_duration_since(Instant::now()) else {
             self.deadline_passed = true;
             return Execution::Parked;
@@ -663,7 +756,7 @@ impl StepExecutor for ItemSteps<'_> {
         if request.step.capacity == Capacity::Release {
             self.commands.context().leases().release_active();
         }
-        let execution = match &request.step.kind {
+        match &request.step.kind {
             StepKind::Command(_) => self.command(request),
             kind => match self.commands.context().hold_leases(request) {
                 Err(error) => Execution::Finished(failed(ProcessEnd::Crashed, error)),
@@ -678,24 +771,9 @@ impl StepExecutor for ItemSteps<'_> {
                     _ => self.wait(request),
                 },
             },
-        };
-        if let Some(report) = execution.report() {
-            self.last_outcome = Some(report.outcome);
-            self.remember(request, report);
         }
-        execution
     }
 
-    fn drain_events(&mut self) -> Vec<RunEvent> {
-        std::mem::take(&mut self.evidence)
-    }
-
-    fn halted(&self) -> bool {
-        self.quitting.load(Ordering::SeqCst)
-    }
-}
-
-impl ItemSteps<'_> {
     fn agent_turn(
         &mut self,
         request: &StepRequest,
@@ -744,12 +822,14 @@ impl ItemSteps<'_> {
             payload: self.payload,
             prior: &self.prior,
             decisions: &decisions,
+            handback_note: self.handback_note.take().as_deref(),
         });
+        let item_turn = self.takeovers.running(self.key, &session_id);
         let live = self
             .live_turns
             .running(&session_id, &self.request.automation, &step.agent.id);
         let end = self.sessions.run_turn(&session_id, &prompt, timeout);
-        drop(live);
+        drop((live, item_turn));
         if conversation.is_none() && self.sessions.conversation(&session_id).is_some() {
             self.record_session(request, &session_id);
         }

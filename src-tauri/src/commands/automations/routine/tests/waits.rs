@@ -20,8 +20,22 @@ impl Executor for Idle {
     fn execute(&self, _: RunRequest, _: Option<Value>) {}
 }
 
+#[test]
+fn an_executor_drives_nothing_again_unless_it_drives_items() {
+    let request = RunRequest {
+        automation: "demo".into(),
+        run_id: "r1".into(),
+        definition_hash: "abc".into(),
+        scheduled_for: now(),
+        fired_at: now(),
+        test: false,
+    };
+    Idle.drive_again(request, vec!["routine".into()]);
+    assert!(!Idle.take_over("demo", "r1", "routine"));
+}
+
 impl Harness {
-    fn definition(&self) -> AutomationDefinition {
+    pub(super) fn definition(&self) -> AutomationDefinition {
         DirectoryDefinitions(self.scratch.0.join("automations"))
             .current("demo")
             .unwrap()

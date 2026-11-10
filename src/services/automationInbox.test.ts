@@ -10,6 +10,7 @@ import {
   freshEntries,
   inboxEntries,
   mark,
+  takenOverTaskIds,
   unreadCount,
   withMarks,
 } from "./automationInbox";
@@ -421,5 +422,51 @@ describe("approval entries", () => {
     expect(editedParams(params, { files: "b.rb" })).toEqual({
       error: 'files must be JSON, like ["a.rb"]',
     });
+  });
+});
+
+describe("taken-over items", () => {
+  const takenOver = {
+    id: "routine",
+    title: null,
+    status: "paused",
+    phase: "triage",
+    cause: "human_takeover",
+    steps: [attempt({ status: "canceled" })],
+  };
+
+  it("show while the owner holds them, without notifying or repeating the run's outcome", () => {
+    const routine = run("2000", { outcome: "needs_attention", items: [takenOver] });
+    const campaign = run("3000", {
+      outcome: "dispatched",
+      task_id: null,
+      items: [{ ...takenOver, id: "unit-1", title: "Unit 1", task_id: "t9", steps: [] }],
+    });
+
+    const entries = inboxEntries([{ entry: entry(), runs: [routine, campaign] }]);
+
+    expect(entries.map((item) => [item.key, item.kind, item.detail, item.notify])).toEqual([
+      ["takeover:babysitter:3000:unit-1:triage:0", "taken_over", "Item Unit 1", false],
+      [
+        "takeover:babysitter:2000:routine:triage:1",
+        "taken_over",
+        "Hand it back from the Pipeline tab or the CLI",
+        false,
+      ],
+    ]);
+    expect(entries[0].target).toEqual({ taskId: "t9", agent: null, conversationId: null });
+    expect(entries[1].title).toBe("Taken over: triage");
+    expect(entries[1].target?.conversationId).toBe("c1");
+    expect(takenOverTaskIds(entries)).toEqual(new Set(["t9", "t1"]));
+  });
+
+  it("let a reopened run report its new outcome as a new entry", () => {
+    const reopened = run("2000", { reopened_at_ms: 1500 });
+    expect(inboxEntries([{ entry: entry(), runs: [reopened] }])[0].key).toBe(
+      "run:babysitter:2000:1500"
+    );
+    expect(takenOverTaskIds(inboxEntries([{ entry: entry(), runs: [run("2000")] }]))).toEqual(
+      new Set()
+    );
   });
 });

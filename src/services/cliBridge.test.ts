@@ -297,6 +297,34 @@ it("signals a waiting step for the CLI", async () => {
   });
 });
 
+it("takes over, hands back and retries items for the CLI", async () => {
+  invokeCommand.mockImplementation((command) => Promise.resolve({ command }));
+  const target = (item: string | null) => ({ name: null, runId: "r1", item, by: "cli" });
+
+  expect(await call("automation.take-over", { runId: "r1" })).toMatchObject({ ok: true });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_take_over", { target: target(null) });
+  await call("automation.hand-back", { runId: "r1", item: "a", note: "Use the API" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_hand_back", {
+    target: target("a"),
+    note: "Use the API",
+  });
+  await call("automation.hand-back", { runId: "r1" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_hand_back", {
+    target: target(null),
+    note: null,
+  });
+  await call("automation.retry", { runId: "r1" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_retry", {
+    target: target(null),
+    definition: "current",
+  });
+  await call("automation.retry", { runId: "r1", item: "a", definition: "original" });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_retry", {
+    target: target("a"),
+    definition: "original",
+  });
+});
+
 it("starts, pauses and resumes automations for the CLI", async () => {
   invokeCommand.mockImplementation((command) => Promise.resolve({ command }));
   expect(await call("automation.run", { name: " babysitter " })).toMatchObject({

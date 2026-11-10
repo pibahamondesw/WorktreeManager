@@ -728,6 +728,25 @@ pub fn load_named(dir: &Path, name: &str, env: &Environment) -> Result<Automatio
     Ok(load_automation(&folder, env))
 }
 
+/// `text`, a definition of `name` a run kept, read with the folder and environment of now.
+pub fn parse_kept(
+    dir: &Path,
+    name: &str,
+    env: &Environment,
+    text: &str,
+) -> Option<AutomationDefinition> {
+    let folder = dir.join(name);
+    let mut report = Report::new(folder.join(DEFINITION_FILE).display().to_string());
+    let definition = parse_definition(&mut report, &folder, name, env, text)?;
+    report.errors.is_empty().then_some(definition)
+}
+
+/// The file's text while it still has the definition's hash.
+pub fn source_text(definition: &AutomationDefinition) -> Option<String> {
+    let text = fs::read_to_string(definition.folder.join(DEFINITION_FILE)).ok()?;
+    (format!("{:x}", Sha256::digest(text.as_bytes())) == definition.hash).then_some(text)
+}
+
 fn load_automation(folder: &Path, env: &Environment) -> AutomationEntry {
     let name = folder
         .file_name()
@@ -872,6 +891,15 @@ pub fn load_current_named<R: Runtime>(
 ) -> Result<AutomationEntry, String> {
     let (dir, env) = Sources::of(app)?.environment();
     load_named(&dir, name, &env)
+}
+
+pub fn load_kept<R: Runtime>(
+    app: &AppHandle<R>,
+    name: &str,
+    text: &str,
+) -> Option<AutomationDefinition> {
+    let (dir, env) = Sources::of(app).ok()?.environment();
+    parse_kept(&dir, name, &env, text)
 }
 
 #[tauri::command]

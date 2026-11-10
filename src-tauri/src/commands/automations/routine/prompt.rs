@@ -53,6 +53,8 @@ pub(super) struct PromptInput<'a> {
     pub prior: &'a [PriorStep],
     /// Trusted: recorded by the owner.
     pub decisions: &'a [Decision],
+    /// Trusted: what the owner wrote handing the item back after taking it over.
+    pub handback_note: Option<&'a str>,
 }
 
 pub(super) fn agent_prompt(input: &PromptInput) -> String {
@@ -71,6 +73,7 @@ pub(super) fn agent_prompt(input: &PromptInput) -> String {
         .cloned(),
     );
     sections.extend(decisions_in_force(input.decisions));
+    sections.extend(input.handback_note.map(handed_back));
     sections.push(context(input));
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let untrusted_blocks = untrusted_data(input)
@@ -87,6 +90,10 @@ fn decisions_in_force(decisions: &[Decision]) -> Option<String> {
         .collect();
     (!decisions.is_empty())
         .then(|| format!("Decisions the owner recorded for this automation; follow them:{rules}"))
+}
+
+fn handed_back(note: &str) -> String {
+    format!("The owner took this item over and handed it back with this note; follow it:\n{note}")
 }
 
 /// What a session in the middle of a turn is told when the owner records a decision.

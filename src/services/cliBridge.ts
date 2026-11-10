@@ -250,6 +250,16 @@ function payloadObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+/** An item of a run, addressed by the CLI on the owner's behalf. */
+function itemTarget(params: Record<string, unknown>) {
+  return {
+    name: null,
+    runId: text(params.runId),
+    item: params.item === undefined ? null : text(params.item),
+    by: "cli",
+  };
+}
+
 async function invokeAutomations(command: string, args?: Record<string, unknown>) {
   try {
     return await invoke(command, args);
@@ -332,6 +342,9 @@ export async function dispatchCliBridge(
       "automation.decisions": ["name"],
       "automation.revoke": ["name", "id"],
       "automation.signal": ["runId", "step", "payload", "item"],
+      "automation.take-over": ["runId", "item"],
+      "automation.hand-back": ["runId", "item", "note"],
+      "automation.retry": ["runId", "item", "definition"],
       "linear.issue-upsert": [
         "workspaceId",
         "marker",
@@ -521,6 +534,23 @@ export async function dispatchCliBridge(
             payload: payloadObject(params.payload) ?? {},
             by: "cli",
           },
+        });
+        break;
+      case "automation.take-over":
+        result = await invokeAutomations("automation_take_over", {
+          target: itemTarget(params),
+        });
+        break;
+      case "automation.hand-back":
+        result = await invokeAutomations("automation_hand_back", {
+          target: itemTarget(params),
+          note: params.note === undefined ? null : text(params.note),
+        });
+        break;
+      case "automation.retry":
+        result = await invokeAutomations("automation_retry", {
+          target: itemTarget(params),
+          definition: params.definition === undefined ? "current" : text(params.definition),
         });
         break;
       case "linear.issue-upsert":

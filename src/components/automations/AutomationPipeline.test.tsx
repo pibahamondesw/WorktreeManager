@@ -489,3 +489,109 @@ it("is a tab of the automation detail", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "Pipeline" }));
   expect(screen.getByText("Unavailable until the definition is valid")).toBeInTheDocument();
 });
+
+it("takes over an item's agent step, opens its conversation and hands it back with a note", async () => {
+  let current = run("1761800000002-bbbbbbbb", {
+    task_id: "t1",
+    status: "running",
+    outcome: null,
+    items: [
+      item("routine", {
+        phase: "implement",
+        steps: [attempt("implement", { status: "running", session_id: "s1" })],
+      }),
+    ],
+  });
+  const control = { automation: "babysitter", run_id: current.id, item: "routine" };
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "automation_take_over") {
+      current = {
+        ...current,
+        status: "completed",
+        items: [{ ...current.items[0], status: "paused", cause: "human_takeover" }],
+      };
+      return {
+        ...control,
+        status: "paused",
+        step: "implement",
+        task_id: "t1",
+        conversation_id: "c1",
+      };
+    }
+    if (command === "automation_hand_back") return { ...control, status: "queued" };
+    return page(current);
+  });
+  const openConversation = vi.fn().mockReturnValue(true);
+  render(
+    <OpenConversationContext.Provider value={openConversation}>
+      <AutomationPipeline name="babysitter" steps={STEPS} />
+    </OpenConversationContext.Provider>
+  );
+
+  fireEvent.click(await screen.findByRole("button", { name: "Take over" }));
+  expect(await screen.findByText("Taken over")).toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("automation_take_over", {
+    target: { name: "babysitter", runId: current.id, item: "routine", by: "user" },
+  });
+  expect(openConversation).toHaveBeenCalledWith({
+    taskId: "t1",
+    agent: "claude",
+    conversationId: "c1",
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Note for the next step" }), {
+    target: { value: " Keep it small " },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Hand back" }));
+
+  await act(async () => undefined);
+  expect(invoke).toHaveBeenCalledWith("automation_hand_back", {
+    target: { name: "babysitter", runId: current.id, item: "routine", by: "user" },
+    note: "Keep it small",
+  });
+  expect(screen.getByRole("textbox", { name: "Note for the next step" })).toHaveValue("");
+});
+
+it("retries a failed item on the definition chosen and shows why an action was refused", async () => {
+  const failed = run("1761800000002-bbbbbbbb", {
+    task_id: "t1",
+    status: "failed",
+    outcome: null,
+    items: [item("routine", { status: "failed", phase: "verify", steps: [attempt("verify")] })],
+  });
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "automation_retry") throw "The chosen definition has no step verify";
+    if (command === "automation_take_over") return { status: "active" };
+    return page(failed);
+  });
+  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+
+  fireEvent.change(await screen.findByRole("combobox", { name: "Definition to retry with" }), {
+    target: { value: "original" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+  expect(await screen.findByText("The chosen definition has no step verify")).toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("automation_retry", {
+    target: { name: "babysitter", runId: failed.id, item: "routine", by: "user" },
+    definition: "original",
+  });
+  expect(screen.queryByRole("button", { name: "Take over" })).not.toBeInTheDocument();
+});
+
+it("says when a step taken over is still stopping", async () => {
+  const blocked = run("1761800000002-bbbbbbbb", {
+    task_id: "t1",
+    outcome: "needs_attention",
+    items: [item("routine", { status: "blocked", phase: "implement", steps: [] })],
+  });
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "automation_take_over" ? { status: "active" } : page(blocked)
+  );
+  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Take over" }));
+
+  expect(
+    await screen.findByText("The step is still stopping; it pauses once its turn ends")
+  ).toBeInTheDocument();
+});

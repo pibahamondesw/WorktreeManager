@@ -173,10 +173,6 @@ impl ChatRegistry {
         self.with_session_id(session_id, |session| session.steer(text))
     }
 
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "canceling a run mid-turn is not wired yet")
-    )]
     pub(crate) fn interrupt(&self, session_id: &str) -> Result<(), String> {
         self.with_session_id(session_id, ChatSession::interrupt)
     }

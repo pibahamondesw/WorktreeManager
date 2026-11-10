@@ -218,9 +218,9 @@ it("moves between cards with the arrow keys and opens the focused item with Ente
   fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
   expect(first).toHaveFocus();
 
-  expect(
-    within(screen.getByRole("article", { name: "Style/B" })).queryByRole("button")
-  ).not.toBeInTheDocument();
+  const running = within(screen.getByRole("article", { name: "Style/B" }));
+  expect(running.queryByRole("button", { name: /^Open/ })).not.toBeInTheDocument();
+  expect(running.getByRole("button", { name: "Take over" })).toBeInTheDocument();
 });
 
 it("shows items whose task was deleted as removed instead of offering to open them", async () => {

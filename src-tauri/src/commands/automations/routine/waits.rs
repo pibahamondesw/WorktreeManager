@@ -36,14 +36,10 @@ impl RoutineExecutor {
     /// A changed definition wakes the item too: driving it reports why it cannot go on.
     fn ready(&self, key: &DrivenItem, request: &RunRequest) -> Result<bool, String> {
         let (automation, run_id, item) = key;
-        let Some(definition) = self
-            .definitions
-            .current(automation)
-            .filter(|definition| definition.hash == request.definition_hash)
-        else {
+        let run = self.store.run(automation, run_id)?;
+        let Some(definition) = self.pinned(request, &run) else {
             return Ok(true);
         };
-        let run = self.store.run(automation, run_id)?;
         if definition.selector.is_none() && !is_active(run.status) {
             return Err(format!("its run is {:?}", run.status).to_lowercase());
         }
@@ -107,16 +103,7 @@ impl RoutineExecutor {
 
     /// The Inbox learns at once that what it showed as waiting is moving on.
     fn wake(&self, request: RunRequest, item: String) {
-        (self.runs_changed)(&request.automation);
-        self.in_flight_thread(request, move |executor, request| {
-            if let Err(error) = executor.redrive(request, &[item], false) {
-                log::warn!(
-                    "Automation run {}/{} did not wake: {error}",
-                    request.automation,
-                    request.run_id
-                );
-            }
-        });
+        self.drive_items_again(request, vec![item]);
     }
 }
 
