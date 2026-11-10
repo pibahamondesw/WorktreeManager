@@ -197,6 +197,7 @@ steps:
   - id: ship
     publish:
       - linear.upsert: { marker: \"sweep:{automation}:{item.id}\" }
+      - linear.state: { state: Done }
 trigger:
   manual: false
   event:

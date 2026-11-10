@@ -84,11 +84,12 @@ impl LinearTriggers {
             match self.linear.updated_since(&workspace_id, &stamp(since)) {
                 Ok(updated) => {
                     poll.failures = 0;
-                    log::info!(
+                    let polled = format!(
                         "Polled Linear for workspace {workspace_id}: {} issues updated after {}",
                         updated.issues.len(),
                         stamp(since)
                     );
+                    log::info!("{polled}");
                     for (definition, cursor) in watched {
                         runs.extend(fire_changes(
                             store, executor, definition, &updated, cursor, now,
@@ -143,11 +144,12 @@ fn watched<'a>(
         match cursor.as_deref().and_then(instant) {
             Some(cursor) => watched.push((definition, cursor)),
             None => {
-                log::info!(
+                let started = format!(
                     "Linear triggers of {} start after {}",
                     definition.name,
                     stamp(now)
                 );
+                log::info!("{started}");
                 save_cursor(store, definition, Some(stamp(now)));
             }
         }
@@ -212,11 +214,10 @@ fn fire_changes(
                     automation: definition.name.clone(),
                     fired,
                 }),
-                Err(error) => log::warn!(
-                    "{} could not fire on {}: {error}",
-                    definition.name,
-                    trigger_key(&change)
-                ),
+                Err(error) => {
+                    let key = trigger_key(&change);
+                    log::warn!("{} could not fire on {key}: {error}", definition.name);
+                }
             }
         }
     }
