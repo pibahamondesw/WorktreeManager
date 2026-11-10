@@ -531,10 +531,29 @@ impl RoutineExecutor {
                     linear_issue: None,
                 })
             }
-            TaskMode::PerItem | TaskMode::Existing => self
-                .tasks
-                .get(target.existing_task.as_deref().unwrap_or_default()),
+            TaskMode::PerItem | TaskMode::Existing => self.existing_task(definition, request),
         }
+    }
+
+    /// The task an `existing` target works in: the one it names, else the one its app event
+    /// supplied.
+    fn existing_task(
+        &self,
+        definition: &AutomationDefinition,
+        request: &RunRequest,
+    ) -> Result<ResolvedTask, TaskFailure> {
+        let task_id = match &definition.target.existing_task {
+            Some(task_id) => task_id.clone(),
+            None => self
+                .store
+                .run(&request.automation, &request.run_id)
+                .ok()
+                .and_then(|run| run.trigger?.task_id)
+                .ok_or_else(|| {
+                    TaskFailure::new("target.existing_task is not set and no event supplied a task")
+                })?,
+        };
+        self.tasks.get(&task_id)
     }
 
     /// Ends the run unless the sweep already did, and counts it toward the auto-pause.

@@ -35,6 +35,7 @@ fn trigger(key: &str) -> RunTrigger {
         scheduled_for: None,
         definition_hash: Some("abc".into()),
         test: false,
+        task_id: None,
     }
 }
 

@@ -39,6 +39,7 @@ fn new_run(store: &RunStore) -> String {
             scheduled_for: None,
             definition_hash: None,
             test: false,
+            task_id: None,
         })
         .unwrap();
     let Claim::Created(run_id) = claim else {

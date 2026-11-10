@@ -351,6 +351,7 @@ impl Harness {
             scheduled_for: None,
             definition_hash: Some(self.hash()),
             test,
+            task_id: None,
         };
         let Claim::Created(run_id) = writer.claim(trigger).unwrap() else {
             panic!("expected a new run");
@@ -619,6 +620,39 @@ fn existing_tasks_are_looked_up_instead_of_created() {
     assert_eq!(run.task_id.as_deref(), Some("t9"));
     assert_eq!(*harness.tasks.fetched.lock().unwrap(), ["t9"]);
     assert!(harness.tasks.created.lock().unwrap().is_empty());
+}
+
+#[test]
+fn an_existing_target_without_a_task_works_in_the_task_its_event_supplied() {
+    let frontmatter = "target: { workspace: Acme, repos: [rails], task: existing }\nagent: { id: claude }\ntrigger: { event: [{ source: app, type: agent.done }] }\n";
+    let harness = Harness::new(frontmatter, FakeTasks::default(), FakeSessions::default());
+    let mut request = harness.claim(false, now());
+    let writer = harness.scratch.store().writer("demo").unwrap();
+    let trigger = RunTrigger {
+        source: RunSource::Event,
+        trigger_key: "app:agent.done:t7:claude:1".into(),
+        scheduled_for: None,
+        definition_hash: Some(harness.hash()),
+        test: false,
+        task_id: Some("t7".into()),
+    };
+    let Claim::Created(run_id) = writer.claim(trigger).unwrap() else {
+        panic!("expected a new run");
+    };
+    drop(writer);
+    request.run_id = run_id;
+
+    harness.executor.run(&request, None);
+
+    let run = harness.state_of(&request);
+    assert_eq!(run.task_id.as_deref(), Some("t7"));
+    assert_eq!(*harness.tasks.fetched.lock().unwrap(), ["t7"]);
+
+    let manual = harness.run();
+    assert_eq!(
+        manual.task_error.map(|error| error.message),
+        Some("target.existing_task is not set and no event supplied a task".into())
+    );
 }
 
 #[test]

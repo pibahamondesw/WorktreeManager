@@ -47,8 +47,9 @@ function fixture() {
   const linear = vi.fn(() => ({ fetchIssueLinearInfoBatch: fetch }));
   const resolveSlug = vi.fn(async (path: string) => (path === "/gitlab" ? null : `org${path}`));
   const refreshPrs = vi.fn().mockResolvedValue(undefined);
-  const store = new TaskLinearStore({ linear, resolveSlug, refreshPrs });
-  return { store, fetch, linear, resolveSlug, refreshPrs };
+  const reportPrs = vi.fn();
+  const store = new TaskLinearStore({ linear, resolveSlug, refreshPrs, reportPrs });
+  return { store, fetch, linear, resolveSlug, refreshPrs, reportPrs };
 }
 
 beforeEach(() => {
@@ -206,10 +207,19 @@ it("uses one timer for all consumers, pauses while hidden and stops after the la
 });
 
 it("retains a successful Linear refresh if the auxiliary GitHub refresh fails", async () => {
-  const { store, refreshPrs } = fixture();
+  const { store, refreshPrs, reportPrs } = fixture();
   refreshPrs.mockRejectedValueOnce(new Error("GitHub unavailable"));
   await expect(store.refreshWorkspace(workspace, [task])).resolves.toEqual({ i1: info });
   expect(store.taskInfo(task, workspace)).toEqual(info);
+  await vi.waitFor(() => expect(refreshPrs).toHaveBeenCalled());
+  expect(reportPrs).not.toHaveBeenCalled();
+});
+
+it("reports each task's pull requests once GitHub has refreshed them", async () => {
+  const { store, reportPrs } = fixture();
+  await store.refreshIssues(workspace, ["i1"]);
+  await store.refreshWorkspace(workspace, [task, { ...task, id: "t2", linearIssueId: undefined }]);
+  await vi.waitFor(() => expect(reportPrs).toHaveBeenCalledWith([{ task, prs: [pr] }]));
 });
 
 it("retries an empty Linear response instead of caching a network failure as fresh", async () => {

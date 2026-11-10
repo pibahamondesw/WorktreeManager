@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { IssueLinearInfo, PullRequestInfo, Task, TaskMember, Workspace } from "../types";
 import { githubSlugFromRemote } from "../utils";
 import { refreshGithubPrs } from "./github";
+import { reportPrChanges, TaskPrs } from "./automationEvents";
 import { LinearService } from "./linear";
 
 export const LINEAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
@@ -14,6 +15,7 @@ export interface TaskLinearPorts {
   };
   resolveSlug: (localPath: string) => Promise<string | null>;
   refreshPrs: (prs: PullRequestInfo[], force: boolean) => Promise<void>;
+  reportPrs: (taskPrs: TaskPrs[]) => void;
 }
 
 interface Account {
@@ -209,8 +211,17 @@ export class TaskLinearStore {
         force
       );
     } finally {
-      const prs = linked.flatMap((task) => this.taskInfo(task, workspace)?.prs ?? []);
-      void this.ports.refreshPrs(prs, force).catch(() => undefined);
+      const taskPrs = linked.map((task) => ({
+        task,
+        prs: this.taskInfo(task, workspace)?.prs ?? [],
+      }));
+      void this.ports
+        .refreshPrs(
+          taskPrs.flatMap(({ prs }) => prs),
+          force
+        )
+        .then(() => this.ports.reportPrs(taskPrs))
+        .catch(() => undefined);
     }
   }
 
@@ -258,4 +269,5 @@ export const taskLinearStore = new TaskLinearStore({
   resolveSlug: async (localPath) =>
     githubSlugFromRemote(await invoke<string>("git_remote_url", { repoPath: localPath })),
   refreshPrs: refreshGithubPrs,
+  reportPrs: reportPrChanges,
 });

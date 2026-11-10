@@ -103,6 +103,7 @@ pub fn run() {
                 commands::automations::decisions::automation_decide,
                 commands::automations::decisions::automation_revoke_decision,
                 commands::automations::actions::fire::automation_fire,
+                commands::automations::actions::events::automation_app_event,
                 commands::automations::actions::automation_signal,
                 commands::automations::command::view::automation_step_receipt,
                 commands::agent_alerts::agent_hooks_status,

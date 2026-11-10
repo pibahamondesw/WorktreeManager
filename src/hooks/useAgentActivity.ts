@@ -24,6 +24,7 @@ import { sessionRegistry } from "../embedded/sessionTransports";
 import { onOpenCodeActivity } from "../services/opencode";
 import { TerminalStatus } from "../services/terminal";
 import { loadAgentAlerts, persist } from "../services/store";
+import { agentAppEvent, emitAppEvent } from "../services/automationEvents";
 
 const NOTIFICATION_OPEN_EVENT = "agent-notification-open";
 
@@ -69,26 +70,30 @@ export function useAgentActivity({
     persist([["agentAlerts", next]]).catch(() => undefined);
   }, []);
 
-  const record = useCallback((task: Task, event: Omit<AgentEvent, "cwd" | "taskId">) => {
-    const { openedTaskId, alerts } = latest.current;
-    const viewing = task.id === openedTaskId && document.hasFocus();
-    const current = activitiesRef.current[task.id];
-    const next = nextActivity(current, event, viewing);
-    if (!next) return;
-    activitiesRef.current = { ...activitiesRef.current, [task.id]: next };
-    setActivities((activities) => ({ ...activities, [task.id]: next }));
-    const category = alertsFor(current, next);
-    if (!category) return;
-    void invoke("agent_attention", {
-      sound: alerts.sounds[category],
-      notification: alerts.notifications[category]
-        ? {
-            ...notificationFor(task, { ...event, state: category }),
-            taskOpen: task.id === openedTaskId,
-          }
-        : null,
-    }).catch(() => undefined);
-  }, []);
+  const record = useCallback(
+    (task: Task, event: Omit<AgentEvent, "cwd" | "taskId">, fromAutomation = false) => {
+      const { openedTaskId, alerts } = latest.current;
+      const viewing = task.id === openedTaskId && document.hasFocus();
+      const current = activitiesRef.current[task.id];
+      const next = nextActivity(current, event, viewing);
+      if (!next) return;
+      activitiesRef.current = { ...activitiesRef.current, [task.id]: next };
+      setActivities((activities) => ({ ...activities, [task.id]: next }));
+      const category = alertsFor(current, next);
+      if (!category) return;
+      if (!fromAutomation) emitAppEvent(agentAppEvent(task, { ...event, state: category }));
+      void invoke("agent_attention", {
+        sound: alerts.sounds[category],
+        notification: alerts.notifications[category]
+          ? {
+              ...notificationFor(task, { ...event, state: category }),
+              taskOpen: task.id === openedTaskId,
+            }
+          : null,
+      }).catch(() => undefined);
+    },
+    []
+  );
 
   const handleAgentEvent = useCallback(
     (event: AgentEvent) => {
@@ -123,7 +128,7 @@ export function useAgentActivity({
           });
         else if (event) {
           const task = latest.current.tasks.find((t) => t.id === chat.taskId);
-          if (task) record(task, event);
+          if (task) record(task, event, chat.origin === "automation");
         }
       }),
     [record]

@@ -8,8 +8,14 @@ import { Task } from "../types";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
+const chatListeners = vi.hoisted(() => new Set<(chat: unknown, previous?: unknown) => void>());
 vi.mock("../embedded/sessionTransports", () => ({
-  sessionRegistry: { onSessionEvent: () => () => {} },
+  sessionRegistry: {
+    onSessionEvent: (_kind: string, listener: (chat: unknown, previous?: unknown) => void) => {
+      chatListeners.add(listener);
+      return () => chatListeners.delete(listener);
+    },
+  },
 }));
 vi.mock("../services/store", () => ({
   loadAgentAlerts: vi.fn().mockRejectedValue(new Error("unused")),
@@ -96,5 +102,59 @@ describe("useAgentActivity", () => {
     expect(onOpenTarget).not.toHaveBeenCalled();
     act(() => open({ payload: target } as never));
     expect(onOpenTarget).toHaveBeenCalledWith(task, target);
+  });
+
+  it("reports finished and waiting agents to the automation engine, except automation sessions", async () => {
+    const { result } = renderHook(() =>
+      useAgentActivity({ tasks: [task], sessions: {}, openedTaskId: null, onOpenTarget: vi.fn() })
+    );
+    const appEvents = () =>
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "automation_app_event")
+        .map(([, args]) => (args as { event: unknown }).event);
+    const report = (state: "working" | "done", at: number) =>
+      act(() => {
+        result.current.handleAgentEvent({
+          state,
+          agent: "claude",
+          surface: "terminal",
+          taskId: "t1",
+          at,
+        });
+      });
+    report("working", 1);
+    report("done", 2);
+    report("done", 3);
+    const chat = {
+      sessionId: "s1",
+      taskId: "t1",
+      agent: "claude",
+      origin: "automation",
+      status: { kind: "idle" },
+      waiting: true,
+      backgroundAgents: false,
+    };
+    const now = vi.spyOn(Date, "now").mockReturnValue(10);
+    act(() => chatListeners.forEach((listener) => listener(chat, undefined)));
+    act(() =>
+      chatListeners.forEach((listener) => listener({ ...chat, sessionId: "s2", origin: "user" }))
+    );
+    now.mockRestore();
+
+    await waitFor(() => expect(appEvents()).toHaveLength(2));
+    const eventTask = { id: "t1", workspaceId: "w1", branch: "branch" };
+    expect(appEvents()).toEqual([
+      {
+        type: "agent.done",
+        task: eventTask,
+        agent: { id: "claude", surface: "terminal", at: 2 },
+      },
+      {
+        type: "agent.waiting",
+        task: eventTask,
+        agent: { id: "claude", surface: "chat", at: 10 },
+      },
+    ]);
   });
 });

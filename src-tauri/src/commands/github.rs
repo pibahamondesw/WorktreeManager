@@ -15,6 +15,8 @@ pub struct GithubPrStatus {
     is_draft: bool,
     ci: String,
     review: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    head_sha: Option<String>,
 }
 
 fn validate_repo(slug: &str) -> Result<(&str, &str), String> {
@@ -103,7 +105,7 @@ fn batch_payload(repo_slug: &str, numbers: &[u32]) -> Result<Value, String> {
         return Err("Invalid pull request number".into());
     }
     let fields = numbers.iter().collect::<BTreeSet<_>>().into_iter().map(|number| format!(
-        "pr{number}: pullRequest(number: {number}) {{ state isDraft reviewDecision commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} }}"
+        "pr{number}: pullRequest(number: {number}) {{ state isDraft reviewDecision commits(last: 1) {{ nodes {{ commit {{ oid statusCheckRollup {{ state }} }} }} }} }}"
     )).collect::<Vec<_>>().join(" ");
     Ok(
         json!({"query": format!("query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"), "variables": {"owner": owner, "name": name}}),
@@ -152,6 +154,10 @@ fn parse_statuses(bytes: &[u8]) -> Result<HashMap<u32, GithubPrStatus>, String> 
                 is_draft,
                 ci: ci.into(),
                 review: review.into(),
+                head_sha: pr
+                    .pointer("/commits/nodes/0/commit/oid")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
             },
         );
     }
@@ -235,12 +241,13 @@ mod tests {
 
     #[test]
     fn partial_response_preserves_valid_prs() {
-        let bytes = br#"{"data":{"repository":{"pr1":{"state":"OPEN","isDraft":true,"reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}},"pr2":null}},"errors":[{"message":"missing"}]}"#;
+        let bytes = br#"{"data":{"repository":{"pr1":{"state":"OPEN","isDraft":true,"reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"oid":"abc123","statusCheckRollup":{"state":"FAILURE"}}}]}},"pr2":null}},"errors":[{"message":"missing"}]}"#;
         let statuses = parse_statuses(bytes).unwrap();
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[&1].ci, "failing");
         assert_eq!(statuses[&1].review, "approved");
         assert!(statuses[&1].is_draft);
+        assert_eq!(statuses[&1].head_sha.as_deref(), Some("abc123"));
         assert!(parse_statuses(b"bad").is_err());
     }
 

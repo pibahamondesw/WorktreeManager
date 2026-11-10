@@ -506,8 +506,8 @@ fn triggers_need_one_enabled_source_and_reject_deferred_ones() {
         IssueKind::Invalid,
     );
     assert_issue(
-        &routine("trigger:\n  event: [{ source: github }]\n"),
-        "trigger.event",
+        &routine("trigger:\n  event: [{ source: github, type: pr.merged }]\n"),
+        "trigger.event[0].source",
         IssueKind::Unsupported,
     );
     assert_issue(
@@ -523,6 +523,91 @@ fn the_cli_trigger_alone_enables_a_definition() {
     assert!(definition.trigger.cli);
     assert!(!definition.trigger.manual);
     assert!(!valid(&routine("")).trigger.cli);
+}
+
+#[test]
+fn app_event_triggers_declare_a_type_and_conditions() {
+    let definition = valid(&routine(
+        "trigger:\n  manual: false\n  event:\n    - { source: app, type: agent.done, where: { workspace: Acme, agent: claude } }\n    - { source: app, type: pr.merged }\n",
+    ));
+    let events = &definition.trigger.events;
+    assert_eq!(
+        (
+            events[0].kind,
+            events[0].workspace_id.as_deref(),
+            events[0].agent.as_deref()
+        ),
+        (AppEventKind::AgentDone, Some("w1"), Some("claude"))
+    );
+    assert_eq!(
+        (
+            events[1].kind,
+            events[1].workspace_id.as_deref(),
+            events[1].agent.as_deref()
+        ),
+        (AppEventKind::PrMerged, None, None)
+    );
+    assert_eq!(
+        serde_json::to_value(&events[0]).unwrap(),
+        json!({ "type": "agent.done", "workspaceId": "w1", "agent": "claude" })
+    );
+    assert!(valid(&routine("")).trigger.events.is_empty());
+    let event = |entry: &str| routine(&format!("trigger:\n  event: [{entry}]\n"));
+    assert_issue(
+        &event("{ source: linear, type: task.created }"),
+        "trigger.event[0].source",
+        IssueKind::Unsupported,
+    );
+    assert_issue(
+        &event("{ source: slack, type: task.created }"),
+        "trigger.event[0].source",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &event("{ source: app, type: task.renamed }"),
+        "trigger.event[0].type",
+        IssueKind::Invalid,
+    );
+    assert_issue(
+        &event("{ source: app }"),
+        "trigger.event[0].type",
+        IssueKind::Missing,
+    );
+    assert_issue(
+        &event("{ source: app, type: task.created, where: { agent: claude } }"),
+        "trigger.event[0].where.agent",
+        IssueKind::UnknownField,
+    );
+    assert_issue(
+        &event("{ source: app, type: agent.waiting, where: { agent: gemini } }"),
+        "trigger.event[0].where.agent",
+        IssueKind::UnknownAgent,
+    );
+    assert_issue(
+        &event("{ source: app, type: task.deleted, where: { workspace: Personal } }"),
+        "trigger.event[0].where.workspace",
+        IssueKind::UnknownWorkspace,
+    );
+    assert_issue(
+        &routine("trigger:\n  manual: false\n  event: []\n"),
+        "trigger",
+        IssueKind::Invalid,
+    );
+}
+
+#[test]
+fn app_events_supply_the_task_of_an_existing_target() {
+    let existing =
+        |trigger: &str| routine(trigger).replace("repos: [app]", "repos: [app]\n  task: existing");
+    let definition = valid(&existing(
+        "trigger: { manual: false, event: [{ source: app, type: agent.done }] }\n",
+    ));
+    assert_eq!(definition.target.existing_task, None);
+    assert_eq!(definition.concurrency.key, "task:{task.id}");
+    assert_eq!(
+        message(&existing(""), "target.existing_task"),
+        "is required when task is existing, unless an event trigger supplies the task"
+    );
 }
 
 #[test]

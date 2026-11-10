@@ -108,10 +108,25 @@ Every key is optional; the triggers present are OR-ed.
 | `schedule.cron`     | string             | required           | 5-field cron. Slots closer than the minimum interval (app preference, default 15 minutes) are a validation error.                                                                                                                                                                                                                                                                 |
 | `schedule.tz`       | string             | `America/Santiago` | IANA timezone; DST handled by the scheduler.                                                                                                                                                                                                                                                                                                                                      |
 | `schedule.catch_up` | `latest` \| `skip` | `latest`           | `latest`: slots missed while the Mac slept or the app was closed collapse into one run for the **latest** missed slot within 7 days, with `scheduled_for` and `fired_at`. `skip`: missed slots are only recorded as skipped. Compose collapses into the oldest slot; WTM uses the latest because a local run should act on the freshest state.                                    |
-| `event`             | list               | none               | **Deferred (WOR-270, WOR-271, WOR-272).** Entries `{source: app \| linear \| github, type: <event>.<action>, where: {…}}`. Conditions per type are defined in those issues; every condition must pass. Events caused by this automation's own runs never fire it.                                                                                                                 |
+| `event`             | list               | none               | Entries `{source: app \| linear \| github, type: <event>.<action>, where: {…}}`; every condition must pass. `linear` and `github` are **deferred (WOR-271, WOR-272)**. See [App events](#app-events). Events caused by this automation's own runs never fire it.                                                                                                                  |
 | `cli`               | bool               | `false`            | Allows `wtm automation fire <name> --key <trigger_key> [--payload <json\|@file>]` from external callers (Compose, launchd, scheduled agent tasks, Git hooks). It prints the run id without waiting; a key that already fired prints its existing run with `deduped: true`. A paused automation records the firing as skipped with `paused`. The CLI reads `@file`, never the app. |
 
 At least one of `manual: true`, `schedule`, `event` or `cli: true` must be present.
+
+#### App events
+
+The app reports these events with `source: app`. Each carries its task, and the run gets the event as its payload (untrusted, like CLI payloads).
+
+| `type`                                                                                                                             | When                                                                                                                                                               | `where`              | `trigger_key`                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | --------------------------------------------- |
+| `task.created`, `task.deleted`                                                                                                     | A task was created (after its setup) or deleted, from the app or `wtm task`.                                                                                       | `workspace`          | `app:<type>:<task id>`                        |
+| `agent.done`, `agent.waiting`                                                                                                      | An agent in the task finished its turn or started waiting for input, from the owner's embedded chats and the `wtm agent event` hooks.                              | `workspace`, `agent` | `app:<type>:<task id>:<agent>:<at>`           |
+| `pr.merged`, `pr.closed`, `pr.reopened`, `pr.ready`, `pr.checks_passed`, `pr.checks_failed`, `pr.approved`, `pr.changes_requested` | A pull request of the task changed between two GitHub refreshes of the app. The first status seen is a baseline; changes while the app is closed are not reported. | `workspace`          | `app:<type>:<owner/repo>/<number>:<head sha>` |
+
+- `workspace` is a workspace name or id; `agent` an agent of the catalog.
+- Task and pull request events of a task the automation created never fire it. Agent events of sessions any automation started are never reported, so automations cannot fire each other in a loop.
+- Runs fired by events for one task serialize: `concurrency.max_runs` counts the active runs for that task; the `active` pool still counts every run.
+- `target.task: existing` without `existing_task` works in the event's task.
 
 ### Concurrency
 

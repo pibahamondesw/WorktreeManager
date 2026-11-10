@@ -133,6 +133,7 @@ fn manual(store: &RunStore, name: &str, key: &str, test: bool) -> String {
         scheduled_for: None,
         definition_hash: None,
         test,
+        task_id: None,
     };
     match store.writer(name).unwrap().claim(trigger).unwrap() {
         Claim::Created(id) | Claim::Existing(id) => id,
@@ -809,6 +810,7 @@ fn quit_run(
         scheduled_for: (key == "routine").then(|| "2026-11-03T10:00:00Z".into()),
         definition_hash: Some(hash.into()),
         test: false,
+        task_id: None,
     };
     let Claim::Created(id) = store.writer("quit").unwrap().claim(trigger).unwrap() else {
         panic!("expected a new run");

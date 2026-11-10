@@ -235,6 +235,10 @@ pub struct RunTrigger {
     pub definition_hash: Option<String>,
     #[serde(default)]
     pub test: bool,
+    /// The task an app event fired for: runs for one task serialize, and work in it when
+    /// `task: existing` names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
 }
 
 /// The schedule slots an `asleep` skip stands for, as UTC RFC 3339 instants.
