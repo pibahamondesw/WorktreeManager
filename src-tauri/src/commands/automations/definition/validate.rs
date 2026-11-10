@@ -1322,13 +1322,26 @@ fn event_wait(
             required.map(|checks| checks.flatten().map(Value::from)),
         );
         let ignore = fields.optional(report, "ignore", |report, value, field| {
-            if !all {
-                report.error(IssueKind::Invalid, field, "needs required: all");
+            needs_all_checks(report, all, field)?;
+            each(report, value, field, context_pattern)
+        });
+        let ignored = ignore.clone().flatten().unwrap_or_default();
+        let expect = fields.optional(report, "expect", |report, value, field| {
+            needs_all_checks(report, all, field)?;
+            let expected = each(report, value, field, context_pattern)?;
+            let overlaps = expected.iter().any(|pattern| {
+                ignored
+                    .iter()
+                    .any(|ignored| covers(ignored, pattern) || covers(pattern, ignored))
+            });
+            if overlaps {
+                report.error(IssueKind::Invalid, field, "overlaps ignore");
                 return None;
             }
-            each(report, value, field, context_pattern).map(Value::from)
+            Some(expected)
         });
-        keep("ignore", ignore);
+        keep("ignore", ignore.map(json_of));
+        keep("expect", expect.map(json_of));
         keep("bot_lgtm", fields.optional(report, "bot_lgtm", bot_lgtm));
         let threads = fields.optional(report, "unresolved_threads", |report, value, field| {
             integer(report, value, field, 0)
@@ -1368,6 +1381,21 @@ fn non_empty_string(report: &mut Report, value: &Value, field: &str) -> Option<S
         return None;
     }
     Some(text)
+}
+
+fn needs_all_checks(report: &mut Report, all: bool, field: &str) -> Option<()> {
+    if !all {
+        report.error(IssueKind::Invalid, field, "needs required: all");
+    }
+    all.then_some(())
+}
+
+/// Whether context `pattern` matches every context `other` does.
+fn covers(pattern: &str, other: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => other.starts_with(prefix),
+        None => other == pattern,
+    }
 }
 
 /// `all`, normalized to no list since the watcher then judges every reported check, or a list of

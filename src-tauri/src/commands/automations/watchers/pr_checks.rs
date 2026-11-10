@@ -497,6 +497,7 @@ impl PullRequest {
             .into_iter()
             .chain(named(CheckStatus::Failed))
             .chain(missing(&params.required, &checks))
+            .chain(missing(&params.expect, &checks))
             .collect();
         if params.required.is_empty() && checks.is_empty() {
             waiting_on.push("checks".into());
@@ -578,7 +579,7 @@ fn matches(pattern: &str, name: &str) -> bool {
     }
 }
 
-/// Required patterns no check matches yet, such as `coverage` before `tests` ends.
+/// Required or expected patterns no check matches yet, such as `coverage` before `tests` ends.
 fn missing<'a>(required: &'a [String], checks: &'a [Check]) -> impl Iterator<Item = String> + 'a {
     required
         .iter()

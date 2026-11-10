@@ -955,7 +955,7 @@ fn wait_steps_wait_for_one_time_or_signal() {
 }
 
 #[test]
-fn pr_checks_accepts_all_checks_but_ignored_ones_and_a_bot_lgtm_rule() {
+fn pr_checks_accepts_all_checks_but_ignored_ones_expected_ones_and_a_bot_lgtm_rule() {
     let definition = valid(&routine(
         "steps:
   - id: ci
@@ -964,6 +964,7 @@ fn pr_checks_accepts_all_checks_but_ignored_ones_and_a_bot_lgtm_rule() {
         watcher: pr_checks
         required: all
         ignore: [\"bors*\", approval-gate]
+        expect: [coverage, \"deploy-*\"]
         bot_lgtm: { login: \"review-bot[bot]\", pattern: \"LGTM ✅\", app_id: 1234567 }
 ",
     ));
@@ -971,6 +972,7 @@ fn pr_checks_accepts_all_checks_but_ignored_ones_and_a_bot_lgtm_rule() {
         kind(&definition.steps[0]),
         json!({ "wait": { "event": { "watcher": "pr_checks", "params": {
             "ignore": ["bors*", "approval-gate"],
+            "expect": ["coverage", "deploy-*"],
             "bot_lgtm": { "login": "review-bot[bot]", "pattern": "LGTM ✅", "app_id": 1_234_567 },
             "repo": "r1",
         } } } })
@@ -991,6 +993,37 @@ fn pr_checks_accepts_all_checks_but_ignored_ones_and_a_bot_lgtm_rule() {
         (
             "required: all, ignore: [\"*\"]",
             "ignore[0]",
+            IssueKind::Invalid,
+        ),
+        ("expect: [coverage]", "expect", IssueKind::Invalid),
+        (
+            "required: [tests], expect: [coverage]",
+            "expect",
+            IssueKind::Invalid,
+        ),
+        (
+            "required: all, ignore: [coverage], expect: [coverage]",
+            "expect",
+            IssueKind::Invalid,
+        ),
+        (
+            "required: all, ignore: [\"cov*\"], expect: [coverage]",
+            "expect",
+            IssueKind::Invalid,
+        ),
+        (
+            "required: all, ignore: [bors-merge], expect: [\"bors*\"]",
+            "expect",
+            IssueKind::Invalid,
+        ),
+        (
+            "required: all, expect: [\"a*b\"]",
+            "expect[0]",
+            IssueKind::Invalid,
+        ),
+        (
+            "required: all, expect: coverage",
+            "expect",
             IssueKind::Invalid,
         ),
         (
