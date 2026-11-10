@@ -269,13 +269,23 @@ fn executor_of(
     tasks: Arc<FakeTasks>,
     sessions: Arc<FakeSessions>,
 ) -> RoutineExecutor {
+    executor_with_gh(scratch, tasks, sessions, "gh")
+}
+
+/// An executor whose GitHub calls run `gh`.
+fn executor_with_gh(
+    scratch: &Scratch,
+    tasks: Arc<FakeTasks>,
+    sessions: Arc<FakeSessions>,
+    gh: &str,
+) -> RoutineExecutor {
     RoutineExecutor::new(
         scratch.store(),
         Arc::new(DirectoryDefinitions(scratch.0.join("automations"))),
         tasks,
         sessions,
         Arc::new(CliForge::with(
-            "gh",
+            gh,
             vec![
                 ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
                 ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),

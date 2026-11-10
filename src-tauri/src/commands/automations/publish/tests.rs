@@ -257,6 +257,7 @@ struct Run {
     bases: BTreeMap<String, String>,
     lease_env: Vec<(String, String)>,
     pushed: Vec<String>,
+    published: Vec<(&'static str, String)>,
 }
 
 impl Run {
@@ -271,6 +272,7 @@ impl Run {
             bases: BTreeMap::new(),
             lease_env: Vec::new(),
             pushed: Vec::new(),
+            published: Vec::new(),
         }
     }
 
@@ -318,6 +320,7 @@ impl Run {
             stale_receipts: &stale_receipts,
             lease_env: &self.lease_env,
             pushed: &self.pushed,
+            published: &self.published,
         };
         let report = publisher.publish(&request, &effects, &scope);
         let mut events = vec![
@@ -1534,4 +1537,106 @@ fn cli_forge_tells_which_pull_requests_are_still_open() {
     let failing = FakeGh::new(true);
     let error = failing.forge.open(&urls).unwrap_err();
     assert!(error.contains("not logged in"), "{error}");
+}
+
+fn recorded(item: &str, effect: &str, status: EffectStatus, reference: Option<&str>) -> RunEvent {
+    RunEvent::EffectRecorded {
+        item: item.into(),
+        step: "publish".into(),
+        attempt: 1,
+        effect: effect.into(),
+        status,
+        detail: None,
+        reference: reference.map(String::from),
+        warnings: Vec::new(),
+    }
+}
+
+#[test]
+fn the_published_pull_request_is_the_last_one_the_items_pr_effects_referenced() {
+    let events = [
+        recorded(
+            ITEM,
+            "github.pr_create",
+            EffectStatus::Executed,
+            Some("https://github.com/acme/api/pull/3"),
+        ),
+        recorded(
+            ITEM,
+            "github.pr_update",
+            EffectStatus::Reconciled,
+            Some("https://github.com/acme/api/pull/4/"),
+        ),
+        recorded(
+            ITEM,
+            "github.pr_comment",
+            EffectStatus::Failed,
+            Some("https://github.com/acme/api/pull/5"),
+        ),
+        recorded(
+            ITEM,
+            "github.pr_ready",
+            EffectStatus::Executed,
+            Some("not a PR"),
+        ),
+        recorded(ITEM, "github.pr_ready", EffectStatus::Executed, None),
+        recorded(
+            ITEM,
+            "git.push",
+            EffectStatus::Executed,
+            Some("https://github.com/acme/api/pull/6"),
+        ),
+        recorded(
+            "other",
+            "github.pr_create",
+            EffectStatus::Executed,
+            Some("https://github.com/acme/api/pull/7"),
+        ),
+    ];
+
+    assert_eq!(
+        published_pull_request(&events, ITEM),
+        [
+            ("pr.number", "4".to_string()),
+            ("pr.url", "https://github.com/acme/api/pull/4/".to_string())
+        ]
+    );
+    assert_eq!(published_pull_request(&events[2..], ITEM), []);
+}
+
+#[test]
+fn effects_render_the_pr_an_earlier_step_published_until_one_of_theirs_finds_another() {
+    let forge = Arc::new(FakeForge::with_pr(true));
+    let bridge = Arc::new(FakeBridge::answering(|_, _| {
+        ok(json!({ "status": "appended", "path": "/vault/t1.md" }))
+    }));
+    let mut run = Run::all();
+    run.published = vec![
+        ("pr.number", "3".into()),
+        ("pr.url", "https://github.com/acme/api/pull/3".into()),
+    ];
+    let entry = |entry: &str| Effect::TaskLog {
+        entry: entry.into(),
+    };
+    let effects = vec![
+        entry("Integrated {pr.url} (#{pr.number})"),
+        Effect::PrReady { repo: "r1".into() },
+        entry("Ready {pr.url}"),
+    ];
+
+    let (report, _) = run.publish(&mut publisher(&forge, &bridge), 1, effects);
+
+    assert_eq!(report.outcome, StepOutcome::Success);
+    let entries: Vec<_> = bridge
+        .calls()
+        .iter()
+        .map(|(_, params)| params["entry"].clone())
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            "Integrated https://github.com/acme/api/pull/3 (#3)",
+            "Ready https://github.com/o/r/pull/7"
+        ]
+    );
 }

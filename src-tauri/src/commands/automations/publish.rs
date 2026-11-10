@@ -123,6 +123,8 @@ pub struct PublishScope<'a> {
     pub lease_env: &'a [(String, String)],
     /// The commits the item's `git.push` effects recorded in the run log so far.
     pub pushed: &'a [String],
+    /// `{pr.*}` of the PR the item's effects recorded in the run log so far.
+    pub published: &'a [(&'static str, String)],
 }
 
 enum Stop {
@@ -386,7 +388,8 @@ impl Publisher {
     fn render(&self, scope: &PublishScope, template: &str) -> Result<String, String> {
         let mut variables = scope.variables.to_vec();
         for (name, pending) in EFFECT_VARIABLES {
-            let value = match (self.values.get(name), scope.staged) {
+            let recorded = self.values.get(name).or_else(|| published(scope, name));
+            let value = match (recorded, scope.staged) {
                 (Some(value), _) => value.clone(),
                 (None, true) => pending.to_string(),
                 (None, false) => continue,
@@ -892,6 +895,44 @@ fn warnings(response: &Value) -> Vec<String> {
     warnings
         .filter_map(|warning| warning["message"].as_str().map(String::from))
         .collect()
+}
+
+fn published<'a>(scope: &'a PublishScope, name: &str) -> Option<&'a String> {
+    scope
+        .published
+        .iter()
+        .find(|(variable, _)| *variable == name)
+        .map(|(_, value)| value)
+}
+
+/// `{pr.number}` and `{pr.url}` of the PR `item`'s `github.pr_*` effects referenced last.
+pub fn published_pull_request<'a>(
+    events: impl IntoIterator<Item = &'a RunEvent>,
+    item: &str,
+) -> Vec<(&'static str, String)> {
+    let pull_request = events
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::EffectRecorded {
+                item: recorded,
+                effect,
+                status: EffectStatus::Executed | EffectStatus::Reconciled,
+                reference: Some(url),
+                ..
+            } if recorded == item && effect.starts_with("github.pr_") => {
+                Some((pull_request_number(url)?, url))
+            }
+            _ => None,
+        })
+        .last();
+    pull_request
+        .map(|(number, url)| vec![("pr.number", number.to_string()), ("pr.url", url.clone())])
+        .unwrap_or_default()
+}
+
+fn pull_request_number(url: &str) -> Option<u64> {
+    let (_, number) = url.trim_end_matches('/').rsplit_once("/pull/")?;
+    number.parse().ok().filter(|number| *number > 0)
 }
 
 /// The commits `item`'s `git.push` effects pushed or found on `origin`, oldest first.
