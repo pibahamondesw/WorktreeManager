@@ -96,6 +96,11 @@ impl ChatItem {
         self
     }
 
+    /// Marks where a turn was stopped before it finished.
+    pub fn interrupted(id: impl Into<String>) -> Self {
+        Self::new(id, ItemKind::Notice, INTERRUPTED_NOTICE)
+    }
+
     pub fn with_status(mut self, status: impl Into<String>) -> Self {
         self.status = Some(status.into());
         self
@@ -402,6 +407,9 @@ pub enum ChatEvent {
     Upsert {
         item: ChatItem,
     },
+    Remove {
+        id: String,
+    },
     Delta {
         id: String,
         field: DeltaField,
@@ -435,6 +443,9 @@ pub struct ChatSnapshot {
     pub controls: ChatControls,
     #[serde(skip)]
     pub background_agents: bool,
+    /// The last turn was stopped before it finished.
+    #[serde(skip)]
+    pub interrupted: bool,
 }
 
 impl ChatSnapshot {
@@ -448,6 +459,7 @@ impl ChatSnapshot {
             denied: Vec::new(),
             controls: ChatControls::default(),
             background_agents: false,
+            interrupted: false,
         }
     }
 
@@ -474,6 +486,7 @@ impl ChatSnapshot {
                 Some(existing) => *existing = item.clone(),
                 None => self.items.push(item.clone()),
             },
+            ChatEvent::Remove { id } => self.items.retain(|item| &item.id != id),
             ChatEvent::Delta { id, field, delta } => {
                 if let Some(item) = self.items.iter_mut().find(|i| &i.id == id) {
                     match field {
@@ -526,6 +539,8 @@ pub struct ProviderOutput {
     pub history_result: Option<Result<(), String>>,
     pub starts_turn: bool,
     pub completes_turn: bool,
+    /// The turn it completes was stopped before it finished.
+    pub interrupted: bool,
     /// Whether background subagents keep the session working after its turn ends.
     pub background_agents: Option<bool>,
     pub denials: Vec<PermissionDenial>,
@@ -555,6 +570,12 @@ impl ProviderOutput {
     }
 }
 
+pub const INTERRUPTED_NOTICE: &str = "Interrupted";
+/// A user message waiting for the turn in progress to end.
+pub const QUEUED: &str = "queued";
+/// A user message that redirected the turn in progress.
+pub const STEERED: &str = "steered";
+
 pub fn user_display_text(text: &str, image_count: usize) -> String {
     match image_count {
         0 => text.to_string(),
@@ -574,7 +595,7 @@ pub fn user_display_text(text: &str, image_count: usize) -> String {
 }
 
 /// Translates one agent's stdio protocol. `send` may be called while a turn runs: providers
-/// steer or queue the message rather than refusing it. The session owns the process and threading; the
+/// queue the message, marked `QUEUED`, rather than refusing it. The session owns the process and threading; the
 /// provider only sees lines and user actions. `snapshot` is the state before this input.
 pub trait ChatProvider: Send {
     fn restore_selection(&mut self, _selection: super::preferences::ModelSelection) {}
@@ -590,6 +611,18 @@ pub trait ChatProvider: Send {
         out: &mut ProviderOutput,
     ) -> Result<(), String>;
     fn interrupt(&mut self, out: &mut ProviderOutput);
+    /// Redirects the turn in progress with `text` at once, as the agent steers.
+    fn steer(&mut self, text: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        self.send(text, &[], out)
+    }
+    /// Redirects the turn in progress with a message queued by `send`.
+    fn steer_queued(&mut self, _item_id: &str, _out: &mut ProviderOutput) -> Result<(), String> {
+        Err("This agent cannot steer a running turn".into())
+    }
+    /// Drops a message queued by `send` before it runs.
+    fn unqueue(&mut self, _item_id: &str, _out: &mut ProviderOutput) -> Result<(), String> {
+        Err("This agent does not queue messages".into())
+    }
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String>;
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
     fn refresh_usage(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
@@ -664,6 +697,8 @@ mod tests {
         });
         assert_eq!(snapshot.items.len(), 1);
         assert_eq!(snapshot.items[0].text, "Hello!");
+        snapshot.apply(&ChatEvent::Remove { id: "a".into() });
+        assert!(snapshot.items.is_empty());
     }
 
     #[test]

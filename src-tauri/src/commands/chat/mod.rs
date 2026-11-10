@@ -195,6 +195,7 @@ impl Shared {
 
     fn commit(&mut self, mut out: ProviderOutput, conversation: &dyn Fn(String), notify: &Notify) {
         if out.completes_turn {
+            self.snapshot.interrupted = out.interrupted;
             self.turns.complete_turn();
             let unfinished_reasoning = self
                 .snapshot
@@ -211,6 +212,7 @@ impl Shared {
             out.events.splice(0..0, unfinished_reasoning);
         }
         if out.starts_turn {
+            self.snapshot.interrupted = false;
             self.turns.start_turn();
         }
         for line in out.writes {
@@ -531,14 +533,17 @@ impl ChatSession {
         self.deliver(&mut state, text, images)
     }
 
-    /// Adds `text` to the turn in progress; `false` without one, since steering never starts a
-    /// turn.
+    /// Redirects the turn in progress with `text`; `false` without one, since steering never
+    /// starts a turn.
     fn steer(&self, text: &str) -> Result<bool, String> {
         let mut state = self.shared.lock().unwrap();
         if state.history_busy || state.snapshot.status != ChatStatus::Busy {
             return Ok(false);
         }
-        self.deliver(&mut state, text, &[]).map(|()| true)
+        let mut out = ProviderOutput::default();
+        state.provider.steer(text, &mut out)?;
+        state.commit(out, &*self.remember, &self.notify);
+        Ok(true)
     }
 
     fn deliver(&self, state: &mut Shared, text: &str, images: &[ChatImage]) -> Result<(), String> {
@@ -1252,6 +1257,31 @@ pub fn chat_interrupt(
     registry.with_session(&task_id, &agent, ChatSession::interrupt)
 }
 
+/// Redirects the turn in progress with a message the user queued during it.
+#[tauri::command(async)]
+pub fn chat_steer_queued(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+    item_id: String,
+) -> Result<(), String> {
+    registry.with_session(&task_id, &agent, |session| {
+        session.with_provider(|provider, _, out| provider.steer_queued(&item_id, out))
+    })
+}
+
+#[tauri::command(async)]
+pub fn chat_unqueue(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+    item_id: String,
+) -> Result<(), String> {
+    registry.with_session(&task_id, &agent, |session| {
+        session.with_provider(|provider, _, out| provider.unqueue(&item_id, out))
+    })
+}
+
 #[tauri::command(async)]
 pub fn chat_respond(
     registry: State<'_, ChatRegistry>,
@@ -1574,6 +1604,15 @@ pub(crate) mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn agents_without_a_queue_refuse_queued_message_actions() {
+        let mut out = ProviderOutput::default();
+        assert!(Echo.steer_queued("x", &mut out).is_err());
+        assert!(Echo.unqueue("x", &mut out).is_err());
+        Echo.steer("now", &mut out).unwrap();
+        assert_eq!(out.writes, ["now"]);
     }
 
     #[test]
@@ -2217,7 +2256,12 @@ pub(crate) mod tests {
             serde_json::json!({ "method": "item/started", "params": { "threadId": "conv", "turnId": "turn-1", "item": { "type": "userMessage", "id": "user-1", "content": [{ "type": "text", "text": "start" }] } } }),
         );
         std::fs::write(fixture.file(0, "file.txt"), "changes before steering").unwrap();
-        send_checkpoint_message(&mut shared, "steer this turn");
+        let mut steer = ProviderOutput::default();
+        shared
+            .provider
+            .steer("steer this turn", &mut steer)
+            .unwrap();
+        shared.commit(steer, &drop, &notify);
         assert_eq!(shared.turns.turn_checkpoint(), Some(before.as_str()));
         feed_checkpoint_line(
             &mut shared,

@@ -19,7 +19,8 @@ const TURN_POLL: Duration = Duration::from_millis(250);
 /// How a turn sent to a headless session ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TurnEnd {
-    /// The agent finished its turn; `reply` is its last top-level message.
+    /// The agent finished its turn; `reply` is its last top-level message. A turn someone stopped
+    /// counts as an `error`; one a steer cut is not finished, since the steer continues it.
     Completed {
         reply: Option<String>,
         error: bool,
@@ -167,7 +168,7 @@ impl ChatRegistry {
         self.with_session_id(session_id, |session| session.send(text, images))
     }
 
-    /// Adds `text` to the session's turn in progress; `false` when no turn is running.
+    /// Redirects the session's turn in progress with `text`; `false` when no turn is running.
     pub(crate) fn steer(&self, session_id: &str, text: &str) -> Result<bool, String> {
         self.with_session_id(session_id, |session| session.steer(text))
     }
@@ -198,7 +199,7 @@ fn turn_end(snapshot: &ChatSnapshot) -> Option<TurnEnd> {
     match &snapshot.status {
         ChatStatus::Idle if !snapshot.background_agents => Some(TurnEnd::Completed {
             reply: last_reply(snapshot),
-            error: snapshot.has_error(),
+            error: snapshot.has_error() || snapshot.interrupted,
         }),
         ChatStatus::Exited { code } => Some(TurnEnd::Ended {
             code: *code,
@@ -248,12 +249,17 @@ fn last_reply(snapshot: &ChatSnapshot) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::claude::ClaudeProvider;
+    use super::super::model::ProviderOutput;
     use super::super::model::{
         ChatItem, DetailFormat, PendingKind, PendingRequest, PermissionDenial, Question,
         UnansweredRequest,
     };
     use super::super::tests::{insert_live_session, set_turn};
+    use super::super::Shared;
     use super::*;
+    use serde_json::json;
+    use std::sync::Arc;
 
     const SESSION: &str = "t1:claude";
 
@@ -431,5 +437,101 @@ mod tests {
         set_turn(&registry, "t1", "claude", true);
         assert_eq!(registry.steer(SESSION, "use rebase"), Ok(true));
         assert!(registry.steer("missing", "use rebase").is_err());
+    }
+
+    /// A live session driven by the Claude provider, fed what the agent prints by `agent_prints`.
+    fn claude_registry() -> Arc<ChatRegistry> {
+        let registry = live_registry();
+        registry
+            .with_session_id(SESSION, |session| {
+                session.shared.lock().unwrap().provider =
+                    Box::new(ClaudeProvider::new("s1".into()));
+                Ok(())
+            })
+            .unwrap();
+        Arc::new(registry)
+    }
+
+    fn agent_prints(registry: &ChatRegistry, line: Value) {
+        registry
+            .with_session_id(SESSION, |session| {
+                let mut state = session.shared.lock().unwrap();
+                let mut out = ProviderOutput::default();
+                let Shared {
+                    provider, snapshot, ..
+                } = &mut *state;
+                provider.handle_line(&line.to_string(), snapshot, &mut out);
+                state.commit(out, &*session.remember, &session.notify);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn interrupted_result() -> Value {
+        json!({
+            "type": "result", "subtype": "error_during_execution", "is_error": true,
+            "stop_reason": "tool_use", "terminal_reason": "aborted_tools",
+            "errors": ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"],
+        })
+    }
+
+    #[test]
+    fn a_steer_cut_keeps_the_turn_waiting_for_the_one_that_follows() {
+        let registry = claude_registry();
+        registry.send(SESSION, "rebase the branch", &[]).unwrap();
+        let waiter = {
+            let registry = registry.clone();
+            thread::spawn(move || {
+                registry.wait_turn(SESSION, Instant::now() + Duration::from_secs(10))
+            })
+        };
+        assert_eq!(registry.steer(SESSION, "use merge instead"), Ok(true));
+        agent_prints(&registry, interrupted_result());
+        thread::sleep(TURN_POLL * 2);
+        assert!(!waiter.is_finished());
+
+        agent_prints(
+            &registry,
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [{ "type": "text", "text": "Merged." }] } }),
+        );
+        agent_prints(
+            &registry,
+            json!({ "type": "result", "subtype": "success", "is_error": false, "terminal_reason": "completed" }),
+        );
+        assert_eq!(
+            waiter.join().unwrap(),
+            TurnEnd::Completed {
+                reply: Some("Merged.".into()),
+                error: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_stopped_turn_ends_as_an_error_and_the_next_one_clears_it() {
+        let registry = claude_registry();
+        registry.send(SESSION, "rebase the branch", &[]).unwrap();
+        registry.interrupt(SESSION).unwrap();
+        agent_prints(&registry, interrupted_result());
+        let soon = Instant::now() + Duration::from_millis(300);
+        assert_eq!(
+            registry.wait_turn(SESSION, soon),
+            TurnEnd::Completed {
+                reply: None,
+                error: true
+            }
+        );
+        registry.send(SESSION, "try again", &[]).unwrap();
+        agent_prints(
+            &registry,
+            json!({ "type": "result", "subtype": "success", "is_error": false }),
+        );
+        assert_eq!(
+            registry.wait_turn(SESSION, soon),
+            TurnEnd::Completed {
+                reply: None,
+                error: false
+            }
+        );
     }
 }

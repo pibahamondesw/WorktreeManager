@@ -15,6 +15,8 @@ import {
   chatOpen,
   chatRespond,
   chatSend,
+  chatSteerQueued,
+  chatUnqueue,
   ChatResponse,
   ReviewTarget,
   ChatSetting,
@@ -139,6 +141,14 @@ export function useChatSession(
   );
   const refreshUsage = useCallback(() => chatRefreshUsage(taskId, agent), [taskId, agent]);
   const interrupt = useCallback(() => chatInterrupt(taskId, agent), [taskId, agent]);
+  const steerQueued = useCallback(
+    (itemId: string) => chatSteerQueued(taskId, agent, itemId),
+    [taskId, agent]
+  );
+  const unqueue = useCallback(
+    (itemId: string) => chatUnqueue(taskId, agent, itemId),
+    [taskId, agent]
+  );
   const respond = useCallback(
     (requestId: string, response: ChatResponse) => chatRespond(taskId, agent, requestId, response),
     [taskId, agent]
@@ -160,6 +170,8 @@ export function useChatSession(
     resume,
     send,
     interrupt,
+    steerQueued,
+    unqueue,
     respond,
     configure,
     compact,

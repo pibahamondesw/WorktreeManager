@@ -22,6 +22,8 @@ describe("applyChatEvent", () => {
     s = applyChatEvent(s, { type: "upsert", item: { id: "a", kind: "assistant", text: "Hi!" } });
     expect(s.items).toHaveLength(1);
     expect(s.items[0].text).toBe("Hi!");
+    s = applyChatEvent(s, { type: "remove", id: "a" });
+    expect(s.items).toEqual([]);
   });
 
   it("dedupes pending requests and drops them when the session ends", () => {

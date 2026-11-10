@@ -2,7 +2,7 @@ import { useState } from "react";
 import Markdown, { Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
-import { ChevronDownIcon } from "../ui/Icons";
+import { ChevronDownIcon, CloseIcon, SteerIcon } from "../ui/Icons";
 import { ChatItem, HistoryAction } from "../../services/chat";
 import { MarkdownLink } from "./MarkdownLink";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
@@ -260,26 +260,83 @@ export function WorkGroup({ items, running }: { items: ChatItem[]; running: bool
   );
 }
 
+/** What can be done with a message waiting for the turn in progress. */
+export interface QueuedActions {
+  /** Absent when the agent cannot redirect a running turn. */
+  steer?: () => void;
+  remove: () => void;
+}
+
+const QUEUE_BUTTON =
+  "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer";
+
+function MessageQueueState({ item, queue }: { item: ChatItem; queue?: QueuedActions }) {
+  if (item.status === "steered") {
+    return (
+      <p
+        title="Sent to redirect the turn that was running"
+        className="mt-1 text-right text-xs text-text-muted"
+      >
+        Steered
+      </p>
+    );
+  }
+  if (item.status !== "queued") return null;
+  return (
+    <div className="mt-1 flex items-center justify-end gap-1 text-xs">
+      <span className="text-text-muted">Queued</span>
+      {queue?.steer && (
+        <button
+          type="button"
+          onClick={queue.steer}
+          title="Send it now, redirecting the turn in progress"
+          className={QUEUE_BUTTON}
+        >
+          <SteerIcon />
+          Steer
+        </button>
+      )}
+      {queue && (
+        <button
+          type="button"
+          onClick={queue.remove}
+          aria-label="Remove queued message"
+          title="Remove queued message"
+          className={QUEUE_BUTTON}
+        >
+          <CloseIcon size={10} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function ChatItemView({
   item,
   steps,
   onHistory,
   historyDisabled,
+  queue,
 }: {
   item: ChatItem;
   steps?: SubagentSteps;
   onHistory?: (action: HistoryAction) => void;
   historyDisabled?: boolean;
+  queue?: QueuedActions;
 }) {
   const preview = useMarkdownPreview();
   switch (item.kind) {
-    case "user":
+    case "user": {
+      const queued = item.status === "queued";
       return (
         <div className="group relative self-end max-w-[85%]">
-          <div className="chat-user-message rounded-lg bg-bg-tertiary px-3 py-2">
+          <div
+            className={`chat-user-message rounded-lg bg-bg-tertiary px-3 py-2${queued ? " opacity-60" : ""}`}
+          >
             <MarkdownText text={item.text} />
           </div>
-          {onHistory && (
+          <MessageQueueState item={item} queue={queue} />
+          {onHistory && !queued && (
             <HistoryMenu
               onPick={onHistory}
               disabled={historyDisabled}
@@ -288,6 +345,7 @@ export function ChatItemView({
           )}
         </div>
       );
+    }
     case "assistant":
       return (
         <>

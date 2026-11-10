@@ -29,6 +29,7 @@ enum Control {
     ContextUsage,
     Usage,
     SessionCost,
+    Interrupt,
     Ignore,
 }
 
@@ -36,7 +37,9 @@ pub struct ClaudeProvider {
     fork_start: bool,
     session_id: String,
     turns: u32,
+    /// Messages sent mid-turn, steered ones first; a steer interrupts the turn so it runs next.
     queued: VecDeque<QueuedMessage>,
+    interrupting: bool,
     controls: ChatControls,
     calls: HashMap<String, Control>,
     blocks: HashMap<u64, String>,
@@ -61,9 +64,26 @@ pub struct ClaudeProvider {
 struct QueuedMessage {
     item: ChatItem,
     content: Value,
+    /// Slash commands run as sent: context ahead of them would hide the command.
+    command: bool,
+}
+
+impl QueuedMessage {
+    fn steered(&self) -> bool {
+        self.item.status.as_deref() == Some(STEERED)
+    }
 }
 
 const UNANSWERED_MESSAGE: &str = "No one answered in time, so this was denied.";
+/// Leads a message that steered a turn; transcripts hide it since it starts with `<`.
+const STEER_TAG: &str = "<steer>";
+const STEER_CONTEXT: &str = "<steer>The user interrupted your previous turn to send the message \
+below. A tool may have been cut off midway: check the current state of the work first, then \
+resume it following the message.</steer>";
+/// Claude's own trace of an interrupted turn, kept out of the errors it reports.
+const DIAGNOSTIC_PREFIX: &str = "[ede_diagnostic]";
+/// The note Claude Code records in the transcript where a turn was interrupted.
+const INTERRUPT_MARKER: &str = "[Request interrupted by user";
 const UNSUPPORTED_CONTROL: &str = "Unsupported control request";
 const EVENT_USAGE_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -109,6 +129,7 @@ impl ClaudeProvider {
             session_id,
             turns: 0,
             queued: VecDeque::new(),
+            interrupting: false,
             controls: ChatControls::default(),
             calls: HashMap::new(),
             blocks: HashMap::new(),
@@ -195,6 +216,9 @@ impl ClaudeProvider {
                 out.history_result = Some(Err(message.clone()));
                 out.status(ChatStatus::Failed { message });
                 return;
+            }
+            if let Control::Interrupt = call {
+                self.interrupting = false;
             }
             if let Control::Usage = call {
                 self.usage_in_flight = false;
@@ -318,7 +342,7 @@ impl ClaudeProvider {
                 self.select_mode(&mode);
                 out.controls(&self.controls);
             }
-            Control::Rename | Control::Ignore => {}
+            Control::Rename | Control::Interrupt | Control::Ignore => {}
         }
     }
 
@@ -396,6 +420,69 @@ impl ClaudeProvider {
                 .collect();
             out.controls(&self.controls);
         }
+    }
+
+    fn request_interrupt(&mut self, out: &mut ProviderOutput) {
+        if self.turns > 0 && !self.interrupting {
+            self.interrupting = true;
+            self.control(out, Control::Interrupt, json!({ "subtype": "interrupt" }));
+        }
+    }
+
+    /// The next queued message starts the following turn, told to resume the work if a steer cut
+    /// this one; a steer still queued cuts that turn in turn.
+    fn begin_next_turn(&mut self, interrupted: bool, out: &mut ProviderOutput) {
+        self.interrupting = false;
+        let Some(mut message) = self.queued.pop_front() else {
+            out.status(ChatStatus::Idle);
+            return;
+        };
+        if interrupted && message.steered() && !message.command {
+            message.content = with_context(STEER_CONTEXT.to_string(), message.content);
+        }
+        self.begin_turn(message, out);
+        if self.queued.iter().any(QueuedMessage::steered) {
+            self.request_interrupt(out);
+        }
+    }
+
+    fn message(&mut self, text: &str, images: &[ChatImage]) -> QueuedMessage {
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let content = user_content(text, images);
+        QueuedMessage {
+            item: ChatItem::new(
+                &message_id,
+                ItemKind::User,
+                user_display_text(text, images.len()),
+            ),
+            content: match self.handoff.take() {
+                Some(handoff) => with_context(handoff, content),
+                None => content,
+            },
+            command: text.starts_with('/'),
+        }
+    }
+
+    /// Runs the message after the steers already waiting, once Claude confirms it stopped.
+    fn queue_steer(&mut self, mut message: QueuedMessage, out: &mut ProviderOutput) {
+        message.item.status = Some(STEERED.into());
+        out.upsert(message.item.clone());
+        let position = self
+            .queued
+            .iter()
+            .position(|queued| !queued.steered())
+            .unwrap_or(self.queued.len());
+        self.queued.insert(position, message);
+        self.request_interrupt(out);
+    }
+
+    fn take_queued(&mut self, item_id: &str) -> Result<QueuedMessage, String> {
+        let index = self
+            .queued
+            .iter()
+            .position(|message| message.item.id == item_id && !message.steered())
+            .ok_or("That message is no longer queued")?;
+        Ok(self.queued.remove(index).unwrap())
     }
 
     fn error_item(&mut self, message: impl Into<String>) -> ChatItem {
@@ -637,14 +724,21 @@ impl ChatProvider for ClaudeProvider {
                 self.request_usage(out)
             }
             Some("result") => {
+                let interrupted = interrupted_result(&message);
                 out.completes_turn = true;
+                out.interrupted = interrupted;
                 out.denials.extend(permission_denials(&message));
                 out.background_agents = Some(self.background_agents);
                 self.turns = self.turns.saturating_sub(1);
                 if let Some(item) = structured_reply(&message) {
                     out.upsert(item);
                 }
-                if message["is_error"] == true {
+                if interrupted {
+                    out.upsert(ChatItem::interrupted(format!(
+                        "interrupted-{}",
+                        uuid::Uuid::new_v4()
+                    )));
+                } else if message["is_error"] == true {
                     let text = message["result"]
                         .as_str()
                         .map(String::from)
@@ -653,6 +747,7 @@ impl ChatProvider for ClaudeProvider {
                                 errors
                                     .iter()
                                     .filter_map(Value::as_str)
+                                    .filter(|error| !error.starts_with(DIAGNOSTIC_PREFIX))
                                     .collect::<Vec<_>>()
                                     .join("\n")
                             })
@@ -668,40 +763,23 @@ impl ChatProvider for ClaudeProvider {
                     json!({ "subtype": "get_context_usage", "detail": "summary" }),
                 );
                 if self.turns == 0 {
-                    if let Some(message) = self.queued.pop_front() {
-                        self.begin_turn(message, out);
-                    } else {
-                        out.status(ChatStatus::Idle);
-                    }
+                    self.begin_next_turn(interrupted, out);
                 }
             }
             _ => {}
         }
     }
 
-    /// Messages sent mid-turn are queued by WorktreeManager and run after the current turn.
+    /// Messages sent mid-turn wait for it in a queue until they run or steer it.
     fn send(
         &mut self,
         text: &str,
         images: &[ChatImage],
         out: &mut ProviderOutput,
     ) -> Result<(), String> {
-        let message_id = uuid::Uuid::new_v4().to_string();
-        let item = ChatItem::new(
-            &message_id,
-            ItemKind::User,
-            user_display_text(text, images.len()),
-        );
-        let content = user_content(text, images);
-        let message = QueuedMessage {
-            item,
-            content: match self.handoff.take() {
-                Some(handoff) => with_context(handoff, content),
-                None => content,
-            },
-        };
+        let message = self.message(text, images);
         if self.turns > 0 {
-            out.upsert(message.item.clone().with_status("queued"));
+            out.upsert(message.item.clone().with_status(QUEUED));
             self.queued.push_back(message);
         } else {
             self.begin_turn(message, out);
@@ -710,9 +788,31 @@ impl ChatProvider for ClaudeProvider {
     }
 
     fn interrupt(&mut self, out: &mut ProviderOutput) {
+        self.request_interrupt(out);
+    }
+
+    /// Claude cannot add to a running turn: it is interrupted and the message runs once Claude
+    /// confirms the turn ended.
+    fn steer(&mut self, text: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        let message = self.message(text, &[]);
         if self.turns > 0 {
-            self.control(out, Control::Ignore, json!({ "subtype": "interrupt" }));
+            self.queue_steer(message, out);
+        } else {
+            self.begin_turn(message, out);
         }
+        Ok(())
+    }
+
+    fn steer_queued(&mut self, item_id: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        let message = self.take_queued(item_id)?;
+        self.queue_steer(message, out);
+        Ok(())
+    }
+
+    fn unqueue(&mut self, item_id: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        self.take_queued(item_id)?;
+        out.event(ChatEvent::Remove { id: item_id.into() });
+        Ok(())
     }
 
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String> {
@@ -1456,13 +1556,14 @@ fn parse_transcript(text: &str, parent: Option<&str>) -> Vec<ChatItem> {
                     finish_notified_agent(&mut snapshot, &agent_calls, &reports, text)
                 }
                 Value::String(text) if parent.is_none() => snapshot.apply(&ChatEvent::Upsert {
-                    item: ChatItem::new(
-                        entry["uuid"].as_str().unwrap_or_default(),
-                        ItemKind::User,
-                        text.clone(),
-                    ),
+                    item: transcript_user_item(entry["uuid"].as_str().unwrap_or_default(), text),
                 }),
                 Value::Array(blocks) => {
+                    let steered = blocks.iter().any(|block| {
+                        block["text"]
+                            .as_str()
+                            .is_some_and(|text| text.starts_with(STEER_TAG))
+                    });
                     for block in blocks {
                         match block["type"].as_str() {
                             Some("tool_result") => {
@@ -1484,13 +1585,14 @@ fn parse_transcript(text: &str, parent: Option<&str>) -> Vec<ChatItem> {
                             Some("text") if parent.is_none() => {
                                 let text = block["text"].as_str().unwrap_or_default();
                                 if !text.starts_with('<') {
-                                    snapshot.apply(&ChatEvent::Upsert {
-                                        item: ChatItem::new(
-                                            entry["uuid"].as_str().unwrap_or_default(),
-                                            ItemKind::User,
-                                            text,
-                                        ),
-                                    });
+                                    let mut item = transcript_user_item(
+                                        entry["uuid"].as_str().unwrap_or_default(),
+                                        text,
+                                    );
+                                    if steered {
+                                        item.status = Some(STEERED.into());
+                                    }
+                                    snapshot.apply(&ChatEvent::Upsert { item });
                                 }
                             }
                             _ => {}
@@ -1567,6 +1669,24 @@ fn finish_notified_agent(
     if let Some(item) = finished {
         snapshot.apply(&ChatEvent::Upsert { item });
     }
+}
+
+/// A user message, or the note Claude Code leaves where a turn was interrupted.
+fn transcript_user_item(id: &str, text: &str) -> ChatItem {
+    if text.starts_with(INTERRUPT_MARKER) {
+        ChatItem::interrupted(id)
+    } else {
+        ChatItem::new(id, ItemKind::User, text)
+    }
+}
+
+/// Claude ends a turn it was interrupted in with an error result that only carries its own
+/// diagnostic; the turn was stopped, not failed.
+fn interrupted_result(result: &Value) -> bool {
+    matches!(
+        result["terminal_reason"].as_str(),
+        Some("aborted_streaming" | "aborted_tools")
+    )
 }
 
 /// Context goes in its own leading block; transcripts hide blocks that start with `<`.
@@ -2169,6 +2289,293 @@ mod tests {
             .is_ok());
     }
 
+    /// What Claude Code 2.1.319 prints after an interrupt cuts a turn waiting on a tool call.
+    fn interrupted_turn() -> [Value; 3] {
+        [
+            json!({ "type": "assistant", "aborted": true, "parent_tool_use_id": null, "message": {
+                "id": "m2", "role": "assistant", "content": [{ "type": "text", "text": "The" }], "stop_reason": null,
+            } }),
+            json!({ "type": "user", "parent_tool_use_id": null, "message": {
+                "role": "user", "content": [{ "type": "text", "text": "[Request interrupted by user]" }],
+            } }),
+            json!({
+                "type": "result", "subtype": "error_during_execution", "is_error": true, "num_turns": 3,
+                "stop_reason": "tool_use", "terminal_reason": "aborted_streaming", "permission_denials": [],
+                "errors": ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"],
+            }),
+        ]
+    }
+
+    fn feed_all(
+        provider: &mut ClaudeProvider,
+        snapshot: &mut ChatSnapshot,
+        lines: impl IntoIterator<Item = Value>,
+    ) -> ProviderOutput {
+        let mut last = ProviderOutput::default();
+        for line in lines {
+            last = feed(provider, snapshot, line);
+        }
+        last
+    }
+
+    fn sent(provider: &mut ClaudeProvider, snapshot: &mut ChatSnapshot, text: &str) -> Vec<Value> {
+        let mut out = ProviderOutput::default();
+        provider.send(text, &[], &mut out).unwrap();
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        written(&out)
+    }
+
+    #[test]
+    fn a_stopped_turn_is_marked_without_an_error_and_the_chat_continues() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        let mut stop = ProviderOutput::default();
+        provider.interrupt(&mut stop);
+        provider.interrupt(&mut stop);
+        let requests = written(&stop);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["request"]["subtype"], "interrupt");
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": {
+                "subtype": "success", "request_id": requests[0]["request_id"], "response": { "still_queued": [] },
+            } }),
+        );
+
+        let end = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        assert!(end.completes_turn && end.interrupted);
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        assert!(!snapshot.has_error());
+        assert!(!snapshot
+            .items
+            .iter()
+            .any(|item| item.text.contains(DIAGNOSTIC_PREFIX)));
+        let marker = snapshot.items.last().unwrap();
+        assert_eq!(
+            (marker.kind, marker.text.as_str()),
+            (ItemKind::Notice, INTERRUPTED_NOTICE)
+        );
+
+        let next = sent(&mut provider, &mut snapshot, "next");
+        assert_eq!(next[0]["message"]["content"], "next");
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+    }
+
+    fn user_item<'a>(snapshot: &'a ChatSnapshot, text: &str) -> &'a ChatItem {
+        snapshot
+            .items
+            .iter()
+            .rfind(|item| item.kind == ItemKind::User && item.text == text)
+            .unwrap()
+    }
+
+    fn steer_queued(
+        provider: &mut ClaudeProvider,
+        snapshot: &mut ChatSnapshot,
+        text: &str,
+    ) -> Vec<Value> {
+        let id = user_item(snapshot, text).id.clone();
+        let mut out = ProviderOutput::default();
+        provider.steer_queued(&id, &mut out).unwrap();
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        written(&out)
+    }
+
+    fn sent_user(out: &ProviderOutput) -> Option<Value> {
+        written(out).into_iter().find(|line| line["type"] == "user")
+    }
+
+    fn interrupts(out: &ProviderOutput) -> bool {
+        written(out)
+            .iter()
+            .any(|line| line["request"]["subtype"] == "interrupt")
+    }
+
+    #[test]
+    fn messages_sent_mid_turn_wait_in_a_queue_until_the_turn_ends() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        assert!(sent(&mut provider, &mut snapshot, "use rebase").is_empty());
+        assert_eq!(
+            user_item(&snapshot, "use rebase").status.as_deref(),
+            Some(QUEUED)
+        );
+        let next = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "result", "subtype": "success", "is_error": false, "terminal_reason": "completed" }),
+        );
+        assert!(!next.interrupted);
+        assert_eq!(
+            sent_user(&next).unwrap()["message"]["content"],
+            "use rebase"
+        );
+        assert_eq!(user_item(&snapshot, "use rebase").status, None);
+    }
+
+    #[test]
+    fn steering_a_queued_message_interrupts_the_turn_and_runs_it_next_told_to_resume() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        sent(&mut provider, &mut snapshot, "use rebase");
+        sent(&mut provider, &mut snapshot, "and squash");
+        let steer = steer_queued(&mut provider, &mut snapshot, "and squash");
+        assert_eq!(steer.len(), 1);
+        assert_eq!(steer[0]["request"]["subtype"], "interrupt");
+        let squash = user_item(&snapshot, "and squash").clone();
+        assert_eq!(squash.status.as_deref(), Some(STEERED));
+        let mut again = ProviderOutput::default();
+        assert!(provider.steer_queued(&squash.id, &mut again).is_err());
+
+        let resumed = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        assert!(resumed.completes_turn && resumed.starts_turn && resumed.interrupted);
+        let user = sent_user(&resumed).unwrap();
+        assert_eq!(user["message"]["content"][0]["text"], STEER_CONTEXT);
+        assert_eq!(user["message"]["content"][1]["text"], "and squash");
+        assert!(!interrupts(&resumed));
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+        assert_eq!(
+            user_item(&snapshot, "and squash").status.as_deref(),
+            Some(STEERED)
+        );
+        assert!(!snapshot.has_error());
+
+        let last = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "result", "subtype": "success", "is_error": false, "terminal_reason": "completed" }),
+        );
+        assert_eq!(
+            sent_user(&last).unwrap()["message"]["content"],
+            "use rebase"
+        );
+    }
+
+    #[test]
+    fn steers_run_in_order_each_cutting_the_turn_the_previous_one_started() {
+        let (mut provider, mut snapshot) = started();
+        let mut out = ProviderOutput::default();
+        provider.steer("go", &mut out).unwrap();
+        assert!(out.starts_turn);
+        sent(&mut provider, &mut snapshot, "later");
+        let mut first = ProviderOutput::default();
+        provider.steer("use rebase", &mut first).unwrap();
+        assert!(interrupts(&first));
+        let mut second = ProviderOutput::default();
+        provider.steer("and squash", &mut second).unwrap();
+        assert!(second.writes.is_empty());
+
+        let cut = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        assert_eq!(
+            sent_user(&cut).unwrap()["message"]["content"][1]["text"],
+            "use rebase"
+        );
+        assert!(interrupts(&cut));
+        let cut = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        assert_eq!(
+            sent_user(&cut).unwrap()["message"]["content"][1]["text"],
+            "and squash"
+        );
+        assert!(!interrupts(&cut));
+    }
+
+    #[test]
+    fn a_steer_that_lands_after_the_turn_finished_runs_as_a_plain_message() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        sent(&mut provider, &mut snapshot, "use rebase");
+        steer_queued(&mut provider, &mut snapshot, "use rebase");
+        let next = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "result", "subtype": "success", "is_error": false, "terminal_reason": "completed" }),
+        );
+        assert!(!next.interrupted);
+        assert_eq!(
+            sent_user(&next).unwrap()["message"]["content"],
+            "use rebase"
+        );
+    }
+
+    #[test]
+    fn a_steered_slash_command_runs_as_sent() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        sent(&mut provider, &mut snapshot, "/compact");
+        assert_eq!(
+            steer_queued(&mut provider, &mut snapshot, "/compact")[0]["request"]["subtype"],
+            "interrupt"
+        );
+        let next = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        assert_eq!(sent_user(&next).unwrap()["message"]["content"], "/compact");
+    }
+
+    #[test]
+    fn queued_messages_can_be_removed_before_they_run() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        sent(&mut provider, &mut snapshot, "use rebase");
+        let id = user_item(&snapshot, "use rebase").id.clone();
+        let mut out = ProviderOutput::default();
+        provider.unqueue(&id, &mut out).unwrap();
+        assert_eq!(out.events, [ChatEvent::Remove { id: id.clone() }]);
+        assert!(provider.unqueue(&id, &mut out).is_err());
+        let end = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "result", "subtype": "success", "is_error": false }),
+        );
+        assert!(sent_user(&end).is_none());
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+    }
+
+    #[test]
+    fn a_failed_interrupt_can_be_requested_again() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        let mut stop = ProviderOutput::default();
+        provider.interrupt(&mut stop);
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": {
+                "subtype": "error", "request_id": written(&stop)[0]["request_id"], "error": "busy",
+            } }),
+        );
+        let mut again = ProviderOutput::default();
+        provider.interrupt(&mut again);
+        assert_eq!(written(&again)[0]["request"]["subtype"], "interrupt");
+    }
+
+    #[test]
+    fn claude_diagnostics_stay_out_of_reported_errors() {
+        let (mut provider, mut snapshot) = started();
+        let failed = |errors: Value| json!({ "type": "result", "subtype": "error_during_execution", "is_error": true, "errors": errors });
+        feed(
+            &mut provider,
+            &mut snapshot,
+            failed(json!([
+                "[ede_diagnostic] result_type=assistant",
+                "API overloaded"
+            ])),
+        );
+        assert_eq!(snapshot.items.last().unwrap().text, "API overloaded");
+        feed(
+            &mut provider,
+            &mut snapshot,
+            failed(json!(["[ede_diagnostic] result_type=assistant"])),
+        );
+        assert_eq!(
+            snapshot.items.last().unwrap().text,
+            "Claude stopped with an error"
+        );
+    }
+
     #[test]
     fn results_report_the_tool_calls_dont_ask_denied() {
         let (mut provider, mut snapshot) = started();
@@ -2224,6 +2631,38 @@ mod tests {
             ]
         );
         assert_eq!(items[2].status.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn history_marks_interrupted_turns_and_the_messages_that_steered_them() {
+        let lines = [
+            json!({ "type": "user", "uuid": "u1", "message": { "content": "Rebase the branch" } }),
+            json!({ "type": "user", "uuid": "u2", "message": { "content": [{ "type": "text", "text": "[Request interrupted by user]" }] } }),
+            json!({ "type": "user", "uuid": "u3", "message": { "content": [
+                { "type": "text", "text": STEER_CONTEXT },
+                { "type": "text", "text": "Use merge instead" },
+            ] } }),
+            json!({ "type": "user", "uuid": "u4", "message": { "content": "[Request interrupted by user for tool use]" } }),
+        ];
+        let text = lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let items = parse_history(&text);
+        let shown: Vec<_> = items
+            .iter()
+            .map(|item| (item.kind, item.text.as_str(), item.status.as_deref()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (ItemKind::User, "Rebase the branch", None),
+                (ItemKind::Notice, INTERRUPTED_NOTICE, None),
+                (ItemKind::User, "Use merge instead", Some(STEERED)),
+                (ItemKind::Notice, INTERRUPTED_NOTICE, None),
+            ]
+        );
     }
 
     fn agent_call(id: &str, description: &str) -> Value {

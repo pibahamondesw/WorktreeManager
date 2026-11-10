@@ -23,6 +23,27 @@ export function RewindIcon({ size = 16, className = "" }: IconProps) {
   );
 }
 
+/** A curved arrow turning forward: redirect what is running. */
+export function SteerIcon({ size = 12, className = "" }: IconProps) {
+  return (
+    <svg
+      width={`${size / 16}rem`}
+      height={`${size / 16}rem`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="m15 4 5 5-5 5" />
+      <path d="M20 9H10a6 6 0 0 0 0 12h3" />
+    </svg>
+  );
+}
+
 export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
   return (
     <svg

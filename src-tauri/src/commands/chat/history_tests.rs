@@ -1808,3 +1808,23 @@ fn interrupting_the_primary_reaches_its_running_session() {
     chat_interrupt(fixture.app.state(), "task".into(), "codex".into()).unwrap();
     assert!(chat_interrupt(fixture.app.state(), "task".into(), "claude".into()).is_err());
 }
+
+#[test]
+fn queued_message_actions_reach_the_primary_session() {
+    let fixture = Fixture::new();
+    fixture.open("codex", OpenMode::Restart).unwrap();
+    let missing = || {
+        (
+            "task".to_string(),
+            "codex".to_string(),
+            "missing".to_string(),
+        )
+    };
+    let (task, agent, item) = missing();
+    let steered = chat_steer_queued(fixture.app.state(), task, agent, item);
+    let (task, agent, item) = missing();
+    let removed = chat_unqueue(fixture.app.state(), task, agent, item);
+    for result in [steered, removed] {
+        assert_eq!(result, Err("That message is no longer queued".into()));
+    }
+}
