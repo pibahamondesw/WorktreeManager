@@ -256,28 +256,25 @@ fn epoch_ms(instant: &str) -> Option<u64> {
         .map(|instant| instant.timestamp_millis().max(0) as u64)
 }
 
-/// GitHub's GraphQL API, paused until the rate limit resets once few points are left.
-struct Github {
-    forge: Arc<dyn WatchForge>,
+/// GitHub's GraphQL rate limit, as queries that ask for `rateLimit` report it: once few points
+/// are left, GitHub is not asked again until it resets.
+#[derive(Default)]
+pub(super) struct RateLimit {
     resumes_at_ms: AtomicU64,
 }
 
-impl Github {
-    fn new(forge: Arc<dyn WatchForge>) -> Self {
-        Self {
-            forge,
-            resumes_at_ms: AtomicU64::new(0),
-        }
-    }
-
-    fn query(&self, query: &str, variables: Value, now_ms: u64) -> Result<Value, String> {
+impl RateLimit {
+    pub(super) fn check(&self, now_ms: u64) -> Result<(), String> {
         let resumes_at_ms = self.resumes_at_ms.load(Ordering::SeqCst);
         if now_ms < resumes_at_ms {
             return Err(format!(
                 "GitHub's rate limit is nearly spent until {resumes_at_ms}"
             ));
         }
-        let answer = self.forge.graphql(query, variables)?;
+        Ok(())
+    }
+
+    pub(super) fn observe(&self, answer: &Value, now_ms: u64) {
         let limit = &answer["data"]["rateLimit"];
         if limit["remaining"]
             .as_u64()
@@ -287,6 +284,27 @@ impl Github {
             self.resumes_at_ms
                 .store(resets_at_ms.unwrap_or(now_ms), Ordering::SeqCst);
         }
+    }
+}
+
+/// GitHub's GraphQL API, paused until the rate limit resets once few points are left.
+struct Github {
+    forge: Arc<dyn WatchForge>,
+    rate_limit: RateLimit,
+}
+
+impl Github {
+    fn new(forge: Arc<dyn WatchForge>) -> Self {
+        Self {
+            forge,
+            rate_limit: RateLimit::default(),
+        }
+    }
+
+    fn query(&self, query: &str, variables: Value, now_ms: u64) -> Result<Value, String> {
+        self.rate_limit.check(now_ms)?;
+        let answer = self.forge.graphql(query, variables)?;
+        self.rate_limit.observe(&answer, now_ms);
         Ok(answer)
     }
 

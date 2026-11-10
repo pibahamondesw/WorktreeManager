@@ -66,7 +66,7 @@ fn conditions(
     })
 }
 
-fn name(report: &mut Report, value: &Value, field: &str) -> Option<String> {
+pub(super) fn name(report: &mut Report, value: &Value, field: &str) -> Option<String> {
     let text = string(report, value, field)?;
     if text.trim().is_empty() {
         report.error(IssueKind::Invalid, field, "must not be empty");

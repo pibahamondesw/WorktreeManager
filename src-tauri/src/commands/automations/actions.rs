@@ -3,6 +3,7 @@
 
 pub mod events;
 pub mod fire;
+pub mod github;
 pub mod intervene;
 pub mod linear;
 #[cfg(test)]

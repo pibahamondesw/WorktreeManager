@@ -195,7 +195,38 @@ fn start_automations(app: &tauri::AppHandle) -> Result<(), String> {
         Arc::new(routine::RoutineExecutor::of(app, operations)?.with_lease_pools(Arc::new(leases)));
     app.manage(actions::AutomationEngine(executor.clone()));
     start_linear_triggers(app, executor.clone())?;
+    start_github_triggers(app, executor.clone())?;
     scheduler::start_scheduler(app.clone(), executor)
+}
+
+/// Polls GitHub once a minute for the automations with GitHub event triggers.
+#[cfg(unix)]
+fn start_github_triggers(
+    app: &tauri::AppHandle,
+    executor: Arc<dyn commands::automations::scheduler::Executor>,
+) -> Result<(), String> {
+    use commands::automations::{actions::github, definition, store::RunStore};
+    let store = RunStore::of(app)?;
+    let mut triggers = github::GithubTriggers::new(Arc::new(github::CliGithub::default()));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        log::info!("GitHub triggers poll every minute");
+        loop {
+            match definition::load_current(&app) {
+                Ok(entries) => {
+                    let definitions: Vec<_> = entries
+                        .iter()
+                        .filter_map(|e| e.definition.as_ref())
+                        .collect();
+                    let now = std::time::SystemTime::now().into();
+                    triggers.poll(&store, executor.as_ref(), &definitions, now);
+                }
+                Err(error) => log::warn!("GitHub triggers could not load the automations: {error}"),
+            }
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+    });
+    Ok(())
 }
 
 /// Polls Linear once a minute for the automations with Linear event triggers.

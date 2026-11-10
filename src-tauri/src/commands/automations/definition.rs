@@ -3,6 +3,7 @@
 //! call. A definition with errors is still listed, with its errors and without a definition.
 
 mod fields;
+mod github_trigger;
 mod linear_trigger;
 mod validate;
 
@@ -23,6 +24,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use crate::commands::agents::permission::UnattendedPolicy;
 use crate::commands::agents::{AgentDescriptor, Agents};
 use fields::{is_automation_name, Report};
+pub use github_trigger::{GithubEventKind, GithubEventTrigger, OWNER as GITHUB_OWNER};
 
 const DEFINITION_FILE: &str = "AUTOMATION.md";
 const PREFERENCES_FILE: &str = "store.json";
@@ -113,6 +115,7 @@ pub struct Trigger {
     pub schedule: Option<Schedule>,
     pub events: Vec<EventTrigger>,
     pub linear_events: Vec<LinearEventTrigger>,
+    pub github_events: Vec<GithubEventTrigger>,
     pub cli: bool,
 }
 
