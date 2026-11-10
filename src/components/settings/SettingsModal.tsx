@@ -1,8 +1,9 @@
 import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
+import { CircleciSettings } from "./CircleciSettings";
 import type { Operations } from "../../services/operations";
 import { useEffect, useRef } from "react";
 import { Modal } from "../ui/Modal";
-import { BellIcon, NotebookIcon, SunIcon, WrenchIcon } from "../ui/Icons";
+import { BellIcon, NotebookIcon, RefreshIcon, SunIcon, WrenchIcon } from "../ui/Icons";
 import { ThemeSettings } from "../ui/ThemePicker";
 import { VaultSettings } from "../sidebar/VaultSettingsModal";
 import { AgentAlertSettingsPanel } from "../sidebar/AgentAlertsModal";
@@ -12,13 +13,20 @@ import { VaultConfig } from "../../types";
 import { AgentAlertSettings } from "../../services/agentActivity";
 import { CheckSeverity, DoctorReport } from "../../services/doctor";
 
-export type SettingsSection = "theme" | "vault" | "dependencies" | "alerts" | "shortcuts";
+export type SettingsSection =
+  | "theme"
+  | "vault"
+  | "dependencies"
+  | "alerts"
+  | "circleci"
+  | "shortcuts";
 
 const SECTIONS = [
   { id: "theme", label: "Theme", icon: SunIcon },
   { id: "vault", label: "Obsidian vault", icon: NotebookIcon },
   { id: "dependencies", label: "Dependencies", icon: WrenchIcon },
   { id: "alerts", label: "Agent alerts", icon: BellIcon },
+  { id: "circleci", label: "CircleCI", icon: RefreshIcon },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: WrenchIcon },
 ] as const;
 
@@ -129,6 +137,7 @@ export function SettingsModal(props: SettingsModalProps) {
                     paletteTaskCount={props.paletteTaskCount}
                   />
                 )}
+                {id === "circleci" && section === id && <CircleciSettings />}
                 {id === "theme" && (
                   <ThemeSettings
                     currentThemeId={props.themeId}

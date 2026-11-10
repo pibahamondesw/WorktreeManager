@@ -108,7 +108,7 @@ Every key is optional; the triggers present are OR-ed.
 | `schedule.cron`     | string             | required           | 5-field cron. Slots closer than the minimum interval (app preference, default 15 minutes) are a validation error.                                                                                                                                                                                                                                                                 |
 | `schedule.tz`       | string             | `America/Santiago` | IANA timezone; DST handled by the scheduler.                                                                                                                                                                                                                                                                                                                                      |
 | `schedule.catch_up` | `latest` \| `skip` | `latest`           | `latest`: slots missed while the Mac slept or the app was closed collapse into one run for the **latest** missed slot within 7 days, with `scheduled_for` and `fired_at`. `skip`: missed slots are only recorded as skipped. Compose collapses into the oldest slot; WTM uses the latest because a local run should act on the freshest state.                                    |
-| `event`             | list               | none               | Entries `{source: app \| linear \| github, type: <event>.<action>, where: {…}}`; every condition must pass. See [App events](#app-events), [Linear events](#linear-events) and [GitHub events](#github-events). Events caused by this automation's own runs never fire it.                                                                                                        |
+| `event`             | list               | none               | Entries `{source: app \| linear \| github \| circleci, type: <event>.<action>, where: {…}}`; every condition must pass. See [App events](#app-events), [Linear events](#linear-events), [GitHub events](#github-events) and [CircleCI events](#circleci-events). Events caused by this automation's own runs never fire it.                                                       |
 | `cli`               | bool               | `false`            | Allows `wtm automation fire <name> --key <trigger_key> [--payload <json\|@file>]` from external callers (Compose, launchd, scheduled agent tasks, Git hooks). It prints the run id without waiting; a key that already fired prints its existing run with `deduped: true`. A paused automation records the firing as skipped with `paused`. The CLI reads `@file`, never the app. |
 
 At least one of `manual: true`, `schedule`, `event` or `cli: true` must be present.
@@ -161,6 +161,22 @@ With `source: github`, the app polls GitHub with `gh` through the login shell, a
 - Pull requests whose head branch starts with the fixed start of `target.branch` (up to its first variable other than `{automation}`, when it contains the automation's name, as the default `wtm/{automation}/…` does) are the automation's own, and so are comments carrying its marker `<!-- wtm:<automation>:`; they never fire it. Everything else the automation does on GitHub acts as the owner, whose reviews and comments never fire `pr.review_received` or `pr.mentioned`. Pushes to branches without such a prefix (tracked Linear branches, `task: existing`) are not told apart.
 - App `pr.*` events report the pull requests of tasks open in the app; GitHub events report any pull request of the repositories, task or not, and need no task mapping.
 - A repository without a GitHub `origin` is skipped and logged once. A failed query fires nothing and is logged; the next poll of that repository backs off.
+
+#### CircleCI events
+
+With `source: circleci`, the app polls CircleCI's API v2 with the owner's personal API token, saved in Settings > CircleCI and kept in Keychain, once a minute for each CircleCI project the automation listens to, backing off up to 15 minutes after failures. It covers every pipeline: pull requests, pushes to main and scheduled pipelines. A poll reads the pipelines of the last 6 hours (up to 3 pages), skipping those whose workflows all stopped more than 5 minutes ago, with their workflows and the jobs of the workflows that need them. It only polls projects with an enabled automation listening, from the app process, so it works with the window hidden. The run gets the pipeline, the workflow and the job as its payload (untrusted), and no task.
+
+| `type`              | When                                                                     | `trigger_key`                              |
+| ------------------- | ------------------------------------------------------------------------ | ------------------------------------------ |
+| `workflow.failed`   | A workflow stopped as `failed` or `error`.                               | `circleci:<workflow id>:<status>`          |
+| `workflow.finished` | A workflow stopped, whatever its status.                                 | `circleci:<workflow id>:<status>`          |
+| `job.failed`        | A job stopped as `failed`, `infrastructure_fail`, `timedout` or similar. | `circleci:<workflow id>:<job id>:<status>` |
+| `job.finished`      | A job stopped, whatever its status.                                      | `circleci:<workflow id>:<job id>:<status>` |
+
+- `where` takes `project` (a CircleCI project slug such as `gh/acme/api`; default the projects of `target.repos`, `gh/<owner>/<name>` of each repository's GitHub `origin`), `branch` (the pipeline's branch, or a prefix ending in `*`; tag pipelines have none) and `author` (the login that triggered the pipeline, or `me` for the owner of the token), case-insensitive except `branch`.
+- Workflow payloads list the failed jobs; job and workflow payloads carry the last 4000 characters of the output of a failed job's failed step (`log`, read through API v1.1, for up to 3 jobs per workflow; `null` when it cannot be read). A rerun is a new workflow and fires again.
+- Each automation keeps as `circleci_cursor` in `state.json` the instant after which stopped workflows and jobs fire. The first poll after enabling only records it, and pausing drops it, so outcomes before enabling or while paused never fire. Each poll moves it to 5 minutes before the poll, so outcomes CircleCI reports late still fire; those seen twice fire once, by their trigger key.
+- A repository without a GitHub `origin` is skipped and logged once. A missing token or a failed request fires nothing and is logged without the token; the next poll of that project backs off.
 
 ### Concurrency
 
@@ -712,21 +728,21 @@ Flow: the selector proposes units; each gets a Linear issue (marker) and a task 
 
 ## Deferred
 
-| Area                                                      | Issue                     |
-| --------------------------------------------------------- | ------------------------- |
-| Loader, validator, `automations_list` / `automations_get` | WOR-246                   |
-| Run store, event log, unique keys                         | WOR-247                   |
-| Scheduler, catch-up, sweep, auto-pause                    | WOR-248                   |
-| Routine executor, `per-run` / `existing` tasks            | WOR-249                   |
-| Step model, transitions, `foreach`                        | WOR-254                   |
-| `command` receipts                                        | WOR-256                   |
-| `agent` steps in pipelines, `result`                      | WOR-257                   |
-| `publish` effects                                         | WOR-258                   |
-| `wait` and `approval`                                     | WOR-259                   |
-| Selector, `per-item`, `exclusive_on`, cursor              | WOR-263                   |
-| Watchers `pr_checks`, `pr_integrated`                     | WOR-264                   |
-| Decisions                                                 | WOR-262                   |
-| Take over, hand back, retry from step                     | WOR-261                   |
-| `cli` trigger                                             | WOR-269                   |
-| `event` triggers                                          | WOR-270, WOR-271, WOR-272 |
-| Repo-scoped definitions                                   | not yet planned           |
+| Area                                                      | Issue                              |
+| --------------------------------------------------------- | ---------------------------------- |
+| Loader, validator, `automations_list` / `automations_get` | WOR-246                            |
+| Run store, event log, unique keys                         | WOR-247                            |
+| Scheduler, catch-up, sweep, auto-pause                    | WOR-248                            |
+| Routine executor, `per-run` / `existing` tasks            | WOR-249                            |
+| Step model, transitions, `foreach`                        | WOR-254                            |
+| `command` receipts                                        | WOR-256                            |
+| `agent` steps in pipelines, `result`                      | WOR-257                            |
+| `publish` effects                                         | WOR-258                            |
+| `wait` and `approval`                                     | WOR-259                            |
+| Selector, `per-item`, `exclusive_on`, cursor              | WOR-263                            |
+| Watchers `pr_checks`, `pr_integrated`                     | WOR-264                            |
+| Decisions                                                 | WOR-262                            |
+| Take over, hand back, retry from step                     | WOR-261                            |
+| `cli` trigger                                             | WOR-269                            |
+| `event` triggers                                          | WOR-270, WOR-271, WOR-272, WOR-288 |
+| Repo-scoped definitions                                   | not yet planned                    |

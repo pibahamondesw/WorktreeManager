@@ -246,7 +246,7 @@ fn unexpected(error: serde_json::Error) -> String {
 }
 
 /// `owner/name` of a GitHub remote URL, over HTTPS or SSH.
-pub(super) fn github_slug(url: &str) -> Option<String> {
+pub(in crate::commands::automations::actions) fn github_slug(url: &str) -> Option<String> {
     let url = url.trim().trim_end_matches('/').trim_end_matches(".git");
     let path = [
         "git@github.com:",

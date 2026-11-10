@@ -9,6 +9,7 @@ use croner::parser::{CronParser, Seconds, Year};
 use croner::Cron;
 use serde_json::{Map, Value};
 
+use super::circleci_trigger::circleci_event_trigger;
 use super::fields::{
     boolean, choice, duration, duration_secs, each, each_entry, index, integer, is_automation_name,
     is_instant, is_step_id, join, map, string, string_list, template, template_list, Fields,
@@ -299,6 +300,7 @@ fn manual_trigger() -> Trigger {
         events: Vec::new(),
         linear_events: Vec::new(),
         github_events: Vec::new(),
+        circleci_events: Vec::new(),
         cli: false,
     }
 }
@@ -311,6 +313,7 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
     });
     let mut linear_events = Vec::new();
     let mut github_events = Vec::new();
+    let mut circleci_events = Vec::new();
     let events = fields.or(report, "event", Vec::new(), |report, value, field| {
         each(report, value, field, |report, value, field| {
             if value["source"] == "linear" {
@@ -319,6 +322,10 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
             }
             if value["source"] == "github" {
                 github_events.push(github_event_trigger(report, value, field)?);
+                return Some(None);
+            }
+            if value["source"] == "circleci" {
+                circleci_events.push(circleci_event_trigger(report, value, field)?);
                 return Some(None);
             }
             event_trigger(report, env, value, field).map(Some)
@@ -333,11 +340,13 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
         events: events?,
         linear_events,
         github_events,
+        circleci_events,
         cli: cli?,
     };
     let no_events = trigger.events.is_empty()
         && trigger.linear_events.is_empty()
-        && trigger.github_events.is_empty();
+        && trigger.github_events.is_empty()
+        && trigger.circleci_events.is_empty();
     if !trigger.manual && trigger.schedule.is_none() && no_events && !trigger.cli {
         report.error(
             IssueKind::Invalid,
