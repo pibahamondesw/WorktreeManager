@@ -366,7 +366,7 @@ export function Composer({
     status.kind === "starting"
       ? `Starting ${agentLabel}…`
       : busy
-        ? `${agentLabel} is working — ${descriptor.capabilities.steer ? "send a message to redirect it" : "messages you send now run after this turn"} (Esc to stop)`
+        ? `${agentLabel} is working — messages you send now run after this turn${descriptor.capabilities.steer ? " unless you steer them" : ""} (Esc to stop)`
         : `Message ${agentLabel} — / for commands, @ for files${canAttach ? ", paste images" : ""}`;
 
   return (

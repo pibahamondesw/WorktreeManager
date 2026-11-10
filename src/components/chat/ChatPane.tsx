@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/Button";
-import { ChatItemView, WorkGroup } from "./ChatItemView";
+import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
 import { Composer } from "./Composer";
 import { ApprovalActions } from "./ApprovalActions";
@@ -86,7 +86,8 @@ export function ChatPane({
 }: ChatPaneProps) {
   const session = useChatSession(taskId, agent, folders, takeOpenIntent);
   const catalog = useAgentCatalog();
-  const agentLabel = describeAgent(agent, catalog).label;
+  const descriptor = describeAgent(agent, catalog);
+  const agentLabel = descriptor.label;
   const { snapshot, error, restart, respond } = session;
   const [approvalDrafts, setApprovalDrafts] = useState<Record<string, ApprovalDraft>>({});
   const [responding, setResponding] = useState<string | null>(null);
@@ -233,6 +234,13 @@ export function ChatPane({
     }
   };
 
+  const queuedActions = (itemId: string): QueuedActions => ({
+    steer: descriptor.capabilities.steer
+      ? () => void run(() => session.steerQueued(itemId))
+      : undefined,
+    remove: () => void run(() => session.unqueue(itemId)),
+  });
+
   const send = async (text: string, images: ChatImage[]) => {
     stickRef.current = true;
     const message = { text, generation: snapshot.generation, users, sent: false };
@@ -373,6 +381,7 @@ export function ChatPane({
                         ? (action) => pickHistory(item, action)
                         : undefined
                     }
+                    queue={item.status === "queued" ? queuedActions(item.id) : undefined}
                   />
                 );
               return (

@@ -549,8 +549,14 @@ describe("ChatPane", () => {
   });
 
   it.each([
-    ["claude", "Claude Code is working — send a message to redirect it (Esc to stop)"],
-    ["codex", "Codex is working — send a message to redirect it (Esc to stop)"],
+    [
+      "claude",
+      "Claude Code is working — messages you send now run after this turn unless you steer them (Esc to stop)",
+    ],
+    [
+      "codex",
+      "Codex is working — messages you send now run after this turn unless you steer them (Esc to stop)",
+    ],
   ] as const)("tells how %s handles messages sent mid-turn", async (agent, placeholder) => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"
@@ -580,6 +586,56 @@ describe("ChatPane", () => {
         "Claude Code is working — messages you send now run after this turn (Esc to stop)"
       )
     );
+  });
+
+  const busyWithQueue = () =>
+    snapshot({
+      status: { kind: "busy" },
+      items: [
+        { id: "u", kind: "user", text: "Fix the bug" },
+        { id: "s", kind: "user", text: "Use merge instead", status: "steered" },
+        { id: "i", kind: "notice", text: "Interrupted" },
+        { id: "q", kind: "user", text: "Then run the tests", status: "queued" },
+      ],
+    });
+
+  it("lets a queued message steer the turn or be removed, and marks steered ones", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open" ? Promise.resolve(busyWithQueue()) : Promise.resolve(undefined)
+    );
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByText("Queued");
+    expect(screen.getByText("Steered")).toBeInTheDocument();
+    expect(screen.getByText("Interrupted")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Steer" }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_steer_queued", {
+        taskId: "t1",
+        agent: "claude",
+        itemId: "q",
+      })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove queued message" }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_unqueue", {
+        taskId: "t1",
+        agent: "claude",
+        itemId: "q",
+      })
+    );
+  });
+
+  it("only offers to remove queued messages when the agent cannot steer", async () => {
+    mocks.catalog = AGENT_CATALOG.map((agent) => ({
+      ...agent,
+      capabilities: { ...agent.capabilities, steer: false },
+    }));
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_open" ? Promise.resolve(busyWithQueue()) : Promise.resolve(undefined)
+    );
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByRole("button", { name: "Remove queued message" });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Steer" })).toBeNull());
   });
 
   it("shows why a session failed and restarts it", async () => {

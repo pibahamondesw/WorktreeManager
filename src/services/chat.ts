@@ -175,6 +175,7 @@ export function effortsFor(controls: ChatControls): string[] {
 export type ChatEvent =
   | { type: "items"; items: ChatItem[] }
   | { type: "upsert"; item: ChatItem }
+  | { type: "remove"; id: string }
   | { type: "delta"; id: string; field: "text" | "detail"; delta: string }
   | { type: "pending"; request: PendingRequest }
   | { type: "resolved"; id: string }
@@ -228,6 +229,8 @@ export function applyChatEvent(snapshot: ChatSnapshot, event: ChatEvent): ChatSn
           : snapshot.items.map((item, i) => (i === index ? event.item : item));
       return { ...snapshot, items };
     }
+    case "remove":
+      return { ...snapshot, items: snapshot.items.filter((item) => item.id !== event.id) };
     case "delta":
       return {
         ...snapshot,
@@ -441,6 +444,13 @@ export const chatReadMarkdown = (folders: string[], path: string) =>
 
 export const chatInterrupt = (taskId: string, agent: AgentId) =>
   invoke<void>("chat_interrupt", { taskId, agent });
+
+/** Redirects the turn in progress with a message queued during it. */
+export const chatSteerQueued = (taskId: string, agent: AgentId, itemId: string) =>
+  invoke<void>("chat_steer_queued", { taskId, agent, itemId });
+
+export const chatUnqueue = (taskId: string, agent: AgentId, itemId: string) =>
+  invoke<void>("chat_unqueue", { taskId, agent, itemId });
 
 export const chatRespond = (
   taskId: string,

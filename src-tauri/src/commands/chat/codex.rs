@@ -2,7 +2,7 @@
 //! codex-cli 0.155.1: initialize → account/read → thread/resume|start → turn/start (review/start from 0.159.1), with
 //! command/file approvals and tool questions arriving as server requests.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
@@ -60,6 +60,7 @@ enum Call {
     Resume,
     Start,
     Turn,
+    Steer,
     Review,
     Models,
     Config,
@@ -112,6 +113,16 @@ pub struct CodexProvider {
     pinned: bool,
     /// Digest of the conversation this one continues, injected into every new thread.
     handoff: Option<String>,
+    /// Messages sent mid-turn, shown by a placeholder item until they run or steer the turn.
+    queued: VecDeque<QueuedInput>,
+    /// Steers Codex has yet to echo as user messages of the turn in progress.
+    steered_echoes: usize,
+    steered_items: HashSet<String>,
+}
+
+struct QueuedInput {
+    item: ChatItem,
+    input: Vec<Value>,
 }
 
 impl Drop for CodexProvider {
@@ -168,6 +179,9 @@ impl CodexProvider {
             },
             skills: HashMap::new(),
             selection_restored: false,
+            queued: VecDeque::new(),
+            steered_echoes: 0,
+            steered_items: HashSet::new(),
             config_approval: None,
             config_reviewer: None,
             config_sandbox: None,
@@ -442,6 +456,49 @@ impl CodexProvider {
         ChatItem::new(format!("error-{}", self.errors), ItemKind::Error, message)
     }
 
+    fn start_turn(&mut self, input: Vec<Value>, out: &mut ProviderOutput) {
+        let mut params = self.turn_overrides();
+        params.insert("threadId".into(), json!(self.thread_id));
+        params.insert("input".into(), json!(input));
+        self.call(out, Call::Turn, "turn/start", Value::Object(params));
+        out.starts_turn = true;
+        self.busy = true;
+        out.status(ChatStatus::Busy);
+    }
+
+    fn steer_input(&mut self, input: Vec<Value>, out: &mut ProviderOutput) -> Result<(), String> {
+        let (Some(thread_id), Some(turn_id)) = (self.thread_id.clone(), self.turn_id.clone())
+        else {
+            return Err("Codex is starting the turn; steer again in a moment".into());
+        };
+        self.call(
+            out,
+            Call::Steer,
+            "turn/steer",
+            json!({ "threadId": thread_id, "input": input, "expectedTurnId": turn_id }),
+        );
+        self.steered_echoes += 1;
+        Ok(())
+    }
+
+    fn queued_index(&self, item_id: &str) -> Result<usize, String> {
+        self.queued
+            .iter()
+            .position(|queued| queued.item.id == item_id)
+            .ok_or_else(|| "That message is no longer queued".into())
+    }
+
+    /// Codex echoes a steer as a user message of the turn in progress, under its own id.
+    fn mark_steered(&mut self, item: &mut ChatItem, started: bool) {
+        if started && self.steered_echoes > 0 {
+            self.steered_echoes -= 1;
+            self.steered_items.insert(item.id.clone());
+        }
+        if self.steered_items.contains(&item.id) {
+            item.status = Some(STEERED.into());
+        }
+    }
+
     fn adopt_thread(&mut self, thread: &Value, out: &mut ProviderOutput) {
         let Some(id) = thread["id"].as_str() else {
             return;
@@ -631,6 +688,13 @@ impl CodexProvider {
                 }
                 out.status(ChatStatus::Idle);
             }
+            Call::Steer => {
+                if let Some(error) = error {
+                    self.steered_echoes = self.steered_echoes.saturating_sub(1);
+                    let item = self.error_item(format!("Codex did not take the message: {error}"));
+                    out.upsert(item);
+                }
+            }
             Call::Turn | Call::Review => match error {
                 Some(error) => {
                     out.completes_turn = true;
@@ -720,7 +784,15 @@ impl CodexProvider {
                     let item = self.error_item(message);
                     out.upsert(item);
                 }
+                if let Some(marker) = interrupted_marker(&params["turn"]) {
+                    out.upsert(marker);
+                }
                 out.status(ChatStatus::Idle);
+                self.steered_echoes = 0;
+                if let Some(next) = self.queued.pop_front() {
+                    out.event(ChatEvent::Remove { id: next.item.id });
+                    self.start_turn(next.input, out);
+                }
             }
             "item/started" | "item/completed" => {
                 if let Some(mut item) = map_item(&params["item"]) {
@@ -738,6 +810,7 @@ impl CodexProvider {
                         if let Some(turn) = params["turnId"].as_str().or(self.turn_id.as_deref()) {
                             self.user_turns.insert(item.id.clone(), turn.to_string());
                         }
+                        self.mark_steered(&mut item, method == "item/started");
                     }
                     out.upsert(item);
                 }
@@ -1014,10 +1087,9 @@ impl ChatProvider for CodexProvider {
         images: &[ChatImage],
         out: &mut ProviderOutput,
     ) -> Result<(), String> {
-        let thread_id = self
-            .thread_id
-            .clone()
-            .ok_or("Codex conversation is not ready yet")?;
+        if self.thread_id.is_none() {
+            return Err("Codex conversation is not ready yet".into());
+        }
         let image_paths = images
             .iter()
             .map(|image| save_image(&self.image_dir, image))
@@ -1025,25 +1097,37 @@ impl ChatProvider for CodexProvider {
         let input = self.user_input(text, &image_paths);
         self.drop_async_questions(out);
         if self.busy {
-            let turn_id = self
-                .turn_id
-                .clone()
-                .ok_or("Codex is starting the turn; send again in a moment")?;
-            self.call(
-                out,
-                Call::Ignore,
-                "turn/steer",
-                json!({ "threadId": thread_id, "input": input, "expectedTurnId": turn_id }),
-            );
+            let id = format!("queued-{}", uuid::Uuid::new_v4());
+            let display = user_display_text(text, images.len());
+            let item = ChatItem::new(id, ItemKind::User, display).with_status(QUEUED);
+            out.upsert(item.clone());
+            self.queued.push_back(QueuedInput { item, input });
             return Ok(());
         }
-        let mut params = self.turn_overrides();
-        params.insert("threadId".into(), json!(thread_id));
-        params.insert("input".into(), json!(input));
-        self.call(out, Call::Turn, "turn/start", Value::Object(params));
-        out.starts_turn = true;
-        self.busy = true;
-        out.status(ChatStatus::Busy);
+        self.start_turn(input, out);
+        Ok(())
+    }
+
+    fn steer(&mut self, text: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        if !self.busy {
+            return self.send(text, &[], out);
+        }
+        let input = self.user_input(text, &[]);
+        self.steer_input(input, out)
+    }
+
+    fn steer_queued(&mut self, item_id: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        let index = self.queued_index(item_id)?;
+        self.steer_input(self.queued[index].input.clone(), out)?;
+        let queued = self.queued.remove(index).unwrap();
+        out.event(ChatEvent::Remove { id: queued.item.id });
+        Ok(())
+    }
+
+    fn unqueue(&mut self, item_id: &str, out: &mut ProviderOutput) -> Result<(), String> {
+        let index = self.queued_index(item_id)?;
+        self.queued.remove(index);
+        out.event(ChatEvent::Remove { id: item_id.into() });
         Ok(())
     }
 
@@ -1464,9 +1548,18 @@ pub(crate) fn thread_items(thread: &Value) -> Vec<ChatItem> {
         .as_array()
         .into_iter()
         .flatten()
-        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
-        .filter_map(map_item)
+        .flat_map(|turn| {
+            let items = turn["items"].as_array().into_iter().flatten();
+            items.filter_map(map_item).chain(interrupted_marker(turn))
+        })
         .collect()
+}
+
+fn interrupted_marker(turn: &Value) -> Option<ChatItem> {
+    let id = turn["id"]
+        .as_str()
+        .filter(|_| turn["status"] == "interrupted")?;
+    Some(ChatItem::interrupted(format!("interrupted-{id}")))
 }
 
 pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
@@ -2003,8 +2096,10 @@ mod tests {
         assert_eq!(turn["method"], "turn/start");
         assert_eq!(turn["params"]["input"][0]["text"], "edit");
         let mut out = ProviderOutput::default();
-        assert!(provider.send("again", &[], &mut out).is_err());
+        provider.send("again", &[], &mut out).unwrap();
         assert!(out.writes.is_empty());
+        let mut steer = ProviderOutput::default();
+        assert!(provider.steer("again", &mut steer).is_err());
 
         let mut provider = resumed().0;
         let lines = [
@@ -2025,7 +2120,7 @@ mod tests {
         assert_eq!(snapshot.status, ChatStatus::Busy);
         assert_eq!(snapshot.item("a1").unwrap().text, "Done");
         let mut out = ProviderOutput::default();
-        provider.send("also @src/a.rs", &[], &mut out).unwrap();
+        provider.steer("also @src/a.rs", &mut out).unwrap();
         let steer = request(&out, "turn/steer");
         assert_eq!(steer["params"]["expectedTurnId"], "t1");
         assert_eq!(steer["params"]["input"][1]["type"], "mention");
@@ -2051,6 +2146,147 @@ mod tests {
         assert!(stopped.interrupted);
         assert_eq!(snapshot.item("a1").unwrap().text, "Done.");
         assert_eq!(snapshot.status, ChatStatus::Idle);
+        let marker = snapshot.items.last().unwrap();
+        assert_eq!(
+            (marker.id.as_str(), marker.text.as_str()),
+            ("interrupted-t1", INTERRUPTED_NOTICE)
+        );
+    }
+
+    fn busy() -> (CodexProvider, ChatSnapshot) {
+        let (mut provider, mut snapshot) = resumed();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "turn/started", "params": { "threadId": "th1", "turn": { "id": "t1" } } }),
+        );
+        (provider, snapshot)
+    }
+
+    fn queue(provider: &mut CodexProvider, snapshot: &mut ChatSnapshot, text: &str) -> String {
+        let mut out = ProviderOutput::default();
+        provider.send(text, &[], &mut out).unwrap();
+        assert!(out.writes.is_empty());
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        let item = snapshot.items.last().unwrap();
+        assert_eq!(item.status.as_deref(), Some(QUEUED));
+        item.id.clone()
+    }
+
+    fn user_echo(method: &str, id: &str, text: &str) -> Value {
+        json!({ "method": method, "params": { "threadId": "th1", "turnId": "t1", "item": {
+            "type": "userMessage", "id": id, "content": [{ "type": "text", "text": text }],
+        } } })
+    }
+
+    #[test]
+    fn queued_messages_start_the_next_turn_unless_removed() {
+        let (mut provider, mut snapshot) = busy();
+        let first = queue(&mut provider, &mut snapshot, "use rebase");
+        let second = queue(&mut provider, &mut snapshot, "and squash");
+        let mut out = ProviderOutput::default();
+        provider.unqueue(&second, &mut out).unwrap();
+        assert_eq!(out.events, [ChatEvent::Remove { id: second.clone() }]);
+        assert!(provider.unqueue(&second, &mut out).is_err());
+
+        let next = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t1", "status": "completed" } } }),
+        );
+        assert!(next.starts_turn);
+        assert_eq!(
+            request(&next, "turn/start")["params"]["input"][0]["text"],
+            "use rebase"
+        );
+        assert!(snapshot.item(&first).is_none());
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+    }
+
+    #[test]
+    fn steering_a_queued_message_sends_it_into_the_turn_and_marks_its_echo() {
+        let (mut provider, mut snapshot) = busy();
+        let queued = queue(&mut provider, &mut snapshot, "use rebase");
+        let mut out = ProviderOutput::default();
+        provider.steer_queued(&queued, &mut out).unwrap();
+        assert_eq!(
+            request(&out, "turn/steer")["params"]["input"][0]["text"],
+            "use rebase"
+        );
+        assert!(out
+            .events
+            .contains(&ChatEvent::Remove { id: queued.clone() }));
+        assert!(provider.steer_queued(&queued, &mut out).is_err());
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            user_echo("item/started", "u2", "use rebase"),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            user_echo("item/completed", "u2", "use rebase"),
+        );
+        assert_eq!(
+            snapshot.item("u2").unwrap().status.as_deref(),
+            Some(STEERED)
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            user_echo("item/started", "u3", "plain"),
+        );
+        assert_eq!(snapshot.item("u3").unwrap().status, None);
+    }
+
+    #[test]
+    fn a_rejected_steer_is_reported_and_marks_nothing() {
+        let (mut provider, mut snapshot) = busy();
+        let mut out = ProviderOutput::default();
+        provider.steer("use rebase", &mut out).unwrap();
+        let id = request(&out, "turn/steer")["id"].clone();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": id, "error": { "code": -32600, "message": "no active turn" } }),
+        );
+        assert_eq!(
+            snapshot.items.last().unwrap().text,
+            "Codex did not take the message: no active turn"
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            user_echo("item/started", "u2", "next"),
+        );
+        assert_eq!(snapshot.item("u2").unwrap().status, None);
+    }
+
+    #[test]
+    fn steering_an_idle_thread_starts_a_turn() {
+        let (mut provider, _) = resumed();
+        let mut out = ProviderOutput::default();
+        provider.steer("use rebase", &mut out).unwrap();
+        assert!(out.starts_turn);
+        assert_eq!(
+            request(&out, "turn/start")["params"]["input"][0]["text"],
+            "use rebase"
+        );
+    }
+
+    #[test]
+    fn history_marks_interrupted_turns() {
+        let items = thread_items(&json!({ "turns": [
+            { "id": "t1", "status": "interrupted", "items": [
+                { "type": "userMessage", "id": "u1", "content": [{ "type": "text", "text": "go" }] },
+            ] },
+            { "id": "t2", "status": "completed", "items": [] },
+        ] }));
+        let ids: Vec<_> = items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["u1", "interrupted-t1"]);
     }
 
     #[test]
