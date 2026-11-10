@@ -132,9 +132,8 @@ pub fn hand_back(
         .map(|note| note.trim().to_string())
         .filter(|note| !note.is_empty());
     let writer = store.writer(name)?;
-    if routine {
-        writer.append(&run.id, &RunEvent::Reopened)?;
-    }
+    let reopen = || writer.append(&run.id, &RunEvent::Reopened);
+    routine.then(reopen).transpose()?;
     let handed_back = RunEvent::ItemHandedBack {
         item: item.id.clone(),
         note,
@@ -289,13 +288,17 @@ fn retry_step(chosen: &AutomationDefinition, item: &ItemState) -> Result<String,
 }
 
 fn others_open(run: &RunState, item: &ItemState) -> bool {
-    run.items.iter().any(|other| {
-        other.id != item.id
-            && matches!(
-                other.status,
-                ItemStatus::Queued | ItemStatus::Active | ItemStatus::Waiting
-            )
-    })
+    let open = |other: &&ItemState| {
+        let status = other.status;
+        matches!(
+            status,
+            ItemStatus::Queued | ItemStatus::Active | ItemStatus::Waiting
+        )
+    };
+    run.items
+        .iter()
+        .filter(|other| other.id != item.id)
+        .any(|other| open(&other))
 }
 
 fn drive_again(

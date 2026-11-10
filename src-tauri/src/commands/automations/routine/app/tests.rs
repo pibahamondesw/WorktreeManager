@@ -349,6 +349,7 @@ fn chat_sessions_steer_only_turns_in_progress_of_agents_that_steer() {
     assert!(!sessions.steer("unknown", "t1:claude", "Use rebase"));
     assert!(!sessions.steer("codex", "missing", "Use rebase"));
     sessions.interrupt("missing");
+    sessions.interrupt("t1:claude");
 }
 
 #[test]

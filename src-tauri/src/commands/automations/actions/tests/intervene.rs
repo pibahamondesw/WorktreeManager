@@ -224,6 +224,12 @@ fn a_retry_pins_the_chosen_definition_and_goes_on_from_the_step_that_failed() {
     assert_eq!(run.retried_hash.as_deref(), Some(original.as_str()));
     assert_eq!(harness.driven_again()[0].0.definition_hash, original);
 
+    let unchanged = harness.recorded(Some(harness.hash()), &failed_at("check"));
+    let on_current = harness.retry(
+        request(&unchanged, None, Actor::User),
+        RetryDefinition::Original,
+    );
+    assert_eq!(on_current.unwrap().step.as_deref(), Some("check"));
     let unknown = harness.recorded(Some(harness.hash()), &failed_at("gone"));
     assert_eq!(
         harness.retry(
