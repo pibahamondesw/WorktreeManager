@@ -472,6 +472,13 @@ impl CodexProvider {
         out.status(ChatStatus::Busy);
     }
 
+    fn ensure_thread(&self) -> Result<(), String> {
+        self.thread_id
+            .as_ref()
+            .ok_or("Codex conversation is not ready yet")?;
+        Ok(())
+    }
+
     /// Compaction runs as a turn of its own; until it starts, nothing else may start one.
     fn start_compaction(&mut self, out: &mut ProviderOutput) {
         self.call(
@@ -1108,9 +1115,7 @@ impl ChatProvider for CodexProvider {
         images: &[ChatImage],
         out: &mut ProviderOutput,
     ) -> Result<(), String> {
-        if self.thread_id.is_none() {
-            return Err("Codex conversation is not ready yet".into());
-        }
+        self.ensure_thread()?;
         let image_paths = images
             .iter()
             .map(|image| save_image(&self.image_dir, image))
@@ -1222,9 +1227,7 @@ impl ChatProvider for CodexProvider {
     }
 
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String> {
-        if self.thread_id.is_none() {
-            return Err("Codex conversation is not ready yet".into());
-        }
+        self.ensure_thread()?;
         if self.busy {
             let id = format!("queued-{}", uuid::Uuid::new_v4());
             let item = ChatItem::new(id, ItemKind::User, "/compact").with_status(QUEUED);
