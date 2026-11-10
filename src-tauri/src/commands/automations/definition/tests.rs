@@ -554,11 +554,6 @@ fn app_event_triggers_declare_a_type_and_conditions() {
     assert!(valid(&routine("")).trigger.events.is_empty());
     let event = |entry: &str| routine(&format!("trigger:\n  event: [{entry}]\n"));
     assert_issue(
-        &event("{ source: linear, type: task.created }"),
-        "trigger.event[0].source",
-        IssueKind::Unsupported,
-    );
-    assert_issue(
         &event("{ source: slack, type: task.created }"),
         "trigger.event[0].source",
         IssueKind::Invalid,
@@ -2262,4 +2257,96 @@ fn pr_body_templates_must_be_text_templates() {
         fs::write(folder.join("pr.md"), "{ not a variable").unwrap();
     });
     assert_eq!(issues(&unbalanced), [(field, IssueKind::Invalid)]);
+}
+
+#[test]
+fn linear_event_triggers_declare_a_type_and_conditions() {
+    let definition = valid(&routine(
+        "trigger:\n  manual: false\n  event:\n    - { source: linear, type: issue.label_added, where: { team: ENG, label: \" Bug \", assignee: me } }\n    - { source: linear, type: issue.created }\n    - { source: app, type: task.created }\n",
+    ));
+    let linear = &definition.trigger.linear_events;
+    assert_eq!(
+        serde_json::to_value(linear).unwrap(),
+        json!([
+            { "type": "issue.label_added", "team": "ENG", "label": "Bug", "assignee": "me", "state": null },
+            { "type": "issue.created", "team": null, "label": null, "assignee": null, "state": null }
+        ])
+    );
+    assert_eq!(definition.trigger.events.len(), 1);
+    assert_eq!(LinearEventKind::StateChanged.action(), "state_changed");
+    let entered = valid(&routine(
+        "trigger:\n  manual: false\n  event: [{ source: linear, type: issue.state_changed, where: { state: In Review } }]\n",
+    ));
+    assert!(entered.trigger.events.is_empty());
+    assert_eq!(
+        entered.trigger.linear_events[0].state.as_deref(),
+        Some("In Review")
+    );
+    let event = |entry: &str| routine(&format!("trigger:\n  event: [{entry}]\n"));
+    for (entry, field, kind) in [
+        (
+            "{ source: linear, type: task.created }",
+            "trigger.event[0].type",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: linear }",
+            "trigger.event[0].type",
+            IssueKind::Missing,
+        ),
+        (
+            "{ source: linear, type: issue.created, where: { workspace: Acme } }",
+            "trigger.event[0].where.workspace",
+            IssueKind::UnknownField,
+        ),
+        (
+            "{ source: linear, type: issue.created, where: { team: \" \" } }",
+            "trigger.event[0].where.team",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: linear, type: issue.created, where: { label: [Bug] } }",
+            "trigger.event[0].where.label",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: linear, type: issue.created, where: [] }",
+            "trigger.event[0].where",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: linear, type: issue.created, extra: 1 }",
+            "trigger.event[0].extra",
+            IssueKind::UnknownField,
+        ),
+        ("linear", "trigger.event[0]", IssueKind::Invalid),
+        (
+            "{ source: linear, type: issue.created, where: { state: Done } }",
+            "trigger.event[0].where.state",
+            IssueKind::UnknownField,
+        ),
+        (
+            "{ source: linear, type: issue.state_changed, where: { state: \"\" } }",
+            "trigger.event[0].where.state",
+            IssueKind::Invalid,
+        ),
+    ] {
+        assert_issue(&event(entry), field, kind);
+    }
+}
+
+#[test]
+fn linear_events_supply_no_task_to_an_existing_target() {
+    let existing =
+        |trigger: &str| routine(trigger).replace("repos: [app]", "repos: [app]\n  task: existing");
+    for events in [
+        "[{ source: linear, type: issue.created }]",
+        "[{ source: app, type: agent.done }, { source: linear, type: issue.created }]",
+    ] {
+        assert_issue(
+            &existing(&format!("trigger: {{ manual: false, event: {events} }}\n")),
+            "target.existing_task",
+            IssueKind::Missing,
+        );
+    }
 }

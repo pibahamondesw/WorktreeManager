@@ -26,6 +26,13 @@ pub fn run() {
         .manage(commands::code_server::EditorRegistry::default())
         .manage(lifecycle::Background::default())
         .setup(|app| {
+            if cfg!(debug_assertions) {
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .build(),
+                )?;
+            }
             std::thread::spawn(commands::chat::purge_stale_chat_images);
             #[cfg(unix)]
             app.manage(
@@ -40,13 +47,6 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
             Ok(())
         })
         .invoke_handler({
@@ -191,5 +191,39 @@ fn start_automations(app: &tauri::AppHandle) -> Result<(), String> {
     let executor: Arc<dyn scheduler::Executor> =
         Arc::new(routine::RoutineExecutor::of(app, operations)?.with_lease_pools(Arc::new(leases)));
     app.manage(actions::AutomationEngine(executor.clone()));
+    start_linear_triggers(app, executor.clone())?;
     scheduler::start_scheduler(app.clone(), executor)
+}
+
+/// Polls Linear once a minute for the automations with Linear event triggers.
+#[cfg(unix)]
+fn start_linear_triggers(
+    app: &tauri::AppHandle,
+    executor: Arc<dyn commands::automations::scheduler::Executor>,
+) -> Result<(), String> {
+    use commands::automations::{actions::linear, definition, store::RunStore};
+    let store = RunStore::of(app)?;
+    let keychain = app.clone();
+    let secrets: linear::SecretReader =
+        Arc::new(move || commands::keychain::keychain_get(keychain.clone()));
+    let mut triggers = linear::LinearTriggers::new(Arc::new(linear::GraphqlLinear::new(secrets)));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        log::info!("Linear triggers poll every minute");
+        loop {
+            match definition::load_current(&app) {
+                Ok(entries) => {
+                    let definitions: Vec<_> = entries
+                        .iter()
+                        .filter_map(|e| e.definition.as_ref())
+                        .collect();
+                    let now = std::time::SystemTime::now().into();
+                    triggers.poll(&store, executor.as_ref(), &definitions, now);
+                }
+                Err(error) => log::warn!("Linear triggers could not load the automations: {error}"),
+            }
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+    });
+    Ok(())
 }

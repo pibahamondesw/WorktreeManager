@@ -14,6 +14,7 @@ use super::fields::{
     is_instant, is_step_id, join, map, string, string_list, template, template_list, Fields,
     Report,
 };
+use super::linear_trigger::linear_event_trigger;
 use super::{
     AgentSettings, AgentStep, AppEventKind, ApprovalDefault, ApprovalStep, Authorization,
     AutomationDefinition, Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency,
@@ -119,7 +120,7 @@ pub(super) fn definition(
         manual_trigger(),
         |report, value, field| trigger(report, context.env, value, field),
     );
-    let events_supply_task = frontmatter["trigger"].get("event").is_some();
+    let events_supply_task = only_app_events(&frontmatter["trigger"]["event"]);
     let target = fields.require(report, "target", |report, value, field| {
         target(report, context.env, value, field, events_supply_task)
     });
@@ -279,11 +280,19 @@ fn check_instructions(report: &mut Report, instructions: &str, steps: Option<&[S
     }
 }
 
+/// App events carry their task; Linear events carry none.
+fn only_app_events(events: &Value) -> bool {
+    events
+        .as_array()
+        .is_some_and(|events| events.iter().all(|event| event["source"] == "app"))
+}
+
 fn manual_trigger() -> Trigger {
     Trigger {
         manual: true,
         schedule: None,
         events: Vec::new(),
+        linear_events: Vec::new(),
         cli: false,
     }
 }
@@ -294,10 +303,16 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
     let schedule = fields.optional(report, "schedule", |report, value, field| {
         schedule(report, env.now, value, field)
     });
+    let mut linear_events = Vec::new();
     let events = fields.or(report, "event", Vec::new(), |report, value, field| {
         each(report, value, field, |report, value, field| {
-            event_trigger(report, env, value, field)
+            if value["source"] == "linear" {
+                linear_events.push(linear_event_trigger(report, value, field)?);
+                return Some(None);
+            }
+            event_trigger(report, env, value, field).map(Some)
         })
+        .map(|events| events.into_iter().flatten().collect())
     });
     let cli = fields.or(report, "cli", false, boolean);
     fields.finish(report);
@@ -305,9 +320,11 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
         manual: manual?,
         schedule: schedule?,
         events: events?,
+        linear_events,
         cli: cli?,
     };
-    if !trigger.manual && trigger.schedule.is_none() && trigger.events.is_empty() && !trigger.cli {
+    let no_events = trigger.events.is_empty() && trigger.linear_events.is_empty();
+    if !trigger.manual && trigger.schedule.is_none() && no_events && !trigger.cli {
         report.error(
             IssueKind::Invalid,
             field,
@@ -347,15 +364,15 @@ fn event_trigger(
 fn event_source(report: &mut Report, value: &Value, field: &str) -> Option<()> {
     match value.as_str() {
         Some("app") => Some(()),
-        Some(source @ ("linear" | "github")) => {
+        Some("github") => {
             report.error(
                 IssueKind::Unsupported,
                 field,
-                format!("{source} events are not supported yet"),
+                "github events are not supported yet",
             );
             None
         }
-        _ => choice(report, value, field, &[("app", ())]),
+        _ => choice(report, value, field, &[("app", ()), ("linear", ())]),
     }
 }
 

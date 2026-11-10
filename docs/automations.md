@@ -108,7 +108,7 @@ Every key is optional; the triggers present are OR-ed.
 | `schedule.cron`     | string             | required           | 5-field cron. Slots closer than the minimum interval (app preference, default 15 minutes) are a validation error.                                                                                                                                                                                                                                                                 |
 | `schedule.tz`       | string             | `America/Santiago` | IANA timezone; DST handled by the scheduler.                                                                                                                                                                                                                                                                                                                                      |
 | `schedule.catch_up` | `latest` \| `skip` | `latest`           | `latest`: slots missed while the Mac slept or the app was closed collapse into one run for the **latest** missed slot within 7 days, with `scheduled_for` and `fired_at`. `skip`: missed slots are only recorded as skipped. Compose collapses into the oldest slot; WTM uses the latest because a local run should act on the freshest state.                                    |
-| `event`             | list               | none               | Entries `{source: app \| linear \| github, type: <event>.<action>, where: {…}}`; every condition must pass. `linear` and `github` are **deferred (WOR-271, WOR-272)**. See [App events](#app-events). Events caused by this automation's own runs never fire it.                                                                                                                  |
+| `event`             | list               | none               | Entries `{source: app \| linear \| github, type: <event>.<action>, where: {…}}`; every condition must pass. `github` is **deferred (WOR-272)**. See [App events](#app-events) and [Linear events](#linear-events). Events caused by this automation's own runs never fire it.                                                                                                     |
 | `cli`               | bool               | `false`            | Allows `wtm automation fire <name> --key <trigger_key> [--payload <json\|@file>]` from external callers (Compose, launchd, scheduled agent tasks, Git hooks). It prints the run id without waiting; a key that already fired prints its existing run with `deduped: true`. A paused automation records the firing as skipped with `paused`. The CLI reads `@file`, never the app. |
 
 At least one of `manual: true`, `schedule`, `event` or `cli: true` must be present.
@@ -127,6 +127,21 @@ The app reports these events with `source: app`. Each carries its task, and the 
 - Task and pull request events of a task the automation created never fire it. Agent events of sessions any automation started are never reported, so automations cannot fire each other in a loop.
 - Runs fired by events for one task serialize: `concurrency.max_runs` counts the active runs for that task; the `active` pool still counts every run.
 - `target.task: existing` without `existing_task` works in the event's task.
+
+#### Linear events
+
+With `source: linear`, the app polls Linear with the Linear key of the target workspace, read from Keychain, once a minute and backing off up to 15 minutes after failures. It only polls workspaces with an enabled automation listening, from the app process, so it works with the window hidden. The run gets the issue and the change as its payload (untrusted), and no task.
+
+| `type`                | When                                                  | `trigger_key`                           |
+| --------------------- | ----------------------------------------------------- | --------------------------------------- |
+| `issue.created`       | An issue was created.                                 | `issue:<id>:created:<createdAt>`        |
+| `issue.label_added`   | Labels were added to an issue, and it still has them. | `issue:<id>:label_added:<changed at>`   |
+| `issue.state_changed` | An issue moved to another state.                      | `issue:<id>:state_changed:<changed at>` |
+
+- `where` takes `team` (key or name), `label` (a label name; for `issue.label_added`, one of the labels added) and `assignee` (email, name, display name, or `me` for the owner of the key), and for `issue.state_changed` only `state` (the state entered, such as `In Review`), all case-insensitive.
+- Each automation keeps the newest `updatedAt` it has seen as `linear_cursor` in `state.json`. The first poll after enabling only records it, and pausing drops it, so changes made before enabling or while paused never fire.
+- Issues whose description carries the fixed start of the automation's own markers (`tracker.linear.marker` and `linear.upsert` overrides, up to their first variable other than `{automation}`) are its own doing and never fire it. The actor cannot tell them apart: the engine writes with the owner's key.
+- A missing key or a failed query fires nothing and is logged without the key; the next poll backs off.
 
 ### Concurrency
 
