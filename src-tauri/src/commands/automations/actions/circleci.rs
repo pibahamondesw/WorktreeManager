@@ -217,14 +217,14 @@ impl CircleciTriggers {
                 }
                 continue;
             }
-            let mut projects: BTreeMap<String, Option<&'a TargetRepo>> = BTreeMap::new();
-            if triggers.iter().any(|trigger| trigger.project.is_none()) {
-                for repo in &definition.target.repos {
-                    if let Some(slug) = self.project(repo) {
-                        projects.insert(slug, Some(repo));
-                    }
-                }
-            }
+            let defaults = triggers.iter().any(|trigger| trigger.project.is_none());
+            let mut projects: BTreeMap<String, Option<&'a TargetRepo>> = definition
+                .target
+                .repos
+                .iter()
+                .filter(|_| defaults)
+                .filter_map(|repo| Some((self.project(repo)?, Some(repo))))
+                .collect();
             for slug in triggers
                 .iter()
                 .filter_map(|trigger| trigger.project.as_ref())
