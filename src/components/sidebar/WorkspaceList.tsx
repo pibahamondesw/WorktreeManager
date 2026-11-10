@@ -1,5 +1,6 @@
 import { useShortcutLabels } from "../../shortcuts/runtime";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useMouseReorder } from "../../hooks/useMouseReorder";
 import { Task, VaultConfig, Workspace } from "../../types";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 import { EditWorkspaceModal } from "./EditWorkspaceModal";
@@ -86,44 +87,10 @@ export function WorkspaceList({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [editWorkspace, setEditWorkspace] = useState<Workspace | null>(null);
   const [removeWorkspace, setRemoveWorkspace] = useState<Workspace | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  // Source index lives in a ref so drop logic never depends on async state having flushed.
-  const dragIndexRef = useRef<number | null>(null);
-
-  const draggingIndex = draggingId ? workspaces.findIndex((w) => w.id === draggingId) : -1;
-
-  const handleDragStart = (e: React.DragEvent, index: number, id: string) => {
-    dragIndexRef.current = index;
-    setDraggingId(id);
-    e.dataTransfer.effectAllowed = "move";
-    // Some engines require data to be set for the drag to initiate.
-    e.dataTransfer.setData("text/plain", String(index));
-  };
-
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    // Must always preventDefault so this element is a valid drop target and `drop` fires.
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    if (index !== dragOverIndex) setDragOverIndex(index);
-  };
-
-  const handleDrop = (e: React.DragEvent, index: number) => {
-    e.preventDefault();
-    const from = dragIndexRef.current;
-    if (from !== null && from !== index) {
-      onReorder(from, index);
-    }
-    dragIndexRef.current = null;
-    setDraggingId(null);
-    setDragOverIndex(null);
-  };
-
-  const handleDragEnd = () => {
-    dragIndexRef.current = null;
-    setDraggingId(null);
-    setDragOverIndex(null);
-  };
+  const indexOf = (id: string) => workspaces.findIndex((w) => w.id === id);
+  const reorder = useMouseReorder((source, target) => onReorder(indexOf(source), indexOf(target)));
+  const draggingId = reorder.dragging;
+  const draggingIndex = draggingId ? indexOf(draggingId) : -1;
 
   const taskCountByWorkspaceId = useMemo(() => {
     const m = new Map<string, number>();
@@ -215,20 +182,17 @@ export function WorkspaceList({
           const activeTaskCount = taskCountByWorkspaceId.get(workspace.id) ?? 0;
           const isSelected = selectedWorkspaceId === workspace.id;
           const isDragging = draggingId === workspace.id;
-          const showDropIndicator = draggingId !== null && dragOverIndex === index && !isDragging;
+          const showDropIndicator =
+            draggingId !== null && reorder.over === workspace.id && !isDragging;
           const dropAbove = showDropIndicator && draggingIndex > index;
           const dropBelow = showDropIndicator && draggingIndex < index;
           return (
             <div
               key={workspace.id}
-              draggable
+              {...reorder.itemProps(workspace.id)}
               onClick={() => onSelect(workspace.id)}
               onMouseEnter={() => setHoveredId(workspace.id)}
               onMouseLeave={() => setHoveredId(null)}
-              onDragStart={(e) => handleDragStart(e, index, workspace.id)}
-              onDragOver={(e) => handleDragOver(e, index)}
-              onDrop={(e) => handleDrop(e, index)}
-              onDragEnd={handleDragEnd}
               className={`group relative flex items-center justify-between gap-2 pl-6 pr-4 py-2.5 mx-2 rounded-lg cursor-pointer transition-colors ${
                 isDragging ? "opacity-50" : ""
               } ${

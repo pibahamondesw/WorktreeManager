@@ -115,33 +115,35 @@ it("routes pin toggles and only allows pinned tasks to be dragged", async () => 
       ["first", false],
     ])
   );
-  expect(screen.getByText("unpinned").parentElement).toHaveAttribute("draggable", "false");
-  expect(screen.getByText("first").parentElement).toHaveAttribute("draggable", "true");
+  expect(screen.getByText("unpinned").parentElement).not.toHaveAttribute("data-reorder-key");
+  expect(screen.getByText("first").parentElement).toHaveAttribute("data-reorder-key", "first");
 });
 
-it("reorders by task ID and ignores unpinned or external drops", async () => {
+function drag(source: Element, target: Element) {
+  fireEvent.mouseDown(source, { button: 0, clientX: 0, clientY: 0 });
+  fireEvent.mouseMove(target, { clientX: 0, clientY: 40 });
+  fireEvent.mouseUp(target);
+}
+
+it("reorders by task ID and ignores clicks, short moves and unpinned targets", async () => {
   const { onPinnedTasksReordered } = fixture();
   const first = screen.getByText("first").parentElement!;
   const second = screen.getByText("second").parentElement!;
   const unpinned = screen.getByText("unpinned").parentElement!;
-  const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
-  fireEvent.drop(first, { dataTransfer });
+  fireEvent.mouseDown(first, { button: 0, clientX: 0, clientY: 0 });
+  fireEvent.mouseMove(second, { clientX: 0, clientY: 2 });
+  fireEvent.mouseUp(second);
   expect(onPinnedTasksReordered).not.toHaveBeenCalled();
-  fireEvent.dragStart(first, { dataTransfer });
-  fireEvent.dragOver(second, { dataTransfer });
-  fireEvent.drop(second, { dataTransfer });
+  drag(first, second);
   await waitFor(() => expect(onPinnedTasksReordered).toHaveBeenCalledWith("first", "second"));
-  fireEvent.dragStart(second, { dataTransfer });
-  fireEvent.drop(unpinned, { dataTransfer });
+  drag(second, unpinned);
   expect(onPinnedTasksReordered).toHaveBeenCalledOnce();
 });
 
 it("shows persistence errors from reordering", async () => {
   const { onPinnedTasksReordered } = fixture();
   onPinnedTasksReordered.mockRejectedValue(new Error("Could not save changes"));
-  const dataTransfer = { setData: vi.fn() };
-  fireEvent.dragStart(screen.getByText("first").parentElement!, { dataTransfer });
-  fireEvent.drop(screen.getByText("second").parentElement!, { dataTransfer });
+  drag(screen.getByText("first").parentElement!, screen.getByText("second").parentElement!);
   expect(await screen.findByText("Error: Could not save changes")).toBeInTheDocument();
 });
 
