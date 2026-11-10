@@ -54,7 +54,7 @@ impl PrIntegrated {
     fn watch(&self, params: &WatchParams, watch: &Watch) -> Result<WatchVerdict, WatchVerdict> {
         let target = Target::of(watch, params)?;
         let (github, now_ms) = (self.github.clone(), watch.now_ms);
-        let (fetch_target, worktree) = (target.clone(), worktree(watch, params));
+        let (fetch_target, worktree) = (target.clone(), worktree(watch, params.repo.as_deref()));
         let latest = self.polls.latest(
             &target.key(),
             now_ms,

@@ -74,6 +74,7 @@ const WATCH: Watch = Watch {
     task: None,
     test: false,
     wait_per_head_secs: 3_600,
+    scripts: None,
 };
 
 struct Fixed(WatchVerdict);

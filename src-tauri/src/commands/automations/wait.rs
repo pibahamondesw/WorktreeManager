@@ -6,6 +6,7 @@
 mod tests;
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use chrono::DateTime;
@@ -47,6 +48,20 @@ pub struct Watch<'a> {
     /// A Test run: its publish effects were staged, so there is nothing published to watch.
     pub test: bool,
     pub wait_per_head_secs: u64,
+    /// What the automation's scripts run with, for watchers that run them.
+    pub scripts: Option<WatchScripts<'a>>,
+}
+
+/// The attempt as a `command` step of the item would see it.
+pub struct WatchScripts<'a> {
+    /// The automation folder, which `scripts/…` programs are relative to.
+    pub folder: &'a Path,
+    /// Names the attempt: automation, run, item, step and attempt number.
+    pub attempt: String,
+    /// The item's template values.
+    pub variables: Vec<(String, String)>,
+    /// The item's `WTM_*` variables, except `WTM_WORKTREE`.
+    pub env: Vec<(String, String)>,
 }
 
 /// Decides `event` conditions. Checked on every scheduler tick while a wait is open, so it should

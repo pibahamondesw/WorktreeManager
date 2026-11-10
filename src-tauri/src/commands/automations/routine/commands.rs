@@ -36,23 +36,24 @@ pub(super) struct TaskCommands {
     task: ResolvedTask,
     data_file: PathBuf,
     data: Map<String, Value>,
-    variables: Vec<(String, String)>,
-    env: Vec<(String, String)>,
+    scope: ItemScope,
     leases: StepLeases,
 }
 
-impl TaskCommands {
-    /// Writes the item's data where `WTM_ITEM_DATA` points.
+/// The item's template values and `WTM_*` variables, except `WTM_WORKTREE`.
+pub(super) struct ItemScope {
+    pub variables: Vec<(String, String)>,
+    pub env: Vec<(String, String)>,
+}
+
+impl ItemScope {
     pub fn new(
         run_dir: &Path,
         run_variables: Vec<(&'static str, String)>,
         task: &ResolvedTask,
         item: &Item,
-        leases: StepLeases,
-    ) -> Result<Self, String> {
-        let data_file = run_dir.join(item_data_file(&item.id));
-        let data = serde_json::to_vec(&item.data).map_err(|e| e.to_string())?;
-        write_atomically(&data_file, &data).map_err(|e| format!("{}: {e}", data_file.display()))?;
+    ) -> Self {
+        let data_file = item_data_path(run_dir, &item.id);
         let value = |name: &str| {
             run_variables
                 .iter()
@@ -82,12 +83,36 @@ impl TaskCommands {
         ]);
         variables.extend(item.title.clone().map(|title| ("item.title".into(), title)));
         variables.extend(item.data.iter().map(item_data_variable));
+        Self { variables, env }
+    }
+
+    /// Values an approver edited replace the item's data variables.
+    pub fn edit(&mut self, edited: &Map<String, Value>) {
+        for entry in edited {
+            let (name, text) = item_data_variable(entry);
+            self.variables.retain(|(variable, _)| *variable != name);
+            self.variables.push((name, text));
+        }
+    }
+}
+
+impl TaskCommands {
+    /// Writes the item's data where `WTM_ITEM_DATA` points.
+    pub fn new(
+        run_dir: &Path,
+        run_variables: Vec<(&'static str, String)>,
+        task: &ResolvedTask,
+        item: &Item,
+        leases: StepLeases,
+    ) -> Result<Self, String> {
+        let data_file = item_data_path(run_dir, &item.id);
+        let data = serde_json::to_vec(&item.data).map_err(|e| e.to_string())?;
+        write_atomically(&data_file, &data).map_err(|e| format!("{}: {e}", data_file.display()))?;
         Ok(Self {
             task: task.clone(),
             data_file,
             data: item.data.clone(),
-            variables,
-            env,
+            scope: ItemScope::new(run_dir, run_variables, task, item),
             leases,
         })
     }
@@ -97,19 +122,19 @@ impl TaskCommands {
         if edited.is_empty() {
             return Ok(());
         }
-        for (key, value) in edited {
-            self.data.insert(key.clone(), value.clone());
-            let (name, text) = item_data_variable((key, value));
-            self.variables.retain(|(variable, _)| *variable != name);
-            self.variables.push((name, text));
-        }
+        self.data.extend(
+            edited
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.scope.edit(edited);
         let data = serde_json::to_vec(&self.data).map_err(|e| e.to_string())?;
         write_atomically(&self.data_file, &data)
             .map_err(|e| format!("{}: {e}", self.data_file.display()))
     }
 
     pub fn variables(&self) -> &[(String, String)] {
-        &self.variables
+        &self.scope.variables
     }
 
     pub fn leases(&self) -> &StepLeases {
@@ -128,11 +153,11 @@ impl CommandContext for TaskCommands {
     }
 
     fn render(&self, _: &StepRequest, template: &str) -> Result<String, String> {
-        render(template, &self.variables)
+        render(template, &self.scope.variables)
     }
 
     fn env(&self, _: &StepRequest) -> Vec<(String, String)> {
-        self.env.clone()
+        self.scope.env.clone()
     }
 
     fn hold_leases(&self, request: &StepRequest) -> Result<HeldLeases, String> {
@@ -148,6 +173,9 @@ pub(super) fn item_data_variable((key, value): (&String, &Value)) -> (String, St
 }
 
 /// Item ids are free text, so each item's data file is named by a digest.
-fn item_data_file(item_id: &str) -> String {
-    format!("item-data-{:x}.json", Sha256::digest(item_id.as_bytes()))
+fn item_data_path(run_dir: &Path, item_id: &str) -> PathBuf {
+    run_dir.join(format!(
+        "item-data-{:x}.json",
+        Sha256::digest(item_id.as_bytes())
+    ))
 }

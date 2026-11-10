@@ -76,7 +76,9 @@ impl ScriptSelector {
     }
 }
 
-fn read_all(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>> {
+pub(in crate::commands::automations) fn read_all(
+    pipe: Option<impl Read + Send + 'static>,
+) -> JoinHandle<Vec<u8>> {
     thread::spawn(move || {
         let mut bytes = Vec::new();
         if let Some(mut pipe) = pipe {
@@ -86,7 +88,7 @@ fn read_all(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>> {
     })
 }
 
-fn tail(text: &str, max_chars: usize) -> &str {
+pub(in crate::commands::automations) fn tail(text: &str, max_chars: usize) -> &str {
     let skip = text.chars().count().saturating_sub(max_chars);
     text.char_indices()
         .nth(skip)

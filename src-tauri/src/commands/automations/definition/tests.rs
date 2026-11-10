@@ -1168,6 +1168,103 @@ steps:
 }
 
 #[test]
+fn command_watchers_run_a_script_of_the_automation_every_one_to_five_minutes() {
+    let frontmatter = routine(
+        "steps:
+  - id: deployed
+    wait:
+      event:
+        watcher: command
+        command: [scripts/deployed.sh, \"{item.id}\"]
+        env: { STAGE: \"{task.branch}\" }
+        interval: 5m
+        run_in_test: true
+  - id: ready
+    wait: { event: { watcher: command, command: [check-ready] } }
+",
+    );
+    let entry = load_with(&frontmatter, BODY, |folder| {
+        fs::create_dir_all(folder.join("scripts")).unwrap();
+        fs::write(folder.join("scripts/deployed.sh"), "").unwrap();
+    });
+    let waits: Vec<_> = entry.definition.unwrap().steps.iter().map(kind).collect();
+    assert_eq!(
+        waits,
+        [
+            json!({ "wait": { "event": { "watcher": "command", "params": {
+                "command": ["scripts/deployed.sh", "{item.id}"],
+                "env": { "STAGE": "{task.branch}" },
+                "run_in_test": true,
+                "interval_secs": 300,
+                "repo": "r1",
+            } } } }),
+            json!({ "wait": { "event": { "watcher": "command", "params": {
+                "command": ["check-ready"],
+                "repo": "r1",
+            } } } }),
+        ]
+    );
+    assert_issue(
+        &frontmatter,
+        "steps[0].wait.event.command[0]",
+        IssueKind::Invalid,
+    );
+    let event = |params: &str| {
+        routine(&format!(
+            "steps:\n  - id: ci\n    wait: {{ event: {{ watcher: command, {params} }} }}\n"
+        ))
+    };
+    for (params, field, kind) in [
+        ("interval: 1m", "command", IssueKind::Missing),
+        ("command: []", "command", IssueKind::Invalid),
+        ("command: [bin/check]", "command[0]", IssueKind::Invalid),
+        (
+            "command: [check, \"{oops}\"]",
+            "command[1]",
+            IssueKind::Invalid,
+        ),
+        (
+            "command: [check], env: { A: \"{oops}\" }",
+            "env.A",
+            IssueKind::Invalid,
+        ),
+        (
+            "command: [check], run_in_test: yes",
+            "run_in_test",
+            IssueKind::Invalid,
+        ),
+        (
+            "command: [check], interval: 6m",
+            "interval",
+            IssueKind::Invalid,
+        ),
+        (
+            "command: [check], interval: 30s",
+            "interval",
+            IssueKind::Invalid,
+        ),
+        (
+            "command: [check], required: [tests]",
+            "required",
+            IssueKind::UnknownField,
+        ),
+    ] {
+        assert_issue(
+            &event(params),
+            &format!("steps[0].wait.event.{field}"),
+            kind,
+        );
+    }
+    assert_issue(
+        &routine(
+            "steps:\n  - id: ci\n    wait: { event: { watcher: pr_checks, command: [check] } }\n",
+        ),
+        "steps[0].wait.event.command",
+        IssueKind::UnknownField,
+    );
+}
+
+#[test]
 fn approval_steps_need_a_default_when_they_time_out() {
     let definition = valid(&routine(
         "steps:
