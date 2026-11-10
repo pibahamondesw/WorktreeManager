@@ -1,13 +1,21 @@
 import { useShortcutActions, useShortcutLabels, dispatchShortcut } from "../../shortcuts/runtime";
-import { DragEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { ChevronDownIcon, CloseIcon } from "../ui/Icons";
-import { ImageAttachment, imageFiles, oversizedImages, readImage } from "./composerImages";
+import {
+  droppedImageAttachment,
+  ImageAttachment,
+  imageFiles,
+  isImagePath,
+  oversizedImages,
+  readImage,
+} from "./composerImages";
 import { MenuOption, OptionMenu } from "./OptionMenu";
 import { ComposerEditor, ComposerEditorHandle } from "./ComposerEditor";
 import {
   insertCommand,
   insertMention,
+  insertPaths,
   localCommand,
   menuTrigger,
   promptMemory,
@@ -18,6 +26,7 @@ import {
   acceptsImages,
   ChatImage,
   chatFileSearch,
+  chatReadImage,
   ChatControls,
   ChatSetting,
   ChatStatus,
@@ -33,6 +42,7 @@ import {
   chatAgents,
 } from "../../services/agents";
 import { useAgentCatalog } from "../../hooks/useAgentCatalog";
+import { useFileDrop } from "../../hooks/useFileDrop";
 import { AgentId } from "../../types";
 
 type Picker = "agent" | "model" | "effort" | "mode" | "review";
@@ -93,8 +103,7 @@ export function Composer({
   const [files, setFiles] = useState<FileMatch[]>([]);
   const [recall, setRecall] = useState<number | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
-  const [dragDepth, setDragDepth] = useState(0);
-  const dragging = dragDepth > 0;
+  const dropTargetRef = useRef<HTMLDivElement>(null);
   const busy = status.kind === "busy";
   const ready = status.kind === "idle" || busy;
   const efforts = effortsFor(controls);
@@ -238,27 +247,25 @@ export function Composer({
     void attach(files);
   };
 
-  const dragsFiles = (e: DragEvent) => canAttach && e.dataTransfer.types.includes("Files");
-
-  const onDragEnter = (e: DragEvent<HTMLDivElement>) => {
-    if (dragsFiles(e)) setDragDepth((depth) => depth + 1);
+  const attachDroppedImages = async (paths: string[]) => {
+    const results = await Promise.allSettled(paths.map(chatReadImage));
+    const added = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    const failures = results.flatMap((r) => (r.status === "rejected" ? [String(r.reason)] : []));
+    if (failures.length) onError(failures.join("\n"));
+    if (added.length) setImages((current) => [...current, ...added.map(droppedImageAttachment)]);
   };
 
-  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
-    if (dragsFiles(e)) setDragDepth((depth) => Math.max(0, depth - 1));
+  const dropPaths = (paths: string[]) => {
+    const imagePaths = canAttach ? paths.filter(isImagePath) : [];
+    const mentioned = paths.filter((path) => !imagePaths.includes(path));
+    if (mentioned.length) {
+      const next = insertPaths(text, caret, mentioned);
+      update(next.text, next.caret);
+    } else focus();
+    if (imagePaths.length) void attachDroppedImages(imagePaths);
   };
 
-  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    if (dragsFiles(e)) e.preventDefault();
-  };
-
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    setDragDepth(0);
-    if (!dragsFiles(e)) return;
-    e.preventDefault();
-    void attach(imageFiles(e.dataTransfer.files));
-    focus();
-  };
+  const dragging = useFileDrop(dropTargetRef, dropPaths, ready);
 
   const submit = async () => {
     const message = text.trim();
@@ -384,10 +391,7 @@ export function Composer({
           />
         )}
         <div
-          onDragOver={onDragOver}
-          onDragEnter={onDragEnter}
-          onDragLeave={onDragLeave}
-          onDrop={onDrop}
+          ref={dropTargetRef}
           className={`rounded-lg bg-bg-secondary border ${tone.focus} ${
             dragging ? "border-accent" : "border-border"
           }`}

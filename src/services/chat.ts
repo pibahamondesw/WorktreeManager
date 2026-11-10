@@ -431,6 +431,14 @@ export const chatRefreshUsage = (taskId: string, agent: AgentId) =>
 export const chatFileSearch = (folders: string[], query: string) =>
   invoke<FileMatch[]>("chat_file_search", { folders, query });
 
+export interface DroppedImage {
+  name: string;
+  mediaType: string;
+  data: string;
+}
+
+export const chatReadImage = (path: string) => invoke<DroppedImage>("chat_read_image", { path });
+
 export interface MarkdownDocument {
   path: string;
   text: string;

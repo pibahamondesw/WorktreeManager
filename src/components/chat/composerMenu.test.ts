@@ -3,6 +3,7 @@ import {
   filterCommands,
   insertCommand,
   insertMention,
+  insertPaths,
   localCommand,
   menuTrigger,
   promptMemory,
@@ -115,6 +116,16 @@ describe("insertMention", () => {
       text: '@"~/Documents/My File.pdf" ',
       caret: 27,
     });
+  });
+});
+
+describe("insertPaths", () => {
+  it("inserts mentions at the caret, separated from adjacent text", () => {
+    expect(insertPaths("readthis", 4, ["/a.md", "/My b.md"])).toEqual({
+      text: 'read @/a.md @"/My b.md" this',
+      caret: 24,
+    });
+    expect(insertPaths("", 0, ["/a.md"])).toEqual({ text: "@/a.md ", caret: 7 });
   });
 });
 

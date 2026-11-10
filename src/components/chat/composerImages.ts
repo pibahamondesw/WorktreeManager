@@ -1,4 +1,4 @@
-import { ChatImage } from "../../services/chat";
+import { ChatImage, DroppedImage } from "../../services/chat";
 
 export interface ImageAttachment extends ChatImage {
   id: string;
@@ -11,6 +11,14 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export const imageFiles = (files: FileList | File[] | null | undefined) =>
   Array.from(files ?? []).filter((file) => SUPPORTED_IMAGE_TYPES.includes(file.type));
+
+export const isImagePath = (path: string) => /\.(png|jpe?g|gif|webp)$/i.test(path);
+
+export const droppedImageAttachment = (image: DroppedImage): ImageAttachment => ({
+  ...image,
+  id: crypto.randomUUID(),
+  url: `data:${image.mediaType};base64,${image.data}`,
+});
 
 export const oversizedImages = (files: File[]) =>
   files.filter((file) => file.size > MAX_IMAGE_BYTES);

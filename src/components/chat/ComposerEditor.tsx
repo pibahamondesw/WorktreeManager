@@ -169,8 +169,6 @@ const codeBlocks = ViewPlugin.fromClass(
   { decorations: (plugin) => plugin.decorations }
 );
 
-const draggedFiles = (event: DragEvent) => !!event.dataTransfer?.types.includes("Files");
-
 function createEditor(parent: HTMLElement, handlers: { current: EditorHandlers }) {
   const caretOf = (view: EditorView) => view.state.selection.main.head;
   return new EditorView({
@@ -187,11 +185,6 @@ function createEditor(parent: HTMLElement, handlers: { current: EditorHandlers }
             paste: (event) => {
               handlers.current.onPaste(event);
               return event.defaultPrevented;
-            },
-            drop: (event) => {
-              if (!draggedFiles(event)) return false;
-              event.preventDefault();
-              return true;
             },
             blur: () => handlers.current.onBlur(),
           })

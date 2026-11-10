@@ -76,18 +76,6 @@ it("lets the composer claim keys and inserts a newline on Shift+Enter", () => {
   expect(editor.state.doc.toString()).toBe("line\n");
 });
 
-it("does not insert dropped files as text", async () => {
-  const { box, editor } = renderEditor({ value: "draft" });
-  vi.spyOn(editor, "posAtCoords").mockReturnValue(5);
-
-  fireEvent.drop(box, {
-    dataTransfer: { types: ["Files"], files: [new File(["notes"], "notes.txt")] },
-  });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  expect(editor.state.doc.toString()).toBe("draft");
-});
-
 it("is read-only while disabled", () => {
   const { box, editor } = renderEditor({ disabled: true });
 

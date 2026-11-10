@@ -19,6 +19,7 @@ mod headless;
 pub mod history;
 #[cfg(test)]
 mod history_tests;
+mod images;
 pub mod interrupted;
 mod markdown;
 mod model;
@@ -1222,6 +1223,11 @@ pub async fn chat_file_search(
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))
+}
+
+#[tauri::command]
+pub async fn chat_read_image(path: String) -> Result<images::DroppedImage, String> {
+    blocking(move || images::read(std::path::Path::new(&path))).await
 }
 
 #[tauri::command]
@@ -2731,5 +2737,24 @@ pub(crate) mod tests {
             .is_ok());
         drop(held);
         assert!(registry.open_lock(&key).try_lock().is_ok());
+    }
+
+    #[test]
+    fn file_search_and_dropped_image_commands_read_from_disk() {
+        let dir = std::env::temp_dir().join(format!("wtm-chat-commands-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shot = dir.join("shot.png");
+        std::fs::write(&shot, "hi").unwrap();
+
+        let found = tauri::async_runtime::block_on(chat_file_search(
+            Vec::new(),
+            format!("{}/sh", dir.display()),
+        ))
+        .unwrap();
+        assert_eq!(found[0].name, "shot.png");
+        let image =
+            tauri::async_runtime::block_on(chat_read_image(shot.display().to_string())).unwrap();
+        assert_eq!(image.data, "aGk=");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

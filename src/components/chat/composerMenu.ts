@@ -67,6 +67,13 @@ export function insertMention(text: string, start: number, caret: number, path: 
   };
 }
 
+export function insertPaths(text: string, caret: number, paths: string[]) {
+  const before = text.slice(0, caret);
+  const lead = before && !/\s$/.test(before) ? " " : "";
+  const insertion = `${lead}${paths.map(mentionToken).join(" ")} `;
+  return { text: `${before}${insertion}${text.slice(caret)}`, caret: caret + insertion.length };
+}
+
 export type LocalCommand =
   | { kind: "configure"; setting: "model" | "effort" | "mode"; value: string }
   | { kind: "picker"; picker: "model" | "effort" | "mode" }
