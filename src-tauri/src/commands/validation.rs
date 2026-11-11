@@ -126,20 +126,25 @@ fn validate_ownership(
     Ok(())
 }
 
+/// Whether git accepts `name` as a new branch, as `git check-ref-format --branch` does.
+pub(crate) fn is_valid_branch_name(name: &str) -> Result<bool, String> {
+    if name.starts_with('-') || name.starts_with('/') {
+        return Ok(false);
+    }
+    let output = git_command()
+        .args(["check-ref-format", "--branch", name])
+        .output()
+        .map_err(|_| "Cannot validate branch")?;
+    Ok(output.status.success())
+}
+
 fn validate_members(members: &[Member], base_paths: &[String]) -> Result<(), String> {
     if members.is_empty() || members.len() != base_paths.len() {
         return Err("Invalid members".into());
     }
     let mut destinations = Vec::new();
     for (member, base) in members.iter().zip(base_paths) {
-        if member.branch_name.starts_with('-') || member.branch_name.starts_with('/') {
-            return Err("Invalid branch".into());
-        }
-        let output = git_command()
-            .args(["check-ref-format", "--branch", &member.branch_name])
-            .output()
-            .map_err(|_| "Cannot validate branch")?;
-        if !output.status.success() {
+        if !is_valid_branch_name(&member.branch_name)? {
             return Err("Invalid branch".into());
         }
         let root = repository_root(&member.local_path)?;

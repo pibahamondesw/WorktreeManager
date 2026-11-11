@@ -5,6 +5,7 @@
 //! feeds the automation's failure count.
 
 mod app;
+mod branch;
 mod campaign;
 mod commands;
 mod leases;
@@ -1227,7 +1228,8 @@ fn run_deadline(definition: &AutomationDefinition, request: &RunRequest) -> Inst
 
 fn per_run_branch(target: &Target, request: &RunRequest) -> Result<String, TaskFailure> {
     let template = target.branch.as_deref().unwrap_or_default();
-    render(template, &run_variables(request)).map_err(TaskFailure::new)
+    let branch = render(template, &run_variables(request)).map_err(TaskFailure::new)?;
+    branch::checked_branch(branch)
 }
 
 fn run_variables(request: &RunRequest) -> Vec<(&'static str, String)> {

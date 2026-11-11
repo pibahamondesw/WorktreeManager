@@ -208,6 +208,59 @@ fn a_failing_selector_fails_the_run_with_its_cause() {
 }
 
 #[test]
+fn items_work_on_a_valid_branch_whatever_their_id_and_invalid_templates_name_theirs() {
+    let items = r#"{"items":[{"id":"close:a","version":"1"},{"id":"close-a","version":"1"}]}"#;
+    let harness = Harness::campaign(
+        "pools: { active: 2 }\n",
+        by_branch(None),
+        FakeSessions::default(),
+    );
+    harness.selector_printing(items);
+
+    let run = harness.run();
+
+    assert_eq!(
+        item(&run, "close:a").status,
+        ItemStatus::Completed,
+        "{run:?}"
+    );
+    let branches: Vec<String> = harness
+        .tasks
+        .created
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|task| task.branch.clone())
+        .collect();
+    assert_eq!(branches.len(), 2);
+    assert!(
+        branches.contains(&"wtm/demo/close-a".to_string()),
+        "{branches:?}"
+    );
+    assert!(
+        branches.contains(&format!("wtm/demo/{}", branch::item_branch("close:a"))),
+        "{branches:?}"
+    );
+
+    let templated = CAMPAIGN.replace(
+        "task: per-item",
+        "task: per-item, branch: \"lint/{item.id}\"",
+    );
+    let harness = Harness::new(
+        &format!("{templated}pools: {{ active: 2 }}\n"),
+        by_branch(None),
+        FakeSessions::default(),
+    );
+    harness.selector_printing(items);
+    let run = harness.run();
+    assert_eq!(
+        item(&run, "close:a").cause.as_deref(),
+        Some("task_create_failed: branch \"lint/close:a\" is not a valid git branch name")
+    );
+    assert_eq!(item(&run, "close-a").status, ItemStatus::Completed);
+}
+
+#[test]
 fn a_selector_command_without_values_fails_the_run() {
     let campaign = CAMPAIGN.replace("[scripts/select.sh]", "[scripts/select.sh, \"{item.id}\"]");
     let harness = Harness::new(&campaign, by_branch(None), FakeSessions::default());

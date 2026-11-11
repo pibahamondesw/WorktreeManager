@@ -20,6 +20,7 @@ use super::super::selector::{
     SelectorOutput,
 };
 use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, RunState, SkipReason};
+use super::branch::{checked_branch, item_branch};
 use super::commands::{item_data_variable, Item};
 use super::{
     bases, render, run_variables, ItemDrive, LinkedIssue, NewTask, ResolvedTask, RoutineExecutor,
@@ -28,7 +29,7 @@ use super::{
 
 const SCRIPTS_DIR: &str = "scripts/";
 /// The branch of a `per-item` task whose issue a Test run does not create.
-const UNTRACKED_BRANCH: &str = "wtm/{automation}/{item.id}";
+const UNTRACKED_BRANCH: &str = "wtm/{automation}/{item.branch}";
 /// Campaign items have no run deadline: their steps' timeouts and budgets bound them.
 const ITEM_DEADLINE: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
@@ -219,6 +220,7 @@ impl RoutineExecutor {
             ),
             None => self.tracker_branch(definition, request, &variables)?,
         };
+        let branch = checked_branch(branch)?;
         if let Some(task) = self.tasks.find(&target.workspace_id, &branch)? {
             return match issue.filter(|_| task.linear_issue_id.is_none()) {
                 Some(issue) => Ok((self.tasks.link_issue(&task.id, &issue.identifier)?, false)),
@@ -306,6 +308,7 @@ fn item_variables(request: &RunRequest, item: &Item) -> Vec<(String, String)> {
         .collect();
     variables.extend([
         ("item.id".into(), item.id.clone()),
+        ("item.branch".into(), item_branch(&item.id)),
         ("item.version".into(), item.version.clone()),
     ]);
     variables.extend(item.title.clone().map(|title| ("item.title".into(), title)));
