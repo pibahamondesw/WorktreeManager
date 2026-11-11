@@ -10,6 +10,8 @@ use tauri::{App, Manager};
 use super::*;
 use crate::commands::agents::{claude, codex, Agents};
 use crate::commands::automations::definition::AppEventKind;
+use crate::commands::automations::store::events::{ItemStatus, RunOutcome};
+use crate::commands::automations::store::{Override, Pace};
 
 const TARGET: &str = "target: { workspace: Acme, repos: [api] }\nagent: { id: claude }\n";
 
@@ -145,8 +147,10 @@ impl Harness {
         by: Actor,
         reason: Option<&str>,
     ) -> Result<AutomationState, String> {
+        let engine = self.app.state::<AutomationEngine>();
         tauri::async_runtime::block_on(automation_resume(
             self.app.handle().clone(),
+            engine,
             name.into(),
             by,
             reason.map(String::from),
@@ -763,3 +767,88 @@ fn an_automation_that_cannot_fire_does_not_stop_the_others() {
 }
 
 mod intervene;
+
+const CAMPAIGN: &str = "target: { workspace: Acme, repos: [api], task: per-item }\nagent: { id: claude }\nselector: { run: [/bin/true] }\npools: { active: 2 }\ntrigger: { manual: false, cli: true }\n";
+
+impl Harness {
+    fn campaign(&self) -> AutomationDefinition {
+        valid_definition(self.app.handle(), "demo").unwrap()
+    }
+
+    fn refill(&self) -> Refill {
+        let executor = self.executor.as_ref();
+        refill(&self.scratch.store(), executor, &self.campaign(), now()).unwrap()
+    }
+
+    fn pace(&self, pace: Pace) {
+        let mut state = self.state();
+        state.overrides.pace = Some(Override::now(pace, Actor::User));
+        let store = self.scratch.store();
+        store.writer("demo").unwrap().save_state(&state).unwrap();
+    }
+}
+
+#[test]
+fn resuming_a_continuous_campaign_starts_a_pass_whatever_its_triggers() {
+    let harness = Harness::new(CAMPAIGN);
+
+    harness.resume("demo", Actor::User, None).unwrap();
+
+    let executed = harness.executed();
+    let (request, payload) = &executed[0];
+    assert_eq!((executed.len(), request.test, payload), (1, false, &None));
+    let run = harness
+        .scratch
+        .store()
+        .run("demo", &request.run_id)
+        .unwrap();
+    let trigger = run.trigger.unwrap();
+    assert_eq!(trigger.source, RunSource::Capacity);
+    assert!(trigger.trigger_key.starts_with("capacity:"));
+
+    harness.resume("demo", Actor::User, None).unwrap();
+    assert!(harness.executed().is_empty());
+    assert_eq!(harness.refill(), Refill::Busy);
+}
+
+#[test]
+fn a_refill_needs_a_free_slot_an_enabled_campaign_and_something_granted() {
+    let harness = Harness::enabled(CAMPAIGN);
+    let (request, _) = harness.executed().remove(0);
+    let store = harness.scratch.store();
+    let append = |event: &RunEvent| {
+        let writer = store.writer("demo").unwrap();
+        writer.append(&request.run_id, event).unwrap();
+    };
+    for item in ["a", "b"] {
+        append(&RunEvent::ItemCreated {
+            item: item.into(),
+            version: "1".into(),
+            title: None,
+            data: Default::default(),
+        });
+    }
+    append(&RunEvent::Completed {
+        outcome: RunOutcome::Dispatched,
+    });
+    assert_eq!(harness.refill(), Refill::Idle);
+
+    append(&RunEvent::ItemStatus {
+        item: "a".into(),
+        status: ItemStatus::Failed,
+        phase: None,
+        stage: None,
+        cause: None,
+        counter: None,
+    });
+    harness.pace(Pace::Next { remaining: 0 });
+    assert_eq!(harness.refill(), Refill::Idle);
+
+    harness.pace(Pace::Continuous);
+    harness.pause(Actor::User, None).unwrap();
+    assert_eq!(harness.refill(), Refill::Idle);
+    assert!(harness.executed().is_empty());
+
+    harness.resume("demo", Actor::User, None).unwrap();
+    assert_eq!(harness.executed().len(), 1);
+}

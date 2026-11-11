@@ -356,6 +356,11 @@ fn created_pull_requests(runs: &[RunState]) -> Vec<String> {
     urls
 }
 
+/// Whether the automation's items leave a slot of `active_pool` free.
+pub fn has_free_slot(store: &RunStore, automation: &str, active_pool: u64) -> Result<bool, String> {
+    Ok(free_slots(&history(store, automation)?, active_pool) > 0)
+}
+
 /// Items in `queued` or `active` hold a slot; waiting and resting items free theirs.
 fn free_slots(runs: &[RunState], active_pool: u64) -> u64 {
     let holding = active_items(runs)

@@ -18,7 +18,7 @@ mod takeover;
 mod tests;
 mod waits;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -199,6 +199,8 @@ pub struct RoutineExecutor {
     watchers: Watchers,
     live_turns: LiveTurns,
     takeovers: Takeovers,
+    /// Automations whose freed slot a selection pass in flight held back.
+    refills_pending: Arc<Mutex<HashSet<String>>>,
 }
 
 type DrivenItem = (String, String, String);
@@ -238,6 +240,7 @@ impl Executor for RoutineExecutor {
 
     fn wake_waiting(&self) {
         self.wake_ready();
+        self.refill_pending();
     }
 
     fn take_over(&self, automation: &str, run_id: &str, item: &str) -> bool {
@@ -292,6 +295,7 @@ impl RoutineExecutor {
             parked: Arc::default(),
             watchers: watchers::registry(Arc::new(CliWatchForge::default())),
             takeovers: Takeovers::default(),
+            refills_pending: Arc::default(),
         }
     }
 

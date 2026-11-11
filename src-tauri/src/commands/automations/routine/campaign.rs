@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use super::super::actions::{self, now, Refill};
 use super::super::definition::{
     AutomationDefinition, LinearOverrides, SelectorSettings, Target, TaskMode,
 };
@@ -49,10 +50,42 @@ impl RoutineExecutor {
         request: &RunRequest,
         payload: Option<&Value>,
     ) -> Result<(), String> {
+        let items = self.selection_pass(definition, request);
+        let missed_release = self
+            .refills_pending
+            .lock()
+            .unwrap()
+            .remove(&request.automation);
+        if missed_release {
+            self.refill(&request.automation);
+        }
+        let items = items?;
+        thread::scope(|scope| {
+            for candidate in items {
+                scope.spawn(move || {
+                    let item = Item {
+                        id: candidate.id,
+                        version: candidate.version,
+                        title: candidate.title,
+                        data: candidate.data,
+                    };
+                    self.run_item(definition, request, payload, &item, None);
+                });
+            }
+        });
+        Ok(())
+    }
+
+    /// Selects the run's new items and completes it; none when it may not take any.
+    fn selection_pass(
+        &self,
+        definition: &AutomationDefinition,
+        request: &RunRequest,
+    ) -> Result<Vec<Candidate>, String> {
         let name = &request.automation;
         let run = self.store.run(name, &request.run_id)?;
         if !is_active(run.status) {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let settings = definition.selector.as_ref().ok_or("not a campaign")?;
         let limits = pass_limits(definition, &self.store.state(name)?, request.test);
@@ -64,7 +97,7 @@ impl RoutineExecutor {
             };
             self.store.writer(name)?.append(&request.run_id, &skipped)?;
             (self.runs_changed)(name);
-            return Ok(());
+            return Ok(Vec::new());
         }
         let policy = SelectionPolicy {
             active_pool: limits.max_active,
@@ -93,10 +126,10 @@ impl RoutineExecutor {
             }
         };
         let Selection::Dispatch(dispatch) = selection else {
-            return Ok(());
+            return Ok(Vec::new());
         };
         if self.halted() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let items = dispatch.items.clone();
         selector::complete(&pass, dispatch)?;
@@ -104,20 +137,36 @@ impl RoutineExecutor {
             take_granted(&self.store, name, items.len() as u64)?;
         }
         (self.runs_changed)(name);
-        thread::scope(|scope| {
-            for candidate in items {
-                scope.spawn(move || {
-                    let item = Item {
-                        id: candidate.id,
-                        version: candidate.version,
-                        title: candidate.title,
-                        data: candidate.data,
-                    };
-                    self.run_item(definition, request, payload, &item, None);
-                });
+        Ok(items)
+    }
+
+    /// Starts a selection pass for the slot an item freed. A pass still in flight may have missed
+    /// it, so the automation waits for that pass to end, or for the next tick.
+    pub(super) fn refill(&self, automation: &str) {
+        if self.halted() {
+            return;
+        }
+        let Some(definition) = self.definitions.current(automation) else {
+            return;
+        };
+        match actions::refill(&self.store, self, &definition, now()) {
+            Ok(Refill::Busy) => {
+                self.refills_pending
+                    .lock()
+                    .unwrap()
+                    .insert(automation.to_string());
             }
-        });
-        Ok(())
+            Ok(_) => {}
+            Err(error) => log::warn!("Automation {automation} did not refill: {error}"),
+        }
+    }
+
+    /// Retries the refills a pass in flight held back.
+    pub(super) fn refill_pending(&self) {
+        let pending = std::mem::take(&mut *self.refills_pending.lock().unwrap());
+        for automation in pending {
+            self.refill(&automation);
+        }
     }
 
     /// Drives one item in its task. A resumed item brings the run's log and the task it had.
@@ -130,7 +179,7 @@ impl RoutineExecutor {
         resumed: Option<(&[LoggedEvent], Option<&str>)>,
     ) {
         let (history, task_id) = resumed.unwrap_or_default();
-        let result = self
+        let status = self
             .item_task(definition, request, item, task_id)
             .and_then(|task| {
                 let drive = ItemDrive {
@@ -143,8 +192,9 @@ impl RoutineExecutor {
                     deadline: Instant::now() + ITEM_DEADLINE,
                 };
                 Ok(self.drive_item(&drive)?.0)
-            })
-            .and_then(|status| self.count_item(request, status));
+            });
+        let holds_slot = matches!(status, Ok(ItemStatus::Queued | ItemStatus::Active));
+        let result = status.and_then(|status| self.count_item(request, status));
         if let Err(error) = result {
             log::warn!(
                 "Automation item {}/{}/{} stopped: {error}",
@@ -154,6 +204,9 @@ impl RoutineExecutor {
             );
         }
         (self.runs_changed)(&request.automation);
+        if !holds_slot && !request.test {
+            self.refill(&request.automation);
+        }
     }
 
     /// Resolves the item's task, or reattaches to the one it had, and records it; an item without

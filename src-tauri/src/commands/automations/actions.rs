@@ -19,7 +19,9 @@ use serde_json::Value;
 use tauri::{AppHandle, Runtime, State};
 
 use super::definition::{self, AutomationDefinition};
+use super::operator::pass_limits;
 use super::scheduler::{capacity_skip, is_active, reschedule, Automation, Executor, RunRequest};
+use super::selector::has_free_slot;
 use super::store::events::{RunEvent, RunSource, RunState, RunStatus, RunTrigger, SkipReason};
 use super::store::{
     Actor, AutomationState, AutomationWriter, Claim, PauseReason, RunStore, Toggle,
@@ -75,6 +77,51 @@ pub fn start_run(
     let skip = capacity_skip(&Automation::of(definition), &active);
     let request = run_request(definition, run_id, test, now);
     launch(writer, executor, request, skip, payload)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Refill {
+    /// A selection pass started, as this run.
+    Started(String),
+    /// A run of the automation is still in flight; its pass may have missed the freed slot.
+    Busy,
+    /// The campaign is paused, has nothing granted under Next or has no free slot.
+    Idle,
+}
+
+/// Starts a selection pass of an enabled campaign that may take new items and has a free slot,
+/// whatever its triggers, unless one of its runs is still in flight.
+pub fn refill(
+    store: &RunStore,
+    executor: &dyn Executor,
+    definition: &AutomationDefinition,
+    now: DateTime<Utc>,
+) -> Result<Refill, String> {
+    let name = &definition.name;
+    let writer = store.writer(name)?;
+    let state = store.state(name)?;
+    let limits = pass_limits(definition, &state, false);
+    if definition.selector.is_none() || !state.enabled || limits.exhausted() {
+        return Ok(Refill::Idle);
+    }
+    if !active_runs(store, name)?.is_empty() {
+        return Ok(Refill::Busy);
+    }
+    if !has_free_slot(store, name, limits.max_active)? {
+        return Ok(Refill::Idle);
+    }
+    let trigger = RunTrigger {
+        source: RunSource::Capacity,
+        trigger_key: format!("capacity:{}", uuid::Uuid::new_v4()),
+        scheduled_for: None,
+        definition_hash: Some(definition.hash.clone()),
+        test: false,
+        task_id: None,
+    };
+    let (Claim::Created(run_id) | Claim::Existing(run_id)) = writer.claim(trigger)?;
+    let request = run_request(definition, run_id, false, now);
+    let started = launch(writer, executor, request, None, None)?;
+    Ok(Refill::Started(started.run_id))
 }
 
 fn run_request(
@@ -252,14 +299,19 @@ pub async fn automation_pause<R: Runtime>(
 #[tauri::command]
 pub async fn automation_resume<R: Runtime>(
     app: AppHandle<R>,
+    engine: State<'_, AutomationEngine>,
     name: String,
     by: Actor,
     reason: Option<String>,
 ) -> Result<AutomationState, String> {
     let by = operator(by)?;
+    let executor = engine.0.clone();
     blocking(move || {
         let definition = valid_definition(&app, &name)?;
-        resume(&RunStore::of(&app)?, &definition, by, note(reason), now())
+        let store = RunStore::of(&app)?;
+        let state = resume(&store, &definition, by, note(reason), now())?;
+        refill(&store, executor.as_ref(), &definition, now())?;
+        Ok(state)
     })
     .await
 }
