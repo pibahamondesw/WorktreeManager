@@ -274,6 +274,8 @@ pub enum RunSource {
     Schedule,
     Event,
     Cli,
+    /// A continuous campaign taking the slot an item freed.
+    Capacity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
