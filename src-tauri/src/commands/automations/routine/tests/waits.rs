@@ -76,7 +76,10 @@ impl Harness {
 
     /// A new app process that re-arms what the earlier one left waiting.
     fn rearmed(&self, run_id: &str) -> RoutineExecutor {
-        let restarted = self.restarted();
+        self.rearm(self.restarted(), run_id)
+    }
+
+    fn rearm(&self, restarted: RoutineExecutor, run_id: &str) -> RoutineExecutor {
         thread::sleep(Duration::from_millis(5));
         let automation = Automation::of(&self.definition());
         self.scheduler(&restarted)
@@ -725,4 +728,83 @@ steps:
         ]
     );
     assert_eq!(effects(&run, "cleanup"), [EffectStatus::Executed]);
+}
+
+/// A tracked campaign item that publishes its PR and goes back to publish once CI times out.
+fn publishing_again_after_ci() -> (Scratch, Harness, String) {
+    let worktree = Scratch::new();
+    let steps = r#"tracker:
+  linear:
+    team: ENG
+authorization: { allow: [linear_write, pr_create] }
+steps:
+  - id: start
+    publish: [linear.upsert]
+  - id: publish
+    publish:
+      - github.pr_create: { title: "[{tracker.issue}] Lint" }
+  - id: ci
+    timeout: 1s
+    wait: { signal: green }
+    on_fail: { goto: publish, max: 1 }
+"#;
+    let tasks = by_branch(Some(worktree.0.clone()));
+    let mut harness = Harness::campaign(steps, tasks, FakeSessions::default());
+    harness.selector_printing(r#"{"items":[{"id":"a","version":"1","title":"A"}]}"#);
+    let gh = fake_gh(&harness.scratch.0);
+    harness.executor = executor_with_gh(
+        &harness.scratch,
+        harness.tasks.clone(),
+        harness.sessions.clone(),
+        &gh,
+    );
+    (worktree, harness, gh)
+}
+
+fn publishes_again_with_its_tracker_issue(harness: &Harness, run_id: &str) {
+    wait_until(|| {
+        let item = &harness.state(run_id).items[0];
+        item.steps.len() > 3 && item.status != ItemStatus::Active
+    });
+    let run = harness.state(run_id);
+    assert_eq!(
+        attempts(&run.items[0]),
+        [
+            "start#1:Succeeded",
+            "publish#1:Succeeded",
+            "ci#1:Failed",
+            "publish#2:Succeeded",
+            "ci#2:Waiting"
+        ]
+    );
+}
+
+#[test]
+fn an_item_back_at_publish_after_a_wait_renders_its_tracker_issue() {
+    let (_worktree, harness, _) = publishing_again_after_ci();
+    let run = harness.run();
+    assert_eq!(item(&run, "a").status, ItemStatus::Waiting, "{run:?}");
+
+    thread::sleep(Duration::from_millis(1_100));
+    harness.executor.wake_ready();
+
+    publishes_again_with_its_tracker_issue(&harness, &run.id);
+}
+
+#[test]
+fn a_restarted_item_back_at_publish_renders_its_tracker_issue() {
+    let (_worktree, harness, gh) = publishing_again_after_ci();
+    let run = harness.run();
+    let restarted = executor_with_gh(
+        &harness.scratch,
+        harness.tasks.clone(),
+        harness.sessions.clone(),
+        &gh,
+    );
+    let restarted = harness.rearm(restarted, &run.id);
+
+    thread::sleep(Duration::from_millis(1_100));
+    restarted.wake_ready();
+
+    publishes_again_with_its_tracker_issue(&harness, &run.id);
 }

@@ -123,7 +123,7 @@ pub struct PublishScope<'a> {
     pub lease_env: &'a [(String, String)],
     /// The commits the item's `git.push` effects recorded in the run log so far.
     pub pushed: &'a [String],
-    /// `{pr.*}` of the PR the item's effects recorded in the run log so far.
+    /// `{pr.*}` and `{tracker.issue}` the item's effects recorded in the run log so far.
     pub published: &'a [(&'static str, String)],
 }
 
@@ -910,23 +910,22 @@ pub fn published_pull_request<'a>(
     events: impl IntoIterator<Item = &'a RunEvent>,
     item: &str,
 ) -> Vec<(&'static str, String)> {
-    let pull_request = events
+    references(events, item, |effect| effect.starts_with("github.pr_"))
         .into_iter()
-        .filter_map(|event| match event {
-            RunEvent::EffectRecorded {
-                item: recorded,
-                effect,
-                status: EffectStatus::Executed | EffectStatus::Reconciled,
-                reference: Some(url),
-                ..
-            } if recorded == item && effect.starts_with("github.pr_") => {
-                Some((pull_request_number(url)?, url))
-            }
-            _ => None,
-        })
-        .last();
-    pull_request
+        .rev()
+        .find_map(|url| Some((pull_request_number(url)?, url)))
         .map(|(number, url)| vec![("pr.number", number.to_string()), ("pr.url", url.clone())])
+        .unwrap_or_default()
+}
+
+/// `{tracker.issue}` of the issue `item`'s `linear.*` effects referenced last.
+pub fn published_issue<'a>(
+    events: impl IntoIterator<Item = &'a RunEvent>,
+    item: &str,
+) -> Vec<(&'static str, String)> {
+    references(events, item, |effect| effect.starts_with("linear."))
+        .pop()
+        .map(|identifier| vec![("tracker.issue", identifier.clone())])
         .unwrap_or_default()
 }
 
@@ -940,17 +939,27 @@ pub fn pushed_commits<'a>(
     events: impl IntoIterator<Item = &'a RunEvent>,
     item: &str,
 ) -> Vec<String> {
-    events
+    references(events, item, |effect| effect == "git.push")
         .into_iter()
-        .filter_map(|event| match event {
-            RunEvent::EffectRecorded {
-                item: recorded,
-                effect,
-                status: EffectStatus::Executed | EffectStatus::Reconciled,
-                reference,
-                ..
-            } if recorded == item && effect == "git.push" => reference.clone(),
-            _ => None,
-        })
+        .cloned()
         .collect()
+}
+
+/// What `item`'s effects that went through referenced, of those `effect_matches` names.
+fn references<'a>(
+    events: impl IntoIterator<Item = &'a RunEvent>,
+    item: &str,
+    effect_matches: impl Fn(&str) -> bool,
+) -> Vec<&'a String> {
+    let references = events.into_iter().filter_map(|event| match event {
+        RunEvent::EffectRecorded {
+            item: recorded,
+            effect,
+            status: EffectStatus::Executed | EffectStatus::Reconciled,
+            reference: Some(reference),
+            ..
+        } if recorded == item && effect_matches(effect) => Some(reference),
+        _ => None,
+    });
+    references.collect()
 }
