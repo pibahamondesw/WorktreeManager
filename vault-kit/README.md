@@ -71,6 +71,7 @@ This is plain Markdown, so it works with any agent that supports global instruct
 | [`task-log`](skills/task-log/SKILL.md) | Distilled decisions and learnings per task. |
 | [`wtm-finish-task`](skills/wtm-finish-task/SKILL.md) | After merge: keep what matters, then delete the task. |
 | [`wtm-repo-setup`](skills/wtm-repo-setup/SKILL.md) | Workspaces, `.worktreemanager.toml` and `.worktreeinclude`. |
+| [`wtm-automation`](skills/wtm-automation/SKILL.md) | Create, edit, validate and test automations, with a condensed spec reference. |
 
 They are plain Markdown with `SKILL.md` frontmatter, so any agent can read them. To also get slash commands in Claude Code, copy a skill folder into `~/.claude/skills/`.
 

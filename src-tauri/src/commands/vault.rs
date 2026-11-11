@@ -145,6 +145,16 @@ const SUPPORT_FILES: &[VaultFile] = &[
         contents: include_str!("../../../vault-kit/skills/wtm-repo-setup/SKILL.md"),
         executable: false,
     },
+    VaultFile {
+        rel_path: "skills/wtm-automation/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-automation/SKILL.md"),
+        executable: false,
+    },
+    VaultFile {
+        rel_path: "skills/wtm-automation/reference.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-automation/reference.md"),
+        executable: false,
+    },
 ];
 
 struct GuideSection {
@@ -170,7 +180,10 @@ Read the matching skill before acting. When a trigger appears, propose the skill
 | A decision or learning worth keeping, or the end of a session | [skills/task-log/SKILL.md](skills/task-log/SKILL.md) |
 | The task's PR merged, or the user wants to clean up a task | [skills/wtm-finish-task/SKILL.md](skills/wtm-finish-task/SKILL.md) |
 | Setup warnings, or missing dependencies or env files in a new worktree | [skills/wtm-repo-setup/SKILL.md](skills/wtm-repo-setup/SKILL.md) |
+| Automate a recurring flow, turn the conversation into an automation, or edit one | [skills/wtm-automation/SKILL.md](skills/wtm-automation/SKILL.md) |
 "#;
+
+const AUTOMATION_SKILL_GUIDE: &str = "\n\n## WorktreeManager automations\n\nBefore automating a recurring flow, turning a conversation into an automation or editing one, read [skills/wtm-automation/SKILL.md](skills/wtm-automation/SKILL.md).\n";
 
 const GUIDE_SECTIONS: &[GuideSection] = &[
     GuideSection {
@@ -180,6 +193,10 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
     GuideSection {
         link: "[skills/wtm/SKILL.md](skills/wtm/SKILL.md)",
         text: WTM_SKILLS_GUIDE,
+    },
+    GuideSection {
+        link: "[skills/wtm-automation/SKILL.md](skills/wtm-automation/SKILL.md)",
+        text: AUTOMATION_SKILL_GUIDE,
     },
 ];
 
@@ -202,15 +219,16 @@ fn ensure_task_note_support(root: &Path) -> Result<(), String> {
     let agents = root.join("AGENTS.md");
     if agents.exists() {
         let contents = fs::read_to_string(&agents).map_err(|e| format!("read AGENTS.md: {e}"))?;
-        let missing: String = GUIDE_SECTIONS
-            .iter()
-            .filter(|section| !contents.contains(section.link))
-            .map(|section| section.text)
-            .collect();
-        if !missing.is_empty() {
+        let mut guided = contents.clone();
+        for section in GUIDE_SECTIONS {
+            if !guided.contains(section.link) {
+                guided.push_str(section.text);
+            }
+        }
+        if guided != contents {
             UserFile::new(&agents)
                 .unchanged_from(&contents)
-                .replace(format!("{contents}{missing}"))?;
+                .replace(guided)?;
         }
     }
     Ok(())
@@ -669,10 +687,33 @@ mod tests {
     }
 
     #[test]
+    fn skills_upgrade_adds_the_automation_skill_to_an_older_guide() {
+        let root = temp_dir("automation-upgrade");
+        let automation_link = GUIDE_SECTIONS[2].link;
+        let older_guide: String = WTM_SKILLS_GUIDE
+            .lines()
+            .filter(|line| !line.contains(automation_link))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let existing = format!("User instructions\n{TASK_NOTE_GUIDE}{older_guide}");
+        fs::write(root.join("AGENTS.md"), &existing).unwrap();
+
+        ensure_task_note_support(&root).unwrap();
+        ensure_task_note_support(&root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("AGENTS.md")).unwrap(),
+            format!("{existing}{AUTOMATION_SKILL_GUIDE}")
+        );
+        assert!(root.join("skills/wtm-automation/reference.md").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn guide_links_every_installed_skill() {
         for file in SUPPORT_FILES
             .iter()
-            .filter(|file| file.rel_path.starts_with("skills/"))
+            .filter(|file| file.rel_path.ends_with("/SKILL.md"))
         {
             let link = format!("[{0}]({0})", file.rel_path);
             assert!(

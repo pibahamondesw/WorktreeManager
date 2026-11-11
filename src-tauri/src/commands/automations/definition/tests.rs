@@ -2497,3 +2497,46 @@ fn circleci_event_triggers_declare_a_type_and_conditions() {
         assert_issue(&event(entry), field, kind);
     }
 }
+
+fn markdown_examples(document: &str) -> Vec<&str> {
+    document
+        .split("```markdown\n")
+        .skip(1)
+        .map(|block| block.split("\n```").next().unwrap())
+        .collect()
+}
+
+fn write_example(dir: &Path, example: &str) -> PathBuf {
+    let name = example
+        .lines()
+        .find_map(|line| line.strip_prefix("name: "))
+        .unwrap();
+    let folder = dir.join(name);
+    fs::create_dir_all(folder.join("scripts")).unwrap();
+    fs::write(folder.join(DEFINITION_FILE), example).unwrap();
+    for script in example
+        .split(|c: char| !(c.is_ascii_alphanumeric() || "/-_.".contains(c)))
+        .filter(|word| word.starts_with("scripts/"))
+    {
+        fs::write(folder.join(script), "#!/bin/sh\n").unwrap();
+    }
+    folder
+}
+
+#[test]
+fn authoring_skill_examples_are_valid() {
+    let examples = markdown_examples(include_str!(
+        "../../../../../vault-kit/skills/wtm-automation/reference.md"
+    ));
+    assert_eq!(examples.len(), 2);
+    let dir = temp_dir();
+    let shapes: Vec<bool> = examples
+        .iter()
+        .map(|example| {
+            let entry = load_automation(&write_example(&dir, example), &env());
+            assert_eq!(entry.errors, Vec::new(), "{example}");
+            entry.definition.unwrap().selector.is_some()
+        })
+        .collect();
+    assert_eq!(shapes, [false, true]);
+}
