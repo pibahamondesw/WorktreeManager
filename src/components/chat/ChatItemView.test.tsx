@@ -294,3 +294,61 @@ it.each(["", " \n "])("shows only the duration when reasoning text is blank: %j"
   expect(screen.getByText("Thought for 2s")).toBeVisible();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
+
+it("shows each question the agent asked with its answer", () => {
+  render(
+    <ChatItemView
+      item={{
+        id: "q1",
+        kind: "question",
+        text: "",
+        status: "completed",
+        questions: [
+          { header: "DB", question: "Which DB?", answer: "Postgres" },
+          { header: "Cache", question: "Which cache?" },
+        ],
+      }}
+    />
+  );
+
+  const card = screen.getByRole("region", { name: "Questions" });
+  expect(within(card).getByText("Which DB?")).toBeInTheDocument();
+  expect(within(card).getByText("Postgres")).toBeInTheDocument();
+  expect(within(card).getByText("Not answered")).toBeInTheDocument();
+});
+
+it("shows a question still waiting for its answer", () => {
+  render(
+    <ChatItemView
+      item={{
+        id: "q1",
+        kind: "question",
+        text: "",
+        status: "inProgress",
+        questions: [{ header: "", question: "Which DB?" }],
+      }}
+    />
+  );
+
+  expect(screen.getByRole("region", { name: "Question" })).toHaveTextContent(
+    "Waiting for an answer…"
+  );
+});
+
+it("shows why a question was rejected", () => {
+  render(
+    <ChatItemView
+      item={{
+        id: "q1",
+        kind: "question",
+        text: "Not now",
+        status: "failed",
+        questions: [{ header: "", question: "Which DB?" }],
+      }}
+    />
+  );
+
+  const card = screen.getByRole("region", { name: "Question" });
+  expect(within(card).getByText("Not answered")).toBeInTheDocument();
+  expect(within(card).getByText("Not now")).toBeInTheDocument();
+});

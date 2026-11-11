@@ -1120,6 +1120,22 @@ pub(crate) fn unix_seconds(timestamp: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset)
 }
 
+fn asked_questions(input: &Value) -> Vec<AskedQuestion> {
+    input["questions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|question| AskedQuestion {
+            header: question["header"].as_str().unwrap_or_default().to_string(),
+            question: question["question"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            answer: None,
+        })
+        .collect()
+}
+
 fn map_question(question: &Value) -> Question {
     let text = question["question"]
         .as_str()
@@ -1219,6 +1235,12 @@ fn assistant_block(message_id: &str, index: usize, block: &Value) -> Option<Chat
             block["input"]["plan"].as_str().unwrap_or_default(),
         )
         .titled("Plan"),
+        "tool_use" if block["name"] == ASK_USER_TOOL => {
+            let mut item = ChatItem::new(block["id"].as_str()?, ItemKind::Question, "")
+                .with_status("inProgress");
+            item.questions = asked_questions(&block["input"]);
+            item
+        }
         "tool_use" if AGENT_TOOLS.iter().any(|tool| block["name"] == *tool) => {
             let input = &block["input"];
             let title = input["description"]
@@ -1298,6 +1320,18 @@ fn tool_result(block: &Value, launch: &Value, snapshot: &ChatSnapshot) -> Option
         );
     }
     item.status = Some(if failed { "failed" } else { "completed" }.into());
+    if item.kind == ItemKind::Question {
+        let answers = &launch["answers"];
+        for question in &mut item.questions {
+            question.answer = answers[question.question.as_str()]
+                .as_str()
+                .map(String::from);
+        }
+        if failed {
+            item.text = output.trim().to_string();
+        }
+        return Some(item);
+    }
     if item.kind == ItemKind::Command || failed {
         item.detail = Some(match item.detail.take() {
             Some(input) if !output.is_empty() => format!("{input}\n\n{output}"),
@@ -1474,7 +1508,9 @@ fn parse_session(main: &str, subagents: &[(String, String)]) -> Vec<ChatItem> {
         items[index].parent = None;
     }
     for item in &mut items {
-        if item.kind == ItemKind::Agent && item.status.as_deref() == Some("inProgress") {
+        if matches!(item.kind, ItemKind::Agent | ItemKind::Question)
+            && item.status.as_deref() == Some("inProgress")
+        {
             item.status = Some("stopped".into());
         }
     }
@@ -2243,6 +2279,87 @@ mod tests {
         let reply = &written(&out)[0]["response"]["response"];
         assert_eq!(reply["behavior"], "allow");
         assert_eq!(reply["updatedInput"]["answers"]["Which DB?"], "Postgres");
+    }
+
+    #[test]
+    fn ask_user_question_shows_the_questions_and_then_the_answers() {
+        let (mut provider, mut snapshot) = started();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [
+                { "type": "tool_use", "id": "tu1", "name": "AskUserQuestion", "input": { "questions": [
+                    { "question": "Which DB?", "header": "DB", "options": [] },
+                    { "question": "Which cache?", "header": "Cache", "options": [] },
+                ] } },
+            ] } }),
+        );
+        let item = snapshot.item("tu1").unwrap();
+        assert_eq!(item.kind, ItemKind::Question);
+        assert_eq!(item.questions[0].header, "DB");
+        assert_eq!(item.questions[0].answer, None);
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "user", "tool_use_result": { "answers": { "Which DB?": "Postgres" } },
+                "message": { "content": [{ "type": "tool_result", "tool_use_id": "tu1", "content": "answered" }] } }),
+        );
+        let item = snapshot.item("tu1").unwrap();
+        assert_eq!(item.status.as_deref(), Some("completed"));
+        assert_eq!(item.questions[0].answer.as_deref(), Some("Postgres"));
+        assert_eq!(item.questions[1].answer, None);
+    }
+
+    #[test]
+    fn history_restores_answered_questions() {
+        let lines = [
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [
+                { "type": "tool_use", "id": "tu1", "name": "AskUserQuestion", "input": { "questions": [
+                    { "question": "Which DB?", "header": "DB", "options": [] },
+                ] } },
+            ] } }),
+            json!({ "type": "user", "uuid": "u1", "toolUseResult": { "answers": { "Which DB?": "Postgres" } },
+                "message": { "content": [{ "type": "tool_result", "tool_use_id": "tu1", "content": "answered" }] } }),
+        ];
+        let text = lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let items = parse_history(&text);
+        assert_eq!(items[0].kind, ItemKind::Question);
+        assert_eq!(items[0].questions[0].answer.as_deref(), Some("Postgres"));
+    }
+
+    #[test]
+    fn history_stops_questions_left_without_an_answer() {
+        let line = json!({ "type": "assistant", "message": { "id": "m1", "content": [
+            { "type": "tool_use", "id": "tu1", "name": "AskUserQuestion", "input": { "questions": [
+                { "question": "Which DB?", "header": "DB", "options": [] },
+            ] } },
+        ] } });
+        let items = parse_session(&line.to_string(), &[]);
+        assert_eq!(items[0].status.as_deref(), Some("stopped"));
+    }
+
+    #[test]
+    fn a_rejected_question_keeps_the_reason() {
+        let (mut provider, mut snapshot) = started();
+        for message in [
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [
+                { "type": "tool_use", "id": "tu1", "name": "AskUserQuestion", "input": { "questions": [
+                    { "question": "Which DB?", "header": "DB", "options": [] },
+                ] } },
+            ] } }),
+            json!({ "type": "user", "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "tu1", "content": "Not now", "is_error": true },
+            ] } }),
+        ] {
+            feed(&mut provider, &mut snapshot, message);
+        }
+        let item = snapshot.item("tu1").unwrap();
+        assert_eq!(item.status.as_deref(), Some("failed"));
+        assert_eq!(item.text, "Not now");
     }
 
     #[test]

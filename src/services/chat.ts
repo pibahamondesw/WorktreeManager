@@ -21,7 +21,14 @@ type ChatItemKind =
   | "notice"
   | "review"
   | "handoff"
-  | "agent";
+  | "agent"
+  | "question";
+
+export interface AskedQuestion {
+  header: string;
+  question: string;
+  answer?: string;
+}
 
 export interface ChatItem {
   id: string;
@@ -36,6 +43,7 @@ export interface ChatItem {
   origin?: AgentId;
   /** The subagent run (an `agent` item's id) this item is a step of. */
   parent?: string;
+  questions?: AskedQuestion[];
 }
 
 export interface ChatQuestion {
