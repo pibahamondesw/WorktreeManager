@@ -36,6 +36,7 @@ const CATCH_UP_WINDOW: TimeDelta = TimeDelta::days(7);
 const START_TIMEOUT: TimeDelta = TimeDelta::minutes(5);
 const AUTO_PAUSE_FAILURES: u32 = 3;
 const INTERRUPTED_CAUSE: &str = "interrupted";
+pub(super) const DEFINITION_CHANGED_CAUSE: &str = "definition_changed";
 /// Quits an item may resume from; past them it ends as interrupted instead of resuming forever.
 const MAX_RESUMES: usize = 3;
 
@@ -315,6 +316,9 @@ impl<C: Clock> Scheduler<C> {
         for (run, resumed) in &recoveries {
             let kept = resumed.as_ref().map(|(_, items)| items.as_slice());
             end_interrupted(&writer, run, kept)?;
+            if !is_active(run.status) && pins_another_definition(automation, run) {
+                end_waiting_on_changed_definition(&writer, run)?;
+            }
         }
         drop(writer);
         for (run, resumed) in recoveries {
@@ -340,9 +344,10 @@ impl<C: Clock> Scheduler<C> {
         automation: &Automation,
         run: &RunState,
     ) -> Result<Option<(RunRequest, Vec<String>)>, String> {
-        let Some(request) = recorded_request(&automation.name, run).filter(|request| {
-            request.definition_hash == automation.definition_hash || run.retried_hash.is_some()
-        }) else {
+        if pins_another_definition(automation, run) {
+            return Ok(None);
+        }
+        let Some(request) = recorded_request(&automation.name, run) else {
             return Ok(None);
         };
         let history = self.store.events(&automation.name, &run.id)?;
@@ -380,17 +385,46 @@ fn end_interrupted(
     }
     let resumed = resumed.unwrap_or_default();
     for item in open_items(run).filter(|item| !resumed.contains(&item.id)) {
-        let failed = RunEvent::ItemStatus {
-            item: item.id.clone(),
-            status: ItemStatus::Failed,
-            phase: item.phase.clone(),
-            stage: item.stage.clone(),
-            cause: Some(INTERRUPTED_CAUSE.into()),
-            counter: None,
-        };
-        writer.append(&run.id, &failed)?;
+        fail_item(writer, run, item, INTERRUPTED_CAUSE)?;
     }
     Ok(())
+}
+
+/// Whether the run pinned a definition other than the current one and kept none to go on with.
+fn pins_another_definition(automation: &Automation, run: &RunState) -> bool {
+    run.retried_hash.is_none()
+        && run
+            .pinned_hash()
+            .is_some_and(|pinned| pinned != automation.definition_hash)
+}
+
+/// Fails the waiting items of a completed campaign run whose definition changed, as they could
+/// never wake on it, so a retry can take them from their wait step.
+fn end_waiting_on_changed_definition(
+    writer: &AutomationWriter,
+    run: &RunState,
+) -> Result<(), String> {
+    for item in waiting_items(run) {
+        fail_item(writer, run, item, DEFINITION_CHANGED_CAUSE)?;
+    }
+    Ok(())
+}
+
+pub(super) fn fail_item(
+    writer: &AutomationWriter,
+    run: &RunState,
+    item: &ItemState,
+    cause: &str,
+) -> Result<(), String> {
+    let failed = RunEvent::ItemStatus {
+        item: item.id.clone(),
+        status: ItemStatus::Failed,
+        phase: item.phase.clone(),
+        stage: item.stage.clone(),
+        cause: Some(cause.into()),
+        counter: None,
+    };
+    writer.append(&run.id, &failed)
 }
 
 fn open_items(run: &RunState) -> impl Iterator<Item = &ItemState> {

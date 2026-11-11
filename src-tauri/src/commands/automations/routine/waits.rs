@@ -6,8 +6,10 @@ use std::time::SystemTime;
 use super::super::command::CommandContext;
 use super::super::definition::{AutomationDefinition, Step, StepKind, WaitStep};
 use super::super::pipeline::{Execution, StepReport, StepRequest};
-use super::super::scheduler::{is_active, RunRequest};
-use super::super::store::events::{LoggedEvent, ProcessEnd, RunEvent, RunState, StepOutcome};
+use super::super::scheduler::{fail_item, is_active, RunRequest, DEFINITION_CHANGED_CAUSE};
+use super::super::store::events::{
+    ItemStatus, LoggedEvent, ProcessEnd, RunEvent, RunState, StepOutcome,
+};
 use super::super::wait::{self, parked_on, Ended, WaitLog, Watch, WatchScripts};
 use super::commands::{Item, ItemScope};
 use super::{failed, run_variables, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor};
@@ -99,6 +101,31 @@ impl RoutineExecutor {
         let own = run.items.iter().find(|state| state.id == item);
         let task_id = own.and_then(|state| state.task_id.as_deref());
         self.tasks.get(task_id.or(run.task_id.as_deref())?).ok()
+    }
+
+    /// Fails the waiting `items` of a completed campaign run whose definition changed, as they
+    /// could never wake on it, so a retry can take them from their wait step. A routine's run
+    /// keeps its item until its deadline.
+    pub(super) fn end_waiting_on_changed_definition(
+        &self,
+        request: &RunRequest,
+        run: &RunState,
+        items: &[String],
+    ) -> Result<(), String> {
+        if is_active(run.status) {
+            return Err("its definition changed".into());
+        }
+        let writer = self.store.writer(&request.automation)?;
+        let waiting = run
+            .items
+            .iter()
+            .filter(|item| item.status == ItemStatus::Waiting && items.contains(&item.id));
+        for item in waiting {
+            fail_item(&writer, run, item, DEFINITION_CHANGED_CAUSE)?;
+        }
+        drop(writer);
+        (self.runs_changed)(&request.automation);
+        Ok(())
     }
 
     /// The Inbox learns at once that what it showed as waiting is moving on.

@@ -1,8 +1,9 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use super::campaign::{by_branch, item, wait_until};
+use super::campaign::{by_branch, item, wait_until, CAMPAIGN};
 use super::*;
+use crate::commands::automations::actions::intervene::RetryDefinition;
 use crate::commands::automations::scheduler::{Automation, Scheduler, SystemClock};
 use crate::commands::automations::store::events::{ItemState, LoggedEvent};
 use crate::commands::automations::store::Actor;
@@ -364,7 +365,7 @@ fn an_answered_approval_is_not_asked_again_and_a_rejection_reaches_the_agent() {
 }
 
 #[test]
-fn a_waiting_item_stops_with_its_run_or_its_definition() {
+fn a_waiting_routine_item_stops_with_its_run_or_its_definition() {
     let steps = "steps:\n  - id: go\n    wait: { signal: deploy }\n";
     let harness = Harness::routine(steps, FakeSessions::default());
     let ended = harness.run();
@@ -393,6 +394,59 @@ fn a_waiting_item_stops_with_its_run_or_its_definition() {
         attempts(&harness.state(&changed.id).items[0]),
         ["go#1:Waiting"]
     );
+}
+
+/// A campaign item waiting on step `go` of a definition that changed since.
+fn waiting_on_a_changed_definition() -> (Harness, String) {
+    let steps = "steps:\n  - id: go\n    wait: { signal: deploy }\n";
+    let harness = Harness::campaign(steps, by_branch(None), FakeSessions::default());
+    harness.selector_printing(r#"{"items":[{"id":"a","version":"1"}]}"#);
+    let run = harness.run();
+    assert_eq!(item(&run, "a").status, ItemStatus::Waiting);
+    harness.scratch.define(&format!(
+        "{CAMPAIGN}steps:\n  - id: go\n    wait: {{ signal: other }}\n"
+    ));
+    (harness, run.id)
+}
+
+/// The item failed on its wait step and a retry on the current definition waits there again.
+fn retried_from_its_wait(harness: &Harness, run_id: &str) {
+    let failed = harness.state(run_id);
+    let stranded = item(&failed, "a");
+    assert_eq!(stranded.status, ItemStatus::Failed);
+    assert_eq!(stranded.cause.as_deref(), Some("definition_changed"));
+    assert_eq!(stranded.phase.as_deref(), Some("go"));
+
+    harness.retry(run_id, RetryDefinition::Current).unwrap();
+    wait_until(|| item(&harness.state(run_id), "a").status == ItemStatus::Waiting);
+    harness.signal(run_id, "go", None, json!({})).unwrap();
+    harness.executor.wake_ready();
+    wait_until(|| item(&harness.state(run_id), "a").status == ItemStatus::Completed);
+    assert_eq!(
+        attempts(item(&harness.state(run_id), "a")),
+        ["go#1:Waiting", "go#2:Succeeded"]
+    );
+}
+
+#[test]
+fn a_waiting_item_whose_definition_changed_before_a_restart_fails_and_retries_from_its_wait() {
+    let (harness, run_id) = waiting_on_a_changed_definition();
+
+    let restarted = harness.rearmed(&run_id);
+
+    assert!(restarted.parked.lock().unwrap().is_empty());
+    retried_from_its_wait(&harness, &run_id);
+}
+
+#[test]
+fn a_waiting_item_whose_definition_changed_fails_when_woken_and_retries_from_its_wait() {
+    let (harness, run_id) = waiting_on_a_changed_definition();
+
+    harness.executor.wake_ready();
+    wait_until(|| item(&harness.state(&run_id), "a").status == ItemStatus::Failed);
+
+    assert!(harness.executor.parked.lock().unwrap().is_empty());
+    retried_from_its_wait(&harness, &run_id);
 }
 
 #[test]
