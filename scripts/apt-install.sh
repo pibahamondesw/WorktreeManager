@@ -21,4 +21,9 @@ if ! update_package_lists; then
   fi
 fi
 
+if [ -n "${APT_ARCHIVES:-}" ]; then
+  mkdir -p "$APT_ARCHIVES/partial"
+  set -- -o "Dir::Cache::archives=$APT_ARCHIVES" "$@"
+fi
+
 sudo apt-get install -y -o Acquire::Retries=3 "$@"

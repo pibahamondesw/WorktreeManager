@@ -47,11 +47,11 @@ jobs:
             sast:
               - '{src/**,src-tauri/src/**,.semgrep/**,.github/workflows/ci.yml}'
             workflow_security:
-              - '{.github/workflows/**,.zizmor/**}'
+              - '{.github/workflows/**,.github/actions/**,.zizmor/**}'
             workflow_lint:
-              - '{.github/workflows/**,.github/actionlint.yaml,.actionlint/**,scripts/apt-install.sh}'
+              - '{.github/workflows/**,.github/actions/**,.github/actionlint.yaml,.actionlint/**,scripts/apt-install.sh}'
             rust:
-              - '{src-tauri/**,deny.toml,scripts/apt-install.sh,scripts/rust-coverage.sh,scripts/rust-coverage-report.py,scripts/coverage-requirements.txt,scripts/macos-changes.py}'
+              - '{src-tauri/**,deny.toml,.github/actions/tauri-system-deps/**,scripts/apt-install.sh,scripts/rust-coverage.sh,scripts/rust-coverage-report.py,scripts/coverage-requirements.txt,scripts/macos-changes.py}'
             vault_kit:
               - 'vault-kit/**'
             workflow:
@@ -162,17 +162,7 @@ jobs:
 
       - name: Install Tauri system dependencies
         timeout-minutes: 15
-        run: |
-          scripts/apt-install.sh \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libxdo-dev \
-            libssl-dev \
-            python3-venv \
-            build-essential \
-            zsh
+        uses: ./.github/actions/tauri-system-deps # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ syntax
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -292,17 +282,7 @@ jobs:
 
       - name: Install Tauri system dependencies
         timeout-minutes: 15
-        run: |
-          scripts/apt-install.sh \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libxdo-dev \
-            libssl-dev \
-            python3-venv \
-            build-essential \
-            zsh
+        uses: ./.github/actions/tauri-system-deps # zizmor: ignore[self-repository] actionlint 1.7.12 rejects the $/ syntax
 
       - name: Install pinned Rust and LLVM tools
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -541,4 +521,4 @@ jobs:
       - name: Scan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: zizmor --format github .github/workflows
+        run: zizmor --format github .github

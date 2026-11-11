@@ -1,0 +1,51 @@
+name: Install Tauri system dependencies
+description: >-
+  Installs the Linux packages Tauri needs, reusing .deb files cached per package
+  list and runner image so a warm cache skips apt-get update and the mirrors.
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve package list and cache key
+      id: apt
+      shell: bash
+      run: |
+        packages="libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev python3-venv build-essential zsh"
+        list_hash=$(printf '%s' "$packages" | sha256sum | cut -c1-16)
+        {
+          echo "packages=$packages"
+          echo "key=apt-${ImageOS:-unknown}-${ImageVersion:-unknown}-${RUNNER_ARCH}-${list_hash}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore cached packages
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-archives/*.deb
+        key: ${{ steps.apt.outputs.key }}
+
+    - name: Install cached packages
+      id: cached
+      if: steps.restore.outputs.cache-hit == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        ARCHIVES: ${{ runner.temp }}/apt-archives
+      run: sudo apt-get install -y --no-download "$ARCHIVES"/*.deb
+
+    - name: Download and install packages
+      if: steps.restore.outputs.cache-hit != 'true' || steps.cached.outcome == 'failure'
+      shell: bash
+      env:
+        APT_ARCHIVES: ${{ runner.temp }}/apt-archives
+        PACKAGES: ${{ steps.apt.outputs.packages }}
+      run: |
+        # shellcheck disable=SC2086
+        scripts/apt-install.sh $PACKAGES
+
+    - name: Save downloaded packages
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-archives/*.deb
+        key: ${{ steps.apt.outputs.key }}
