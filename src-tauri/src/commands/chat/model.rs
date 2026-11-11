@@ -44,6 +44,8 @@ pub enum ItemKind {
     Handoff,
     /// A subagent run; its steps are the items whose `parent` is this item's id.
     Agent,
+    /// Questions the agent asked the user, with the answers once given.
+    Question,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -68,6 +70,17 @@ pub struct ChatItem {
     /// The subagent run this item is a step of.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<AskedQuestion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskedQuestion {
+    pub header: String,
+    pub question: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
 }
 
 impl ChatItem {
@@ -83,6 +96,7 @@ impl ChatItem {
             duration_ms: None,
             origin: None,
             parent: None,
+            questions: Vec::new(),
         }
     }
 

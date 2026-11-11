@@ -274,6 +274,18 @@ fn render_turn(items: &[ChatItem]) -> String {
                 ),
             ),
             ItemKind::Error => tool_line(&mut text, format!("error: {}", first_line(&item.text))),
+            ItemKind::Question => {
+                for question in &item.questions {
+                    text.push_str(&format!(
+                        "\n[{speaker} asked]\n{}\n[User answered]\n{}\n",
+                        clip(&question.question, MAX_TEXT_CHARS),
+                        clip(
+                            question.answer.as_deref().unwrap_or("(no answer)"),
+                            MAX_TEXT_CHARS
+                        )
+                    ));
+                }
+            }
             _ => {}
         }
     }
@@ -359,6 +371,7 @@ Continue from where the conversation left off.\n{body}</{DIGEST_TAG}>"
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::chat::model::AskedQuestion;
 
     fn store(tag: &str) -> HandoffStore {
         let dir = std::env::temp_dir().join(format!("wm-handoff-{tag}-{}", std::process::id()));
@@ -425,6 +438,27 @@ mod tests {
         let (digest, _) = digest(&items);
         assert!(digest.contains("delegated to a subagent: Find the bug"));
         assert!(!digest.contains("cargo test"));
+    }
+
+    #[test]
+    fn the_digest_keeps_questions_and_their_answers() {
+        let mut question = ChatItem::new("q", ItemKind::Question, "");
+        question.origin = Some("claude".into());
+        question.questions = vec![
+            AskedQuestion {
+                header: "DB".into(),
+                question: "Which DB?".into(),
+                answer: Some("Postgres".into()),
+            },
+            AskedQuestion {
+                header: "Cache".into(),
+                question: "Which cache?".into(),
+                answer: None,
+            },
+        ];
+        let (digest, _) = digest(&[user("u", "Pick a stack"), question]);
+        assert!(digest.contains("[Claude Code asked]\nWhich DB?\n[User answered]\nPostgres\n"));
+        assert!(digest.contains("Which cache?\n[User answered]\n(no answer)"));
     }
 
     #[test]

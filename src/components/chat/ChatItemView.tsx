@@ -3,7 +3,7 @@ import Markdown, { Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { ChevronDownIcon, CloseIcon, SteerIcon } from "../ui/Icons";
-import { ChatItem, HistoryAction } from "../../services/chat";
+import { AskedQuestion, ChatItem, HistoryAction } from "../../services/chat";
 import { MarkdownLink } from "./MarkdownLink";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { HistoryMenu } from "./HistoryMenu";
@@ -177,6 +177,46 @@ function Activity({ item }: { item: ChatItem }) {
         </div>
       )}
     </div>
+  );
+}
+
+function QuestionAnswer({ question, status }: { question: AskedQuestion; status?: string }) {
+  if (question.answer !== undefined)
+    return (
+      <p className="border-l-2 border-accent pl-2 text-sm text-text-primary whitespace-pre-wrap select-text">
+        {question.answer}
+      </p>
+    );
+  const waiting = status === "inProgress";
+  return (
+    <p className={`text-xs italic text-text-muted${waiting ? " animate-pulse" : ""}`}>
+      {waiting ? "Waiting for an answer…" : "Not answered"}
+    </p>
+  );
+}
+
+function QuestionCard({ item }: { item: ChatItem }) {
+  const questions = item.questions ?? [];
+  const title = questions.length === 1 ? "Question" : "Questions";
+  return (
+    <section
+      aria-label={title}
+      className="rounded-lg border border-border bg-bg-secondary/40 px-3 py-2 flex flex-col gap-3"
+    >
+      <span className="text-xs font-medium text-text-muted">{title}</span>
+      {questions.map((question, index) => (
+        <div key={index} className="flex flex-col gap-1">
+          <p className="text-xs text-text-secondary select-text [overflow-wrap:anywhere]">
+            {question.header && <span className="font-medium">{question.header} · </span>}
+            {question.question}
+          </p>
+          <QuestionAnswer question={question} status={item.status} />
+        </div>
+      ))}
+      {item.text && (
+        <p className="text-xs text-text-muted whitespace-pre-wrap select-text">{item.text}</p>
+      )}
+    </section>
   );
 }
 
@@ -396,6 +436,8 @@ export function ChatItemView({
       );
     case "agent":
       return <SubagentCard item={item} steps={steps} />;
+    case "question":
+      return <QuestionCard item={item} />;
     default:
       return <Activity item={item} />;
   }
