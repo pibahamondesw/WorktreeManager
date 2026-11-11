@@ -49,9 +49,9 @@ jobs:
             workflow_security:
               - '{.github/workflows/**,.zizmor/**}'
             workflow_lint:
-              - '{.github/workflows/**,.actionlint/**}'
+              - '{.github/workflows/**,.actionlint/**,scripts/apt-install.sh}'
             rust:
-              - '{src-tauri/**,deny.toml,scripts/rust-coverage.sh,scripts/rust-coverage-report.py,scripts/coverage-requirements.txt,scripts/macos-changes.py}'
+              - '{src-tauri/**,deny.toml,scripts/apt-install.sh,scripts/rust-coverage.sh,scripts/rust-coverage-report.py,scripts/coverage-requirements.txt,scripts/macos-changes.py}'
             vault_kit:
               - 'vault-kit/**'
             workflow:
@@ -152,6 +152,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -160,9 +161,9 @@ jobs:
           persist-credentials: false
 
       - name: Install Tauri system dependencies
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          scripts/apt-install.sh \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
@@ -290,9 +291,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install Tauri system dependencies
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          scripts/apt-install.sh \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
@@ -476,9 +477,9 @@ jobs:
           persist-credentials: false
 
       - name: Install actionlint and ShellCheck
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+          scripts/apt-install.sh shellcheck
           archive="$RUNNER_TEMP/actionlint.tar.gz"
           curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
           echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check
