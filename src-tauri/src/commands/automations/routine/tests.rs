@@ -622,6 +622,19 @@ fn a_branch_template_without_a_value_fails_task_creation() {
 }
 
 #[test]
+fn a_branch_template_git_rejects_fails_task_creation_naming_the_branch() {
+    let frontmatter = "target: { workspace: Acme, repos: [rails], branch: \"wtm//{automation}\" }\nagent: { id: claude }\n";
+    let harness = Harness::new(frontmatter, FakeTasks::default(), FakeSessions::default());
+    let run = harness.run();
+    assert_eq!(run.failure_reason, Some(FailureReason::TaskCreateFailed));
+    assert_eq!(
+        run.task_error.unwrap().message,
+        "branch \"wtm//demo\" is not a valid git branch name"
+    );
+    assert!(harness.tasks.created.lock().unwrap().is_empty());
+}
+
+#[test]
 fn existing_tasks_are_looked_up_instead_of_created() {
     let frontmatter = "target: { workspace: Acme, repos: [rails], task: existing, existing_task: t9 }\nagent: { id: claude }\n";
     let harness = Harness::new(frontmatter, FakeTasks::default(), FakeSessions::default());

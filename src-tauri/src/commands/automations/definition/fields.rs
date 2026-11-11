@@ -8,6 +8,7 @@ const TEMPLATE_VARIABLES: &[&str] = &[
     "run.short_id",
     "run.scheduled_for",
     "item.id",
+    "item.branch",
     "item.version",
     "item.title",
     "tracker.issue",

@@ -588,7 +588,7 @@ fn target(
     }
     let default_branch = match task {
         TaskMode::PerRun => Some("wtm/{automation}/{run.short_id}".into()),
-        TaskMode::PerItem => Some("wtm/{automation}/{item.id}".into()),
+        TaskMode::PerItem => Some("wtm/{automation}/{item.branch}".into()),
         TaskMode::Existing => None,
     };
     Some(Target {

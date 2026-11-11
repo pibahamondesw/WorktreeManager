@@ -1777,7 +1777,7 @@ fn campaigns_read_their_selector_and_work_in_per_item_tasks() {
     assert_eq!(definition.target.task, TaskMode::PerItem);
     assert_eq!(
         definition.target.branch.as_deref(),
-        Some("wtm/{automation}/{item.id}")
+        Some("wtm/{automation}/{item.branch}")
     );
     assert_eq!(
         definition.target.repos[0].local_path.as_deref(),

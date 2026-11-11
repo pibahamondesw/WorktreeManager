@@ -10,6 +10,7 @@ use super::super::command::{CommandContext, HeldLeases};
 use super::super::pipeline::StepRequest;
 use super::super::store::events::ItemState;
 use super::super::store::write_atomically;
+use super::branch::item_branch;
 use super::leases::StepLeases;
 use super::{render, ResolvedTask};
 
@@ -77,6 +78,7 @@ impl ItemScope {
             .collect();
         variables.extend([
             ("item.id".into(), item.id.clone()),
+            ("item.branch".into(), item_branch(&item.id)),
             ("item.version".into(), item.version.clone()),
             ("task.id".into(), task.id.clone()),
             ("task.branch".into(), task.branch.clone()),
