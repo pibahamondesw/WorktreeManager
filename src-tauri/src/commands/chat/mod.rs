@@ -24,6 +24,7 @@ pub mod interrupted;
 mod markdown;
 mod model;
 mod preferences;
+mod questions;
 mod reasoning;
 mod sessions;
 mod turns;
@@ -141,10 +142,24 @@ struct Shared {
     /// How an unattended session resolves requests no one answers.
     pending_resolution: Option<PendingResolution>,
     pending_deadlines: HashMap<String, Instant>,
+    questions: Option<questions::QuestionLog>,
 }
 
 type Notify = Arc<dyn Fn(ChatActivity) + Send + Sync>;
 type Remember = Arc<dyn Fn(String) + Send + Sync>;
+
+const QUESTION_ANCHORS: usize = 16;
+
+fn question_anchors(before: &[model::ChatItem]) -> Vec<String> {
+    before
+        .iter()
+        .rev()
+        .take_while(|item| item.origin.is_none())
+        .filter(|item| item.status.as_deref() != Some(model::QUEUED))
+        .take(QUESTION_ANCHORS)
+        .map(|item| item.id.clone())
+        .collect()
+}
 
 impl Shared {
     fn new(
@@ -164,6 +179,7 @@ impl Shared {
             handoff: None,
             pending_resolution: None,
             pending_deadlines: HashMap::new(),
+            questions: None,
         }
     }
 
@@ -190,6 +206,28 @@ impl Shared {
     fn prepend_carried(&self, items: &mut Vec<model::ChatItem>) {
         if let Some(handoff) = &self.handoff {
             items.splice(0..0, handoff.carried.iter().cloned());
+        }
+    }
+
+    fn restore_questions(&self, items: &mut Vec<model::ChatItem>, fork_source: Option<&str>) {
+        if let (Some(log), Some(conversation)) = (&self.questions, self.turns.conversation()) {
+            log.restore(conversation, fork_source, items);
+        }
+    }
+
+    /// Keeps a question with the items before it, so a reopened conversation places it after the
+    /// nearest one its history still has: the app adds items, like errors, that it doesn't.
+    fn keep_question(&self, id: &str) {
+        let items = &self.snapshot.items;
+        let question = items.iter().position(|item| item.id == id);
+        if let (Some(log), Some(conversation), Some(index)) =
+            (&self.questions, self.turns.conversation(), question)
+        {
+            log.keep(
+                conversation,
+                question_anchors(&items[..index]),
+                &items[index],
+            );
         }
     }
 
@@ -249,6 +287,7 @@ impl Shared {
                     if let Err(error) = copied {
                         log::warn!("could not copy fork checkpoints: {error}");
                     }
+                    self.restore_questions(items, fork_source.as_deref());
                     self.prepend_carried(items);
                 }
                 ChatEvent::Pending { request } => self.start_deadline(&request.id),
@@ -265,6 +304,9 @@ impl Shared {
                     });
                 }
             }
+        }
+        for id in out.kept {
+            self.keep_question(&id);
         }
         if let Some(background_agents) = out.background_agents {
             let before = self.activity();
@@ -355,6 +397,7 @@ struct SessionSetup {
     remember: Remember,
     notify: Notify,
     pending_resolution: Option<PendingResolution>,
+    questions: Option<questions::QuestionLog>,
 }
 
 /// Spawns a launch as the task's chat, with its history and the conversation it continues.
@@ -398,6 +441,7 @@ impl ChatSession {
             remember,
             notify,
             pending_resolution,
+            questions,
         } = setup;
         command
             .stdin(Stdio::piped())
@@ -412,6 +456,7 @@ impl ChatSession {
         let mut shared = Shared::new(provider, ChatSnapshot::new(generation), turns);
         shared.stdin = stdin;
         shared.pending_resolution = pending_resolution;
+        shared.questions = questions;
         let shared = Arc::new(Mutex::new(shared));
         let process = Arc::new(Mutex::new(Some(process)));
         let session = Self {
@@ -933,6 +978,7 @@ fn session_setup<R: Runtime>(
         remember: remember_conversation(&app_data, target, handoff_link),
         notify: broadcast_activity(app, target),
         pending_resolution,
+        questions: Some(questions::QuestionLog::new(&app_data)),
     })
 }
 
@@ -1091,6 +1137,11 @@ pub async fn chat_open<R: Runtime>(
             .filter(|entry| entry.conversation_id == link.conversation_id)
             .and_then(|entry| entry.fork)
     });
+    let kept_questions = questions::QuestionLog::new(
+        &app.path()
+            .app_data_dir()
+            .map_err(|e| format!("app data dir: {e}"))?,
+    );
     let (handoff, mut launch) = {
         let (task_id, agent) = (task_id.clone(), agent.clone());
         tauri::async_runtime::spawn_blocking(move || {
@@ -1098,9 +1149,12 @@ pub async fn chat_open<R: Runtime>(
                 let first = link.clone();
                 handoff::resolve(&handoffs, &task_id, &agent, link, |source| {
                     let fork = pending_fork.as_ref().filter(|_| *source == first);
-                    agents
-                        .get(&source.agent)?
-                        .history(&cwd, &source.conversation_id, fork)
+                    let mut items =
+                        agents
+                            .get(&source.agent)?
+                            .history(&cwd, &source.conversation_id, fork)?;
+                    kept_questions.restore(&source.conversation_id, None, &mut items);
+                    Ok(items)
                 })
             });
             let request = ChatRequest {
@@ -1560,6 +1614,7 @@ pub(crate) mod tests {
                 statuses.lock().unwrap().push(activity.status)
             }),
             pending_resolution: None,
+            questions: None,
         };
         ChatSession::spawn(command, Box::new(Echo), setup).unwrap()
     }
@@ -1765,6 +1820,7 @@ pub(crate) mod tests {
             remember: Arc::new(drop),
             notify: Arc::new(|_| {}),
             pending_resolution: unattended(Duration::ZERO, PendingDefault::Deny),
+            questions: None,
         };
         let session = ChatSession::spawn(
             command,
@@ -2219,6 +2275,74 @@ pub(crate) mod tests {
             shared.snapshot.item(&third).unwrap().checkpoint.as_deref(),
             Some(queued_turn.after.as_str())
         );
+    }
+
+    fn codex_session_with_questions(fixture: &checkpoints::tests::Fixture) -> Shared {
+        let mut shared = checkpoint_session(
+            fixture,
+            Box::new(codex::CodexProvider::new(
+                fixture.folders[0].clone(),
+                Vec::new(),
+                Some("conv".into()),
+            )),
+        );
+        shared.questions = Some(questions::QuestionLog::new(&fixture.dir.join("app-data")));
+        let mut out = ProviderOutput::default();
+        shared.provider.start(&mut out);
+        let notify: Notify = Arc::new(|_| {});
+        shared.commit(out, &drop, &notify);
+        feed_checkpoint_line(&mut shared, serde_json::json!({ "id": 1, "result": {} }));
+        feed_checkpoint_line(
+            &mut shared,
+            serde_json::json!({ "id": 2, "result": { "account": {} } }),
+        );
+        feed_checkpoint_line(
+            &mut shared,
+            serde_json::json!({ "id": 5, "result": { "thread": { "id": "conv", "status": { "type": "idle" }, "turns": [
+                { "id": "t0", "items": [
+                    { "type": "userMessage", "id": "u0", "content": [{ "type": "text", "text": "hi" }] },
+                    { "type": "agentMessage", "id": "a0", "text": "which?" },
+                    { "type": "agentMessage", "id": "a1", "text": "done" },
+                ] },
+            ] } } }),
+        );
+        shared
+    }
+
+    #[test]
+    fn codex_questions_reappear_with_their_answers_when_the_conversation_reopens() {
+        let fixture = checkpoints::tests::Fixture::new(1);
+        let mut shared = codex_session_with_questions(&fixture);
+        shared.snapshot.items.truncate(2);
+        feed_checkpoint_line(
+            &mut shared,
+            serde_json::json!({ "id": "q", "method": "item/tool/requestUserInput", "params": { "threadId": "conv", "itemId": "call_q", "questions": [
+                { "id": "color", "header": "Color", "question": "Pick one", "options": [] },
+            ] } }),
+        );
+        let mut out = ProviderOutput::default();
+        let response = ChatResponse {
+            answers: HashMap::from([("color".to_string(), vec!["Red".to_string()])]),
+            ..Default::default()
+        };
+        shared
+            .provider
+            .respond("q", &response, &shared.snapshot, &mut out)
+            .unwrap();
+        let notify: Notify = Arc::new(|_| {});
+        shared.commit(out, &drop, &notify);
+
+        let reopened = codex_session_with_questions(&fixture);
+        let ids: Vec<&str> = reopened
+            .snapshot
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(ids, ["u0", "a0", "call_q", "a1"]);
+        let question = reopened.snapshot.item("call_q").unwrap();
+        assert_eq!(question.status.as_deref(), Some("completed"));
+        assert_eq!(question.questions[0].answer.as_deref(), Some("Red"));
     }
 
     #[test]

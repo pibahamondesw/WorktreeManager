@@ -77,7 +77,11 @@ enum ServerRequest {
         amendment: Option<Value>,
     },
     FileChange,
-    Question,
+    /// Codex's history drops these, so the chat item showing them is kept by the app.
+    Question {
+        item: String,
+        questions: Vec<Question>,
+    },
     /// `request_user_input_async`: the question arrives as an agent message and is answered with
     /// a user message in the reply envelope, not a JSON-RPC response. Holds (id, title) per question.
     AsyncQuestion(Vec<(String, String)>),
@@ -891,7 +895,10 @@ impl CodexProvider {
             }
             "serverRequest/resolved" => {
                 let id = request_key(&params["requestId"]);
-                if self.requests.remove(&id).is_some() {
+                if let Some((_, kind)) = self.requests.remove(&id) {
+                    if let ServerRequest::Question { item, .. } = kind {
+                        finish_question(snapshot, &item, None, out);
+                    }
                     out.event(ChatEvent::Resolved { id });
                 }
             }
@@ -976,23 +983,32 @@ impl CodexProvider {
                     },
                 )
             }
-            "item/tool/requestUserInput" => (
-                ServerRequest::Question,
-                PendingRequest {
-                    id: key.clone(),
-                    title: "Codex has a question".into(),
-                    detail: None,
-                    format: DetailFormat::Text,
-                    kind: PendingKind::Question {
-                        questions: params["questions"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .map(map_question)
-                            .collect(),
+            "item/tool/requestUserInput" => {
+                let questions: Vec<Question> = params["questions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(map_question)
+                    .collect();
+                let item = params["itemId"].as_str().map_or_else(
+                    || format!("question-{}", uuid::Uuid::new_v4()),
+                    String::from,
+                );
+                out.keep(question_item(&item, &questions));
+                (
+                    ServerRequest::Question {
+                        item,
+                        questions: questions.clone(),
                     },
-                },
-            ),
+                    PendingRequest {
+                        id: key.clone(),
+                        title: "Codex has a question".into(),
+                        detail: None,
+                        format: DetailFormat::Text,
+                        kind: PendingKind::Question { questions },
+                    },
+                )
+            }
             other => (
                 ServerRequest::Unsupported,
                 PendingRequest {
@@ -1278,7 +1294,7 @@ impl ChatProvider for CodexProvider {
         &mut self,
         request_id: &str,
         response: &ChatResponse,
-        _snapshot: &ChatSnapshot,
+        snapshot: &ChatSnapshot,
         out: &mut ProviderOutput,
     ) -> Result<(), String> {
         let (id, kind) = self
@@ -1296,7 +1312,12 @@ impl ChatProvider for CodexProvider {
                 let decision = response.decision.as_deref().unwrap_or("decline");
                 json!({ "id": id, "result": { "decision": decision } })
             }
-            ServerRequest::Question => {
+            ServerRequest::Question { item, questions } => {
+                let shown = questions
+                    .iter()
+                    .map(|question| shown_answer(question, &response.answers))
+                    .collect();
+                finish_question(snapshot, &item, Some(shown), out);
                 let answers: serde_json::Map<String, Value> = response
                     .answers
                     .iter()
@@ -1442,6 +1463,55 @@ fn map_question(question: &Value) -> Question {
         allow_other: question["isOther"] == true,
         multi_select: false,
         secret: question["isSecret"] == true,
+    }
+}
+
+const SECRET_ANSWER: &str = "••••••";
+
+fn question_item(id: &str, questions: &[Question]) -> ChatItem {
+    let mut item = ChatItem::new(id, ItemKind::Question, "").with_status("inProgress");
+    item.questions = questions
+        .iter()
+        .map(|question| AskedQuestion {
+            header: question.header.clone(),
+            question: question.question.clone(),
+            answer: None,
+        })
+        .collect();
+    item
+}
+
+fn shown_answer(question: &Question, answers: &HashMap<String, Vec<String>>) -> Option<String> {
+    let answer = answers
+        .get(&question.id)
+        .filter(|answer| !answer.is_empty())?;
+    Some(if question.secret {
+        SECRET_ANSWER.into()
+    } else {
+        answer.join(", ")
+    })
+}
+
+/// Answered with one entry per question, or stopped without answers.
+fn finish_question(
+    snapshot: &ChatSnapshot,
+    id: &str,
+    answers: Option<Vec<Option<String>>>,
+    out: &mut ProviderOutput,
+) {
+    if let Some(mut item) = snapshot.item(id).cloned() {
+        item.status = Some(
+            if answers.is_some() {
+                "completed"
+            } else {
+                "stopped"
+            }
+            .into(),
+        );
+        for (question, answer) in item.questions.iter_mut().zip(answers.into_iter().flatten()) {
+            question.answer = answer;
+        }
+        out.keep(item);
     }
 }
 
@@ -2538,11 +2608,15 @@ mod tests {
         feed(
             &mut provider,
             &mut snapshot,
-            json!({ "id": "q", "method": "item/tool/requestUserInput", "params": { "threadId": "th1", "questions": [
+            json!({ "id": "q", "method": "item/tool/requestUserInput", "params": { "threadId": "th1", "itemId": "call_q", "questions": [
                 { "id": "color", "header": "Color", "question": "Pick one", "isOther": true, "isSecret": false,
                   "options": [{ "label": "Red", "description": "warm" }] },
             ] } }),
         );
+        let asked = snapshot.item("call_q").unwrap();
+        assert_eq!(asked.kind, ItemKind::Question);
+        assert_eq!(asked.status.as_deref(), Some("inProgress"));
+        assert_eq!(asked.questions[0].header, "Color");
         feed(
             &mut provider,
             &mut snapshot,
@@ -2571,6 +2645,83 @@ mod tests {
             json!(["Red"])
         );
         assert_eq!(writes[1]["error"]["code"], UNSUPPORTED);
+        assert_eq!(out.kept, ["call_q"]);
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        let answered = snapshot.item("call_q").unwrap();
+        assert_eq!(answered.status.as_deref(), Some("completed"));
+        assert_eq!(answered.questions[0].answer.as_deref(), Some("Red"));
+    }
+
+    #[test]
+    fn answering_a_question_missing_from_the_chat_keeps_nothing() {
+        let (mut provider, mut snapshot) = resumed();
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": "q", "method": "item/tool/requestUserInput", "params": { "threadId": "th1", "itemId": "call_q", "questions": [
+                { "id": "color", "header": "Color", "question": "Pick one", "options": [] },
+            ] } }),
+        );
+        let mut out = ProviderOutput::default();
+        provider
+            .respond(
+                "q",
+                &ChatResponse::default(),
+                &ChatSnapshot::new(0),
+                &mut out,
+            )
+            .unwrap();
+        assert!(out.kept.is_empty());
+    }
+
+    #[test]
+    fn question_items_hide_secret_answers_and_stop_when_resolved_elsewhere() {
+        let (mut provider, mut snapshot) = resumed();
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": "q", "method": "item/tool/requestUserInput", "params": { "threadId": "th1", "itemId": "call_q", "questions": [
+                { "id": "token", "header": "Token", "question": "Paste it", "isSecret": true, "options": [] },
+                { "id": "name", "header": "Name", "question": "Who?", "isOther": true, "options": [] },
+            ] } }),
+        );
+        assert_eq!(out.kept, ["call_q"]);
+        let mut out = ProviderOutput::default();
+        let response = ChatResponse {
+            answers: HashMap::from([("token".to_string(), vec!["s3cr3t".to_string()])]),
+            ..Default::default()
+        };
+        provider
+            .respond("q", &response, &snapshot, &mut out)
+            .unwrap();
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        let answered = snapshot.item("call_q").unwrap();
+        assert_eq!(answered.questions[0].answer.as_deref(), Some(SECRET_ANSWER));
+        assert_eq!(answered.questions[1].answer, None);
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "id": "r", "method": "item/tool/requestUserInput", "params": { "threadId": "th1", "questions": [
+                { "id": "color", "header": "Color", "question": "Pick one", "options": [] },
+            ] } }),
+        );
+        let out = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "serverRequest/resolved", "params": { "threadId": "th1", "requestId": "r" } }),
+        );
+        assert_eq!(out.kept.len(), 1);
+        assert!(out.kept[0].starts_with("question-"));
+        assert_eq!(
+            snapshot.item(&out.kept[0]).unwrap().status.as_deref(),
+            Some("stopped")
+        );
+        assert!(snapshot.pending.is_empty());
     }
 
     #[test]

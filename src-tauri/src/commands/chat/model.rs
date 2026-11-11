@@ -74,7 +74,7 @@ pub struct ChatItem {
     pub questions: Vec<AskedQuestion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskedQuestion {
     pub header: String,
@@ -558,6 +558,8 @@ pub struct ProviderOutput {
     /// Whether background subagents keep the session working after its turn ends.
     pub background_agents: Option<bool>,
     pub denials: Vec<PermissionDenial>,
+    /// Items the agent's own history drops, which the app keeps with the conversation.
+    pub kept: Vec<String>,
 }
 
 impl ProviderOutput {
@@ -567,6 +569,11 @@ impl ProviderOutput {
 
     pub fn upsert(&mut self, item: ChatItem) {
         self.events.push(ChatEvent::Upsert { item });
+    }
+
+    pub fn keep(&mut self, item: ChatItem) {
+        self.kept.push(item.id.clone());
+        self.upsert(item);
     }
 
     pub fn status(&mut self, status: ChatStatus) {
