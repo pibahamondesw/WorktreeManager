@@ -37,7 +37,8 @@ use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
 use super::publish::{
-    published_pull_request, pushed_commits, CliForge, Forge, PublishScope, Publisher,
+    published_issue, published_pull_request, pushed_commits, CliForge, Forge, PublishScope,
+    Publisher,
 };
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::selector::OpenPullRequests;
@@ -865,7 +866,8 @@ impl ItemSteps<'_> {
         let history = self.run_history();
         let events = || history.iter().map(|logged| &logged.event);
         let pushed = pushed_commits(events(), request.item);
-        let published = published_pull_request(events(), request.item);
+        let mut published = published_pull_request(events(), request.item);
+        published.extend(published_issue(events(), request.item));
         let definition = self.definition;
         let repo_names: BTreeMap<_, _> = definition
             .target

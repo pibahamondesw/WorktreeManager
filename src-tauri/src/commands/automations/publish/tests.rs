@@ -1605,6 +1605,33 @@ fn the_published_pull_request_is_the_last_one_the_items_pr_effects_referenced() 
 }
 
 #[test]
+fn the_published_issue_is_the_last_one_the_items_linear_effects_referenced() {
+    let events = [
+        recorded(ITEM, "linear.upsert", EffectStatus::Executed, Some("ENG-1")),
+        recorded(
+            ITEM,
+            "linear.state",
+            EffectStatus::Reconciled,
+            Some("ENG-2"),
+        ),
+        recorded(ITEM, "linear.state", EffectStatus::Failed, Some("ENG-3")),
+        recorded(ITEM, "git.push", EffectStatus::Executed, Some("abc")),
+        recorded(
+            "other",
+            "linear.upsert",
+            EffectStatus::Executed,
+            Some("ENG-4"),
+        ),
+    ];
+
+    assert_eq!(
+        published_issue(&events, ITEM),
+        [("tracker.issue", "ENG-2".to_string())]
+    );
+    assert_eq!(published_issue(&events[2..], ITEM), []);
+}
+
+#[test]
 fn effects_render_the_pr_an_earlier_step_published_until_one_of_theirs_finds_another() {
     let forge = Arc::new(FakeForge::with_pr(true));
     let bridge = Arc::new(FakeBridge::answering(|_, _| {
