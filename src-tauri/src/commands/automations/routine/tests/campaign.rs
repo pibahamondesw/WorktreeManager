@@ -7,7 +7,7 @@ use crate::commands::automations::command::HeldLeases;
 use crate::commands::automations::routine::leases::Quotas;
 use crate::commands::automations::store::events::{ItemState, RunOutcome};
 
-const CAMPAIGN: &str = "target: { workspace: Acme, repos: [rails], task: per-item }\nagent: { id: claude }\nselector: { run: [scripts/select.sh] }\n";
+pub(super) const CAMPAIGN: &str = "target: { workspace: Acme, repos: [rails], task: per-item }\nagent: { id: claude }\nselector: { run: [scripts/select.sh] }\n";
 const ITEMS_AB: &str = r#"{"items":[{"id":"a","version":"1"},{"id":"b","version":"1"}]}"#;
 
 impl Harness {

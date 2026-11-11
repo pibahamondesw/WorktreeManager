@@ -54,7 +54,11 @@ impl Harness {
         )
     }
 
-    fn retry(&self, run_id: &str, choice: RetryDefinition) -> Result<ItemControl, String> {
+    pub(super) fn retry(
+        &self,
+        run_id: &str,
+        choice: RetryDefinition,
+    ) -> Result<ItemControl, String> {
         let store = self.scratch.store();
         let definitions = DirectoryDefinitions(self.scratch.0.join("automations"));
         let current = definitions.current("demo");

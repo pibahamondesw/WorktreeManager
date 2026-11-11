@@ -104,7 +104,9 @@ impl RoutineExecutor {
     ) -> Result<(), String> {
         let name = &request.automation;
         let run = self.store.run(name, &request.run_id)?;
-        let definition = self.pinned(request, &run).ok_or("its definition changed")?;
+        let Some(definition) = self.pinned(request, &run) else {
+            return self.end_waiting_on_changed_definition(request, &run, items);
+        };
         let history = self.store.events(name, &request.run_id)?;
         let payload = self.store.payload(name, &request.run_id)?;
         let resumed = run.items.iter().filter(|item| items.contains(&item.id));
