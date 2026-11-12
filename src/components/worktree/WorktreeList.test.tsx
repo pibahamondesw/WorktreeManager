@@ -65,10 +65,10 @@ function fixture({
 } = {}) {
   const onTaskPinned = vi.fn().mockResolvedValue(undefined);
   const onPinnedTasksReordered = vi.fn().mockResolvedValue(undefined);
-  const listProps = (tasks: Task[]) => (
+  const listProps = (tasks: Task[], workspaceId = "w1") => (
     <WorktreeList
       tasks={tasks}
-      workspace={{ id: "w1", name: "Workspace", repos: [] }}
+      workspace={{ id: workspaceId, name: "Workspace", repos: [] }}
       vault={{ enabled: false, path: null }}
       taskActions={{
         create: vi.fn(),
@@ -102,7 +102,9 @@ function fixture({
   );
   const view = render(listProps(TASKS));
   const setTasks = (tasks: Task[]) => view.rerender(listProps(tasks));
-  return { onTaskPinned, onPinnedTasksReordered, setTasks };
+  const switchWorkspace = (workspaceId: string, tasks: Task[]) =>
+    view.rerender(listProps(tasks, workspaceId));
+  return { onTaskPinned, onPinnedTasksReordered, setTasks, switchWorkspace };
 }
 
 it("routes pin toggles and only allows pinned tasks to be dragged", async () => {
@@ -191,6 +193,21 @@ it("dims a deleting card and restores it without a toast when deletion fails", a
   expect(card).not.toHaveClass("opacity-50");
   expect(card).not.toHaveAttribute("inert");
   expect(screen.queryByText("git worktree remove failed")).not.toBeInTheDocument();
+});
+
+it("keeps a deleting card in its own workspace and reports its failure from another", async () => {
+  const { deferred, onTaskDeleted } = deferredDeletion();
+  const { switchWorkspace } = fixture({ onTaskDeleted });
+  fireEvent.click(screen.getByText("delete second"));
+  switchWorkspace("w2", []);
+  expect(screen.queryByText("second")).not.toBeInTheDocument();
+  expect(screen.getByText("No active tasks")).toBeInTheDocument();
+  await act(async () => deferred.reject(new Error("git worktree remove failed")));
+  expect(
+    screen.getByText('Could not delete "second". Open its workspace to review.')
+  ).toBeInTheDocument();
+  switchWorkspace("w1", TASKS);
+  expect(screen.getByText("second").parentElement).not.toHaveAttribute("inert");
 });
 
 it("removes a deleted card once its exit animation finishes", async () => {

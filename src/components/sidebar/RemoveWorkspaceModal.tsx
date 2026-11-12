@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { DeleteOutcomeView } from "../ui/DeleteOutcomeView";
@@ -23,17 +24,21 @@ export function RemoveWorkspaceModal({
   tasks,
   onConfirm,
 }: RemoveWorkspaceModalProps) {
-  const deletion = useDeletion(onConfirm);
+  const deletion = useDeletion(useId(), onConfirm);
   const removing = deletion.deleting;
   const outcome = deletion.outcome;
+  const close = () => {
+    deletion.dismiss();
+    onClose();
+  };
 
   const handleRemove = async (request: DeleteRequest) => {
     const result = await deletion.run(request);
-    if (result.kind === "deleted" && !result.warnings.length) onClose();
+    if (result.kind === "deleted" && !result.warnings.length) close();
   };
 
   const closeUnlessRemoving = () => {
-    if (!removing) onClose();
+    if (!removing) close();
   };
 
   return (
@@ -80,7 +85,7 @@ export function RemoveWorkspaceModal({
             outcome={outcome}
             deleting={removing}
             onRetry={(request) => void handleRemove(request)}
-            onDismiss={outcome.kind === "deleted" ? onClose : deletion.dismiss}
+            onDismiss={outcome.kind === "deleted" ? close : deletion.dismiss}
           />
         )}
 

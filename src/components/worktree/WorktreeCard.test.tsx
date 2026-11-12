@@ -352,6 +352,25 @@ it("offers deleting without teardown after a teardown failure", async () => {
   );
 });
 
+it("keeps the deletion progress and its failure when the card remounts", async () => {
+  let reject!: (error: Error) => void;
+  const onDelete = vi.fn(
+    () =>
+      new Promise<never>((_, fail) => {
+        reject = fail;
+      })
+  );
+  const props = { task, workspace, vault, onDelete, repoSlugs: {} };
+  const first = render(<Card {...props} requestDelete />);
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  first.unmount();
+  render(<Card {...props} />);
+  expect(screen.getByTitle(/^Delete task/)).toBeDisabled();
+  reject(new OperationError("delete_failed", "Worktrees could not be removed."));
+  expect(await screen.findByText("Worktrees could not be removed.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+});
+
 it("offers removing from the app when disk deletion fails", async () => {
   const onDelete = vi
     .fn()

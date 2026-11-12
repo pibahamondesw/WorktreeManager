@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde_json::Value;
 
@@ -10,6 +11,10 @@ fn claude_json_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home).join(".claude.json")
 }
+
+/// Concurrent task deletions clean up in parallel; serialize them so one's write doesn't
+/// fail the other's unchanged-since-read check.
+static CLEANUP: Mutex<()> = Mutex::new(());
 
 struct ClaudeJson {
     original: String,
@@ -95,6 +100,9 @@ fn entries_under_bases(root: &Value, base_paths: &[String]) -> Vec<String> {
 /// that is not present are all treated as success. This must never block worktree deletion.
 /// Returns the paths that were actually removed.
 pub(crate) fn cleanup_claude_json(paths: Vec<String>) -> Result<Vec<String>, String> {
+    let _guard = CLEANUP
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     cleanup_claude_json_at_path(&claude_json_path(), &paths)
 }
 
@@ -123,6 +131,9 @@ fn cleanup_claude_json_at_path(
 /// Returns the paths that were actually removed.
 #[tauri::command]
 pub fn cleanup_claude_json_stale(base_paths: Vec<String>) -> Result<Vec<String>, String> {
+    let _guard = CLEANUP
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     cleanup_claude_json_stale_at_path(&claude_json_path(), &base_paths)
 }
 
