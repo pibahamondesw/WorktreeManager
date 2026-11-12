@@ -5,7 +5,7 @@ import type { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { useChatSession } from "./useChatSession";
 import { EMPTY_CONTROLS } from "../services/chat";
 
-type LiveMessage = { generation: number; event: unknown };
+type LiveMessage = { generation: number; events: unknown[] };
 
 const { invoke, channels } = vi.hoisted(() => ({
   invoke: vi.fn<typeof tauriInvoke>(),
@@ -68,11 +68,17 @@ describe("useChatSession", () => {
     await waitFor(() => expect(view.result.current.snapshot.generation).toBe(2));
 
     act(() =>
-      channels[0].onmessage({ generation: 1, event: { type: "status", status: { kind: "busy" } } })
+      channels[0].onmessage({
+        generation: 1,
+        events: [{ type: "status", status: { kind: "busy" } }],
+      })
     );
     expect(view.result.current.snapshot.status).toEqual({ kind: "idle" });
     act(() =>
-      channels[1].onmessage({ generation: 2, event: { type: "status", status: { kind: "busy" } } })
+      channels[1].onmessage({
+        generation: 2,
+        events: [{ type: "status", status: { kind: "busy" } }],
+      })
     );
     expect(view.result.current.snapshot.status).toEqual({ kind: "busy" });
   });

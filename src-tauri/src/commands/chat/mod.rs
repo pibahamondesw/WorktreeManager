@@ -21,6 +21,7 @@ pub mod history;
 mod history_tests;
 mod images;
 pub mod interrupted;
+mod live;
 mod markdown;
 mod model;
 mod preferences;
@@ -40,7 +41,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -54,6 +55,7 @@ use super::agents::{Agents, ChatRequest};
 use super::process::OwnedProcess;
 use conversations::{Conversation, ConversationStore};
 use handoff::{Handoff, HandoffLink, HandoffStore};
+use live::{LiveBatch, LiveSink};
 use model::{
     ChatEvent, ChatImage, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus,
     PendingRequest, ProviderOutput, ReviewTarget, UnansweredRequest,
@@ -121,18 +123,11 @@ pub struct ChatActivity {
     has_error: bool,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LiveEvent {
-    generation: u64,
-    event: ChatEvent,
-}
-
 struct Shared {
     provider: Box<dyn ChatProvider>,
     snapshot: ChatSnapshot,
     stdin: Option<ChildStdin>,
-    sink: Option<Channel<LiveEvent>>,
+    sink: LiveSink,
     turns: turns::TurnTracker,
     reasoning: reasoning::ReasoningTracker,
     history_reply: Option<std::sync::mpsc::Sender<Result<(), String>>>,
@@ -171,7 +166,7 @@ impl Shared {
             provider,
             snapshot,
             stdin: None,
-            sink: None,
+            sink: LiveSink::default(),
             turns,
             reasoning: reasoning::ReasoningTracker::default(),
             history_reply: None,
@@ -297,12 +292,8 @@ impl Shared {
                 let before = self.activity();
                 self.snapshot.apply(&event);
                 self.notify_change(before, notify);
-                if let Some(sink) = &self.sink {
-                    let _ = sink.send(LiveEvent {
-                        generation: self.snapshot.generation,
-                        event,
-                    });
-                }
+                self.sink
+                    .push(event, self.snapshot.generation, Instant::now());
             }
         }
         for id in out.kept {
@@ -318,6 +309,10 @@ impl Shared {
                 let _ = reply.send(result);
             }
         }
+    }
+
+    fn replace_sink(&mut self, sink: Option<Channel<LiveBatch>>) {
+        self.sink.replace(sink, self.snapshot.generation);
     }
 
     fn start_deadline(&mut self, request_id: &str) {
@@ -381,6 +376,24 @@ fn watch_unanswered(
         if !state.history_busy {
             state.resolve_unanswered(Instant::now(), conversation, notify);
         }
+    }
+}
+
+/// Sends each batch of streaming deltas once its window closes, until the session ends.
+fn flush_live_batches(shared: &Mutex<Shared>, wake: &Condvar) {
+    let mut state = shared.lock().unwrap();
+    while state.snapshot.status.is_live() {
+        let now = Instant::now();
+        let wait = match state.sink.due() {
+            Some(due) if due <= now => {
+                let generation = state.snapshot.generation;
+                state.sink.flush(generation);
+                continue;
+            }
+            Some(due) => due - now,
+            None => live::IDLE_WAIT,
+        };
+        state = wake.wait_timeout(state, wait).unwrap().0;
     }
 }
 
@@ -469,6 +482,12 @@ impl ChatSession {
             provider.start(out);
             Ok(())
         })?;
+
+        let (shared, wake) = (
+            session.shared.clone(),
+            session.shared.lock().unwrap().sink.wake.clone(),
+        );
+        thread::spawn(move || flush_live_batches(&shared, &wake));
 
         let tail = Arc::new(Mutex::new(String::new()));
         if let Some(stderr) = stderr {
@@ -605,16 +624,16 @@ impl ChatSession {
         })
     }
 
-    fn attach(&self, sink: Channel<LiveEvent>) -> ChatSnapshot {
+    fn attach(&self, sink: Channel<LiveBatch>) -> ChatSnapshot {
         let mut state = self.shared.lock().unwrap();
-        state.sink = Some(sink);
+        state.replace_sink(Some(sink));
         state.snapshot.clone()
     }
 
     fn detach(&self, generation: u64) {
         let mut state = self.shared.lock().unwrap();
         if state.snapshot.generation == generation {
-            state.sink = None;
+            state.replace_sink(None);
         }
     }
 
@@ -649,7 +668,7 @@ impl ChatSession {
     fn terminate(&self) {
         {
             let mut state = self.shared.lock().unwrap();
-            state.sink = None;
+            state.replace_sink(None);
             state.stdin = None;
             let Shared {
                 reasoning,
@@ -743,7 +762,7 @@ impl Sessions {
         task_id: &str,
         agent: &str,
         mode: OpenMode,
-        on_event: &Channel<LiveEvent>,
+        on_event: &Channel<LiveBatch>,
     ) -> PrimaryClaim {
         match self.primary(task_id, agent) {
             Some((id, session)) if mode == OpenMode::Attach && session.status().is_live() => {
@@ -772,7 +791,7 @@ impl Sessions {
         session_id: &str,
         task_id: &str,
         agent: &str,
-        sink: Channel<LiveEvent>,
+        sink: Channel<LiveBatch>,
     ) -> Result<OpenedChat, String> {
         let chat = self
             .0
@@ -1064,7 +1083,7 @@ pub async fn chat_open<R: Runtime>(
     conversation: Option<String>,
     handoff_from: Option<String>,
     session_id: Option<String>,
-    on_event: Channel<LiveEvent>,
+    on_event: Channel<LiveBatch>,
 ) -> Result<OpenedChat, String> {
     if let Some(session_id) = session_id {
         return registry
@@ -1994,9 +2013,40 @@ pub(crate) mod tests {
         let session = spawn("sleep 60", Arc::default(), Arc::default());
         session.attach(Channel::new(|_| Ok(())));
         session.detach(6);
-        assert!(session.shared.lock().unwrap().sink.is_some());
+        assert!(session.shared.lock().unwrap().sink.is_attached());
         session.detach(7);
-        assert!(session.shared.lock().unwrap().sink.is_none());
+        assert!(!session.shared.lock().unwrap().sink.is_attached());
+        session.terminate();
+    }
+
+    #[test]
+    fn streaming_deltas_reach_the_pane_once_the_batch_window_closes() {
+        let session = spawn("sleep 60", Arc::default(), Arc::default());
+        let (sent, received) = std::sync::mpsc::channel();
+        session.attach(Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                let _ = sent.send(json);
+            }
+            Ok(())
+        }));
+        let queued_at = Instant::now();
+        session.shared.lock().unwrap().sink.push(
+            ChatEvent::Delta {
+                id: "a".into(),
+                field: model::DeltaField::Text,
+                delta: "Hi".into(),
+            },
+            7,
+            queued_at,
+        );
+
+        let batch = received.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        assert!(queued_at.elapsed() >= live::BATCH_WINDOW);
+        assert!(queued_at.elapsed() < live::IDLE_WAIT);
+        let batch: serde_json::Value = serde_json::from_str(&batch).unwrap();
+        assert_eq!(batch["generation"], 7);
+        assert_eq!(batch["events"][0]["delta"], "Hi");
         session.terminate();
     }
 
@@ -2763,7 +2813,7 @@ pub(crate) mod tests {
                 .lock()
                 .unwrap()
                 .sink
-                .is_some();
+                .is_attached();
             attached
         };
         assert!(!attached("pane"));
@@ -2794,7 +2844,7 @@ pub(crate) mod tests {
             .lock()
             .unwrap()
             .sink
-            .is_some();
+            .is_attached();
         attached
     }
 

@@ -122,7 +122,7 @@ const snapshot = (overrides = {}) => ({
 });
 
 const emit = (generation: number, event: unknown) =>
-  act(() => mocks.channels.at(-1)!.onmessage?.({ generation, event }));
+  act(() => mocks.channels.at(-1)!.onmessage?.({ generation, events: [event] }));
 
 beforeAll(async () => {
   mocks.catalog = AGENT_CATALOG;
