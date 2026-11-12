@@ -9,7 +9,20 @@ const mocks = vi.hoisted(() => ({
   catalog: [] as unknown[],
   channels: [] as { onmessage?: (m: unknown) => void }[],
   dropHandlers: new Set<(event: { payload: unknown }) => void>(),
+  markdownRenders: [] as unknown[],
 }));
+
+vi.mock("react-markdown", async (importOriginal) => {
+  const { createElement } = await import("react");
+  const actual = await importOriginal<typeof import("react-markdown")>();
+  return {
+    ...actual,
+    default: (props: Parameters<typeof actual.default>[0]) => {
+      mocks.markdownRenders.push(props.children);
+      return createElement(actual.default, props);
+    },
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) =>
@@ -393,6 +406,31 @@ describe("ChatPane", () => {
     expect(composerText(box)).toBe("Fails");
     expect(screen.queryByLabelText("Sending message")).toBeNull();
     expect(screen.getByText("Agent unavailable")).toBeInTheDocument();
+  });
+
+  it("re-renders only the streamed row when a delta arrives", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            status: { kind: "busy" },
+            items: [
+              ...snapshot().items,
+              { id: "q", kind: "user", text: "Queued note", status: "queued" },
+            ],
+          })
+        );
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByText("Queued note");
+    emit(3, { type: "upsert", item: { id: "b", kind: "assistant", text: "Work" } });
+    mocks.markdownRenders.length = 0;
+
+    emit(3, { type: "delta", id: "b", field: "text", delta: "ing" });
+
+    expect(screen.getByText("Working")).toBeInTheDocument();
+    expect(mocks.markdownRenders).toEqual(["Working"]);
   });
 
   it("sends on Enter, streams the reply and ignores a stale generation", async () => {

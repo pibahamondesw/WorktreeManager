@@ -155,11 +155,14 @@ export function useChatSession(
   );
   const previewRewind = (itemId: string) =>
     chatRewindPreview(taskId, agent, snapshot.generation, itemId);
-  const changeHistory = async (itemId: string, action: HistoryAction, confirmation?: string) => {
-    const open = openRef.current;
-    await chatHistory(taskId, agent, snapshot.generation, itemId, action, confirmation);
-    if (action !== "code") await open("attach");
-  };
+  const changeHistory = useCallback(
+    async (itemId: string, action: HistoryAction, confirmation?: string) => {
+      const open = openRef.current;
+      await chatHistory(taskId, agent, snapshot.generation, itemId, action, confirmation);
+      if (action !== "code") await open("attach");
+    },
+    [taskId, agent, snapshot.generation]
+  );
 
   return {
     snapshot,

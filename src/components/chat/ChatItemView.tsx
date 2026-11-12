@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import Markdown, { Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -263,7 +263,15 @@ const isVisibleStep = (item: ChatItem) =>
 const isFailedStep = (item: ChatItem) => item.status === "failed" || item.status === "declined";
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
-export function WorkGroup({ items, running }: { items: ChatItem[]; running: boolean }) {
+const sameItems = (a: ChatItem[], b: ChatItem[]) =>
+  a.length === b.length && a.every((item, index) => item === b[index]);
+
+export const WorkGroup = memo(
+  WorkGroupView,
+  (prev, next) => prev.running === next.running && sameItems(prev.items, next.items)
+);
+
+function WorkGroupView({ items, running }: { items: ChatItem[]; running: boolean }) {
   const [open, setOpen] = useState(false);
   const steps = items.filter(isVisibleStep);
   const failed = steps.filter(isFailedStep).length;
@@ -303,8 +311,8 @@ export function WorkGroup({ items, running }: { items: ChatItem[]; running: bool
 /** What can be done with a message waiting for the turn in progress. */
 export interface QueuedActions {
   /** Absent when the agent cannot redirect a running turn. */
-  steer?: () => void;
-  remove: () => void;
+  steer?: (itemId: string) => void;
+  remove: (itemId: string) => void;
 }
 
 const QUEUE_BUTTON =
@@ -322,13 +330,14 @@ function MessageQueueState({ item, queue }: { item: ChatItem; queue?: QueuedActi
     );
   }
   if (item.status !== "queued") return null;
+  const steer = queue?.steer;
   return (
     <div className="mt-1 flex items-center justify-end gap-1 text-xs">
       <span className="text-text-muted">Queued</span>
-      {queue?.steer && (
+      {steer && (
         <button
           type="button"
-          onClick={queue.steer}
+          onClick={() => steer(item.id)}
           title="Send it now, redirecting the turn in progress"
           className={QUEUE_BUTTON}
         >
@@ -339,7 +348,7 @@ function MessageQueueState({ item, queue }: { item: ChatItem; queue?: QueuedActi
       {queue && (
         <button
           type="button"
-          onClick={queue.remove}
+          onClick={() => queue.remove(item.id)}
           aria-label="Remove queued message"
           title="Remove queued message"
           className={QUEUE_BUTTON}
@@ -351,7 +360,10 @@ function MessageQueueState({ item, queue }: { item: ChatItem; queue?: QueuedActi
   );
 }
 
-export function ChatItemView({
+/** Callbacks must be stable so a row only re-renders when its own item changes. */
+export const ChatItemView = memo(ChatItemContent);
+
+function ChatItemContent({
   item,
   steps,
   onHistory,
@@ -360,7 +372,7 @@ export function ChatItemView({
 }: {
   item: ChatItem;
   steps?: SubagentSteps;
-  onHistory?: (action: HistoryAction) => void;
+  onHistory?: (item: ChatItem, action: HistoryAction) => void;
   historyDisabled?: boolean;
   queue?: QueuedActions;
 }) {
@@ -378,7 +390,7 @@ export function ChatItemView({
           <MessageQueueState item={item} queue={queue} />
           {onHistory && !queued && (
             <HistoryMenu
-              onPick={onHistory}
+              onPick={(action) => onHistory(item, action)}
               disabled={historyDisabled}
               canRewind={!!item.checkpoint}
             />
