@@ -59,6 +59,15 @@ impl Harness {
         run_id: &str,
         choice: RetryDefinition,
     ) -> Result<ItemControl, String> {
+        self.retry_from(run_id, choice, None)
+    }
+
+    fn retry_from(
+        &self,
+        run_id: &str,
+        choice: RetryDefinition,
+        from: Option<&str>,
+    ) -> Result<ItemControl, String> {
         let store = self.scratch.store();
         let definitions = DirectoryDefinitions(self.scratch.0.join("automations"));
         let current = definitions.current("demo");
@@ -69,6 +78,7 @@ impl Harness {
             &self.executor,
             &chosen,
             only_item(run_id),
+            from,
             Actor::Cli,
             now(),
         )
@@ -217,6 +227,50 @@ fn a_retry_goes_on_from_the_failed_step_on_the_current_or_the_original_definitio
     assert_eq!(attempts(&retried, "ship").len(), 1);
     assert_eq!(effects(&retried, "ship"), [EffectStatus::Executed]);
     assert_eq!(git(&remote.0, &["rev-parse", "wtm/demo/branch"]), pushed);
+}
+
+#[test]
+fn a_retry_gives_an_item_blocked_by_its_repair_budget_a_new_round_from_any_step() {
+    let harness = Harness::routine(
+        "budgets: { repair_rounds: 1 }
+steps:
+  - id: implement
+    agent: {}
+  - id: verify
+    command: [/bin/sh, -c, 'exit 1']
+    on_fail: { goto: implement, max: repair_rounds }
+",
+        FakeSessions::default(),
+    );
+    let run = harness.run();
+    let rounds = |run: &RunState| {
+        (
+            attempts(run, "implement").len(),
+            attempts(run, "verify").len(),
+        )
+    };
+    let blocked = |run: &RunState| (run.items[0].status, run.items[0].cause.clone());
+    let repair_rounds = || (ItemStatus::Blocked, Some("budget:repair_rounds".into()));
+    assert_eq!((rounds(&run), blocked(&run)), ((2, 2), repair_rounds()));
+
+    harness.retry(&run.id, RetryDefinition::Current).unwrap();
+    let again = harness.settled(&run.id);
+    assert_eq!((rounds(&again), blocked(&again)), ((3, 4), repair_rounds()));
+
+    harness
+        .retry_from(&run.id, RetryDefinition::Current, Some("implement"))
+        .unwrap();
+    let from_implement = harness.settled(&run.id);
+    assert_eq!(
+        (rounds(&from_implement), blocked(&from_implement)),
+        ((5, 6), repair_rounds())
+    );
+    assert_eq!(
+        harness
+            .retry_from(&run.id, RetryDefinition::Current, Some("review"))
+            .unwrap_err(),
+        "The chosen definition has no step review"
+    );
 }
 
 #[test]

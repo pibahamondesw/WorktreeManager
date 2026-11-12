@@ -1,9 +1,10 @@
 //! What the owner does to one item: take it over, hand it back and retry it. Taking over pauses
 //! the item at its agent step so the owner continues that conversation in the task's chat;
 //! handing it back drives it again from that step with an optional note for its next agent step;
-//! retrying a failed or blocked item drives it again from the step it stopped at, on the current
-//! definition or on the one its run started with. Publish effects already recorded are not
-//! executed again: later steps never re-run them and a retried publish step reconciles them.
+//! retrying a failed or blocked item drives it again from the step it stopped at, or another one,
+//! on the current definition or on the one its run started with, with a fresh count of the
+//! counter that blocked it. Publish effects already recorded are not executed again: later steps
+//! never re-run them and a retried publish step reconciles them.
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -144,13 +145,14 @@ pub fn hand_back(
     drive_again(store, executor, name, &run.id, &item.id, now)
 }
 
-/// Drives a failed or blocked item again from the step it stopped at, on `chosen`, which the run
-/// pins from then on.
+/// Drives a failed or blocked item again from the step it stopped at, or from `from`, on
+/// `chosen`, which the run pins from then on. The exhausted counter that blocked it starts again.
 pub fn retry(
     store: &RunStore,
     executor: &dyn Executor,
     chosen: &AutomationDefinition,
     target: ItemRef,
+    from: Option<&str>,
     by: Actor,
     now: DateTime<Utc>,
 ) -> Result<ItemControl, String> {
@@ -167,7 +169,7 @@ pub fn retry(
     }
     still_stopping(executor, &run, routine)?;
     newest(store, name, &run, item)?;
-    let step = retry_step(chosen, item)?;
+    let step = retry_step(chosen, item, from)?;
     if run.pinned_hash() != Some(chosen.hash.as_str()) && others_open(&run, item) {
         return Err(format!(
             "Other items of run {} are still going on its definition; retry item {} on it instead",
@@ -186,6 +188,7 @@ pub fn retry(
         step,
         definition_hash: chosen.hash.clone(),
         by,
+        reset_counter: exhausted_counter(item),
     };
     writer.append(&run.id, &retried)?;
     drop(writer);
@@ -276,15 +279,31 @@ fn newest(store: &RunStore, name: &str, run: &RunState, item: &ItemState) -> Res
     }
 }
 
-/// The step the item stopped at, or the first one for an item that never started a step.
-fn retry_step(chosen: &AutomationDefinition, item: &ItemState) -> Result<String, String> {
-    let step = match &item.phase {
-        Some(phase) => chosen.steps.iter().find(|step| step.id == *phase),
+/// `from`, else the step the item stopped at, or the first one for an item that never started a
+/// step.
+fn retry_step(
+    chosen: &AutomationDefinition,
+    item: &ItemState,
+    from: Option<&str>,
+) -> Result<String, String> {
+    let wanted = from.or(item.phase.as_deref());
+    let step = match wanted {
+        Some(wanted) => chosen.steps.iter().find(|step| step.id == wanted),
         None => chosen.steps.first(),
     };
-    let phase = item.phase.as_deref().unwrap_or_default();
-    let missing = || format!("The chosen definition has no step {phase}");
+    let missing = || {
+        format!(
+            "The chosen definition has no step {}",
+            wanted.unwrap_or_default()
+        )
+    };
     step.map(|step| step.id.clone()).ok_or_else(missing)
+}
+
+/// The goto counter a blocked item exhausted, such as `budget:repair_rounds`, which is its cause.
+fn exhausted_counter(item: &ItemState) -> Option<String> {
+    let cause = item.cause.as_ref()?;
+    (item.status == ItemStatus::Blocked && item.counters.contains_key(cause)).then(|| cause.clone())
 }
 
 const OPEN: [ItemStatus; 3] = [ItemStatus::Queued, ItemStatus::Active, ItemStatus::Waiting];
@@ -443,6 +462,7 @@ pub async fn automation_retry<R: Runtime>(
     engine: State<'_, AutomationEngine>,
     target: ItemRequest,
     definition: RetryDefinition,
+    from: Option<String>,
 ) -> Result<ItemControl, String> {
     let by = operator(target.by)?;
     let executor = engine.0.clone();
@@ -457,6 +477,7 @@ pub async fn automation_retry<R: Runtime>(
             executor.as_ref(),
             &chosen,
             target.target(),
+            from.as_deref(),
             by,
             now(),
         )

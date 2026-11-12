@@ -344,7 +344,7 @@ export async function dispatchCliBridge(
       "automation.signal": ["runId", "step", "payload", "item"],
       "automation.take-over": ["runId", "item"],
       "automation.hand-back": ["runId", "item", "note"],
-      "automation.retry": ["runId", "item", "definition"],
+      "automation.retry": ["runId", "item", "definition", "from"],
       "linear.issue-upsert": [
         "workspaceId",
         "marker",
@@ -551,6 +551,7 @@ export async function dispatchCliBridge(
         result = await invokeAutomations("automation_retry", {
           target: itemTarget(params),
           definition: params.definition === undefined ? "current" : text(params.definition),
+          from: params.from === undefined ? null : text(params.from),
         });
         break;
       case "linear.issue-upsert":
