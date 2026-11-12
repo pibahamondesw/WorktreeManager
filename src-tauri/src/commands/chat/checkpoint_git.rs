@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
@@ -102,6 +103,56 @@ fn hash_objects(
         return Err("Could not read the Git checkpoint base".into());
     }
     Ok(hashes)
+}
+
+fn output_line(folder: &str, args: &[&str]) -> Option<String> {
+    let output = git_command()
+        .args(["-C", folder])
+        .args(args)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|line| !line.is_empty())
+}
+
+const UPSTREAM_CANDIDATES: [&str; 4] = ["origin/main", "origin/master", "main", "master"];
+
+/// The branch a task branch is rebased onto or merges from, unless the task works on it directly.
+pub fn upstream(folder: &str, branch: &str) -> Option<String> {
+    let remote_default = output_line(folder, &["rev-parse", "--abbrev-ref", "origin/HEAD"]);
+    remote_default
+        .into_iter()
+        .chain(UPSTREAM_CANDIDATES.map(String::from))
+        .find(|candidate| {
+            output_line(
+                folder,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{candidate}^{{commit}}"),
+                ],
+            )
+            .is_some()
+        })
+        .filter(|upstream| upstream.trim_start_matches("origin/") != branch)
+}
+
+pub fn merge_base(folder: &str, commit: &str, upstream: &str) -> Option<String> {
+    output_line(folder, &["merge-base", commit, upstream])
+}
+
+/// Applies the base → other change onto current; None when the files conflict or are binary.
+pub fn merge_file(current: &Path, base: &Path, other: &Path) -> Result<Option<Vec<u8>>, String> {
+    let output = git_command()
+        .args(["merge-file", "-p", "-q"])
+        .args([current, base, other])
+        .output()
+        .map_err(|e| e.to_string())?;
+    Ok(output.status.success().then_some(output.stdout))
 }
 
 pub fn read_blob(folder: &str, object: &str) -> Result<Vec<u8>, String> {
