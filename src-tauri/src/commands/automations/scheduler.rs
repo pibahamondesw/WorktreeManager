@@ -20,8 +20,8 @@ use tauri::{AppHandle, Runtime};
 
 use super::definition::{self, AutomationDefinition, CatchUp, Schedule};
 use super::store::events::{
-    FailureReason, ItemState, ItemStatus, LoggedEvent, MissedSlots, RunEvent, RunSource, RunState,
-    RunStatus, RunTrigger, SkipReason,
+    awaits_slot, FailureReason, ItemState, ItemStatus, LoggedEvent, MissedSlots, RunEvent,
+    RunSource, RunState, RunStatus, RunTrigger, SkipReason,
 };
 use super::store::{
     Actor, AutomationState, AutomationWriter, Claim, PauseReason, RunStore, Toggle,
@@ -101,6 +101,10 @@ pub trait Executor: Send + Sync {
 
     /// Drives `items` of the run again from its log, as handing back or retrying them does.
     fn drive_again(&self, _request: RunRequest, _items: Vec<String>) {}
+
+    /// Drives the campaign's retried items awaiting a free slot, then takes new items into the
+    /// slots still free.
+    fn refill(&self, _automation: &str) {}
 }
 
 pub struct Automation {
@@ -312,6 +316,9 @@ impl<C: Clock> Scheduler<C> {
         if recoveries.is_empty() {
             return Ok(());
         }
+        let retries_await = recoveries
+            .iter()
+            .any(|(run, _)| run.items.iter().any(awaits_slot));
         let writer = self.store.writer(name)?;
         for (run, resumed) in &recoveries {
             let kept = resumed.as_ref().map(|(_, items)| items.as_slice());
@@ -333,6 +340,9 @@ impl<C: Clock> Scheduler<C> {
             if !recovered {
                 end_interrupted(&self.store.writer(name)?, &run, None)?;
             }
+        }
+        if retries_await {
+            self.executor.refill(name);
         }
         Ok(())
     }
@@ -367,7 +377,8 @@ impl<C: Clock> Scheduler<C> {
 
 /// Ends what does not resume: an active run fails, and the queued and active items of a
 /// completed campaign run fail, releasing their slot, their `id` + `version` and their
-/// `exclusive_on` values for the next selection. Neither counts toward the auto-pause.
+/// `exclusive_on` values for the next selection. Neither counts toward the auto-pause. Retried
+/// items awaiting a slot never started, so they stay queued for one.
 fn end_interrupted(
     writer: &AutomationWriter,
     run: &RunState,
@@ -384,7 +395,8 @@ fn end_interrupted(
         return Ok(());
     }
     let resumed = resumed.unwrap_or_default();
-    for item in open_items(run).filter(|item| !resumed.contains(&item.id)) {
+    let ended = |item: &&ItemState| !resumed.contains(&item.id) && !awaits_slot(item);
+    for item in open_items(run).filter(ended) {
         fail_item(writer, run, item, INTERRUPTED_CAUSE)?;
     }
     Ok(())

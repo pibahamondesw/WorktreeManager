@@ -9,7 +9,7 @@ use tauri::App;
 
 use super::*;
 use crate::commands::agents::{claude, codex, Agents};
-use crate::commands::automations::store::events::RunOutcome;
+use crate::commands::automations::store::events::{RunOutcome, AWAITING_SLOT};
 
 struct Scratch(PathBuf);
 
@@ -784,7 +784,7 @@ fn the_app_scheduler_survives_an_unreadable_automations_directory() {
 }
 
 #[derive(Default)]
-struct ResumingExecutor(Mutex<Vec<(String, Vec<String>)>>);
+struct ResumingExecutor(Mutex<Vec<(String, Vec<String>)>>, Mutex<Vec<String>>);
 
 impl Executor for ResumingExecutor {
     fn execute(&self, _: RunRequest, _: Option<Value>) {}
@@ -793,6 +793,10 @@ impl Executor for ResumingExecutor {
         assert_eq!(request.definition_hash, "hash");
         self.0.lock().unwrap().push((request.run_id, items));
         true
+    }
+
+    fn refill(&self, automation: &str) {
+        self.1.lock().unwrap().push(automation.to_string());
     }
 }
 
@@ -927,5 +931,55 @@ fn an_executor_that_cannot_resume_ends_the_quit_items_as_interrupted() {
     assert_eq!(
         (item.status, item.cause.as_deref()),
         (ItemStatus::Failed, Some("interrupted"))
+    );
+}
+
+#[test]
+fn retried_items_awaiting_a_slot_stay_queued_at_start_and_take_one_that_is_free() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let campaign = quit_run(
+        &store,
+        "campaign",
+        "hash",
+        &[("quit", 1), ("retried", 0)],
+        false,
+    );
+    let writer = store.writer("quit").unwrap();
+    let blocked = RunEvent::ItemStatus {
+        item: "retried".into(),
+        status: ItemStatus::Blocked,
+        phase: Some("fix".into()),
+        stage: None,
+        cause: None,
+        counter: None,
+    };
+    writer.append(&campaign, &blocked).unwrap();
+    let retried = RunEvent::ItemRetried {
+        item: "retried".into(),
+        step: "fix".into(),
+        definition_hash: "hash".into(),
+        by: Actor::Cli,
+        reset_counter: None,
+        awaiting_slot: true,
+    };
+    writer.append(&campaign, &retried).unwrap();
+    drop(writer);
+    let executor = Arc::new(ResumingExecutor::default());
+    let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
+    let mut scheduler = Scheduler::new(scratch.store(), clock, executor.clone());
+
+    scheduler.recover_interrupted(&[hourly("quit"), hourly("idle")]);
+
+    assert_eq!(
+        *executor.0.lock().unwrap(),
+        [(campaign.clone(), vec!["quit".to_string()])]
+    );
+    assert_eq!(*executor.1.lock().unwrap(), ["quit"]);
+    let run = store.run("quit", &campaign).unwrap();
+    let item = &run.items[1];
+    assert_eq!(
+        (item.status, item.cause.as_deref()),
+        (ItemStatus::Queued, Some(AWAITING_SLOT))
     );
 }

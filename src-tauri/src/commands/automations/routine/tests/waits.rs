@@ -32,6 +32,7 @@ fn an_executor_drives_nothing_again_unless_it_drives_items() {
         test: false,
     };
     Idle.drive_again(request, vec!["routine".into()]);
+    Idle.refill("demo");
     assert!(!Idle.take_over("demo", "r1", "routine"));
 }
 

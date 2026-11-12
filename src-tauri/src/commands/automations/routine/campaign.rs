@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use super::super::actions::intervene::start_retries_due;
 use super::super::actions::{self, now, Refill};
 use super::super::definition::{
     AutomationDefinition, LinearOverrides, SelectorSettings, Target, TaskMode,
@@ -140,8 +141,9 @@ impl RoutineExecutor {
         Ok(items)
     }
 
-    /// Starts a selection pass for the slot an item freed. A pass still in flight may have missed
-    /// it, so the automation waits for that pass to end, or for the next tick.
+    /// Drives the retried items awaiting the slot an item freed, then starts a selection pass for
+    /// the slots still free. A pass still in flight may have missed it, so the automation waits
+    /// for that pass to end, or for the next tick.
     pub(super) fn refill(&self, automation: &str) {
         if self.halted() {
             return;
@@ -149,7 +151,9 @@ impl RoutineExecutor {
         let Some(definition) = self.definitions.current(automation) else {
             return;
         };
-        match actions::refill(&self.store, self, &definition, now()) {
+        let refilled = start_retries_due(&self.store, self, &definition, now())
+            .and_then(|()| actions::refill(&self.store, self, &definition, now()));
+        match refilled {
             Ok(Refill::Busy) => {
                 self.refills_pending
                     .lock()

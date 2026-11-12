@@ -12,8 +12,8 @@ use serde_json::{Map, Value};
 
 use super::scheduler::record_failure;
 use super::store::events::{
-    EffectStatus, FailureReason, ItemState, ItemStatus, RunEvent, RunOutcome, RunSource, RunState,
-    RunStatus, SkipReason,
+    awaits_slot, EffectStatus, FailureReason, ItemState, ItemStatus, RunEvent, RunOutcome,
+    RunSource, RunState, RunStatus, SkipReason,
 };
 use super::store::{Actor, PauseReason, RunStore, Toggle};
 
@@ -325,9 +325,13 @@ fn is_test_run(run: &RunState) -> bool {
 
 /// Items of runs that did not fail: a failed run releases its items for the next selection.
 fn released_items(runs: &[RunState]) -> impl Iterator<Item = &ItemState> {
+    released_items_by_run(runs).map(|(_, item)| item)
+}
+
+fn released_items_by_run(runs: &[RunState]) -> impl Iterator<Item = (&str, &ItemState)> {
     runs.iter()
         .filter(|run| run.status != RunStatus::Failed)
-        .flat_map(|run| &run.items)
+        .flat_map(|run| run.items.iter().map(|item| (run.id.as_str(), item)))
 }
 
 fn active_items(runs: &[RunState]) -> impl Iterator<Item = &ItemState> {
@@ -363,10 +367,30 @@ pub fn has_free_slot(store: &RunStore, automation: &str, active_pool: u64) -> Re
 
 /// Items in `queued` or `active` hold a slot; waiting and resting items free theirs.
 fn free_slots(runs: &[RunState], active_pool: u64) -> u64 {
-    let holding = active_items(runs)
-        .filter(|item| matches!(item.status, ItemStatus::Queued | ItemStatus::Active))
-        .count() as u64;
+    let holding = active_items(runs).filter(|item| holds_slot(item)).count() as u64;
     active_pool.saturating_sub(holding)
+}
+
+fn holds_slot(item: &ItemState) -> bool {
+    matches!(item.status, ItemStatus::Queued | ItemStatus::Active)
+}
+
+/// The retried items awaiting a slot that the items going on leave room for, as `(run, item)`,
+/// oldest run first.
+pub fn retries_due(
+    store: &RunStore,
+    automation: &str,
+    active_pool: u64,
+) -> Result<Vec<(String, String)>, String> {
+    let runs = history(store, automation)?;
+    let going_on = active_items(&runs)
+        .filter(|item| holds_slot(item) && !awaits_slot(item))
+        .count() as u64;
+    let free = active_pool.saturating_sub(going_on) as usize;
+    let awaiting = released_items_by_run(&runs)
+        .filter(|(_, item)| awaits_slot(item))
+        .map(|(run_id, item)| (run_id.to_string(), item.id.clone()));
+    Ok(awaiting.take(free).collect())
 }
 
 fn run_context(run: &RunState) -> RunContext {
