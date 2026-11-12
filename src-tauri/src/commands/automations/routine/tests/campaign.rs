@@ -544,17 +544,17 @@ steps:
 
 #[test]
 fn tracked_items_work_on_their_issue_branch_and_fail_without_one() {
-    let tracked = "pools: { active: 5, open_prs: 5 }\ntracker: { linear: { team: ENG } }\n";
+    let tracked = "pools: { active: 6, open_prs: 6 }\ntracker: { linear: { team: ENG } }\n";
     let harness = Harness::campaign(tracked, by_branch(None), FakeSessions::default());
     harness.selector_printing(concat!(
         r#"{"items":[{"id":"a","version":"1","title":"A"},{"id":"b","version":"1"},"#,
         r#"{"id":"c","version":"1","title":"Offline"},{"id":"d","version":"1","title":"Unbranched"},"#,
-        r#"{"id":"e","version":"1","title":"Unidentified"}]}"#
+        r#"{"id":"e","version":"1","title":"Unidentified"},{"id":"f","version":"1","title":"Silent"}]}"#
     ));
 
     let run = harness.run();
 
-    assert_eq!(run.items.len(), 5, "{run:?}");
+    assert_eq!(run.items.len(), 6, "{run:?}");
     assert_eq!(item(&run, "a").status, ItemStatus::Completed);
     assert_eq!(item(&run, "a").task_id.as_deref(), Some("t-me/wtm-demo-a"));
     let created = harness.tasks.created.lock().unwrap().clone();
@@ -586,6 +586,11 @@ fn tracked_items_work_on_their_issue_branch_and_fail_without_one() {
         cause("e"),
         "task_create_failed: tracker issue: missing field `id`"
     );
+    assert_eq!(
+        cause("f"),
+        "task_create_failed: tracker issue: The app did not answer linear.issue-upsert for 600s"
+    );
+    assert_eq!(item(&run, "f").status, ItemStatus::Failed);
 
     let staged = Harness::campaign(tracked, by_branch(None), FakeSessions::default());
     staged.selector_printing(r#"{"items":[{"id":"a","version":"1","title":"A"}]}"#);
