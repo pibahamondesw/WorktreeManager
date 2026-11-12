@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { extractPrsFromAttachments, GqlAttachmentNode, LinearService } from "./linear";
 
 describe("extractPrsFromAttachments", () => {
@@ -642,5 +642,30 @@ describe("marked issues", () => {
     await expect(missing.linear.moveMarkedIssue(marker, "Done")).rejects.toThrow(
       `No Linear issue carries the marker ${marker}`
     );
+  });
+});
+
+describe("Linear requests", () => {
+  const unanswered = vi.fn(
+    (_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+      })
+  );
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fail with a timeout when Linear never answers, raw or through the SDK", async () => {
+    vi.stubGlobal("fetch", unanswered);
+    const linear = new LinearService("test-key", 20);
+
+    await expect(linear.moveMarkedIssue("lint:api:unit-1", "Done")).rejects.toThrow(
+      "Linear did not answer within 0.02s"
+    );
+    await expect(linear.updateIssueTitle("issue", "Title")).rejects.toThrow(
+      "Linear did not answer within 0.02s"
+    );
+    const [first, second] = unanswered.mock.calls.map(([, init]) => init.signal);
+    expect(first).not.toBe(second);
   });
 });

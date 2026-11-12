@@ -1,4 +1,4 @@
-import { LinearClient } from "@linear/sdk";
+import { LinearClient, LinearGraphQLClient } from "@linear/sdk";
 import { IssueLinearInfo, LinearIssue, LinearTeam, PullRequestInfo } from "../types";
 
 // ---- Standalone: does not require an initialized client ----
@@ -319,13 +319,35 @@ export function extractPrsFromAttachments(attachments: GqlAttachmentNode[]): Pul
   return prs;
 }
 
+/** How long a Linear request may run, so one that never settles cannot stall an operation. */
+const LINEAR_REQUEST_TIMEOUT_MS = 60_000;
+
+/** A client whose every request, raw or through the SDK, aborts once `timeoutMs` pass. */
+function timedClient(apiKey: string, timeoutMs: number): LinearClient {
+  const linear = new LinearClient({ apiKey });
+  const options = { ...linear.options };
+  Object.defineProperty(options, "signal", {
+    enumerable: true,
+    get: () => requestDeadline(timeoutMs),
+  });
+  linear.client = new LinearGraphQLClient(linear.options.apiUrl, options);
+  return linear;
+}
+
+function requestDeadline(timeoutMs: number): AbortSignal {
+  const controller = new AbortController();
+  const timedOut = new Error(`Linear did not answer within ${timeoutMs / 1000}s`);
+  setTimeout(() => controller.abort(timedOut), timeoutMs);
+  return controller.signal;
+}
+
 // ---- Service class: encapsulates the LinearClient ----
 
 export class LinearService {
   private client: LinearClient;
 
-  constructor(apiKey: string) {
-    this.client = new LinearClient({ apiKey });
+  constructor(apiKey: string, requestTimeoutMs = LINEAR_REQUEST_TIMEOUT_MS) {
+    this.client = timedClient(apiKey, requestTimeoutMs);
   }
 
   private get gql() {

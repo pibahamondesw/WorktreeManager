@@ -1282,6 +1282,10 @@ impl OperationsBridge for LoggingBridge {
             let branch = issue_branch(&params);
             return match params["title"].as_str().unwrap() {
                 "Offline" => json!({ "ok": false, "error": { "message": "Linear is offline" } }),
+                "Silent" => json!({ "ok": false, "error": {
+                    "code": "frontend_timeout",
+                    "message": "The app did not answer linear.issue-upsert for 600s",
+                } }),
                 "Unbranched" => json!({ "ok": true, "data": { "identifier": "ENG-2" } }),
                 "Unidentified" => {
                     json!({ "ok": true, "data": { "branchName": format!("me/{branch}") } })

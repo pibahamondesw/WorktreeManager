@@ -330,9 +330,17 @@ const IN_PROCESS_POLL: Duration = if cfg!(test) {
     Duration::from_secs(5)
 };
 
+/// How long an in-process call waits while the frontend neither answers nor reports progress.
+const ENGINE_SILENCE: Duration = Duration::from_secs(10 * 60);
+
 impl CliBridge {
     /// Runs an operation through the frontend as a CLI request would, blocking until it answers.
     pub fn call(&self, method: &str, params: Value) -> Value {
+        self.call_within_silence(method, params, ENGINE_SILENCE)
+    }
+
+    /// Gives up once the frontend stays silent for `silence`; its late answer is then dropped.
+    fn call_within_silence(&self, method: &str, params: Value, silence: Duration) -> Value {
         let request = Request {
             id: uuid::Uuid::new_v4().to_string(),
             version: VERSION,
@@ -343,18 +351,32 @@ impl CliBridge {
             Ok(delivered) => delivered,
             Err(response) => return response,
         };
+        let running = || !self.shared.stopped.load(Ordering::Acquire);
+        let mut last_heard = Instant::now();
         let response = loop {
             match receiver.recv_timeout(IN_PROCESS_POLL) {
                 Ok(value) if value.get("ok").is_some() => break value,
-                Ok(_) => {}
+                Ok(_) => last_heard = Instant::now(),
                 Err(mpsc::RecvTimeoutError::Timeout)
-                    if !self.shared.stopped.load(Ordering::Acquire) => {}
+                    if running() && last_heard.elapsed() < silence => {}
+                Err(mpsc::RecvTimeoutError::Timeout) if running() => {
+                    break silent_frontend(method, silence)
+                }
                 Err(_) => break failure("app_closed", "The app closed before answering."),
             }
         };
         self.shared.pending.lock().unwrap().remove(&token);
         response
     }
+}
+
+fn silent_frontend(method: &str, silence: Duration) -> Value {
+    failure(
+        "frontend_timeout",
+        &format!(
+            "The app did not answer {method} for {silence:?}; it may still finish it, so inspect its state before retrying."
+        ),
+    )
 }
 
 /// How long the engine waits for the interface to load, at launch or after a reload.
@@ -811,6 +833,54 @@ mod tests {
             .lock()
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn in_process_calls_give_up_on_a_silent_frontend() {
+        let server = Server::new();
+        answer_with(&server, |_| {});
+        let params = json!({ "input": { "branchName": "wtm/demo" } });
+        let response = server.cli_bridge().call_within_silence(
+            "task.create",
+            params,
+            Duration::from_millis(60),
+        );
+        assert_eq!(response["error"]["code"], "frontend_timeout");
+        assert!(response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("The app did not answer task.create for 60ms;"));
+        assert!(server
+            .cli_bridge()
+            .shared
+            .pending
+            .lock()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn in_process_calls_wait_on_a_frontend_that_reports_progress() {
+        let server = Server::new();
+        answer_with(&server, |pending| {
+            let sender = pending.sender.clone();
+            std::thread::spawn(move || {
+                for _ in 0..10 {
+                    std::thread::sleep(Duration::from_millis(25));
+                    sender.send(json!({ "progress": "Creating" })).unwrap();
+                }
+                sender
+                    .send(json!({ "ok": true, "data": { "id": "t1" } }))
+                    .unwrap();
+            });
+        });
+        let params = json!({ "input": { "branchName": "wtm/demo" } });
+        let response = server.cli_bridge().call_within_silence(
+            "task.create",
+            params,
+            Duration::from_millis(100),
+        );
+        assert_eq!(response["data"]["id"], "t1");
     }
 
     #[test]
