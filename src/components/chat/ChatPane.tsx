@@ -1,4 +1,12 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
@@ -151,6 +159,8 @@ export function ChatPane({
       request.format === "markdown" && request.detail ? [request.detail] : []
     )
   );
+  const historyDisabled =
+    status.kind !== "idle" || pending.length > 0 || historyPending === `${taskId}:${agent}`;
   const approvalKey = (id: string) => `${snapshot.generation}:${id}`;
   const approvalDraft = (id: string) => approvalDrafts[approvalKey(id)] ?? {};
   const changeApprovalDraft = (id: string, draft: ApprovalDraft) =>
@@ -225,21 +235,24 @@ export function ChatPane({
     else if (!windowStartId && entries[firstVisible]) setWindowStartId(entries[firstVisible].id);
   };
 
-  const run = async (action: () => Promise<void>) => {
+  const run = useCallback(async (action: () => Promise<void>) => {
     setActionError(null);
     try {
       await action();
     } catch (e) {
       setActionError(String(e));
     }
-  };
+  }, []);
 
-  const queuedActions = (itemId: string): QueuedActions => ({
-    steer: descriptor.capabilities.steer
-      ? () => void run(() => session.steerQueued(itemId))
-      : undefined,
-    remove: () => void run(() => session.unqueue(itemId)),
-  });
+  const canSteer = descriptor.capabilities.steer;
+  const { steerQueued, unqueue, changeHistory } = session;
+  const queuedActions = useMemo<QueuedActions>(
+    () => ({
+      steer: canSteer ? (itemId) => void run(() => steerQueued(itemId)) : undefined,
+      remove: (itemId) => void run(() => unqueue(itemId)),
+    }),
+    [canSteer, run, steerQueued, unqueue]
+  );
 
   const send = async (text: string, images: ChatImage[]) => {
     stickRef.current = true;
@@ -285,17 +298,20 @@ export function ChatPane({
     setChangesScope(null);
   };
 
-  const pickHistory = (item: ChatItem, action: HistoryAction) => {
-    const sessionKey = `${taskId}:${agent}`;
-    if (action === "conversation") {
-      setHistoryPending(sessionKey);
-      void run(() => session.changeHistory(item.id, action)).finally(() => {
-        setHistoryPending((current) => (current === sessionKey ? null : current));
-      });
-    } else {
-      setHistoryItem({ item, action, generation: snapshot.generation, sessionKey });
-    }
-  };
+  const pickHistory = useCallback(
+    (item: ChatItem, action: HistoryAction) => {
+      const sessionKey = `${taskId}:${agent}`;
+      if (action === "conversation") {
+        setHistoryPending(sessionKey);
+        void run(() => changeHistory(item.id, action)).finally(() => {
+          setHistoryPending((current) => (current === sessionKey ? null : current));
+        });
+      } else {
+        setHistoryItem({ item, action, generation: snapshot.generation, sessionKey });
+      }
+    },
+    [taskId, agent, run, changeHistory, snapshot.generation]
+  );
 
   return (
     <MarkdownPreviewContext.Provider value={previewContext}>
@@ -370,18 +386,10 @@ export function ChatPane({
                 ) : (
                   <ChatItemView
                     item={item}
-                    steps={steps}
-                    historyDisabled={
-                      status.kind !== "idle" ||
-                      pending.length > 0 ||
-                      historyPending === `${taskId}:${agent}`
-                    }
-                    onHistory={
-                      item.kind === "user" && !item.origin
-                        ? (action) => pickHistory(item, action)
-                        : undefined
-                    }
-                    queue={item.status === "queued" ? queuedActions(item.id) : undefined}
+                    steps={item.kind === "agent" ? steps : undefined}
+                    historyDisabled={historyDisabled}
+                    onHistory={item.kind === "user" && !item.origin ? pickHistory : undefined}
+                    queue={item.status === "queued" ? queuedActions : undefined}
                   />
                 );
               return (
