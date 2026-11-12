@@ -103,6 +103,8 @@ struct Repository {
     delta: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     removed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    upstream_base: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -141,6 +143,77 @@ pub struct FileComparison {
     pub before: Option<StoredFile>,
     pub after: Option<StoredFile>,
 }
+
+#[derive(Debug)]
+struct UpstreamShift {
+    folder: String,
+    from: String,
+    to: String,
+}
+
+/// Two checkpoints to compare. When a repository was rebased onto or merged a newer upstream in
+/// between, the earlier side is moved onto that upstream so only the task's own edits remain.
+pub struct Baseline {
+    before: Checkpoint,
+    after: Checkpoint,
+    shifts: Vec<UpstreamShift>,
+}
+
+impl Baseline {
+    pub fn key(&self) -> String {
+        self.shifts
+            .iter()
+            .map(|shift| format!("{}\0{}\0{}\0", shift.folder, shift.from, shift.to))
+            .collect()
+    }
+
+    fn shift(&self, folder: &str) -> Option<&UpstreamShift> {
+        self.shifts.iter().find(|shift| shift.folder == folder)
+    }
+}
+
+fn upstream_shift(before: &Repository, after: &Repository) -> Option<UpstreamShift> {
+    if before.head == after.head {
+        return None;
+    }
+    let folder = &after.folder;
+    let from = before
+        .upstream_base
+        .clone()
+        .or_else(|| upstream_base(folder, &before.head, &after.branch))?;
+    let to = after
+        .upstream_base
+        .clone()
+        .or_else(|| upstream_base(folder, &after.head, &after.branch))?;
+    (from != to).then(|| UpstreamShift {
+        folder: folder.clone(),
+        from,
+        to,
+    })
+}
+
+fn upstream_base(folder: &str, head: &str, branch: &str) -> Option<String> {
+    let upstream = checkpoint_git::upstream(folder, branch.trim())?;
+    checkpoint_git::merge_base(folder, head.trim(), &upstream)
+}
+
+fn rebased_mode(current: &FileState, old: &FileState, new: &FileState) -> u32 {
+    if old.mode == new.mode {
+        current.mode
+    } else {
+        new.mode
+    }
+}
+
+fn same_content(file: &Option<FileState>, other: &Option<FileState>) -> bool {
+    match (file, other) {
+        (Some(file), Some(other)) => file.blob == other.blob && file.link == other.link,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+type Tree = BTreeMap<String, BaseFile>;
 
 type FileWrite = (PathBuf, Option<FileState>, Option<Vec<u8>>);
 
@@ -222,13 +295,45 @@ impl Checkpoints {
         known: Option<&Checkpoint>,
     ) -> Result<String, String> {
         let checkpoint = self.compact(self.scan(folders, known, true)?)?;
-        let bytes = serde_json::to_vec(&checkpoint).map_err(|e| e.to_string())?;
+        self.store(&checkpoint)
+    }
+
+    fn store(&self, checkpoint: &Checkpoint) -> Result<String, String> {
+        let bytes = serde_json::to_vec(checkpoint).map_err(|e| e.to_string())?;
         let digest = Sha256::digest(&bytes);
         let id = uuid::Uuid::from_bytes(digest[..16].try_into().unwrap()).to_string();
         if !self.dir.join(format!("{id}.json")).exists() {
-            self.save(&format!("{id}.json"), &checkpoint)?;
+            self.save(&format!("{id}.json"), checkpoint)?;
         }
         Ok(id)
+    }
+
+    /// The point each repository of a checkpoint branched from upstream, so comparing it with the
+    /// checkpoint gives the branch's whole diff. Without an upstream, its own commit.
+    pub fn upstream_checkpoint(&self, id: &str) -> Result<String, String> {
+        let checkpoint: Checkpoint = self.read(&format!("{id}.json"))?;
+        let repositories = checkpoint
+            .repositories
+            .into_iter()
+            .map(|repository| {
+                let base = repository
+                    .upstream_base
+                    .or_else(|| {
+                        upstream_base(&repository.folder, &repository.head, &repository.branch)
+                    })
+                    .unwrap_or_else(|| repository.head.trim().to_string());
+                Repository {
+                    folder: repository.folder,
+                    head: format!("{base}\n"),
+                    branch: repository.branch,
+                    files: BTreeMap::new(),
+                    delta: true,
+                    removed: Vec::new(),
+                    upstream_base: Some(base),
+                }
+            })
+            .collect();
+        self.store(&Checkpoint { repositories })
     }
 
     fn base(&self, folder: &str, head: &str) -> Result<BTreeMap<String, BaseFile>, String> {
@@ -360,13 +465,7 @@ impl Checkpoints {
                         };
                         let blob = hash(&bytes);
                         if !stored(&blob) {
-                            let tmp = self
-                                .dir
-                                .join("blobs")
-                                .join(format!("{}.tmp", uuid::Uuid::new_v4()));
-                            fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
-                            fs::rename(tmp, self.dir.join("blobs").join(&blob))
-                                .map_err(|e| e.to_string())?;
+                            self.write_blob(&blob, &bytes)?;
                         }
                         blob
                     }
@@ -386,6 +485,7 @@ impl Checkpoints {
                 );
             }
             let _ = self.save(&stamp_cache_name(folder), &stamps);
+            let upstream_base = upstream_base(folder, &head, &branch);
             repositories.push(Repository {
                 folder: folder.clone(),
                 head,
@@ -393,6 +493,7 @@ impl Checkpoints {
                 files,
                 delta: false,
                 removed: Vec::new(),
+                upstream_base,
             });
         }
         Ok(Checkpoint { repositories })
@@ -548,41 +649,170 @@ impl Checkpoints {
         Ok(bytes)
     }
 
-    pub fn stored_file(
-        &self,
-        id: &str,
-        folder: &str,
-        path: &str,
-    ) -> Result<Option<StoredFile>, String> {
-        Ok(self
-            .load(id)?
-            .repositories
-            .into_iter()
-            .find(|repository| repository.folder == folder)
-            .and_then(|mut repository| repository.files.remove(path))
-            .map(|state| StoredFile {
-                folder: folder.to_string(),
-                state,
-            }))
-    }
-
-    pub fn compare(&self, before: &str, after: &str) -> Result<Vec<FileComparison>, String> {
+    pub fn baseline(&self, before: &str, after: &str) -> Result<Baseline, String> {
         let before = self.load(before)?;
         let after = self.load(after)?;
+        let shifts = after
+            .repositories
+            .iter()
+            .filter_map(|repository| {
+                let previous = before
+                    .repositories
+                    .iter()
+                    .find(|r| r.folder == repository.folder)?;
+                upstream_shift(previous, repository)
+            })
+            .collect();
+        Ok(Baseline {
+            before,
+            after,
+            shifts,
+        })
+    }
+
+    pub fn before_file(&self, baseline: &Baseline, folder: &str, path: &str) -> Option<StoredFile> {
+        let file = stored_state(&baseline.before, folder, path);
+        let state = match self.shifted_trees(baseline, folder) {
+            Some((from, to)) => self.rebased_file(folder, &from, &to, path, file),
+            None => file,
+        }?;
+        Some(StoredFile {
+            folder: folder.to_string(),
+            state,
+        })
+    }
+
+    pub fn after_file(&self, baseline: &Baseline, folder: &str, path: &str) -> Option<StoredFile> {
+        stored_state(&baseline.after, folder, path).map(|state| StoredFile {
+            folder: folder.to_string(),
+            state,
+        })
+    }
+
+    fn shifted_trees(&self, baseline: &Baseline, folder: &str) -> Option<(Tree, Tree)> {
+        let shift = baseline.shift(folder)?;
+        let from = self.base(folder, &shift.from).ok()?;
+        let to = self.base(folder, &shift.to).ok()?;
+        Some((from, to))
+    }
+
+    fn rebased_files(
+        &self,
+        folder: &str,
+        (from, to): (Tree, Tree),
+        mut files: BTreeMap<String, FileState>,
+    ) -> BTreeMap<String, FileState> {
+        let moved = from
+            .keys()
+            .chain(to.keys())
+            .filter(|path| from.get(*path).map(base_state) != to.get(*path).map(base_state))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for path in moved {
+            let file = files.remove(&path);
+            if let Some(state) = self.rebased_file(folder, &from, &to, &path, file) {
+                files.insert(path, state);
+            }
+        }
+        files
+    }
+
+    fn rebased_file(
+        &self,
+        folder: &str,
+        from: &Tree,
+        to: &Tree,
+        path: &str,
+        file: Option<FileState>,
+    ) -> Option<FileState> {
+        let old = from.get(path).map(base_state);
+        let new = to.get(path).map(base_state);
+        if old == new {
+            return file;
+        }
+        if same_content(&file, &old) {
+            return match (&file, &old, new) {
+                (Some(current), Some(old), Some(new)) => Some(FileState {
+                    mode: rebased_mode(current, old, &new),
+                    ..new
+                }),
+                (_, _, new) => new,
+            };
+        }
+        match (&file, &old, &new) {
+            (Some(current), Some(old), Some(new)) if !(current.link || old.link || new.link) => {
+                self.merged(folder, current, old, new)
+                    .ok()
+                    .flatten()
+                    .or(file)
+            }
+            _ => file,
+        }
+    }
+
+    fn merged(
+        &self,
+        folder: &str,
+        current: &FileState,
+        old: &FileState,
+        new: &FileState,
+    ) -> Result<Option<FileState>, String> {
+        let dir = self.dir.join(format!("merge-{}", uuid::Uuid::new_v4()));
+        let merge = || {
+            fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let sides = [("current", current), ("base", old), ("other", new)];
+            for (name, state) in sides {
+                fs::write(dir.join(name), self.read_stored(folder, state)?)
+                    .map_err(|e| e.to_string())?;
+            }
+            checkpoint_git::merge_file(&dir.join("current"), &dir.join("base"), &dir.join("other"))
+        };
+        let result = merge();
+        let _ = fs::remove_dir_all(&dir);
+        let Some(bytes) = result? else {
+            return Ok(None);
+        };
+        let blob = hash(&bytes);
+        self.write_blob(&blob, &bytes)?;
+        Ok(Some(FileState {
+            blob,
+            mode: rebased_mode(current, old, new),
+            link: false,
+            git_blob: None,
+        }))
+    }
+
+    fn write_blob(&self, blob: &str, bytes: &[u8]) -> Result<(), String> {
+        let blobs = self.dir.join("blobs");
+        if blobs.join(blob).exists() {
+            return Ok(());
+        }
+        fs::create_dir_all(&blobs).map_err(|e| e.to_string())?;
+        let tmp = blobs.join(format!("{}.tmp", uuid::Uuid::new_v4()));
+        fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+        fs::rename(tmp, blobs.join(blob)).map_err(|e| e.to_string())
+    }
+
+    pub fn compare(&self, baseline: &Baseline) -> Vec<FileComparison> {
         let mut comparisons = Vec::new();
-        for repository in after.repositories {
-            let mut previous = before
+        for repository in &baseline.after.repositories {
+            let folder = &repository.folder;
+            let mut previous = baseline
+                .before
                 .repositories
                 .iter()
-                .find(|r| r.folder == repository.folder)
+                .find(|r| &r.folder == folder)
                 .map(|r| r.files.clone())
                 .unwrap_or_default();
+            if let Some(trees) = self.shifted_trees(baseline, folder) {
+                previous = self.rebased_files(folder, trees, previous);
+            }
             let names = previous
                 .keys()
                 .chain(repository.files.keys())
                 .cloned()
                 .collect::<BTreeSet<_>>();
-            let mut current = repository.files;
+            let mut current = repository.files.clone();
             for name in names {
                 let old = previous.remove(&name);
                 let new = current.remove(&name);
@@ -590,18 +820,18 @@ impl Checkpoints {
                     continue;
                 }
                 let stored = |state| StoredFile {
-                    folder: repository.folder.clone(),
+                    folder: folder.clone(),
                     state,
                 };
                 comparisons.push(FileComparison {
-                    folder: repository.folder.clone(),
+                    folder: folder.clone(),
                     path: name,
                     before: old.map(stored),
                     after: new.map(stored),
                 });
             }
         }
-        Ok(comparisons)
+        comparisons
     }
 
     fn prepare_restore(
@@ -667,6 +897,14 @@ impl Checkpoints {
         }
         Ok(())
     }
+}
+
+fn stored_state(checkpoint: &Checkpoint, folder: &str, path: &str) -> Option<FileState> {
+    checkpoint
+        .repositories
+        .iter()
+        .find(|repository| repository.folder == folder)
+        .and_then(|repository| repository.files.get(path).cloned())
 }
 
 fn base_state(base: &BaseFile) -> FileState {

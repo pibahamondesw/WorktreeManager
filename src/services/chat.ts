@@ -366,7 +366,7 @@ export interface ChangeSet {
 }
 
 export interface ChatChanges {
-  turns: { items: string[]; changes: ChangeSet }[];
+  turns: { items: string[]; changes: ChangeSet; branch: ChangeSet | null }[];
   conversation: ChangeSet | null;
 }
 

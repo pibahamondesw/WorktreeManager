@@ -51,6 +51,7 @@ pub struct ChangeSet {
 pub struct TurnChanges {
     pub items: Vec<String>,
     pub changes: ChangeSet,
+    pub branch: Option<ChangeSet>,
 }
 
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -170,14 +171,15 @@ pub fn change_set(
     before: &str,
     after: &str,
 ) -> Result<ChangeSet, String> {
+    let baseline = checkpoints.baseline(before, after)?;
     let cache = format!(
         "changes-{}.json",
-        checkpoints::hash(format!("{before}\0{after}").as_bytes())
+        checkpoints::hash(format!("{before}\0{after}{}", baseline.key()).as_bytes())
     );
     if let Ok(set) = checkpoints.read::<ChangeSet>(&cache) {
         return Ok(set);
     }
-    let comparisons = checkpoints.compare(before, after)?;
+    let comparisons = checkpoints.compare(&baseline);
     let files = comparisons
         .iter()
         .map(|comparison| file_change(checkpoints, comparison))
@@ -190,6 +192,10 @@ pub fn change_set(
     };
     let _ = checkpoints.save(&cache, &set);
     Ok(set)
+}
+
+fn branch_change_set(checkpoints: &Checkpoints, point: &str) -> Result<ChangeSet, String> {
+    change_set(checkpoints, &checkpoints.upstream_checkpoint(point)?, point)
 }
 
 fn logged(set: Result<ChangeSet, String>) -> Option<ChangeSet> {
@@ -222,8 +228,13 @@ pub fn collect(
         turns: turns
             .into_iter()
             .filter_map(|(items, turn)| {
-                logged(change_set(checkpoints, &turn.before, &turn.after))
-                    .map(|changes| TurnChanges { items, changes })
+                logged(change_set(checkpoints, &turn.before, &turn.after)).map(|changes| {
+                    TurnChanges {
+                        items,
+                        branch: logged(branch_change_set(checkpoints, &turn.after)),
+                        changes,
+                    }
+                })
             })
             .collect(),
         conversation,
@@ -271,19 +282,21 @@ pub fn file_diff(
     previous_path: Option<&str>,
 ) -> Result<FileDiff, String> {
     let previous_path = previous_path.unwrap_or(path);
-    let read = |id: &str, path: &str| {
-        checkpoints
-            .stored_file(id, folder, path)?
-            .map(|file| {
-                checkpoints
-                    .read_file(&file)
-                    .map(|bytes| content(path, bytes))
-            })
-            .transpose()
+    let baseline = checkpoints.baseline(before, after)?;
+    let read = |file: Option<checkpoints::StoredFile>, path: &str| {
+        file.map(|file| {
+            checkpoints
+                .read_file(&file)
+                .map(|bytes| content(path, bytes))
+        })
+        .transpose()
     };
     Ok(FileDiff {
-        before: read(before, previous_path)?,
-        after: read(after, path)?,
+        before: read(
+            checkpoints.before_file(&baseline, folder, previous_path),
+            previous_path,
+        )?,
+        after: read(checkpoints.after_file(&baseline, folder, path), path)?,
     })
 }
 
@@ -496,6 +509,230 @@ mod tests {
         )
         .unwrap();
         assert_eq!(binary.after, Some(FileContent::Binary { size: 3 }));
+    }
+
+    fn run(fixture: &Fixture, args: &[&str]) {
+        let status = crate::commands::git::git_command()
+            .args(["-C", &fixture.folders[0]])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "git {args:?}: {status:?}");
+    }
+
+    fn commit(fixture: &Fixture, name: &str, text: &str) {
+        fs::write(fixture.file(0, name), text).unwrap();
+        run(fixture, &["add", name]);
+        run(fixture, &["commit", "-qm", name]);
+    }
+
+    fn feature_branch(shared: &str) -> Fixture {
+        let fixture = Fixture::new(1);
+        run(&fixture, &["branch", "-M", "main"]);
+        commit(&fixture, "shared.txt", shared);
+        run(&fixture, &["checkout", "-qb", "feature"]);
+        fixture
+    }
+
+    fn advance_main_and_rebase(fixture: &Fixture, shared: &str) {
+        run(fixture, &["checkout", "-q", "main"]);
+        commit(fixture, "upstream.txt", "from main\n");
+        commit(fixture, "shared.txt", shared);
+        run(fixture, &["checkout", "-q", "feature"]);
+        run(fixture, &["rebase", "-q", "main"]);
+    }
+
+    fn text(text: &str) -> Option<FileContent> {
+        Some(FileContent::Text { text: text.into() })
+    }
+
+    #[test]
+    fn upstream_changes_brought_by_a_rebase_are_not_reported() {
+        let fixture = feature_branch("a\nb\nc\n");
+        commit(&fixture, "shared.txt", "a\nb\nc\nagent\n");
+        let before = capture(&fixture);
+        advance_main_and_rebase(&fixture, "upstream\na\nb\nc\n");
+        fs::write(
+            fixture.file(0, "shared.txt"),
+            "upstream\na\nb\nc\nagent\nturn\n",
+        )
+        .unwrap();
+        let after = capture(&fixture);
+
+        let set = change_set(&fixture.store, &before, &after).unwrap();
+
+        assert_eq!(
+            set.files
+                .iter()
+                .map(|f| (f.path.as_str(), f.status, f.additions, f.deletions))
+                .collect::<Vec<_>>(),
+            [("shared.txt", ChangeStatus::Modified, 1, 0)]
+        );
+        let diff = file_diff(
+            &fixture.store,
+            &before,
+            &after,
+            &fixture.folders[0],
+            "shared.txt",
+            None,
+        )
+        .unwrap();
+        assert_eq!(diff.before, text("upstream\na\nb\nc\nagent\n"));
+        assert_eq!(diff.after, text("upstream\na\nb\nc\nagent\nturn\n"));
+        let untouched = file_diff(
+            &fixture.store,
+            &before,
+            &after,
+            &fixture.folders[0],
+            "file.txt",
+            None,
+        )
+        .unwrap();
+        assert_eq!(untouched.before, untouched.after);
+    }
+
+    #[test]
+    fn each_turn_reports_the_whole_branch_diff_up_to_its_end() {
+        let fixture = feature_branch("a\n");
+        commit(&fixture, "feature.txt", "committed\n");
+        let before = capture(&fixture);
+        advance_main_and_rebase(&fixture, "upstream\na\n");
+        fs::write(fixture.file(0, "shared.txt"), "upstream\na\nturn\n").unwrap();
+        let after = capture(&fixture);
+        let turn = checkpoints::TurnCheckpoints { before, after };
+        fixture.store.bind_turn("conv", "user", &turn).unwrap();
+
+        let changes = collect(&fixture.store, "conv", &["user".into()]);
+
+        let branch = changes.turns[0].branch.as_ref().unwrap();
+        assert_eq!(branch.after, turn.after);
+        assert_eq!(
+            branch
+                .files
+                .iter()
+                .map(|f| (f.path.as_str(), f.status, f.additions, f.deletions))
+                .collect::<Vec<_>>(),
+            [
+                ("feature.txt", ChangeStatus::Added, 1, 0),
+                ("shared.txt", ChangeStatus::Modified, 1, 0),
+            ]
+        );
+        let diff = file_diff(
+            &fixture.store,
+            &branch.before,
+            &branch.after,
+            &fixture.folders[0],
+            "shared.txt",
+            None,
+        )
+        .unwrap();
+        assert_eq!(diff.before, text("upstream\na\n"));
+    }
+
+    #[test]
+    fn edits_conflicting_with_upstream_keep_the_original_before() {
+        let fixture = feature_branch("a\nb\nc\n");
+        fs::write(fixture.file(0, "shared.txt"), "a\nmine\nc\n").unwrap();
+        fs::remove_file(fixture.file(0, "file.txt")).unwrap();
+        let before = capture(&fixture);
+        run(&fixture, &["checkout", "--", "shared.txt", "file.txt"]);
+        run(&fixture, &["checkout", "-q", "main"]);
+        commit(&fixture, "file.txt", "theirs\n");
+        run(&fixture, &["checkout", "-q", "feature"]);
+        advance_main_and_rebase(&fixture, "a\ntheirs\nc\n");
+        let after = capture(&fixture);
+
+        let set = change_set(&fixture.store, &before, &after).unwrap();
+
+        assert_eq!(
+            set.files
+                .iter()
+                .map(|f| (f.path.as_str(), f.additions, f.deletions))
+                .collect::<Vec<_>>(),
+            [("file.txt", 1, 0), ("shared.txt", 1, 1)]
+        );
+    }
+
+    #[test]
+    fn commits_on_the_feature_or_upstream_branch_itself_are_reported() {
+        let fixture = feature_branch("a\n");
+        let before = capture(&fixture);
+        commit(&fixture, "shared.txt", "a\nfeature\n");
+        let after = capture(&fixture);
+        assert_eq!(
+            change_set(&fixture.store, &before, &after).unwrap().files[0].path,
+            "shared.txt"
+        );
+
+        run(&fixture, &["checkout", "-q", "main"]);
+        let before = capture(&fixture);
+        commit(&fixture, "shared.txt", "a\nmain\n");
+        let after = capture(&fixture);
+        assert_eq!(
+            change_set(&fixture.store, &before, &after).unwrap().files[0].path,
+            "shared.txt"
+        );
+    }
+
+    #[test]
+    fn agent_commits_stay_reported_after_the_branch_is_merged_upstream() {
+        let fixture = feature_branch("a\n");
+        let before = capture(&fixture);
+        commit(&fixture, "shared.txt", "a\nagent\n");
+        let after = capture(&fixture);
+        run(&fixture, &["checkout", "-q", "main"]);
+        run(&fixture, &["merge", "-q", "--ff-only", "feature"]);
+        run(&fixture, &["checkout", "-q", "feature"]);
+
+        let set = change_set(&fixture.store, &before, &after).unwrap();
+
+        assert_eq!(set.files.len(), 1);
+        assert_eq!(set.files[0].path, "shared.txt");
+    }
+
+    #[test]
+    fn upstream_symlink_retargets_are_not_reported() {
+        let fixture = feature_branch("a\n");
+        let retarget_on_main = |target: &str| {
+            run(&fixture, &["checkout", "-q", "main"]);
+            let _ = fs::remove_file(fixture.file(0, "link"));
+            std::os::unix::fs::symlink(target, fixture.file(0, "link")).unwrap();
+            run(&fixture, &["add", "link"]);
+            run(&fixture, &["commit", "-qm", target]);
+            run(&fixture, &["checkout", "-q", "feature"]);
+            run(&fixture, &["rebase", "-q", "main"]);
+        };
+        retarget_on_main("shared.txt");
+        let before = capture(&fixture);
+        retarget_on_main("file.txt");
+        let after = capture(&fixture);
+
+        assert_eq!(
+            change_set(&fixture.store, &before, &after).unwrap().files,
+            []
+        );
+    }
+
+    #[test]
+    fn upstream_mode_changes_are_not_reported() {
+        let fixture = feature_branch("a\n");
+        let before = capture(&fixture);
+        run(&fixture, &["checkout", "-q", "main"]);
+        fs::set_permissions(
+            fixture.file(0, "shared.txt"),
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        run(&fixture, &["add", "shared.txt"]);
+        run(&fixture, &["commit", "-qm", "executable"]);
+        run(&fixture, &["checkout", "-q", "feature"]);
+        run(&fixture, &["rebase", "-q", "main"]);
+        let after = capture(&fixture);
+
+        assert_eq!(
+            change_set(&fixture.store, &before, &after).unwrap().files,
+            []
+        );
     }
 
     #[test]

@@ -8,6 +8,19 @@ import { diffCommentCount, diffKeyOf, DiffThread, removeDiffThread } from "./dif
 
 export type ChangesScope = "conversation" | number;
 
+type ChangesView = "changes" | "branch";
+
+const VIEWS: { view: ChangesView; label: string; title: string }[] = [
+  { view: "changes", label: "Changes", title: "What changed in this selection" },
+  { view: "branch", label: "Branch", title: "The whole branch diff up to this point" },
+];
+
+function changeSetOf(changes: ChatChanges, scope: ChangesScope, view: ChangesView) {
+  const turn = scope === "conversation" ? changes.turns.at(-1) : changes.turns[scope];
+  if (view === "branch") return turn?.branch ?? null;
+  return scope === "conversation" ? changes.conversation : turn?.changes;
+}
+
 const STATUS: Record<FileChange["status"], { letter: string; className: string }> = {
   added: { letter: "A", className: "text-success" },
   modified: { letter: "M", className: "text-warning" },
@@ -92,7 +105,10 @@ function FileRow({
 }
 
 function diffKeysOf(changes: ChatChanges) {
-  const changeSets = [changes.conversation, ...changes.turns.map((turn) => turn.changes)];
+  const changeSets = [
+    changes.conversation,
+    ...changes.turns.flatMap((turn) => [turn.changes, turn.branch]),
+  ];
   return new Set(
     changeSets.flatMap((changeSet) =>
       changeSet ? changeSet.files.map((file) => diffKeyOf(changeSet, file)) : []
@@ -164,9 +180,10 @@ export function ChangesPanel({
   onClose: () => void;
 }) {
   const [scope, setScope] = useState<ChangesScope>(initialScope);
+  const [view, setView] = useState<ChangesView>("changes");
   const [layout, setLayout] = useState<DiffLayout>("unified");
   const [hideFormatting, setHideFormatting] = useState(false);
-  const changeSet = scope === "conversation" ? changes.conversation : changes.turns[scope]?.changes;
+  const changeSet = changeSetOf(changes, scope, view);
   const files = useMemo(() => changeSet?.files ?? [], [changeSet]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selected = files.find((file) => fileKey(file) === selectedKey) ?? files[0];
@@ -226,6 +243,26 @@ export function ChangesPanel({
             </option>
           ))}
         </select>
+        <div
+          role="group"
+          aria-label="Changes view"
+          className="flex rounded-md border border-border"
+        >
+          {VIEWS.map((option) => (
+            <button
+              key={option.view}
+              type="button"
+              title={option.title}
+              aria-pressed={view === option.view}
+              onClick={() => setView(option.view)}
+              className={`px-2 py-0.5 cursor-pointer ${
+                view === option.view ? "bg-bg-active text-text-primary" : "text-text-secondary"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <span className="text-text-muted">
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
