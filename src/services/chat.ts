@@ -285,14 +285,14 @@ interface ChatOpenArgs {
   mode: ChatOpenMode;
   conversation?: string;
   handoffFrom?: AgentId;
-  onEvent: (generation: number, event: ChatEvent) => void;
+  onEvents: (generation: number, events: ChatEvent[]) => void;
 }
 
 export type OpenedChat = ChatSnapshot & { sessionId: string };
 
-export function chatOpen({ onEvent, ...args }: ChatOpenArgs): Promise<OpenedChat> {
-  const channel = new Channel<{ generation: number; event: ChatEvent }>();
-  channel.onmessage = (message) => onEvent(message.generation, message.event);
+export function chatOpen({ onEvents, ...args }: ChatOpenArgs): Promise<OpenedChat> {
+  const channel = new Channel<{ generation: number; events: ChatEvent[] }>();
+  channel.onmessage = (message) => onEvents(message.generation, message.events);
   return invoke<OpenedChat>("chat_open", { ...args, onEvent: channel });
 }
 

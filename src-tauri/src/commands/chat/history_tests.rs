@@ -1601,7 +1601,7 @@ fn attaching_reuses_the_live_primary_that_detach_then_releases() {
     let attached_sink = || {
         registry
             .with_session("task", "codex", |session| {
-                Ok(session.shared.lock().unwrap().sink.is_some())
+                Ok(session.shared.lock().unwrap().sink.is_attached())
             })
             .unwrap()
     };
@@ -1716,7 +1716,7 @@ fn headless_sessions_run_unattended_until_a_pane_attaches_and_close_with_their_t
     {
         let sessions = registry.sessions.lock().unwrap();
         let shared = sessions.get(&session_id).unwrap().shared.lock().unwrap();
-        assert!(shared.sink.is_none());
+        assert!(!shared.sink.is_attached());
         assert!(shared.pending_resolution.is_some());
     }
 
@@ -1765,7 +1765,7 @@ fn headless_sessions_run_unattended_until_a_pane_attaches_and_close_with_their_t
         .lock()
         .unwrap()
         .sink
-        .is_some());
+        .is_attached());
 
     tauri::async_runtime::block_on(chat_close(
         fixture.app.handle().clone(),

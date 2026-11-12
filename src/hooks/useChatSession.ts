@@ -36,10 +36,10 @@ const CONNECTING: ChatSnapshot = {
 
 /**
  * Attaches to the task agent's primary chat session. The session outlives this hook: unmounting
- * only detaches the sink of the session it opened. Events from an older generation (a session
- * replaced by a restart) are dropped, and events that race the snapshot are queued and replayed
- * on top of it. The first open follows `takeIntent` when the pane was mounted to resume or
- * continue a conversation.
+ * only detaches the sink of the session it opened. Each batch of events applies as one update.
+ * Batches from an older generation (a session replaced by a restart) are dropped, and batches
+ * that race the snapshot are queued and replayed on top of it. The first open follows
+ * `takeIntent` when the pane was mounted to resume or continue a conversation.
  */
 export function useChatSession(
   taskId: string,
@@ -75,9 +75,10 @@ export function useChatSession(
           mode,
           conversation,
           handoffFrom,
-          onEvent: (eventGeneration, event) => {
+          onEvents: (eventGeneration, events) => {
             if (disposed || version !== opening) return;
-            const apply = (s: ChatSnapshot) => applyChatEvent(s, event);
+            const apply = (s: ChatSnapshot) =>
+              events.reduce((next, event) => applyChatEvent(next, event), s);
             if (!ready) early.push({ generation: eventGeneration, apply });
             else if (eventGeneration === generation) setSnapshot(apply);
           },
