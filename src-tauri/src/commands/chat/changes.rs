@@ -51,6 +51,7 @@ pub struct ChangeSet {
 pub struct TurnChanges {
     pub items: Vec<String>,
     pub changes: ChangeSet,
+    pub branch: Option<ChangeSet>,
 }
 
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -193,6 +194,10 @@ pub fn change_set(
     Ok(set)
 }
 
+fn branch_change_set(checkpoints: &Checkpoints, point: &str) -> Result<ChangeSet, String> {
+    change_set(checkpoints, &checkpoints.upstream_checkpoint(point)?, point)
+}
+
 fn logged(set: Result<ChangeSet, String>) -> Option<ChangeSet> {
     set.map_err(|error| log::warn!("could not compute chat changes: {error}"))
         .ok()
@@ -223,8 +228,13 @@ pub fn collect(
         turns: turns
             .into_iter()
             .filter_map(|(items, turn)| {
-                logged(change_set(checkpoints, &turn.before, &turn.after))
-                    .map(|changes| TurnChanges { items, changes })
+                logged(change_set(checkpoints, &turn.before, &turn.after)).map(|changes| {
+                    TurnChanges {
+                        items,
+                        branch: logged(branch_change_set(checkpoints, &turn.after)),
+                        changes,
+                    }
+                })
             })
             .collect(),
         conversation,
@@ -579,6 +589,44 @@ mod tests {
         )
         .unwrap();
         assert_eq!(untouched.before, untouched.after);
+    }
+
+    #[test]
+    fn each_turn_reports_the_whole_branch_diff_up_to_its_end() {
+        let fixture = feature_branch("a\n");
+        commit(&fixture, "feature.txt", "committed\n");
+        let before = capture(&fixture);
+        advance_main_and_rebase(&fixture, "upstream\na\n");
+        fs::write(fixture.file(0, "shared.txt"), "upstream\na\nturn\n").unwrap();
+        let after = capture(&fixture);
+        let turn = checkpoints::TurnCheckpoints { before, after };
+        fixture.store.bind_turn("conv", "user", &turn).unwrap();
+
+        let changes = collect(&fixture.store, "conv", &["user".into()]);
+
+        let branch = changes.turns[0].branch.as_ref().unwrap();
+        assert_eq!(branch.after, turn.after);
+        assert_eq!(
+            branch
+                .files
+                .iter()
+                .map(|f| (f.path.as_str(), f.status, f.additions, f.deletions))
+                .collect::<Vec<_>>(),
+            [
+                ("feature.txt", ChangeStatus::Added, 1, 0),
+                ("shared.txt", ChangeStatus::Modified, 1, 0),
+            ]
+        );
+        let diff = file_diff(
+            &fixture.store,
+            &branch.before,
+            &branch.after,
+            &fixture.folders[0],
+            "shared.txt",
+            None,
+        )
+        .unwrap();
+        assert_eq!(diff.before, text("upstream\na\n"));
     }
 
     #[test]

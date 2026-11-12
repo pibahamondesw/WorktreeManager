@@ -295,13 +295,45 @@ impl Checkpoints {
         known: Option<&Checkpoint>,
     ) -> Result<String, String> {
         let checkpoint = self.compact(self.scan(folders, known, true)?)?;
-        let bytes = serde_json::to_vec(&checkpoint).map_err(|e| e.to_string())?;
+        self.store(&checkpoint)
+    }
+
+    fn store(&self, checkpoint: &Checkpoint) -> Result<String, String> {
+        let bytes = serde_json::to_vec(checkpoint).map_err(|e| e.to_string())?;
         let digest = Sha256::digest(&bytes);
         let id = uuid::Uuid::from_bytes(digest[..16].try_into().unwrap()).to_string();
         if !self.dir.join(format!("{id}.json")).exists() {
-            self.save(&format!("{id}.json"), &checkpoint)?;
+            self.save(&format!("{id}.json"), checkpoint)?;
         }
         Ok(id)
+    }
+
+    /// The point each repository of a checkpoint branched from upstream, so comparing it with the
+    /// checkpoint gives the branch's whole diff. Without an upstream, its own commit.
+    pub fn upstream_checkpoint(&self, id: &str) -> Result<String, String> {
+        let checkpoint: Checkpoint = self.read(&format!("{id}.json"))?;
+        let repositories = checkpoint
+            .repositories
+            .into_iter()
+            .map(|repository| {
+                let base = repository
+                    .upstream_base
+                    .or_else(|| {
+                        upstream_base(&repository.folder, &repository.head, &repository.branch)
+                    })
+                    .unwrap_or_else(|| repository.head.trim().to_string());
+                Repository {
+                    folder: repository.folder,
+                    head: format!("{base}\n"),
+                    branch: repository.branch,
+                    files: BTreeMap::new(),
+                    delta: true,
+                    removed: Vec::new(),
+                    upstream_base: Some(base),
+                }
+            })
+            .collect();
+        self.store(&Checkpoint { repositories })
     }
 
     fn base(&self, folder: &str, head: &str) -> Result<BTreeMap<String, BaseFile>, String> {

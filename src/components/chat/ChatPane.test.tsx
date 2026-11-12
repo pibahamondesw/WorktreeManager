@@ -1059,8 +1059,12 @@ describe("ChatPane", () => {
       if (command === "chat_changes")
         return Promise.resolve({
           turns: [
-            { items: ["u"], changes: turn },
-            { items: ["u2"], changes: { before: "a1", after: "a1", files: [] } },
+            { items: ["u"], changes: turn, branch: null },
+            {
+              items: ["u2"],
+              changes: { before: "a1", after: "a1", files: [] },
+              branch: { before: "base", after: "a1", files: [file("/wt/a", "z.ts", 5, 0)] },
+            },
           ],
           conversation: { ...turn, files: [file("/wt/a", "src/x.ts", 3, 1)] },
         });
@@ -1103,6 +1107,21 @@ describe("ChatPane", () => {
       expect(mocks.invoke).toHaveBeenCalledWith(
         "chat_file_diff",
         expect.objectContaining({ folder: "/wt/b", path: "y.rb" })
+      )
+    );
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Branch" }));
+    expect(panel).toHaveTextContent("No file changes.");
+    fireEvent.change(within(panel).getByLabelText("Changes scope"), {
+      target: { value: "conversation" },
+    });
+    expect(within(panel).getByRole("navigation", { name: "Changed files" })).toHaveTextContent(
+      "Mz.ts+5 −0"
+    );
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "chat_file_diff",
+        expect.objectContaining({ before: "base", after: "a1", path: "z.ts" })
       )
     );
 
