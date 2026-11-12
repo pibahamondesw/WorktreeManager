@@ -115,7 +115,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   // so the Create PR links still render. undefined = still loading, hide PR slots.
   const prs = task.linearIssueId ? linearInfo?.prs : [];
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const deletion = useDeletion((options) => actions.delete(task.id, options));
+  const deletion = useDeletion(task.id, (options) => actions.delete(task.id, options));
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -152,8 +152,9 @@ export const WorktreeCard = memo(function WorktreeCard({
   const deleteTask = async (request: DeleteRequest) => {
     setConfirmDelete(false);
     const outcome = await deletion.run(request);
-    if (outcome.kind === "deleted")
-      for (const warning of outcome.warnings) onToast(warning.message);
+    if (outcome.kind !== "deleted") return;
+    deletion.dismiss();
+    for (const warning of outcome.warnings) onToast(warning.message);
   };
 
   const handleDeleteConfirm = async (event: React.MouseEvent) => {

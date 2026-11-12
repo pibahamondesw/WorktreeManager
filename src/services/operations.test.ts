@@ -722,6 +722,35 @@ describe("shared operations", () => {
     expect(operations.task("t1")).toBe(task);
   });
 
+  it("releases the mutation queue while removing worktrees and rejects edits to the task", async () => {
+    const { operations, lifecycle } = fixture([task]);
+    const releaseRemoval = lifecycle.hold("removeWorktree");
+    const deleting = operations.deleteTask("t1", { deleteWorktrees: true });
+    await vi.waitFor(() => expect(lifecycle.targets("removeWorktree")).not.toHaveLength(0));
+    await operations.change(() => ({ selectedWorkspaceId: null }));
+    expect(operations.getState().selectedWorkspaceId).toBeNull();
+    expect(operations.task("t1")).toBe(task);
+    for (const attempt of [
+      operations.deleteTask("t1", { deleteWorktrees: true }),
+      operations.setTaskAgent("t1", "codex"),
+      operations.deleteWorkspace("w1", { deleteWorktrees: false }),
+    ])
+      await expect(attempt).rejects.toMatchObject({ code: "task_deleting" });
+    releaseRemoval();
+    await deleting;
+    expect(operations.getState().tasks).toEqual([]);
+  });
+
+  it("allows editing a task again after a failed deletion", async () => {
+    const { operations, lifecycle } = fixture([task]);
+    lifecycle.fail("removeWorktree");
+    await expect(operations.deleteTask("t1", { deleteWorktrees: true })).rejects.toMatchObject({
+      code: "delete_failed",
+    });
+    await operations.setTaskAgent("t1", "codex");
+    expect(operations.task("t1").agent).toBe("codex");
+  });
+
   it("requires an explicit workspace deletion mode only when tasks exist", async () => {
     await expect(fixture([task]).operations.deleteWorkspace("w1")).rejects.toMatchObject({
       code: "invalid_params",

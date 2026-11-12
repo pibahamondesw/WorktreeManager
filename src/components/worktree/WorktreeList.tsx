@@ -129,6 +129,10 @@ function withExits(tasks: Task[], exits: Exits) {
   return rows;
 }
 
+function exitsIn(exits: Exits, workspaceId: string | undefined): Exits {
+  return new Map([...exits].filter(([, exit]) => exit.task.workspaceId === workspaceId));
+}
+
 function withExit(exits: Exits, id: string, exit: ExitingTask | undefined): Exits {
   const next = new Map(exits);
   if (exit) next.set(id, exit);
@@ -213,7 +217,8 @@ export function WorktreeList({
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [revealNonce, setRevealNonce] = useState(0);
-  const [exits, setExits] = useState<Exits>(new Map());
+  const [allExits, setExits] = useState<Exits>(new Map());
+  const exits = useMemo(() => exitsIn(allExits, workspace?.id), [allExits, workspace?.id]);
   const finishDeparture = useCallback(
     (taskId: string) => setExits((current) => withExit(current, taskId, undefined)),
     []
@@ -309,6 +314,11 @@ export function WorktreeList({
       return result;
     } catch (error) {
       setExits((current) => withExit(current, id, undefined));
+      const task = tasks[index];
+      if (task && latest.current.workspaceId !== task.workspaceId)
+        latest.current.showToast(
+          `Could not delete "${task.linearIssueTitle ?? task.branchName}". Open its workspace to review.`
+        );
       throw error;
     }
   };
@@ -353,9 +363,18 @@ export function WorktreeList({
     onPrReady,
     onOpenTask,
     showToast,
+    workspaceId: workspace?.id,
   });
   useLayoutEffect(() => {
-    latest.current = { deleteTask, onTaskPinned, onTaskRenamed, onPrReady, onOpenTask, showToast };
+    latest.current = {
+      deleteTask,
+      onTaskPinned,
+      onTaskRenamed,
+      onPrReady,
+      onOpenTask,
+      showToast,
+      workspaceId: workspace?.id,
+    };
   });
   const hasPrReady = !!onPrReady;
   const cardActions = useMemo<TaskCardActions>(

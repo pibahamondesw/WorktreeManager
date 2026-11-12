@@ -177,6 +177,7 @@ function linearFailure<T>(request: Promise<T>): Promise<T> {
 export class Operations {
   private pending: Promise<unknown> = Promise.resolve();
   private readyRequests = new Map<string, Promise<void>>();
+  private deletingTaskIds = new Set<string>();
   readonly getState: () => AppState;
   private publish: (state: AppState) => void;
   private getEditor: () => EditorApp;
@@ -366,9 +367,15 @@ export class Operations {
     return task;
   }
 
+  private liveTask(id: string) {
+    if (this.deletingTaskIds.has(id))
+      throw new OperationError("task_deleting", "This task is being deleted.");
+    return this.task(id);
+  }
+
   setTaskPinned(id: string, pinned: boolean) {
     return this.change((state) => {
-      const task = this.task(id);
+      const task = this.liveTask(id);
       if ((task.pinOrder !== undefined) === pinned) return {};
       const pins = state.tasks.filter(
         (item) => item.workspaceId === task.workspaceId && item.pinOrder !== undefined
@@ -380,7 +387,7 @@ export class Operations {
 
   setTaskAgent(id: string, agent: AgentId) {
     return this.enqueue(async () => {
-      if (this.task(id).agent === agent) return;
+      if (this.liveTask(id).agent === agent) return;
       await this.write({
         tasks: this.getState().tasks.map((item) => (item.id === id ? { ...item, agent } : item)),
       });
@@ -389,8 +396,8 @@ export class Operations {
 
   reorderPinnedTasks(id: string, targetId: string) {
     return this.change((state) => {
-      const task = this.task(id);
-      const target = this.task(targetId);
+      const task = this.liveTask(id);
+      const target = this.liveTask(targetId);
       if (
         task.workspaceId !== target.workspaceId ||
         task.pinOrder === undefined ||
@@ -799,7 +806,7 @@ export class Operations {
     repoId: string,
     choice: SetupRetry = "retry"
   ): Promise<OperationResult<{ repoId: string; steps: SetupSteps }>> {
-    const task = this.task(taskId);
+    const task = this.liveTask(taskId);
     const member = task.members.find((item) => item.repoId === repoId);
     if (!member) throw new OperationError("not_found", "Repository not found in this task.");
     const running = getTaskSetup(taskId)?.repos.find((repo) => repo.repoId === repoId);
@@ -957,7 +964,7 @@ export class Operations {
 
   linkTaskIssue(id: string, identifier: string) {
     return this.enqueue(async () => {
-      const task = this.task(id);
+      const task = this.liveTask(id);
       if (!identifier.trim())
         throw new OperationError("invalid_params", "Provide a Linear issue ID.");
       if (task.linearIssueId) {
@@ -1032,7 +1039,7 @@ export class Operations {
 
   renameTask(id: string, title: string) {
     return this.enqueue(async () => {
-      const task = this.task(id);
+      const task = this.liveTask(id);
       const trimmed = title.trim();
       if (!trimmed) throw new OperationError("invalid_params", "Provide a title.");
       if (!task.linearIssueId)
@@ -1144,23 +1151,36 @@ export class Operations {
       );
   }
 
-  deleteTask(id: string, options: DeleteOptions): Promise<OperationResult<{ id: string }>> {
-    return this.enqueue(async () => {
-      const task = this.task(id);
+  async deleteTask(id: string, options: DeleteOptions): Promise<OperationResult<{ id: string }>> {
+    const task = await this.enqueue(async () => {
+      const task = this.liveTask(id);
+      this.deletingTaskIds.add(id);
+      return task;
+    });
+    try {
       const warnings: OperationWarning[] = [];
       await this.removeResources([task], options, warnings);
-      await this.write({ tasks: this.getState().tasks.filter((item) => item.id !== id) });
+      await this.enqueue(() =>
+        this.write({ tasks: this.getState().tasks.filter((item) => item.id !== id) })
+      );
       clearTaskSetup(id);
       emitAppEvent(taskAppEvent("task.deleted", task));
       await this.archiveNotes([task], warnings);
       return { data: { id }, warnings };
-    });
+    } finally {
+      this.deletingTaskIds.delete(id);
+    }
   }
 
   deleteWorkspace(id: string, options?: DeleteOptions): Promise<OperationResult<{ id: string }>> {
     return this.enqueue(async () => {
       this.workspace(id);
       const tasks = this.getState().tasks.filter((task) => task.workspaceId === id);
+      if (tasks.some((task) => this.deletingTaskIds.has(task.id)))
+        throw new OperationError(
+          "task_deleting",
+          "A task in this workspace is still being deleted. Try again when it finishes."
+        );
       if (tasks.length && !options)
         throw new OperationError(
           "invalid_params",
