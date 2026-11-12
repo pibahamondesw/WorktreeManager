@@ -199,7 +199,8 @@ pub enum RunEvent {
     },
     /// The owner retries a failed or blocked item from `step`, on the definition with
     /// `definition_hash`, which the run pins from then on. `reset_counter` is the exhausted
-    /// counter that blocked the item, which starts again from zero.
+    /// counter that blocked the item, which starts again from zero. A campaign item retried while
+    /// its `pools.active` is full stays queued `awaiting_slot` until it takes a freed slot.
     ItemRetried {
         item: String,
         step: String,
@@ -207,6 +208,12 @@ pub enum RunEvent {
         by: Actor,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reset_counter: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        awaiting_slot: bool,
+    },
+    /// A retried item awaiting a slot takes one that freed and goes on.
+    ItemSlotTaken {
+        item: String,
     },
     #[serde(other)]
     Unknown,
@@ -503,6 +510,14 @@ impl ItemStatus {
     }
 }
 
+/// The cause of a retried campaign item queued until a slot of `pools.active` frees.
+pub const AWAITING_SLOT: &str = "awaiting_slot";
+
+/// A retried item queued for a slot: it holds one in the count, but nothing drives it yet.
+pub fn awaits_slot(item: &ItemState) -> bool {
+    item.status == ItemStatus::Queued && item.cause.as_deref() == Some(AWAITING_SLOT)
+}
+
 impl StepAttemptState {
     fn clock(&mut self, at_ms: u64) {
         if self.status.is_terminal() {
@@ -778,16 +793,22 @@ impl RunState {
                 step,
                 definition_hash,
                 reset_counter,
+                awaiting_slot,
                 ..
             } => {
                 if let Some(item) = self.items.iter_mut().find(|state| state.id == item) {
                     item.status = ItemStatus::Queued;
                     item.phase = Some(step);
-                    item.cause = None;
+                    item.cause = awaiting_slot.then(|| AWAITING_SLOT.to_string());
                     if let Some(counter) = reset_counter {
                         item.counters.remove(&counter);
                     }
                     self.retried_hash = Some(definition_hash);
+                }
+            }
+            RunEvent::ItemSlotTaken { item } => {
+                if let Some(item) = self.open_item(&item).filter(|item| awaits_slot(item)) {
+                    item.cause = None;
                 }
             }
             RunEvent::CandidateSkipped { .. }

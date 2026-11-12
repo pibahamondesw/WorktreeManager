@@ -250,6 +250,10 @@ impl Executor for RoutineExecutor {
     fn drive_again(&self, request: RunRequest, items: Vec<String>) {
         self.drive_items_again(request, items);
     }
+
+    fn refill(&self, automation: &str) {
+        RoutineExecutor::refill(self, automation);
+    }
 }
 
 fn did_not_resume(request: &RunRequest, error: &str) {

@@ -1,10 +1,12 @@
 use super::*;
 use crate::commands::automations::actions::intervene::{
-    automation_hand_back, automation_retry, automation_take_over, ItemControl, ItemRequest,
-    RetryDefinition,
+    automation_hand_back, automation_retry, automation_take_over, start_retries_due, ItemControl,
+    ItemRequest, RetryDefinition,
 };
 use crate::commands::automations::routine::HUMAN_TAKEOVER;
-use crate::commands::automations::store::events::{FailureReason, ItemStatus, RunOutcome};
+use crate::commands::automations::store::events::{
+    FailureReason, ItemState, ItemStatus, RunOutcome, AWAITING_SLOT,
+};
 use sha2::Digest;
 use std::collections::BTreeMap;
 
@@ -60,13 +62,21 @@ impl Harness {
 
     /// A run of `demo` claimed on the definition with `hash`, with `events` after its claim.
     fn recorded(&self, hash: Option<String>, events: &[RunEvent]) -> String {
+        self.claimed(hash, false, events)
+    }
+
+    fn recorded_test(&self, events: &[RunEvent]) -> String {
+        self.claimed(Some(self.hash()), true, events)
+    }
+
+    fn claimed(&self, hash: Option<String>, test: bool, events: &[RunEvent]) -> String {
         let writer = self.scratch.store().writer("demo").unwrap();
         let trigger = RunTrigger {
             source: RunSource::Manual,
             trigger_key: format!("manual:{}", uuid::Uuid::new_v4()),
             scheduled_for: None,
             definition_hash: hash,
-            test: false,
+            test,
             task_id: None,
         };
         let (Claim::Created(run_id) | Claim::Existing(run_id)) = writer.claim(trigger).unwrap();
@@ -117,6 +127,24 @@ impl Harness {
 
     fn driven_again(&self) -> Vec<(RunRequest, Vec<String>)> {
         std::mem::take(&mut self.executor.3.lock().unwrap())
+    }
+
+    fn append(&self, run_id: &str, event: &RunEvent) {
+        let writer = self.scratch.store().writer("demo").unwrap();
+        writer.append(run_id, event).unwrap();
+    }
+
+    fn item(&self, run_id: &str, item: &str) -> ItemState {
+        let run = self.scratch.store().run("demo", run_id).unwrap();
+        run.items
+            .into_iter()
+            .find(|state| state.id == item)
+            .unwrap()
+    }
+
+    fn start_retries_due(&self) {
+        let store = self.scratch.store();
+        start_retries_due(&store, self.executor.as_ref(), &self.campaign(), now()).unwrap();
     }
 
     fn events(&self, run_id: &str) -> Vec<RunEvent> {
@@ -470,4 +498,140 @@ fn kept_definitions_are_found_by_their_hash_only() {
         Err("Invalid definition hash: ../state".into())
     );
     assert!(store.keep_definition("demo", "abc", "text").is_err());
+}
+
+/// A dispatched campaign run whose items `a` and `b` are active and `c` blocked on `check`.
+fn campaign_full(harness: &Harness) -> String {
+    campaign_with(harness, ["a", "b", "c"])
+}
+
+fn campaign_with(harness: &Harness, [a, b, c]: [&str; 3]) -> String {
+    harness.recorded(
+        Some(harness.hash()),
+        &[
+            RunEvent::Started,
+            created(a),
+            created(b),
+            created(c),
+            RunEvent::Completed {
+                outcome: RunOutcome::Dispatched,
+            },
+            moved(a, ItemStatus::Active, Some("fix")),
+            moved(b, ItemStatus::Active, Some("fix")),
+            moved(c, ItemStatus::Blocked, Some("check")),
+        ],
+    )
+}
+
+#[test]
+fn a_retried_campaign_item_waits_queued_for_a_free_slot_of_max_active() {
+    let harness = Harness::new(&format!("{CAMPAIGN}{STEPS}"));
+    let run_id = campaign_full(&harness);
+
+    let retried = harness
+        .retry(
+            request(&run_id, Some("c"), Actor::User),
+            RetryDefinition::Current,
+        )
+        .unwrap();
+
+    assert_eq!(
+        (retried.status, retried.cause.as_deref()),
+        (ItemStatus::Queued, Some(AWAITING_SLOT))
+    );
+    assert!(harness.driven_again().is_empty());
+    assert_eq!(harness.refill(), Refill::Idle);
+    harness.start_retries_due();
+    assert!(harness.driven_again().is_empty());
+
+    harness.append(&run_id, &moved("a", ItemStatus::Completed, Some("check")));
+    harness.start_retries_due();
+
+    let driven = harness.driven_again();
+    assert_eq!(driven.len(), 1);
+    assert_eq!(
+        (&driven[0].0.run_id, &driven[0].1),
+        (&run_id, &vec!["c".to_string()])
+    );
+    let item = harness.item(&run_id, "c");
+    assert_eq!(
+        (item.status, item.cause, item.phase.as_deref()),
+        (ItemStatus::Queued, None, Some("check"))
+    );
+    assert!(harness
+        .events(&run_id)
+        .contains(&RunEvent::ItemSlotTaken { item: "c".into() }));
+    harness.start_retries_due();
+    assert!(harness.driven_again().is_empty());
+    assert_eq!(harness.refill(), Refill::Idle);
+}
+
+#[test]
+fn freed_slots_go_to_the_oldest_retries_awaiting_one_before_new_items() {
+    let harness = Harness::enabled(&format!("{CAMPAIGN}{STEPS}"));
+    let (pass, _) = harness.executed().remove(0);
+    let noop = RunEvent::Completed {
+        outcome: RunOutcome::Noop,
+    };
+    harness.append(&pass.run_id, &noop);
+    let older = campaign_full(&harness);
+    let newer = campaign_with(&harness, ["d", "e", "f"]);
+    for (run_id, item) in [(&older, "c"), (&newer, "f")] {
+        harness
+            .retry(
+                request(run_id, Some(item), Actor::User),
+                RetryDefinition::Current,
+            )
+            .unwrap();
+    }
+    assert!(harness.driven_again().is_empty());
+    for item in ["a", "b"] {
+        harness.append(&older, &moved(item, ItemStatus::Completed, Some("check")));
+    }
+    harness.append(&newer, &moved("d", ItemStatus::Failed, Some("check")));
+    let driven_runs = || -> Vec<String> {
+        let driven = harness.driven_again().into_iter();
+        driven.map(|(request, _)| request.run_id).collect()
+    };
+
+    harness.start_retries_due();
+
+    assert_eq!(driven_runs(), [older]);
+    assert_eq!(harness.refill(), Refill::Idle);
+    harness.append(&newer, &moved("e", ItemStatus::Failed, Some("check")));
+    harness.start_retries_due();
+    assert_eq!(driven_runs(), [newer]);
+    assert_eq!(harness.refill(), Refill::Idle);
+    assert!(harness.executed().is_empty());
+}
+
+#[test]
+fn a_campaign_item_retried_with_a_free_slot_or_in_a_test_run_goes_on_at_once() {
+    let harness = Harness::new(&format!("{CAMPAIGN}{STEPS}"));
+    let run_id = campaign_full(&harness);
+    harness.append(&run_id, &moved("b", ItemStatus::Waiting, Some("check")));
+
+    let retried = harness
+        .retry(
+            request(&run_id, Some("c"), Actor::User),
+            RetryDefinition::Current,
+        )
+        .unwrap();
+
+    assert_eq!((retried.status, retried.cause), (ItemStatus::Queued, None));
+    assert_eq!(harness.driven_again()[0].1, ["c"]);
+
+    let test_run = harness.recorded_test(&[
+        RunEvent::Started,
+        created("t"),
+        moved("t", ItemStatus::Blocked, Some("check")),
+    ]);
+    let retried = harness
+        .retry(
+            request(&test_run, Some("t"), Actor::User),
+            RetryDefinition::Current,
+        )
+        .unwrap();
+    assert_eq!(retried.cause, None);
+    assert_eq!(harness.driven_again()[0].1, ["t"]);
 }

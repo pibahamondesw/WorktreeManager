@@ -260,3 +260,60 @@ fn a_campaign_run_the_sweep_already_ended_selects_nothing() {
 
     assert!(harness.state_of(&request).items.is_empty());
 }
+
+#[test]
+fn a_retry_awaiting_a_slot_takes_the_freed_one_before_the_selector_takes_new_items() {
+    let harness = Harness::campaign(
+        "pools: { active: 1 }\n",
+        by_branch(None),
+        FakeSessions::default(),
+    );
+    harness.selector_printing(r#"{"items":[{"id":"a","version":"1"}]}"#);
+    enabled_at(&harness, Pace::Continuous);
+    let retried = harness.claim(false, now());
+    let step = harness.definition().steps[0].id.clone();
+    let writer = harness.scratch.store().writer("demo").unwrap();
+    for event in [
+        RunEvent::Started,
+        RunEvent::ItemCreated {
+            item: "z".into(),
+            version: "1".into(),
+            title: None,
+            data: Default::default(),
+        },
+        RunEvent::Completed {
+            outcome: RunOutcome::Dispatched,
+        },
+        RunEvent::ItemStatus {
+            item: "z".into(),
+            status: ItemStatus::Blocked,
+            phase: Some(step.clone()),
+            stage: None,
+            cause: None,
+            counter: None,
+        },
+        RunEvent::ItemRetried {
+            item: "z".into(),
+            step,
+            definition_hash: harness.hash(),
+            by: Actor::Cli,
+            reset_counter: None,
+            awaiting_slot: true,
+        },
+    ] {
+        writer.append(&retried.run_id, &event).unwrap();
+    }
+    drop(writer);
+
+    Executor::refill(&harness.executor, "demo");
+
+    let runs = settled_runs(&harness);
+    assert_eq!(
+        selected(&runs),
+        [("a", ItemStatus::Completed), ("z", ItemStatus::Completed)]
+    );
+    assert_eq!(ids(&runs[1]), ["a"]);
+    assert!(runs[1..]
+        .iter()
+        .all(|run| source(run) == RunSource::Capacity));
+}

@@ -4,7 +4,9 @@
 //! retrying a failed or blocked item drives it again from the step it stopped at, or another one,
 //! on the current definition or on the one its run started with, with a fresh count of the
 //! counter that blocked it. Publish effects already recorded are not executed again: later steps
-//! never re-run them and a retried publish step reconciles them.
+//! never re-run them and a retried publish step reconciles them. A retried campaign item counts
+//! toward `pools.active`: while it is full the item stays queued until a slot frees, and takes it
+//! before the selector takes new items.
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -14,8 +16,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime, State};
 
 use super::super::definition::{self, AutomationDefinition, StepKind};
+use super::super::operator::pass_limits;
 use super::super::routine::HUMAN_TAKEOVER;
 use super::super::scheduler::{is_active, recorded_request, Executor};
+use super::super::selector::{has_free_slot, retries_due};
 use super::super::store::events::{ItemState, ItemStatus, RunEvent, RunState};
 use super::super::store::{Actor, RunStore};
 use super::{blocking, now, operator, run_owner, valid_definition, AutomationEngine};
@@ -183,16 +187,53 @@ pub fn retry(
     if routine && !is_active(run.status) {
         writer.append(&run.id, &RunEvent::Reopened)?;
     }
+    let awaiting_slot =
+        !routine && !is_test(&run) && !has_free_slot(store, name, max_active(store, chosen)?)?;
     let retried = RunEvent::ItemRetried {
         item: item.id.clone(),
         step,
         definition_hash: chosen.hash.clone(),
         by,
         reset_counter: exhausted_counter(item),
+        awaiting_slot,
     };
     writer.append(&run.id, &retried)?;
     drop(writer);
+    if awaiting_slot {
+        return reloaded(store, name, &run.id, &item.id);
+    }
     drive_again(store, executor, name, &run.id, &item.id, now)
+}
+
+/// Drives the campaign's retried items awaiting a slot, oldest run first, as far as the items
+/// going on leave slots of `pools.active` free.
+pub fn start_retries_due(
+    store: &RunStore,
+    executor: &dyn Executor,
+    definition: &AutomationDefinition,
+    now: DateTime<Utc>,
+) -> Result<(), String> {
+    let name = &definition.name;
+    let writer = store.writer(name)?;
+    let due = retries_due(store, name, max_active(store, definition)?)?;
+    for (run_id, item) in &due {
+        let taken = RunEvent::ItemSlotTaken { item: item.clone() };
+        writer.append(run_id, &taken)?;
+    }
+    drop(writer);
+    for (run_id, item) in due {
+        drive_again(store, executor, name, &run_id, &item, now)?;
+    }
+    Ok(())
+}
+
+fn max_active(store: &RunStore, campaign: &AutomationDefinition) -> Result<u64, String> {
+    let state = store.state(&campaign.name)?;
+    Ok(pass_limits(campaign, &state, false).max_active)
+}
+
+fn is_test(run: &RunState) -> bool {
+    run.trigger.as_ref().is_some_and(|trigger| trigger.test)
 }
 
 /// The definition a retry goes on with: the current one, or the one the run started with, from
@@ -265,7 +306,7 @@ fn still_stopping(executor: &dyn Executor, run: &RunState, routine: bool) -> Res
 
 /// A later selection may have taken the item's id again; only its newest item is retried.
 fn newest(store: &RunStore, name: &str, run: &RunState, item: &ItemState) -> Result<(), String> {
-    let test = run.trigger.as_ref().is_some_and(|trigger| trigger.test);
+    let test = is_test(run);
     let latest = store.latest_items(name)?;
     match latest
         .iter()
