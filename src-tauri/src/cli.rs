@@ -75,10 +75,12 @@ automation take-over <run_id> [--item <id>]
 automation hand-back <run_id> [--item <id>] [--note <text>]
                                      Goes on from the step taken over; the next
                                      agent step reads the note.
-automation retry <run_id> [--item <id>] [--definition <current|original>]
+automation retry <run_id> [--item <id>] [--definition <current|original>] [--from <step>]
                                      Runs a failed or blocked item again from the
-                                     step it stopped at, on the current definition
-                                     (default) or the one its run started with.
+                                     step it stopped at (or --from another step),
+                                     on the current definition (default) or the one
+                                     its run started with. An item blocked by an
+                                     exhausted budget gets a fresh count of it.
                                      Publish effects already done are not repeated.
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
@@ -203,6 +205,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                         .ok_or("--definition requires current or original")?),
                 );
             }
+            "--from" if !params.contains_key("from") => {
+                params.insert(
+                    "from".into(),
+                    json!(args.next().ok_or("--from requires a step ID")?),
+                );
+            }
             "--text" if !params.contains_key("text") => {
                 params.insert(
                     "text".into(),
@@ -272,7 +280,7 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.signal" => (&["runId", "step", "payload"], false, &["item"]),
         "automation.take-over" => (&["runId"], false, &["item"]),
         "automation.hand-back" => (&["runId"], false, &["item", "note"]),
-        "automation.retry" => (&["runId"], false, &["item", "definition"]),
+        "automation.retry" => (&["runId"], false, &["item", "definition", "from"]),
         _ => return Err("Unknown operation; see --help".into()),
     };
     if words.len() != 2 + positional.len()
@@ -1114,10 +1122,13 @@ mod tests {
                 .as_object()
                 .unwrap()
         );
-        let retried = parse(&args("automation retry r1 --definition original")).unwrap();
+        let retried = parse(&args(
+            "automation retry r1 --definition original --from implement",
+        ))
+        .unwrap();
         assert_eq!(
             retried.params,
-            *json!({ "runId": "r1", "definition": "original" })
+            *json!({ "runId": "r1", "definition": "original", "from": "implement" })
                 .as_object()
                 .unwrap()
         );
@@ -1131,6 +1142,7 @@ mod tests {
             "automation hand-back r1 --note",
             "automation hand-back r1 --definition current",
             "automation retry r1 --definition",
+            "automation retry r1 --from",
             "automation retry r1 r2",
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");

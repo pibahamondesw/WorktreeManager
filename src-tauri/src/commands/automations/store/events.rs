@@ -198,12 +198,15 @@ pub enum RunEvent {
         by: Actor,
     },
     /// The owner retries a failed or blocked item from `step`, on the definition with
-    /// `definition_hash`, which the run pins from then on.
+    /// `definition_hash`, which the run pins from then on. `reset_counter` is the exhausted
+    /// counter that blocked the item, which starts again from zero.
     ItemRetried {
         item: String,
         step: String,
         definition_hash: String,
         by: Actor,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reset_counter: Option<String>,
     },
     #[serde(other)]
     Unknown,
@@ -774,12 +777,16 @@ impl RunState {
                 item,
                 step,
                 definition_hash,
+                reset_counter,
                 ..
             } => {
                 if let Some(item) = self.items.iter_mut().find(|state| state.id == item) {
                     item.status = ItemStatus::Queued;
                     item.phase = Some(step);
                     item.cause = None;
+                    if let Some(counter) = reset_counter {
+                        item.counters.remove(&counter);
+                    }
                     self.retried_hash = Some(definition_hash);
                 }
             }

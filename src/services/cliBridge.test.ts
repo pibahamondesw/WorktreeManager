@@ -317,11 +317,18 @@ it("takes over, hands back and retries items for the CLI", async () => {
   expect(invokeCommand).toHaveBeenLastCalledWith("automation_retry", {
     target: target(null),
     definition: "current",
+    from: null,
   });
-  await call("automation.retry", { runId: "r1", item: "a", definition: "original" });
+  await call("automation.retry", {
+    runId: "r1",
+    item: "a",
+    definition: "original",
+    from: "implement",
+  });
   expect(invokeCommand).toHaveBeenLastCalledWith("automation_retry", {
     target: target("a"),
     definition: "original",
+    from: "implement",
   });
 });
 

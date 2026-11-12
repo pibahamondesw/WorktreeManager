@@ -195,7 +195,15 @@ impl<'a> ItemMachine<'a> {
             RunEvent::ItemHandedBack { item, .. } if item == self.item => {
                 self.reenter(self.position);
             }
-            RunEvent::ItemRetried { item, step, .. } if item == self.item => {
+            RunEvent::ItemRetried {
+                item,
+                step,
+                reset_counter,
+                ..
+            } if item == self.item => {
+                if let Some(counter) = reset_counter {
+                    self.counters.remove(counter);
+                }
                 self.reenter(self.position_of(None, Some(step)));
             }
             _ => {}

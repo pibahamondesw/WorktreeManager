@@ -6,6 +6,7 @@ use crate::commands::automations::actions::intervene::{
 use crate::commands::automations::routine::HUMAN_TAKEOVER;
 use crate::commands::automations::store::events::{FailureReason, ItemStatus, RunOutcome};
 use sha2::Digest;
+use std::collections::BTreeMap;
 
 const STEPS: &str =
     "steps:\n  - id: fix\n    agent: {}\n  - id: check\n    command: [/bin/sh, -c, 'exit 1']\n";
@@ -95,12 +96,22 @@ impl Harness {
     }
 
     fn retry(&self, target: ItemRequest, choice: RetryDefinition) -> Result<ItemControl, String> {
+        self.retry_from(target, choice, None)
+    }
+
+    fn retry_from(
+        &self,
+        target: ItemRequest,
+        choice: RetryDefinition,
+        from: Option<&str>,
+    ) -> Result<ItemControl, String> {
         let engine = self.app.state::<AutomationEngine>();
         tauri::async_runtime::block_on(automation_retry(
             self.app.handle().clone(),
             engine,
             target,
             choice,
+            from.map(String::from),
         ))
     }
 
@@ -261,6 +272,102 @@ fn a_retry_pins_the_chosen_definition_and_goes_on_from_the_step_that_failed() {
         RetryDefinition::Current,
     );
     assert_eq!(reopened.unwrap().status, ItemStatus::Queued);
+}
+
+fn counted(status: ItemStatus, cause: Option<&str>, counter: Option<&str>) -> RunEvent {
+    RunEvent::ItemStatus {
+        item: "routine".into(),
+        status,
+        phase: Some("check".into()),
+        stage: None,
+        cause: cause.map(String::from),
+        counter: counter.map(String::from),
+    }
+}
+
+/// A routine item that went around `retries:check` once and `budget:repair_rounds` twice and
+/// then stopped as `last`.
+fn repaired_then(last: RunEvent) -> Vec<RunEvent> {
+    routine_with(vec![
+        counted(ItemStatus::Active, None, Some("retries:check")),
+        counted(ItemStatus::Active, None, Some(REPAIR_ROUNDS)),
+        counted(ItemStatus::Active, None, Some(REPAIR_ROUNDS)),
+        last,
+        RunEvent::Completed {
+            outcome: RunOutcome::NeedsAttention,
+        },
+    ])
+}
+
+const REPAIR_ROUNDS: &str = "budget:repair_rounds";
+
+#[test]
+fn a_retry_resets_only_the_counter_that_blocked_the_item_and_records_it() {
+    let harness = Harness::new(&format!("{TARGET}{STEPS}"));
+    let store = harness.scratch.store();
+    let retried = |last: RunEvent| {
+        let run_id = harness.recorded(Some(harness.hash()), &repaired_then(last));
+        harness
+            .retry(
+                request(&run_id, None, Actor::User),
+                RetryDefinition::Current,
+            )
+            .unwrap();
+        let reset = match harness.events(&run_id).last() {
+            Some(RunEvent::ItemRetried { reset_counter, .. }) => reset_counter.clone(),
+            other => panic!("expected a retry, got {other:?}"),
+        };
+        let run = store.run("demo", &run_id).unwrap();
+        (reset, run.items[0].counters.clone())
+    };
+    let kept = BTreeMap::from([("retries:check".into(), 1), (REPAIR_ROUNDS.into(), 2)]);
+
+    assert_eq!(
+        retried(counted(ItemStatus::Blocked, Some(REPAIR_ROUNDS), None)),
+        (
+            Some(REPAIR_ROUNDS.into()),
+            [("retries:check".into(), 1)].into()
+        )
+    );
+    assert_eq!(
+        retried(counted(ItemStatus::Blocked, Some("step:check"), None)),
+        (None, kept.clone())
+    );
+    assert_eq!(
+        retried(counted(ItemStatus::Failed, Some(REPAIR_ROUNDS), None)),
+        (None, kept)
+    );
+}
+
+#[test]
+fn a_retry_goes_on_from_the_step_asked_for_on_the_chosen_definition() {
+    let harness = Harness::new(&format!("{TARGET}{STEPS}"));
+    let run_id = harness.recorded(Some(harness.hash()), &failed_at("check"));
+
+    assert_eq!(
+        harness.retry_from(
+            request(&run_id, None, Actor::User),
+            RetryDefinition::Current,
+            Some("implement")
+        ),
+        Err("The chosen definition has no step implement".into())
+    );
+    let retried = harness
+        .retry_from(
+            request(&run_id, None, Actor::User),
+            RetryDefinition::Current,
+            Some("fix"),
+        )
+        .unwrap();
+
+    assert_eq!(
+        (retried.status, retried.step.as_deref()),
+        (ItemStatus::Queued, Some("fix"))
+    );
+    assert!(matches!(
+        harness.events(&run_id).last(),
+        Some(RunEvent::ItemRetried { step, .. }) if step == "fix"
+    ));
 }
 
 #[test]
