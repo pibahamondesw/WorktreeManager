@@ -961,6 +961,7 @@ fn retried_items_awaiting_a_slot_stay_queued_at_start_and_take_one_that_is_free(
         definition_hash: "hash".into(),
         by: Actor::Cli,
         reset_counter: None,
+        reset_active_time: false,
         awaiting_slot: true,
     };
     writer.append(&campaign, &retried).unwrap();

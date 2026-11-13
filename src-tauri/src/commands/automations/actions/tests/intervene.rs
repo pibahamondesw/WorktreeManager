@@ -328,6 +328,7 @@ fn repaired_then(last: RunEvent) -> Vec<RunEvent> {
 }
 
 const REPAIR_ROUNDS: &str = "budget:repair_rounds";
+const ACTIVE_TIME: &str = "budget:active_time";
 
 #[test]
 fn a_retry_resets_only_the_counter_that_blocked_the_item_and_records_it() {
@@ -365,6 +366,51 @@ fn a_retry_resets_only_the_counter_that_blocked_the_item_and_records_it() {
         retried(counted(ItemStatus::Failed, Some(REPAIR_ROUNDS), None)),
         (None, kept)
     );
+}
+
+#[test]
+fn a_retry_resets_the_active_time_only_of_an_item_it_blocked() {
+    let harness = Harness::new(&format!("{TARGET}{STEPS}"));
+    let resets_active_time = |status: ItemStatus, cause: &str| {
+        let run_id = harness.recorded(
+            Some(harness.hash()),
+            &repaired_then(counted(status, Some(cause), None)),
+        );
+        harness
+            .retry(
+                request(&run_id, None, Actor::User),
+                RetryDefinition::Current,
+            )
+            .unwrap();
+        match harness.events(&run_id).last() {
+            Some(RunEvent::ItemRetried {
+                reset_active_time, ..
+            }) => *reset_active_time,
+            other => panic!("expected a retry, got {other:?}"),
+        }
+    };
+
+    assert!(resets_active_time(ItemStatus::Blocked, ACTIVE_TIME));
+    assert!(!resets_active_time(ItemStatus::Blocked, REPAIR_ROUNDS));
+    assert!(!resets_active_time(ItemStatus::Failed, ACTIVE_TIME));
+}
+
+#[test]
+fn a_retry_logged_before_active_time_resets_reads_as_keeping_it() {
+    let logged = json!({
+        "type": "item_retried",
+        "item": "routine",
+        "step": "check",
+        "definition_hash": "hash",
+        "by": "user"
+    });
+
+    match serde_json::from_value(logged).unwrap() {
+        RunEvent::ItemRetried {
+            reset_active_time, ..
+        } => assert!(!reset_active_time),
+        other => panic!("expected a retry, got {other:?}"),
+    }
 }
 
 #[test]

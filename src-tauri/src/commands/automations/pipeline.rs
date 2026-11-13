@@ -12,7 +12,7 @@ use super::store::events::{
     ItemStatus, LoggedEvent, ProcessEnd, RunEvent, StepOutcome, StepStatus, Verdict,
 };
 
-const ACTIVE_TIME_BUDGET: &str = "budget:active_time";
+pub const ACTIVE_TIME_BUDGET: &str = "budget:active_time";
 const WAIT_PER_HEAD_BUDGET: &str = "budget:wait_per_head";
 
 pub struct Pipeline<'a> {
@@ -199,10 +199,14 @@ impl<'a> ItemMachine<'a> {
                 item,
                 step,
                 reset_counter,
+                reset_active_time,
                 ..
             } if item == self.item => {
                 if let Some(counter) = reset_counter {
                     self.counters.remove(counter);
+                }
+                if *reset_active_time {
+                    self.active_ms = 0;
                 }
                 self.reenter(self.position_of(None, Some(step)));
             }
