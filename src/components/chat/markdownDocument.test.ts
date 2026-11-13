@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   documentSummary,
+  fileReference,
   markdownPath,
   markdownReferences,
   relativeTo,
@@ -15,6 +16,7 @@ describe("markdownPath", () => {
     ["file:///Users/me/notes/a%20b.markdown", "/Users/me/notes/a b.markdown"],
     ["<docs/My Plan.mdx>", "docs/My Plan.mdx"],
     ["~/.claude/plans/x.md", "~/.claude/plans/x.md"],
+    ["README.md:3", "README.md"],
   ])("reads %s as %s", (reference, path) => {
     expect(markdownPath(reference)).toBe(path);
   });
@@ -23,6 +25,25 @@ describe("markdownPath", () => {
     "ignores %s",
     (reference) => {
       expect(markdownPath(reference)).toBeNull();
+    }
+  );
+});
+
+describe("fileReference", () => {
+  it.each([
+    ["src/x.ts", { path: "src/x.ts" }],
+    ["src/x.ts:42", { path: "src/x.ts", line: 42 }],
+    ["x.ts:42:7", { path: "x.ts", line: 42 }],
+    ["/repo/src/x.ts#L42-L50", { path: "/repo/src/x.ts", line: 42 }],
+    ["file:///repo/a%20b.rs", { path: "/repo/a b.rs" }],
+  ])("reads %s", (reference, expected) => {
+    expect(fileReference(reference)).toEqual(expected);
+  });
+
+  it.each(["https://example.com/x.ts", "mailto:a@b.c", "#section", "", undefined])(
+    "ignores %s",
+    (reference) => {
+      expect(fileReference(reference)).toBeNull();
     }
   );
 });

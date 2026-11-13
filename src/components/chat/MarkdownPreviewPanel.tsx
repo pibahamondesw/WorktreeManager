@@ -2,6 +2,8 @@ import { ReactNode, RefObject, useEffect, useLayoutEffect, useMemo, useRef, useS
 import { Button } from "../ui/Button";
 import { ChevronLeftIcon, CloseIcon, DocumentIcon, RefreshIcon, SpinnerIcon } from "../ui/Icons";
 import { MarkdownText } from "./ChatItemView";
+import { FilePreview } from "./FilePreview";
+import { usePreviewFile } from "./previewFile";
 import {
   directoryOf,
   documentSummary,
@@ -70,9 +72,22 @@ export function MarkdownPreviewPanel({
   const [active, setActive] = useState(0);
   const source = history[history.length - 1];
   const loaded = useMarkdownDocument(source, folders, revision);
+  const codeFile = usePreviewFile(
+    source.kind === "code" ? source.path : null,
+    folders,
+    source.kind === "code" ? (source.base ?? null) : null,
+    revision
+  );
   const canEdit = editable && history.length === 1;
   const text = canEdit ? editable.text : loaded.kind === "ready" ? loaded.text : "";
-  const path = loaded.kind === "ready" ? loaded.document?.path : undefined;
+  const path =
+    source.kind === "code"
+      ? codeFile.kind === "ready"
+        ? codeFile.path
+        : undefined
+      : loaded.kind === "ready"
+        ? loaded.document?.path
+        : undefined;
   const { entries, body } = useMemo(() => splitFrontmatter(text), [text]);
   const summary = useMemo(() => documentSummary(text), [text]);
   const panelRef = useRef<HTMLElement>(null);
@@ -82,14 +97,19 @@ export function MarkdownPreviewPanel({
   const showOutline = outline.length >= OUTLINE_MIN_HEADINGS;
 
   const title =
-    summary.title ?? (source.kind === "file" ? fileName(path ?? source.path) : source.title);
+    summary.title ?? (source.kind === "inline" ? source.title : fileName(path ?? source.path));
 
   const nested = useMemo(
     () => ({
       folders,
       open: ({ source: next }: MarkdownPreviewRequest) => {
         const base = path ? [directoryOf(path), ...folders] : folders;
-        const resolved = next.kind === "file" && !next.folders ? { ...next, folders: base } : next;
+        const resolved =
+          next.kind === "code"
+            ? { ...next, base: path ? directoryOf(path) : undefined }
+            : next.kind === "file" && !next.folders
+              ? { ...next, folders: base }
+              : next;
         setHistory((current) => [...current, resolved]);
       },
     }),
@@ -159,7 +179,7 @@ export function MarkdownPreviewPanel({
             {editing ? "Preview plan" : "Edit plan"}
           </Button>
         )}
-        {source.kind === "file" && (
+        {source.kind !== "inline" && (
           <Button
             variant="ghost"
             onClick={() => setRevision((current) => current + 1)}
@@ -209,6 +229,7 @@ export function MarkdownPreviewPanel({
           onScroll={(e) => showOutline && setActive(activeHeading(e.currentTarget, outline))}
           className="chat-scroll flex-1 min-w-0 overflow-y-auto"
         >
+          {source.kind === "code" && <FilePreview file={codeFile} line={source.line} />}
           {loaded.kind === "loading" && (
             <div className="flex items-center justify-center gap-2 p-8 text-xs text-text-muted">
               <SpinnerIcon size={12} /> Loading…
@@ -228,6 +249,7 @@ export function MarkdownPreviewPanel({
               className="h-full min-h-64 w-full resize-none bg-bg-primary p-6 font-mono text-sm text-text-primary outline-none"
             />
           ) : (
+            source.kind !== "code" &&
             loaded.kind === "ready" && (
               <article ref={articleRef} className="mx-auto max-w-3xl px-6 py-8 @2xl:px-10">
                 {entries.length > 0 && (

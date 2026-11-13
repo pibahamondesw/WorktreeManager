@@ -66,7 +66,7 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function MediaSide({ label, content }: { label: string; content: FileContent | null }) {
+export function MediaSide({ label, content }: { label: string; content: FileContent | null }) {
   const [size, setSize] = useState<string | null>(null);
   return (
     <figure className="flex-1 min-w-0 flex flex-col gap-1.5">
@@ -115,7 +115,7 @@ function lineTitle(line: DiffLine) {
   return undefined;
 }
 
-function Code({ line, analysis }: { line: DiffLine; analysis: TextDiff["analysis"] }) {
+export function Code({ line, analysis }: { line: DiffLine; analysis: TextDiff["analysis"] }) {
   return (
     <>
       {lineSegments(line, analysis[line.side].highlights).map((segment, index) => (
@@ -130,7 +130,7 @@ function Code({ line, analysis }: { line: DiffLine; analysis: TextDiff["analysis
   );
 }
 
-function LineNumber({ value }: { value?: number }) {
+export function LineNumber({ value }: { value?: number }) {
   return (
     <span className="diff-number w-10 shrink-0 pr-2 text-right text-text-muted select-none">
       {value ?? ""}
