@@ -10,6 +10,7 @@ use crate::commands::automations::definition::{
     AgentSettings, AgentStep, ApprovalStep, CommandStep, WaitStep,
 };
 use crate::commands::automations::store::events::{reduce, ItemState};
+use crate::commands::automations::store::Actor;
 
 const ITEM: &str = "unit-1";
 const REPAIR_ROUNDS: &str = "budget:repair_rounds";
@@ -813,6 +814,67 @@ fn an_attempt_that_spends_the_last_active_time_blocks_instead_of_retrying() {
     assert_eq!(
         harness.moves().last().unwrap(),
         "blocked:verify (budget:active_time)"
+    );
+}
+
+/// The item spends 70s of a 60s budget on `implement` and blocks before `verify`; the owner
+/// retries it from `implement`.
+fn retried_after_running_out_of_active_time(reset_active_time: bool) -> Harness {
+    let mut harness = Harness::new(vec![agent("implement", None), command("verify")]).script(
+        "implement",
+        vec![
+            finished(70_000, report(StepOutcome::Success)),
+            finished(20_000, report(StepOutcome::Success)),
+        ],
+    );
+    harness.budgets.active_time_secs = 60;
+    assert_eq!(harness.drive(), ItemStatus::Blocked);
+    harness
+        .log
+        .append(RunEvent::ItemRetried {
+            item: ITEM.into(),
+            step: "implement".into(),
+            definition_hash: "hash".into(),
+            by: Actor::User,
+            reset_counter: None,
+            reset_active_time,
+            awaiting_slot: false,
+        })
+        .unwrap();
+    harness
+}
+
+#[test]
+fn a_retry_of_an_item_blocked_by_active_time_gets_a_fresh_budget() {
+    let mut harness = retried_after_running_out_of_active_time(true);
+
+    assert_eq!(harness.drive(), ItemStatus::Completed);
+
+    assert_eq!(
+        harness.executor.calls,
+        ["implement#1", "implement#2", "verify#1"]
+    );
+    assert_eq!(
+        harness.executor.active_time_left,
+        [
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+            Duration::from_secs(40)
+        ]
+    );
+    assert_eq!(harness.item().steps[0].elapsed_ms, 70_000);
+}
+
+#[test]
+fn a_retry_that_keeps_the_active_time_blocks_again_at_once() {
+    let mut harness = retried_after_running_out_of_active_time(false);
+
+    assert_eq!(harness.drive(), ItemStatus::Blocked);
+
+    assert_eq!(harness.executor.calls, ["implement#1"]);
+    assert_eq!(
+        harness.moves().last().unwrap(),
+        "blocked:implement (budget:active_time)"
     );
 }
 

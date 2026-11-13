@@ -298,6 +298,7 @@ fn a_retry_awaiting_a_slot_takes_the_freed_one_before_the_selector_takes_new_ite
             definition_hash: harness.hash(),
             by: Actor::Cli,
             reset_counter: None,
+            reset_active_time: false,
             awaiting_slot: true,
         },
     ] {

@@ -17,6 +17,7 @@ use tauri::{AppHandle, Runtime, State};
 
 use super::super::definition::{self, AutomationDefinition, StepKind};
 use super::super::operator::pass_limits;
+use super::super::pipeline::ACTIVE_TIME_BUDGET;
 use super::super::routine::HUMAN_TAKEOVER;
 use super::super::scheduler::{is_active, recorded_request, Executor};
 use super::super::selector::{has_free_slot, retries_due};
@@ -150,7 +151,8 @@ pub fn hand_back(
 }
 
 /// Drives a failed or blocked item again from the step it stopped at, or from `from`, on
-/// `chosen`, which the run pins from then on. The exhausted counter that blocked it starts again.
+/// `chosen`, which the run pins from then on. The exhausted counter or active time budget that
+/// blocked it starts again.
 pub fn retry(
     store: &RunStore,
     executor: &dyn Executor,
@@ -195,6 +197,7 @@ pub fn retry(
         definition_hash: chosen.hash.clone(),
         by,
         reset_counter: exhausted_counter(item),
+        reset_active_time: blocked_by(item, ACTIVE_TIME_BUDGET),
         awaiting_slot,
     };
     writer.append(&run.id, &retried)?;
@@ -345,6 +348,10 @@ fn retry_step(
 fn exhausted_counter(item: &ItemState) -> Option<String> {
     let cause = item.cause.as_ref()?;
     (item.status == ItemStatus::Blocked && item.counters.contains_key(cause)).then(|| cause.clone())
+}
+
+fn blocked_by(item: &ItemState, cause: &str) -> bool {
+    item.status == ItemStatus::Blocked && item.cause.as_deref() == Some(cause)
 }
 
 const OPEN: [ItemStatus; 3] = [ItemStatus::Queued, ItemStatus::Active, ItemStatus::Waiting];

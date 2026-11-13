@@ -199,8 +199,10 @@ pub enum RunEvent {
     },
     /// The owner retries a failed or blocked item from `step`, on the definition with
     /// `definition_hash`, which the run pins from then on. `reset_counter` is the exhausted
-    /// counter that blocked the item, which starts again from zero. A campaign item retried while
-    /// its `pools.active` is full stays queued `awaiting_slot` until it takes a freed slot.
+    /// counter that blocked the item, which starts again from zero; `reset_active_time` likewise gives
+    /// an item blocked by `budget:active_time` a fresh budget, counting only later attempts. A
+    /// campaign item retried while its `pools.active` is full stays queued `awaiting_slot` until it
+    /// takes a freed slot.
     ItemRetried {
         item: String,
         step: String,
@@ -208,6 +210,8 @@ pub enum RunEvent {
         by: Actor,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reset_counter: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reset_active_time: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         awaiting_slot: bool,
     },
