@@ -6,7 +6,7 @@ import { LinearService } from "../services/linear";
 import { IssueLinearInfo, Task, Workspace } from "../types";
 import { resetGithubCache } from "../services/github";
 import { taskLinearStore } from "../services/taskLinear";
-import { useWorktreeData } from "./useWorktreeData";
+import { mergeGitStatuses, useWorktreeData } from "./useWorktreeData";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const pr = {
@@ -148,4 +148,41 @@ it("notifies workspace readiness while an optional GitHub refresh is still pendi
     resolve({});
     await settle();
   }
+});
+
+it("keeps unchanged git status objects across refreshes", async () => {
+  const member = {
+    repoId: "r1",
+    repoName: "repo",
+    localPath: "/repo",
+    path: "/wt/a",
+    branchName: "feat",
+  };
+  const gitTasks = [
+    { ...task, linearIssueId: undefined, members: [member, { ...member, path: "/wt/b" }] },
+  ];
+  const clean = { ahead: 0, behind: 0, dirty: false, last_commit_epoch: 1 };
+  let dirtyB = false;
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "git_worktree_status_batch"
+      ? { "/wt/a": { ...clean }, "/wt/b": { ...clean, dirty: dirtyB } }
+      : {}
+  );
+  const { result } = renderHook(() => useWorktreeData(gitTasks, workspace));
+  await settle();
+  const initial = result.current.gitStatuses;
+  await act(() => result.current.handleRefresh());
+  expect(result.current.gitStatuses).toBe(initial);
+  dirtyB = true;
+  await act(() => result.current.handleRefresh());
+  expect(result.current.gitStatuses["/wt/a"]).toBe(initial["/wt/a"]);
+  expect(result.current.gitStatuses["/wt/b"]).toEqual({ ...clean, dirty: true });
+});
+
+it("adds newly fetched git statuses without dropping previous ones", () => {
+  const status = { ahead: 1, behind: 0, dirty: false, last_commit_epoch: 1 };
+  const prev = { "/wt/a": status };
+  const merged = mergeGitStatuses(prev, { "/wt/b": { ...status } });
+  expect(merged["/wt/a"]).toBe(status);
+  expect(merged["/wt/b"]).toEqual(status);
 });

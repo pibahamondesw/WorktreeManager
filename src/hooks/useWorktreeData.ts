@@ -4,6 +4,25 @@ import { Task, Workspace, GitStatus } from "../types";
 import { taskLinearStore } from "../services/taskLinear";
 import { useTaskLinearData } from "./useTaskLinearData";
 
+function sameGitStatus(a: GitStatus, b: GitStatus) {
+  return (
+    a.ahead === b.ahead &&
+    a.behind === b.behind &&
+    a.dirty === b.dirty &&
+    a.last_commit_epoch === b.last_commit_epoch
+  );
+}
+
+export function mergeGitStatuses(
+  prev: Record<string, GitStatus>,
+  fetched: Record<string, GitStatus>
+): Record<string, GitStatus> {
+  const changed = Object.entries(fetched).filter(
+    ([path, status]) => !prev[path] || !sameGitStatus(prev[path], status)
+  );
+  return changed.length === 0 ? prev : { ...prev, ...Object.fromEntries(changed) };
+}
+
 export function useWorktreeData(
   tasks: Task[],
   workspace: Workspace | undefined,
@@ -37,7 +56,7 @@ export function useWorktreeData(
       );
       const merged: Record<string, GitStatus> = {};
       for (const r of results) Object.assign(merged, r);
-      setGitStatuses((prev) => ({ ...prev, ...merged }));
+      setGitStatuses((prev) => mergeGitStatuses(prev, merged));
     } catch {
       /* git status is best-effort */
     }
