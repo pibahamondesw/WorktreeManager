@@ -14,7 +14,7 @@ use super::{blocking, model, ChatRegistry};
 
 const DIFF_TIMEOUT: Duration = Duration::from_millis(500);
 const MAX_TEXT_BYTES: usize = 4 * 1024 * 1024;
-const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+pub(super) const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -252,7 +252,7 @@ const IMAGE_TYPES: [(&str, &str); 8] = [
     ("avif", "image/avif"),
 ];
 
-fn image_mime(path: &str) -> Option<&'static str> {
+pub(super) fn image_mime(path: &str) -> Option<&'static str> {
     let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
     IMAGE_TYPES
         .iter()
@@ -260,7 +260,7 @@ fn image_mime(path: &str) -> Option<&'static str> {
         .map(|(_, mime)| *mime)
 }
 
-fn content(path: &str, bytes: Vec<u8>) -> FileContent {
+pub(super) fn content(path: &str, bytes: Vec<u8>) -> FileContent {
     if let Some(mime) = image_mime(path).filter(|_| bytes.len() <= MAX_IMAGE_BYTES) {
         return FileContent::Image {
             mime: mime.into(),

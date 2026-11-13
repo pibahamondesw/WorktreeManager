@@ -13,6 +13,7 @@ mod codex_hooks;
 
 pub use codex::purge_stale_chat_images;
 mod conversations;
+mod file_preview;
 mod files;
 mod handoff;
 mod headless;
@@ -1319,6 +1320,19 @@ pub async fn chat_read_markdown(
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn chat_read_file(
+    folders: Vec<String>,
+    base: Option<String>,
+    path: String,
+) -> Result<file_preview::PreviewFile, String> {
+    blocking(move || {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        file_preview::read(&folders, base.as_deref(), &path, home.as_deref())
+    })
+    .await
 }
 
 #[tauri::command(async)]
