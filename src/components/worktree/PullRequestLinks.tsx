@@ -2,6 +2,14 @@ import { prKey, useGithubPrStatuses } from "../../services/github";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "../ui/Badge";
 import { PullRequestInfo } from "../../types";
+import {
+  PullRequestClosedIcon,
+  PullRequestConflictIcon,
+  PullRequestDraftIcon,
+  PullRequestIcon,
+  PullRequestMergedIcon,
+} from "../ui/Icons";
+import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 
 const prBadgeVariants: Record<string, "success" | "accent" | "danger" | "default"> = {
   merged: "accent",
@@ -9,6 +17,22 @@ const prBadgeVariants: Record<string, "success" | "accent" | "danger" | "default
 };
 
 const isInactivePr = (state: string) => state === "draft" || state === "closed";
+
+type PrDisplayState = "open" | "draft" | "merged" | "closed" | "conflicts";
+
+const prStateIcons: Record<PrDisplayState, { Icon: typeof PullRequestIcon; className: string }> = {
+  open: { Icon: PullRequestIcon, className: "text-success" },
+  draft: { Icon: PullRequestDraftIcon, className: "text-text-muted" },
+  merged: { Icon: PullRequestMergedIcon, className: "text-accent" },
+  closed: { Icon: PullRequestClosedIcon, className: "text-danger" },
+  conflicts: { Icon: PullRequestConflictIcon, className: "text-warning" },
+};
+
+function prDisplayState(state: string, draft: boolean, hasConflicts: boolean): PrDisplayState {
+  if (state === "merged" || state === "closed") return state;
+  if (hasConflicts) return "conflicts";
+  return draft ? "draft" : "open";
+}
 
 interface PullRequestLinksProps {
   prs: PullRequestInfo[];
@@ -30,6 +54,8 @@ export function PullRequestLinks({
     const state = status?.state ?? pr.state;
     const draft = status ? status.isDraft : pr.state === "draft";
     const showBadges = !numbersOnly;
+    const displayState = prDisplayState(state, draft, !!status?.hasConflicts);
+    const { Icon: StateIcon, className: stateIconClass } = prStateIcons[displayState];
     return (
       <span
         key={pr.url}
@@ -41,12 +67,16 @@ export function PullRequestLinks({
             event.stopPropagation();
             openUrl(pr.url).catch(() => onOpenError?.("Could not open the pull request"));
           }}
-          title={draft ? `#${pr.number} (draft): ${pr.title}` : `#${pr.number}: ${pr.title}`}
+          title={
+            displayState === "open"
+              ? `#${pr.number}: ${pr.title}`
+              : `#${pr.number} (${displayState}): ${pr.title}`
+          }
           className={`pointer-events-auto inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
             isInactivePr(draft ? "draft" : state) ? "text-text-muted" : "text-accent"
           } hover:text-accent-hover`}
         >
-          #{pr.number}
+          <StateIcon size={12} className={`flex-shrink-0 ${stateIconClass}`} />#{pr.number}
           {showBadges && state !== "open" && (
             <Badge variant={prBadgeVariants[state] ?? "default"}>{state}</Badge>
           )}
@@ -55,15 +85,17 @@ export function PullRequestLinks({
         {showBadges && status && state === "open" && (
           <>
             {status.ci !== "none" && (
-              <Badge
-                variant={
-                  status.ci === "passing"
-                    ? "success"
-                    : status.ci === "failing"
-                      ? "danger"
-                      : "default"
-                }
-              >{`CI ${status.ci}`}</Badge>
+              <PullRequestChecksPopover pr={pr} onOpenError={onOpenError}>
+                <Badge
+                  variant={
+                    status.ci === "passing"
+                      ? "success"
+                      : status.ci === "failing"
+                        ? "danger"
+                        : "default"
+                  }
+                >{`CI ${status.ci}`}</Badge>
+              </PullRequestChecksPopover>
             )}
             <Badge
               variant={

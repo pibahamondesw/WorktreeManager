@@ -401,7 +401,9 @@ export const WorktreeCard = memo(function WorktreeCard({
                 data-task-part={prs.length ? "prs" : undefined}
                 className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-left pointer-events-none"
               >
-                <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
+                {prs.length === 0 && (
+                  <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
+                )}
                 {prs.length > 0 ? (
                   <PullRequestLinks prs={prs} onOpenError={onOpenError} onReady={onPrReady} />
                 ) : (
