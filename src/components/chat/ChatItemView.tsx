@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import Markdown, { Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -11,6 +11,7 @@ import { PlanCard, ReferencedDocuments } from "./MarkdownPreviewCard";
 import { useMarkdownPreview } from "./markdownPreviewContext";
 import { isPlanItem } from "./markdownDocument";
 import { SubagentSteps } from "./chatEntries";
+import { splitMarkdownBlocks } from "./markdownBlocks";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted animate-pulse",
@@ -32,6 +33,18 @@ const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm];
 const REHYPE_PLUGINS: Options["rehypePlugins"] = [[rehypeHighlight, { plainText: ["mermaid"] }]];
 const MARKDOWN_COMPONENTS: Options["components"] = { a: MarkdownLink, pre: MarkdownCodeBlock };
 
+const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
+  return (
+    <Markdown
+      remarkPlugins={REMARK_PLUGINS}
+      rehypePlugins={REHYPE_PLUGINS}
+      components={MARKDOWN_COMPONENTS}
+    >
+      {text}
+    </Markdown>
+  );
+});
+
 export function MarkdownText({
   text,
   className = "text-sm",
@@ -39,15 +52,12 @@ export function MarkdownText({
   text: string;
   className?: string;
 }) {
+  const blocks = useMemo(() => splitMarkdownBlocks(text) ?? [text], [text]);
   return (
     <div className={`chat-markdown ${className} text-text-primary select-text break-words`}>
-      <Markdown
-        remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
-        components={MARKDOWN_COMPONENTS}
-      >
-        {text}
-      </Markdown>
+      {blocks.map((block, index) => (
+        <MarkdownBlock key={index} text={block} />
+      ))}
     </div>
   );
 }
