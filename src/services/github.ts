@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
-import { GithubPrStatus, PullRequestInfo } from "../types";
+import { GithubPrCheck, GithubPrStatus, PullRequestInfo } from "../types";
 
 const GITHUB_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 interface Entry {
@@ -127,4 +127,11 @@ export function resetGithubCache() {
   for (const slug of requests.keys()) generations.set(slug, (generations.get(slug) ?? 0) + 1);
   requests.clear();
   publish({});
+}
+
+export function fetchGithubPrChecks(pr: PullRequestInfo): Promise<GithubPrCheck[]> {
+  return invoke<GithubPrCheck[]>("github_pr_checks", {
+    repoSlug: pr.repoSlug.toLowerCase(),
+    prNumber: pr.number,
+  });
 }

@@ -15,6 +15,7 @@ pub struct GithubPrStatus {
     is_draft: bool,
     ci: String,
     review: String,
+    has_conflicts: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     head_sha: Option<String>,
 }
@@ -105,7 +106,7 @@ fn batch_payload(repo_slug: &str, numbers: &[u32]) -> Result<Value, String> {
         return Err("Invalid pull request number".into());
     }
     let fields = numbers.iter().collect::<BTreeSet<_>>().into_iter().map(|number| format!(
-        "pr{number}: pullRequest(number: {number}) {{ state isDraft reviewDecision commits(last: 1) {{ nodes {{ commit {{ oid statusCheckRollup {{ state }} }} }} }} }}"
+        "pr{number}: pullRequest(number: {number}) {{ state isDraft mergeable reviewDecision commits(last: 1) {{ nodes {{ commit {{ oid statusCheckRollup {{ state }} }} }} }} }}"
     )).collect::<Vec<_>>().join(" ");
     Ok(
         json!({"query": format!("query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"), "variables": {"owner": owner, "name": name}}),
@@ -154,6 +155,7 @@ fn parse_statuses(bytes: &[u8]) -> Result<HashMap<u32, GithubPrStatus>, String> 
                 is_draft,
                 ci: ci.into(),
                 review: review.into(),
+                has_conflicts: pr["mergeable"].as_str() == Some("CONFLICTING"),
                 head_sha: pr
                     .pointer("/commits/nodes/0/commit/oid")
                     .and_then(Value::as_str)
@@ -182,6 +184,113 @@ pub async fn github_pr_status_batch(
     })
     .await
     .map_err(|_| "GitHub task failed".to_string())?
+}
+
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct GithubPrCheck {
+    name: String,
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+}
+
+const CHECK_STATE_ORDER: [&str; 4] = ["failing", "running", "passing", "skipped"];
+
+fn checks_payload(repo_slug: &str, number: u32) -> Result<Value, String> {
+    let (owner, name) = validate_repo(repo_slug)?;
+    if number == 0 {
+        return Err("Invalid pull request number".into());
+    }
+    Ok(json!({
+        "query": "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl } } } } } } } } } }",
+        "variables": {"owner": owner, "name": name, "number": number},
+    }))
+}
+
+fn check_run_state(status: Option<&str>, conclusion: Option<&str>) -> &'static str {
+    if status != Some("COMPLETED") {
+        return "running";
+    }
+    match conclusion {
+        Some("SUCCESS") => "passing",
+        Some("SKIPPED" | "NEUTRAL" | "STALE") => "skipped",
+        _ => "failing",
+    }
+}
+
+fn status_context_state(state: Option<&str>) -> &'static str {
+    match state {
+        Some("SUCCESS") => "passing",
+        Some("PENDING" | "EXPECTED") => "running",
+        _ => "failing",
+    }
+}
+
+fn parse_checks(bytes: &[u8]) -> Result<Vec<GithubPrCheck>, String> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| "Invalid GitHub response")?;
+    let pr = value
+        .pointer("/data/repository/pullRequest")
+        .filter(|pr| pr.is_object())
+        .ok_or("GitHub pull request unavailable")?;
+    let contexts = pr
+        .pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut checks: Vec<_> = contexts
+        .iter()
+        .filter_map(|node| {
+            let text = |key: &str| node[key].as_str();
+            let (name, state, url) = match text("__typename")? {
+                "CheckRun" => (
+                    text("name")?,
+                    check_run_state(text("status"), text("conclusion")),
+                    text("detailsUrl"),
+                ),
+                "StatusContext" => (
+                    text("context")?,
+                    status_context_state(text("state")),
+                    text("targetUrl"),
+                ),
+                _ => return None,
+            };
+            Some(GithubPrCheck {
+                name: name.to_owned(),
+                state,
+                url: url.filter(|url| !url.is_empty()).map(str::to_owned),
+            })
+        })
+        .collect();
+    checks.sort_by(|a, b| {
+        let rank = |check: &GithubPrCheck| CHECK_STATE_ORDER.iter().position(|s| *s == check.state);
+        rank(a).cmp(&rank(b)).then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(checks)
+}
+
+type GhRunner = fn(&[&str], &[u8]) -> Result<Vec<u8>, String>;
+
+fn query_checks(
+    repo_slug: &str,
+    pr_number: u32,
+    gh: GhRunner,
+) -> Result<Vec<GithubPrCheck>, String> {
+    let payload = checks_payload(repo_slug, pr_number)?;
+    let bytes = gh(
+        &["api", "graphql", "--hostname", "github.com", "--input", "-"],
+        &serde_json::to_vec(&payload).unwrap(),
+    )?;
+    parse_checks(&bytes)
+}
+
+#[tauri::command]
+pub async fn github_pr_checks(
+    repo_slug: String,
+    pr_number: u32,
+) -> Result<Vec<GithubPrCheck>, String> {
+    tauri::async_runtime::spawn_blocking(move || query_checks(&repo_slug, pr_number, run_gh))
+        .await
+        .map_err(|_| "GitHub task failed".to_string())?
 }
 
 #[tauri::command]
@@ -248,6 +357,7 @@ mod tests {
         assert_eq!(statuses[&1].review, "approved");
         assert!(statuses[&1].is_draft);
         assert_eq!(statuses[&1].head_sha.as_deref(), Some("abc123"));
+        assert!(!statuses[&1].has_conflicts);
         assert!(parse_statuses(b"bad").is_err());
     }
 
@@ -272,6 +382,76 @@ mod tests {
             run_process(&mut command, payload, Duration::from_secs(5), true).unwrap(),
             payload
         );
+    }
+
+    #[test]
+    fn reports_merge_conflicts() {
+        let bytes = br#"{"data":{"repository":{"pr1":{"state":"OPEN","isDraft":false,"mergeable":"CONFLICTING","reviewDecision":null,"commits":{"nodes":[]}}}}}"#;
+        assert!(parse_statuses(bytes).unwrap()[&1].has_conflicts);
+    }
+
+    #[test]
+    fn checks_payload_validates_inputs() {
+        let payload = checks_payload("org/repo", 7).unwrap();
+        assert_eq!(payload["variables"]["number"], 7);
+        assert!(checks_payload("org/repo;bad", 7).is_err());
+        assert!(checks_payload("org/repo", 0).is_err());
+    }
+
+    #[test]
+    fn parses_check_runs_and_status_contexts_sorted_by_state() {
+        let bytes = serde_json::to_vec(&json!({"data": {"repository": {"pullRequest": {"commits": {"nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": [
+            {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://ci/lint"},
+            {"__typename": "CheckRun", "name": "docs", "status": "COMPLETED", "conclusion": "SKIPPED", "detailsUrl": ""},
+            {"__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": null, "detailsUrl": "https://ci/test"},
+            {"__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "TIMED_OUT", "detailsUrl": "https://ci/build"},
+            {"__typename": "StatusContext", "context": "deploy", "state": "ERROR", "targetUrl": "https://ci/deploy"},
+            {"__typename": "StatusContext", "context": "preview", "state": "PENDING", "targetUrl": null},
+            {"__typename": "FutureContext", "name": "ignored"}
+        ]}}}}]}}}}}))
+        .unwrap();
+        let checks = parse_checks(&bytes).unwrap();
+        let summary: Vec<_> = checks.iter().map(|c| (c.name.as_str(), c.state)).collect();
+        assert_eq!(
+            summary,
+            [
+                ("build", "failing"),
+                ("deploy", "failing"),
+                ("preview", "running"),
+                ("test", "running"),
+                ("lint", "passing"),
+                ("docs", "skipped"),
+            ]
+        );
+        assert_eq!(checks[0].url.as_deref(), Some("https://ci/build"));
+        assert_eq!(checks[5].url, None);
+    }
+
+    #[test]
+    fn queries_checks_through_gh_graphql() {
+        let checks = query_checks("org/repo", 7, |args, input| {
+            assert_eq!(args[..2], ["api", "graphql"]);
+            let payload: Value = serde_json::from_slice(input).unwrap();
+            assert_eq!(payload["variables"]["number"], 7);
+            Ok(br#"{"data":{"repository":{"pullRequest":{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":null}]}}}}]}}}}}"#.to_vec())
+        })
+        .unwrap();
+        assert_eq!(checks[0].name, "lint");
+        assert_eq!(
+            query_checks("org/repo", 7, |_, _| Err("denied".into())).unwrap_err(),
+            "denied"
+        );
+        assert!(
+            tauri::async_runtime::block_on(github_pr_checks("org/repo;bad".into(), 7)).is_err()
+        );
+    }
+
+    #[test]
+    fn checks_without_rollup_are_empty_and_missing_prs_fail() {
+        let bytes = br#"{"data":{"repository":{"pullRequest":{"commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}}}}"#;
+        assert!(parse_checks(bytes).unwrap().is_empty());
+        assert!(parse_checks(br#"{"data":{"repository":{"pullRequest":null}}}"#).is_err());
+        assert!(parse_checks(b"bad").is_err());
     }
 
     #[test]

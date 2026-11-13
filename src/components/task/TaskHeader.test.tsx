@@ -97,7 +97,7 @@ it("omits the Linear link for tasks without an issue", () => {
 it("links every attached PR by number with its full title on hover", () => {
   renderHeader(linearInfo);
   expect(screen.getByTitle("#424: First")).toHaveTextContent("#424");
-  fireEvent.click(screen.getByTitle("#425: Second"));
+  fireEvent.click(screen.getByTitle("#425 (merged): Second"));
   expect(openUrl).toHaveBeenCalledWith("https://github.com/o/r/pull/425");
 });
 
@@ -118,7 +118,7 @@ it("shows the full title and branch name on hover", () => {
 
 it("shows PR numbers without status badges", () => {
   renderHeader(linearInfo);
-  expect(screen.getByTitle("#425: Second")).toHaveTextContent(/^#425$/);
+  expect(screen.getByTitle("#425 (merged): Second")).toHaveTextContent(/^#425$/);
   expect(screen.queryByText("merged")).not.toBeInTheDocument();
 });
 

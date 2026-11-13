@@ -1,14 +1,7 @@
 import { useShortcutLabels } from "../../shortcuts/runtime";
 import { MouseEvent, ReactNode, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  BranchIcon,
-  ChevronLeftIcon,
-  CloseIcon,
-  PullRequestIcon,
-  SidebarIcon,
-  SpinnerIcon,
-} from "../ui/Icons";
+import { BranchIcon, ChevronLeftIcon, CloseIcon, SidebarIcon, SpinnerIcon } from "../ui/Icons";
 import { GitStatus, IssueLinearInfo, Task } from "../../types";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { taskTransitionName } from "../../services/taskTransition";
@@ -162,7 +155,6 @@ export function TaskHeader({
           className="flex items-center gap-1.5 text-xs min-w-0 shrink-[0.01] overflow-hidden whitespace-nowrap"
           style={{ viewTransitionName: taskTransitionName("prs") }}
         >
-          <PullRequestIcon size={12} className="text-text-muted flex-shrink-0" />
           <PullRequestLinks prs={prs} numbersOnly />
         </span>
       )}
