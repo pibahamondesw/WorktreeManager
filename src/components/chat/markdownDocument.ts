@@ -1,13 +1,15 @@
 import { ChatItem } from "../../services/chat";
 
 const MARKDOWN_PATH = /\.(md|markdown|mdx)$/i;
-const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
-const LINE_SUFFIX = /(:\d+)+$/;
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:(?!\d)/i;
+const LINE_FRAGMENT = /#L(\d+)/;
+const LINE_NUMBER = /:(\d+)(:\d+)*$/;
 const FENCE = /^\s*(```|~~~)/;
 const PREVIEW_LINES = 5;
 
 export type MarkdownSource =
   | { kind: "file"; path: string; folders?: string[] }
+  | { kind: "code"; path: string; line?: number; base?: string }
   | { kind: "inline"; title: string; text: string };
 
 export interface DocumentSummary {
@@ -28,13 +30,28 @@ const safeDecode = (value: string) => {
   }
 };
 
-export function markdownPath(reference: string | undefined): string | null {
+export interface FileReference {
+  path: string;
+  line?: number;
+}
+
+export function fileReference(reference: string | undefined): FileReference | null {
   if (!reference) return null;
   let path = reference.trim().replace(/^<|>$/g, "");
   if (path.startsWith("file://")) path = path.slice("file://".length);
-  else if (URL_SCHEME.test(path)) return null;
-  path = safeDecode(path.split(/[?#]/)[0]).replace(LINE_SUFFIX, "");
-  return MARKDOWN_PATH.test(path) ? path : null;
+  else if (URL_SCHEME.test(path) || path.startsWith("#")) return null;
+  const fragmentLine = LINE_FRAGMENT.exec(path)?.[1];
+  path = safeDecode(path.split(/[?#]/)[0]);
+  const suffixLine = LINE_NUMBER.exec(path)?.[1];
+  path = path.replace(LINE_NUMBER, "");
+  if (!path) return null;
+  const line = Number(fragmentLine ?? suffixLine);
+  return line > 0 ? { path, line } : { path };
+}
+
+export function markdownPath(reference: string | undefined): string | null {
+  const path = fileReference(reference)?.path;
+  return path && MARKDOWN_PATH.test(path) ? path : null;
 }
 
 const withoutFencedCode = (text: string) => {

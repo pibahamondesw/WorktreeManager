@@ -455,6 +455,14 @@ export interface MarkdownDocument {
   text: string;
 }
 
+export interface PreviewFile {
+  path: string;
+  content: FileContent;
+}
+
+export const chatReadFile = (folders: string[], base: string | null, path: string) =>
+  invoke<PreviewFile>("chat_read_file", { folders, base, path });
+
 export const chatReadMarkdown = (folders: string[], path: string) =>
   invoke<MarkdownDocument>("chat_read_markdown", { folders, path });
 

@@ -46,7 +46,9 @@ export function useMarkdownDocument(
     };
   }, [key, revision]);
 
-  if (source.kind === "inline") return { kind: "ready", document: null, text: source.text };
+  if (source.kind !== "file") {
+    return { kind: "ready", document: null, text: source.kind === "inline" ? source.text : "" };
+  }
   if (loaded?.key !== key) return { kind: "loading" };
   return loaded.state;
 }

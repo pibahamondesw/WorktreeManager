@@ -22,7 +22,7 @@ fn is_markdown(path: &Path) -> bool {
         .is_some_and(|extension| EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
 }
 
-fn candidates(folders: &[String], path: &str, home: Option<&Path>) -> Vec<PathBuf> {
+pub(super) fn candidates(folders: &[String], path: &str, home: Option<&Path>) -> Vec<PathBuf> {
     if let Some(rest) = path.strip_prefix("~/") {
         return home.map(|home| home.join(rest)).into_iter().collect();
     }

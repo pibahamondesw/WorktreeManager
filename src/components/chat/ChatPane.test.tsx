@@ -1317,6 +1317,51 @@ describe("Markdown previews", () => {
     expect(await screen.findByRole("region", { name: "Preview of Ship previews" })).toBeVisible();
   });
 
+  it("opens linked source files in a highlighted preview scrolled to the cited line", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    mocks.invoke.mockImplementation((command: string, args: { path?: string }) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            items: [
+              {
+                id: "a",
+                kind: "assistant",
+                text: "See [main.ts:2](src/main.ts:2) and [gone](src/gone.ts).",
+              },
+            ],
+          })
+        );
+      if (command === "chat_read_file")
+        return args.path === "src/main.ts"
+          ? Promise.resolve({
+              path: "/wt/a/src/main.ts",
+              content: { kind: "text", text: "const a = 1;\nexport default a;" },
+            })
+          : Promise.reject("File not found in the task repositories: src/gone.ts");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
+
+    fireEvent.click(await screen.findByRole("link", { name: "main.ts:2" }));
+    const panel = await screen.findByRole("region", { name: "Preview of main.ts" });
+    await waitFor(() => expect(panel).toHaveTextContent("1const a = 1;2export default a;"));
+    expect(panel).toHaveTextContent("src/main.ts");
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_read_file", {
+      folders: ["/wt/a"],
+      base: null,
+      path: "src/main.ts",
+    });
+    expect(panel.querySelector(".diff-selected")).toHaveTextContent("2export default a;");
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("link", { name: "gone" }));
+    const missing = await screen.findByRole("region", { name: "Preview of gone.ts" });
+    expect(await within(missing).findByRole("alert")).toHaveTextContent("File not found");
+  });
+
   it("previews a pending plan and approves it from the preview", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"
