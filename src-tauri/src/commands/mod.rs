@@ -15,6 +15,7 @@ pub mod editor;
 pub mod embedded;
 pub mod export;
 pub mod git;
+pub mod git_watch;
 pub mod github;
 pub mod keychain;
 pub mod login_shell;

@@ -164,6 +164,7 @@ describe("Rust coverage pipeline", () => {
         "cli_bridge::tests::",
         "commands::claude_config::tests::",
         "commands::git::tests::",
+        "commands::git_watch::tests::",
         "commands::validation::tests::",
         "commands::worktree_cleanup::tests::",
         "commands::export::tests::",
