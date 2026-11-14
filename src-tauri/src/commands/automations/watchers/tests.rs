@@ -608,22 +608,86 @@ fn a_new_head_invalidates_what_was_watched_and_gets_its_own_budget() {
     );
 }
 
+/// `pr` closed by GitHub at `state`, merged at `merged_at`.
+fn closed_pr(state: &str, merged_at: Option<&str>) -> Value {
+    let mut pr = open_pr(HEAD, vec![check_run("tests", "IN_PROGRESS", None)]);
+    pr["state"] = json!(state);
+    pr["mergedAt"] = json!(merged_at);
+    pr
+}
+
+fn integrated_checks(state: &str) -> WatchVerdict {
+    WatchVerdict::Succeeded(Some(
+        json!({ "verdict": "integrated", "pr": PR_URL, "head": HEAD, "state": state }),
+    ))
+}
+
 #[test]
-fn a_closed_pr_blocks_the_checks_for_its_owner() {
-    let mut pr = open_pr(HEAD, vec![passed("tests")]);
-    pr["state"] = json!("MERGED");
-    let forge = FakeForge::answering(pr);
+fn a_pr_closed_without_its_changes_on_the_base_blocks_the_checks_for_its_owner() {
+    let forge = FakeForge::answering(closed_pr("CLOSED", None));
+    *forge.on_base.lock().unwrap() = Some(Ok(false));
     let watchers = inline_registry(&forge);
 
     assert_eq!(
-        Waiting::published().checks(&watchers, json!({}), NOW),
+        Waiting::published().checks(&watchers, json!({ "repo": "app" }), NOW),
         WatchVerdict::Blocked(
             "pr_closed".into(),
             Some(
-                json!({ "verdict": "pr_closed", "pr": PR_URL, "head": HEAD, "state": "merged",
-                "summary": format!("The PR {PR_URL} was merged before its checks passed") })
+                json!({ "verdict": "pr_closed", "pr": PR_URL, "head": HEAD, "state": "closed",
+                "summary": format!("The PR {PR_URL} was closed before its checks passed") })
             )
         )
+    );
+    let without_task = Waiting {
+        task: None,
+        ..Waiting::published()
+    };
+    assert_eq!(
+        without_task.checks(&watchers, json!({}), NOW + HOUR_MS),
+        WatchVerdict::Blocked(
+            "pr_closed".into(),
+            Some(
+                json!({ "verdict": "pr_closed", "pr": PR_URL, "head": HEAD, "state": "closed",
+                "summary": format!("The PR {PR_URL} was closed before its checks passed") })
+            )
+        )
+    );
+    assert_eq!(forge.integration_checks.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_pr_integrated_before_its_checks_passed_lets_the_item_go_on() {
+    let forge = FakeForge::answering(closed_pr("MERGED", Some("2026-11-05T13:00:00Z")));
+    let watchers = inline_registry(&forge);
+    let waiting = Waiting::published();
+
+    assert_eq!(
+        waiting.checks(&watchers, json!({}), NOW),
+        integrated_checks("merged")
+    );
+    assert!(forge.integration_checks.lock().unwrap().is_empty());
+
+    forge.set(closed_pr("CLOSED", None));
+    *forge.on_base.lock().unwrap() = Some(Ok(true));
+    assert_eq!(
+        waiting.checks(&watchers, json!({ "repo": "app" }), NOW + HOUR_MS),
+        integrated_checks("closed")
+    );
+    assert_eq!(
+        waiting.at(
+            &watchers,
+            PR_INTEGRATED,
+            json!({ "repo": "app" }),
+            NOW + HOUR_MS
+        ),
+        WatchVerdict::Succeeded(Some(json!({ "verdict": "integrated", "pr": PR_URL,
+            "head": HEAD, "base": "main", "merged_at": null })))
+    );
+
+    *forge.on_base.lock().unwrap() = Some(Err("Could not fetch main".into()));
+    assert_eq!(
+        waiting.checks(&inline_registry(&forge), json!({ "repo": "app" }), NOW),
+        WatchVerdict::Pending
     );
 }
 

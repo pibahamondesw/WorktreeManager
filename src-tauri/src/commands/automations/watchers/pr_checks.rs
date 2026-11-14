@@ -3,14 +3,16 @@
 //! `wait_per_head` budget and its own review request.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
+use super::pr_integrated::integration;
 use super::{
-    closed, conflict, epoch_ms, pushed_head, staged, Github, Mergeability, Polls, Spawn, Target,
-    WatchParams, PR_CHECKS,
+    closed, conflict, epoch_ms, pushed_head, staged, worktree, Github, Mergeability, Polls,
+    PullRequestRef, Spawn, Target, WatchParams, PR_CHECKS,
 };
 use crate::commands::automations::wait::{Watch, WatchVerdict, Watcher};
 
@@ -54,15 +56,17 @@ impl PrChecks {
     fn watch(&self, params: &WatchParams, watch: &Watch) -> Result<WatchVerdict, WatchVerdict> {
         let target = Target::of(watch, params)?;
         let (github, now_ms) = (self.github.clone(), watch.now_ms);
-        let fetch_target = target.clone();
+        let (fetch_target, worktree) = (target.clone(), worktree(watch, params.repo.as_deref()));
         let latest = self.polls.latest(
             &target.key(),
             now_ms,
             watch.armed_at_ms,
             params.interval_ms(),
             move || {
-                let pr = fetch_target.resolve(github.forge.as_ref())?;
-                github.pull_request(QUERY, &pr, now_ms)
+                let pr_ref = fetch_target.resolve(github.forge.as_ref())?;
+                let mut pr: PullRequest = github.pull_request(QUERY, &pr_ref, now_ms)?;
+                pr.integrated = pr.integrated(&github, pr_ref, worktree, now_ms)?;
+                Ok(pr)
             },
         );
         let expected = pushed_head(watch);
@@ -172,6 +176,9 @@ pub(super) struct PullRequest {
     reviews: Nodes<Review>,
     review_threads: Nodes<Thread>,
     comments: Nodes<Comment>,
+    /// Whether the PR, no longer open, merged or has its changes on the base branch.
+    #[serde(skip)]
+    integrated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -376,6 +383,22 @@ impl Context {
 }
 
 impl PullRequest {
+    /// The test `pr_integrated` applies, for a PR no longer open. Without a worktree to check the
+    /// base branch in, a PR closed without merging is not integrated.
+    fn integrated(
+        &self,
+        github: &Github,
+        pr_ref: PullRequestRef,
+        worktree: Option<PathBuf>,
+        now_ms: u64,
+    ) -> Result<bool, String> {
+        if self.state == "OPEN" || (self.state == "CLOSED" && worktree.is_none()) {
+            return Ok(false);
+        }
+        let landed = integration(github, &Target::Published(pr_ref), worktree, now_ms)?;
+        Ok(landed.integrated())
+    }
+
     fn head_commit(&self) -> Option<&Commit> {
         self.commits.nodes.last().map(|node| &node.commit)
     }
@@ -442,12 +465,17 @@ impl PullRequest {
         })
     }
 
-    /// `ci_green`, `ci_failed`, `review_findings` or `conflict`, or what is still awaited.
+    /// `ci_green`, `ci_failed`, `review_findings`, `conflict`, `integrated` or `pr_closed`, or
+    /// what is still awaited.
     fn verdict(&self, params: &WatchParams, evidence: Value) -> Result<WatchVerdict, Vec<String>> {
         let mut evidence = evidence;
         if self.state != "OPEN" {
             let state = self.state.to_lowercase();
             evidence["state"] = json!(state);
+            if self.integrated {
+                evidence["verdict"] = json!("integrated");
+                return Ok(WatchVerdict::Succeeded(Some(evidence)));
+            }
             return Ok(closed(
                 evidence,
                 &format!("{state} before its checks passed"),

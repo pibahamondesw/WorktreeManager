@@ -77,7 +77,7 @@ impl Watcher for PrIntegrated {
     }
 }
 
-fn integration(
+pub(super) fn integration(
     github: &Github,
     target: &Target,
     worktree: Option<PathBuf>,
@@ -97,6 +97,11 @@ fn integration(
 }
 
 impl Integration {
+    /// Whether the PR merged, or was closed with its changes on the base branch.
+    pub(super) fn integrated(&self) -> bool {
+        self.pr.merged_at.is_some() || self.on_base == Some(true)
+    }
+
     fn verdict(&self) -> WatchVerdict {
         let pr = &self.pr;
         let evidence = |verdict: &str| {
