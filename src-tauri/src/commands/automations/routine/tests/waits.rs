@@ -785,6 +785,61 @@ steps:
     assert_eq!(effects(&run, "cleanup"), [EffectStatus::Executed]);
 }
 
+#[test]
+fn an_approval_after_a_publish_renders_the_pr_the_item_published() {
+    let worktree = Scratch::new();
+    let tasks = FakeTasks {
+        worktree: Some(worktree.0.clone()),
+        ..FakeTasks::default()
+    };
+    let steps = r#"authorization: { allow: [pr_create] }
+steps:
+  - id: publish
+    publish:
+      - github.pr_create: { title: Lint }
+  - id: review
+    approval: { title: "Ready: {pr.url}", detail: "Review #{pr.number} of {automation}" }
+"#;
+    let mut harness = Harness::new(&format!("{TARGET}{steps}"), tasks, FakeSessions::default());
+    let gh = fake_gh(&harness.scratch.0);
+    harness.executor = executor_with_gh(
+        &harness.scratch,
+        harness.tasks.clone(),
+        harness.sessions.clone(),
+        &gh,
+    );
+
+    let run = harness.run();
+
+    let armed = run.items[0].steps[1].wait.clone().unwrap();
+    assert_eq!(
+        armed.title.as_deref(),
+        Some("Ready: https://github.com/acme/api/pull/7")
+    );
+    assert_eq!(armed.detail.as_deref(), Some("Review #7 of demo"));
+    assert!(armed.unrendered.is_empty());
+}
+
+#[test]
+fn an_approval_without_a_value_for_its_template_shows_what_it_could_render() {
+    let steps = r#"steps:
+  - id: ship
+    approval: { title: "Ship {pr.url} of {automation}?", detail: "{tracker.issue} {{x}}" }
+"#;
+    let harness = Harness::routine(steps, FakeSessions::default());
+    let run = harness.run();
+    let armed = run.items[0].steps[0].wait.clone().unwrap();
+    assert_eq!(armed.title.as_deref(), Some("Ship {pr.url} of demo?"));
+    assert_eq!(armed.detail.as_deref(), Some("{tracker.issue} {x}"));
+    assert_eq!(
+        armed.unrendered,
+        [
+            "{pr.url} has no value for this run",
+            "{tracker.issue} has no value for this run"
+        ]
+    );
+}
+
 /// A tracked campaign item that publishes its PR and goes back to publish once CI times out.
 fn publishing_again_after_ci() -> (Scratch, Harness, String) {
     let worktree = Scratch::new();

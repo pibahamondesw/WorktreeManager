@@ -1163,6 +1163,21 @@ fn templates_render_run_variables_and_literal_braces() {
 }
 
 #[test]
+fn a_partial_render_keeps_what_has_no_value_as_written() {
+    let variables = [("automation", "demo".to_string())];
+    assert_eq!(
+        render_partially("{automation}/{pr.url}/{automation", &variables),
+        (
+            "demo/{pr.url}/{automation".to_string(),
+            vec![
+                "{pr.url} has no value for this run".to_string(),
+                "unbalanced braces in template".to_string()
+            ]
+        )
+    );
+}
+
+#[test]
 fn losing_the_run_log_mid_run_still_closes_its_sessions() {
     let sessions = FakeSessions {
         settled: vec![settled("Bash", false)],

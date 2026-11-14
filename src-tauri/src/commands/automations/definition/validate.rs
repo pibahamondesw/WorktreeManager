@@ -1594,7 +1594,7 @@ fn approval_step(
 ) -> Option<ApprovalStep> {
     let mut fields = Fields::of(report, value, field)?;
     let title = fields.require(report, "title", template);
-    let detail = fields.optional(report, "detail", string);
+    let detail = fields.optional(report, "detail", template);
     let params = fields.or(report, "params", Map::new(), |report, value, field| {
         map(report, value, field).cloned()
     });

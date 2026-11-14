@@ -198,7 +198,7 @@ export interface StepAttempt {
   /** When the attempt last opened, while it is open. */
   opened_at_ms?: number | null;
   elapsed_ms?: number;
-  /** When a wait or approval attempt is due and times out, and the approval's title. */
+  /** When a wait or approval attempt is due and times out, and the approval's title and detail. */
   wait?: ArmedWait;
   /** The payload that resolved a signal wait, or an approval's answer. */
   signal?: unknown;
@@ -208,6 +208,7 @@ interface ArmedWait {
   wake_at_ms?: number;
   timeout_at_ms?: number;
   title?: string;
+  detail?: string;
 }
 
 /** An approval's answer: edited params are available to later steps as `item.data`. */

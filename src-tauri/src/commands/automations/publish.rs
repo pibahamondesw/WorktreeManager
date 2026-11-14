@@ -22,7 +22,7 @@ use super::definition::{
 };
 use super::pipeline::{StepReport, StepRequest};
 use super::routine::{render, OperationsBridge, ResolvedTask};
-use super::store::events::{EffectStatus, ProcessEnd, RunEvent, StepOutcome, Verdict};
+use super::store::events::{EffectStatus, LoggedEvent, ProcessEnd, RunEvent, StepOutcome, Verdict};
 
 const DEFAULT_CAP: u64 = 20;
 const DEFAULT_ASSIGNEE: &str = "@me";
@@ -905,8 +905,16 @@ fn published<'a>(scope: &'a PublishScope, name: &str) -> Option<&'a String> {
         .map(|(_, value)| value)
 }
 
+/// `{pr.*}` and `{tracker.issue}` the item's effects recorded in `history` so far.
+pub fn published_values(history: &[LoggedEvent], item: &str) -> Vec<(&'static str, String)> {
+    let events = || history.iter().map(|logged| &logged.event);
+    let mut published = published_pull_request(events(), item);
+    published.extend(published_issue(events(), item));
+    published
+}
+
 /// `{pr.number}` and `{pr.url}` of the PR `item`'s `github.pr_*` effects referenced last.
-pub fn published_pull_request<'a>(
+fn published_pull_request<'a>(
     events: impl IntoIterator<Item = &'a RunEvent>,
     item: &str,
 ) -> Vec<(&'static str, String)> {
@@ -919,7 +927,7 @@ pub fn published_pull_request<'a>(
 }
 
 /// `{tracker.issue}` of the issue `item`'s `linear.*` effects referenced last.
-pub fn published_issue<'a>(
+fn published_issue<'a>(
     events: impl IntoIterator<Item = &'a RunEvent>,
     item: &str,
 ) -> Vec<(&'static str, String)> {
