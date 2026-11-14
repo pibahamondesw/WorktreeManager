@@ -9,7 +9,7 @@ use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 
 use super::api::github_slug;
 use super::*;
-use crate::commands::agents::{claude, codex, Agents};
+use crate::commands::agents::Agents;
 use crate::commands::automations::definition::AutomationEntry;
 use crate::commands::automations::store::AutomationState;
 
@@ -52,10 +52,7 @@ impl Scratch {
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier = self.0.to_string_lossy().into_owned();
         let app: tauri::App<MockRuntime> = mock_builder()
-            .manage(Agents::new(
-                claude::Claude::new("/missing-test-agent", None),
-                codex::Codex::new("/missing-test-agent", None, None),
-            ))
+            .manage(Agents::missing())
             .build(context)
             .unwrap();
         let entries = definition::load_current(app.handle()).unwrap();

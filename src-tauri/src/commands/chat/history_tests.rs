@@ -87,6 +87,18 @@ for line in sys.stdin:
         send({'id': message['id'], 'result': result})
 "#;
 
+/// Generous because waits for success end as soon as the condition holds; only tests that
+/// exercise a timeout use a short one.
+const SETTLE_DEADLINE: Duration = Duration::from_secs(120);
+
+fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = Instant::now() + SETTLE_DEADLINE;
+    while !done() {
+        assert!(Instant::now() < deadline, "{what}");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 struct Fixture {
     repositories: checkpoints::tests::Fixture,
     app: tauri::App<MockRuntime>,
@@ -94,6 +106,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_history_timeout(SETTLE_DEADLINE)
+    }
+
+    fn with_history_timeout(history_timeout: Duration) -> Self {
         let mut repositories = checkpoints::tests::Fixture::new(2);
         repositories.folders = repositories
             .folders
@@ -137,7 +153,7 @@ impl Fixture {
                 super::chat_close
             ])
             .manage(ChatRegistry {
-                history_timeout: Duration::from_secs(10),
+                history_timeout,
                 ..Default::default()
             })
             .manage(agents)
@@ -218,11 +234,9 @@ impl Fixture {
     }
 
     fn wait_for_file(&self, name: &str) {
-        let deadline = Instant::now() + Duration::from_secs(120);
-        while !self.repositories.dir.join(name).exists() {
-            assert!(Instant::now() < deadline, "test agent did not reach {name}");
-            thread::sleep(Duration::from_millis(10));
-        }
+        wait_until(&format!("test agent did not reach {name}"), || {
+            self.repositories.dir.join(name).exists()
+        });
     }
 
     fn open(&self, agent: &str, mode: OpenMode) -> Result<ChatSnapshot, String> {
@@ -238,15 +252,14 @@ impl Fixture {
             None,
             Channel::new(|_| Ok(())),
         ))?;
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
+        let mut started = None;
+        wait_until("test agent did not initialize", || {
             let snapshot = self.snapshot(agent);
-            if snapshot.status != ChatStatus::Starting {
-                return Ok(snapshot);
-            }
-            assert!(Instant::now() < deadline, "test agent did not initialize");
-            thread::sleep(Duration::from_millis(10));
-        }
+            let done = snapshot.status != ChatStatus::Starting;
+            started = Some(snapshot);
+            done
+        });
+        Ok(started.unwrap())
     }
 
     fn snapshot(&self, agent: &str) -> ChatSnapshot {
@@ -317,91 +330,121 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn history_actions_restore_all_repositories_and_preserve_original_conversations() {
-    for agent in ["claude", "codex"] {
-        for action in [
-            HistoryAction::Code,
-            HistoryAction::Conversation,
-            HistoryAction::Both,
-        ] {
-            let fixture = Fixture::new();
-            assert_eq!(
-                fixture.open(agent, OpenMode::Restart).unwrap().status,
-                ChatStatus::Idle
-            );
-            let source = conversation_store(fixture.app.handle())
-                .unwrap()
-                .get("task", agent, &fixture.repositories.folders[0])
-                .unwrap();
-            let original = fs::read(
-                fixture
-                    .repositories
-                    .dir
-                    .join("agent-state/.claude/projects/fixture/parent.jsonl"),
-            )
-            .unwrap();
-            let preview = fixture.preview(agent, "u2").unwrap();
-            assert_eq!(preview.files.len(), 2);
-            fixture
-                .apply(agent, "u2", action, Some(preview.token))
-                .unwrap();
-            let current = fixture.snapshot(agent);
-            if action == HistoryAction::Code {
-                assert_eq!(
-                    current
-                        .items
-                        .iter()
-                        .filter(|item| item.kind == model::ItemKind::User)
-                        .count(),
-                    2
-                );
-            } else {
-                assert_eq!(
-                    current
-                        .items
-                        .iter()
-                        .filter(|item| item.kind == model::ItemKind::User)
-                        .map(|item| item.id.as_str())
-                        .collect::<Vec<_>>(),
-                    ["u1"]
-                );
-                let store = conversation_store(fixture.app.handle()).unwrap();
-                assert_ne!(
-                    store.get("task", agent, &fixture.repositories.folders[0]),
-                    Some(source)
-                );
-                if agent == "claude" {
-                    let reopened = fixture.open(agent, OpenMode::Restart).unwrap();
-                    assert_eq!(reopened.status, ChatStatus::Idle);
-                    assert!(reopened.items.iter().any(|item| item.id == "u1"));
-                }
-            }
-            let contents = fs::read(fixture.repositories.file(0, "file.txt")).unwrap();
-            if action == HistoryAction::Conversation {
-                assert_eq!(contents, b"agent changes");
-            } else {
-                assert_eq!(contents, b"user baseline");
-                assert_eq!(
-                    fs::read(fixture.repositories.file(1, "file.txt")).unwrap(),
-                    b"original"
-                );
-            }
-            assert_eq!(
-                fs::read(fixture.repositories.file(0, "user.txt")).unwrap(),
-                b"untracked baseline"
-            );
-            assert_eq!(
-                fs::read(
-                    fixture
-                        .repositories
-                        .dir
-                        .join("agent-state/.claude/projects/fixture/parent.jsonl")
-                )
-                .unwrap(),
-                original
-            );
+fn claude_history_code_restores_all_repositories_and_preserves_original_conversations() {
+    restores_all_repositories_and_preserves_original_conversations("claude", HistoryAction::Code);
+}
+
+#[test]
+fn claude_history_conversation_restores_all_repositories_and_preserves_original_conversations() {
+    restores_all_repositories_and_preserves_original_conversations(
+        "claude",
+        HistoryAction::Conversation,
+    );
+}
+
+#[test]
+fn claude_history_both_restores_all_repositories_and_preserves_original_conversations() {
+    restores_all_repositories_and_preserves_original_conversations("claude", HistoryAction::Both);
+}
+
+#[test]
+fn codex_history_code_restores_all_repositories_and_preserves_original_conversations() {
+    restores_all_repositories_and_preserves_original_conversations("codex", HistoryAction::Code);
+}
+
+#[test]
+fn codex_history_conversation_restores_all_repositories_and_preserves_original_conversations() {
+    restores_all_repositories_and_preserves_original_conversations(
+        "codex",
+        HistoryAction::Conversation,
+    );
+}
+
+#[test]
+fn codex_history_both_restores_all_repositories_and_preserves_original_conversations() {
+    restores_all_repositories_and_preserves_original_conversations("codex", HistoryAction::Both);
+}
+
+fn restores_all_repositories_and_preserves_original_conversations(
+    agent: &str,
+    action: HistoryAction,
+) {
+    let fixture = Fixture::new();
+    assert_eq!(
+        fixture.open(agent, OpenMode::Restart).unwrap().status,
+        ChatStatus::Idle
+    );
+    let source = conversation_store(fixture.app.handle())
+        .unwrap()
+        .get("task", agent, &fixture.repositories.folders[0])
+        .unwrap();
+    let original = fs::read(
+        fixture
+            .repositories
+            .dir
+            .join("agent-state/.claude/projects/fixture/parent.jsonl"),
+    )
+    .unwrap();
+    let preview = fixture.preview(agent, "u2").unwrap();
+    assert_eq!(preview.files.len(), 2);
+    fixture
+        .apply(agent, "u2", action, Some(preview.token))
+        .unwrap();
+    let current = fixture.snapshot(agent);
+    if action == HistoryAction::Code {
+        assert_eq!(
+            current
+                .items
+                .iter()
+                .filter(|item| item.kind == model::ItemKind::User)
+                .count(),
+            2
+        );
+    } else {
+        assert_eq!(
+            current
+                .items
+                .iter()
+                .filter(|item| item.kind == model::ItemKind::User)
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["u1"]
+        );
+        let store = conversation_store(fixture.app.handle()).unwrap();
+        assert_ne!(
+            store.get("task", agent, &fixture.repositories.folders[0]),
+            Some(source)
+        );
+        if agent == "claude" {
+            let reopened = fixture.open(agent, OpenMode::Restart).unwrap();
+            assert_eq!(reopened.status, ChatStatus::Idle);
+            assert!(reopened.items.iter().any(|item| item.id == "u1"));
         }
     }
+    let contents = fs::read(fixture.repositories.file(0, "file.txt")).unwrap();
+    if action == HistoryAction::Conversation {
+        assert_eq!(contents, b"agent changes");
+    } else {
+        assert_eq!(contents, b"user baseline");
+        assert_eq!(
+            fs::read(fixture.repositories.file(1, "file.txt")).unwrap(),
+            b"original"
+        );
+    }
+    assert_eq!(
+        fs::read(fixture.repositories.file(0, "user.txt")).unwrap(),
+        b"untracked baseline"
+    );
+    assert_eq!(
+        fs::read(
+            fixture
+                .repositories
+                .dir
+                .join("agent-state/.claude/projects/fixture/parent.jsonl")
+        )
+        .unwrap(),
+        original
+    );
 }
 
 #[test]
@@ -428,6 +471,20 @@ fn history_errors_leave_files_and_conversation_unchanged_and_release_the_lock() 
         .unwrap_err()
         .contains("test fork failed"));
     assert_eq!(fixture.snapshot("codex").status, ChatStatus::Idle);
+    assert_eq!(
+        fs::read(fixture.repositories.file(0, "file.txt")).unwrap(),
+        b"agent changes"
+    );
+    assert_eq!(
+        fs::read(fixture.repositories.file(0, "late.txt")).unwrap(),
+        b"user edit after preview"
+    );
+}
+
+#[test]
+fn a_fork_that_never_answers_times_out_and_leaves_files_unchanged() {
+    let fixture = Fixture::with_history_timeout(Duration::from_millis(300));
+    fixture.open("codex", OpenMode::Restart).unwrap();
     fixture.settings(json!({"timeout_fork": true}));
     assert!(fixture
         .apply("codex", "u2", HistoryAction::Conversation, None)
@@ -437,10 +494,6 @@ fn history_errors_leave_files_and_conversation_unchanged_and_release_the_lock() 
     assert_eq!(
         fs::read(fixture.repositories.file(0, "file.txt")).unwrap(),
         b"agent changes"
-    );
-    assert_eq!(
-        fs::read(fixture.repositories.file(0, "late.txt")).unwrap(),
-        b"user edit after preview"
     );
 }
 
@@ -703,11 +756,9 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
         None,
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while fixture.snapshot("codex").status != ChatStatus::Idle {
-        assert!(Instant::now() < deadline);
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_until("codex did not settle", || {
+        fixture.snapshot("codex").status == ChatStatus::Idle
+    });
     let registry = fixture.app.state::<ChatRegistry>();
     let shared = registry
         .with_session("task", "codex", |session| Ok(session.shared.clone()))
@@ -913,11 +964,9 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         idle_compaction: None,
     };
     let session = ChatSession::spawn(launched.command, launched.provider, setup).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while session.status() == ChatStatus::Starting {
-        assert!(Instant::now() < deadline);
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_until("pinned codex did not start", || {
+        session.status() != ChatStatus::Starting
+    });
     assert_eq!(session.status(), ChatStatus::Idle);
     assert_eq!(
         session.shared.lock().unwrap().turns.conversation(),
@@ -1359,14 +1408,9 @@ fn claude_catalogue_reads_transcripts_and_renames_through_the_live_session_when_
             .map(|request| request["request"]["title"].clone())
             .collect()
     };
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while renamed().last() != Some(&json!("Live")) {
-        assert!(
-            Instant::now() < deadline,
-            "the live session was not renamed"
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_until("the live session was not renamed", || {
+        renamed().last() == Some(&json!("Live"))
+    });
     assert!(renamed().contains(&json!("Headless")));
 }
 
@@ -1436,11 +1480,9 @@ fn continuing_in_another_agent_seeds_it_and_keeps_the_earlier_items_read_only() 
         .unwrap_err()
         .contains("its own agent"));
     open(OpenMode::Fresh, Some("claude")).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while fixture.snapshot("codex").status != ChatStatus::Idle {
-        assert!(Instant::now() < deadline, "codex did not take the handoff");
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_until("codex did not take the handoff", || {
+        fixture.snapshot("codex").status == ChatStatus::Idle
+    });
     let carried = |snapshot: &ChatSnapshot| {
         snapshot
             .items
@@ -1476,11 +1518,9 @@ fn continuing_in_another_agent_seeds_it_and_keeps_the_earlier_items_read_only() 
     .is_err());
 
     open(OpenMode::Restart, None).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while fixture.snapshot("codex").items.len() <= expected.len() {
-        assert!(Instant::now() < deadline, "codex did not resume");
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_until("codex did not resume", || {
+        fixture.snapshot("codex").items.len() > expected.len()
+    });
     let mut resumed = expected.clone();
     resumed.extend([
         ("message 1".to_string(), None),
@@ -1656,15 +1696,14 @@ fn wait_for_headless(
     session_id: &str,
     done: impl Fn(&ChatSnapshot) -> bool,
 ) -> ChatSnapshot {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
+    let mut settled = None;
+    wait_until("headless session did not settle", || {
         let snapshot = headless_snapshot(fixture, session_id);
-        if done(&snapshot) {
-            return snapshot;
-        }
-        assert!(Instant::now() < deadline, "headless session did not settle");
-        thread::sleep(Duration::from_millis(10));
-    }
+        let done = done(&snapshot);
+        settled = Some(snapshot);
+        done
+    });
+    settled.unwrap()
 }
 
 fn attach_to(fixture: &Fixture, agent: &str, session_id: &str) -> Result<OpenedChat, String> {

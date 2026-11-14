@@ -184,6 +184,7 @@ describe("Rust coverage pipeline", () => {
         "commands::claude_usage::tests::",
         "commands::codex_usage::tests::",
         "commands::login_shell::tests::",
+        "commands::process::tests::",
         "commands::doctor::tests::",
         "commands::doppler::tests::",
         "commands::detected_setup::tests::",

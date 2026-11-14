@@ -28,5 +28,7 @@ Keep changes small and follow nearby patterns. Prioritize user data, consistent 
 
 - Default to `pnpm run tauri:dev:local`; shared development uses the installed app's state and credentials. See [development setup](README.md#development).
 - Verify behavior changes with focused tests, including relevant failure paths. Run only affected files/modules and direct neighbours, never the full suite. Frontend example: `pnpm exec vitest run src/services/operations.test.ts`. Rust example: `CARGO_TARGET_DIR="$HOME/.cache/worktreemanager-target" cargo test --manifest-path src-tauri/Cargo.toml --lib commands::notes::tests`.
+- Tests wait on conditions, not durations: poll with a generous deadline, since success paths return as soon as the condition holds. Only tests that assert a timeout use a short one, injected rather than inherited from production defaults.
+- Keep tests independent of the machine and of each other: fake agents and CLIs by absolute path or injected adapters (e.g. `Agents::missing()`), never through real login-shell detection. Split independent cases into separate tests so they run in parallel instead of looping over expensive fixtures.
 - Run relevant type, lint and formatting checks from [package scripts](package.json). Native drag, focus and embedded webview changes also need a macOS smoke check; report when it was not possible.
 - Leave commits, pull requests and releases to the user unless explicitly requested. The release script commits and tags as well as bumping versions.

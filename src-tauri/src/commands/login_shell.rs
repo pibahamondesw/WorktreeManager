@@ -163,9 +163,10 @@ impl LoginShell {
 
 static AVAILABLE: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
-/// True when `program` resolves after the profiles. A found program is remembered for the rest of
-/// the process so launches don't source the profiles once more just to check; a missing one is
-/// probed again on every call. The Doctor refresh replaces what is remembered.
+/// True when `program` resolves after the profiles. An absolute path doesn't depend on them, so it
+/// is checked directly. A found program is remembered for the rest of the process so launches
+/// don't source the profiles once more just to check; a missing one is probed again on every
+/// call. The Doctor refresh replaces what is remembered.
 pub fn cli_available(program: &str) -> bool {
     if AVAILABLE
         .lock()
@@ -174,9 +175,13 @@ pub fn cli_available(program: &str) -> bool {
     {
         return true;
     }
-    let found = availability_probe(program)
-        .output()
-        .is_ok_and(|output| output.status.success());
+    let found = if Path::new(program).is_absolute() {
+        is_executable_file(Path::new(program))
+    } else {
+        availability_probe(program)
+            .output()
+            .is_ok_and(|output| output.status.success())
+    };
     remember_availability(program, found);
     found
 }
@@ -188,6 +193,12 @@ pub(crate) fn remember_availability(program: &str, found: bool) {
     } else {
         available.remove(program);
     }
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 fn availability_probe(program: &str) -> LoginShell {

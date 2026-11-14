@@ -197,6 +197,14 @@ impl Agents {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
+    pub(crate) fn missing() -> Self {
+        Self::new(
+            claude::Claude::new("/missing-test-agent", None),
+            codex::Codex::new("/missing-test-agent", None, None),
+        )
+    }
+
     pub(crate) fn new(claude: claude::Claude, codex: codex::Codex) -> Self {
         Self::with_adapters(vec![Arc::new(claude), Arc::new(codex)])
     }
@@ -265,16 +273,9 @@ mod tests {
         assert_eq!(user_claude().home(), user_home().as_deref());
     }
 
-    fn missing_agents() -> Agents {
-        Agents::new(
-            claude::Claude::new("/missing-test-agent", None),
-            codex::Codex::new("/missing-test-agent", None, None),
-        )
-    }
-
     #[test]
     fn agents_are_looked_up_by_their_id() {
-        let agents = missing_agents();
+        let agents = Agents::missing();
         assert_eq!(agents.get("claude").unwrap().id(), "claude");
         assert_eq!(agents.get("codex").unwrap().id(), "codex");
         assert_eq!(
@@ -299,7 +300,7 @@ mod tests {
 
     #[test]
     fn catalog_describes_every_agent_in_order() {
-        let catalog = missing_agents().catalog();
+        let catalog = Agents::missing().catalog();
         let names: Vec<_> = catalog
             .iter()
             .map(|agent| (agent.id, agent.label))
@@ -312,7 +313,7 @@ mod tests {
     fn catalog_command_reads_the_agents_the_app_manages() {
         use tauri::test::{mock_builder, mock_context, noop_assets};
         let app = mock_builder()
-            .manage(missing_agents())
+            .manage(Agents::missing())
             .build(mock_context(noop_assets()))
             .unwrap();
         let catalog = tauri::async_runtime::block_on(agents_catalog(app.handle().clone())).unwrap();
@@ -323,7 +324,7 @@ mod tests {
     #[test]
     fn claude_forks_by_relaunching_and_steers_by_interrupting() {
         assert_eq!(
-            missing_agents().get("claude").unwrap().capabilities(),
+            Agents::missing().get("claude").unwrap().capabilities(),
             AgentCapabilities {
                 fork: Some(ForkMethod::Relaunch),
                 review: false,
@@ -348,7 +349,7 @@ mod tests {
     #[test]
     fn codex_forks_in_session_reviews_archives_and_steers() {
         assert_eq!(
-            missing_agents().get("codex").unwrap().capabilities(),
+            Agents::missing().get("codex").unwrap().capabilities(),
             AgentCapabilities {
                 fork: Some(ForkMethod::InSession),
                 review: true,
@@ -372,7 +373,7 @@ mod tests {
 
     #[test]
     fn descriptors_serialize_for_the_frontend() {
-        let codex = missing_agents().get("codex").unwrap().descriptor();
+        let codex = Agents::missing().get("codex").unwrap().descriptor();
         let json = serde_json::to_value(codex).unwrap();
         assert_eq!(json["capabilities"]["fork"], "inSession");
         assert_eq!(
