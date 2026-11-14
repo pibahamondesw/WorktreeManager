@@ -560,6 +560,8 @@ pub struct ProviderOutput {
     pub denials: Vec<PermissionDenial>,
     /// Items the agent's own history drops, which the app keeps with the conversation.
     pub kept: Vec<String>,
+    /// The turn it starts is an idle compaction the app asked for.
+    pub idle_compaction: bool,
 }
 
 impl ProviderOutput {
@@ -646,6 +648,10 @@ pub trait ChatProvider: Send {
     }
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String>;
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
+    /// How long the agent's prompt cache outlives the last turn; `None` skips idle compaction.
+    fn prompt_cache_ttl(&self) -> Option<std::time::Duration> {
+        None
+    }
     fn refresh_usage(&mut self, out: &mut ProviderOutput) -> Result<(), String>;
 
     fn review(&mut self, _target: &ReviewTarget, _out: &mut ProviderOutput) -> Result<(), String> {

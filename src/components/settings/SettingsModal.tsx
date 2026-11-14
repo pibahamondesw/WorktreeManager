@@ -49,6 +49,8 @@ interface SettingsModalProps {
   onAlertsChange: (alerts: AgentAlertSettings) => void;
   keepRunningInBackground: boolean;
   onKeepRunningInBackgroundChange: (keepRunning: boolean) => void;
+  compactIdleChats: boolean;
+  onCompactIdleChatsChange: (compact: boolean) => void;
   report: DoctorReport | null;
   running: boolean;
   severity: CheckSeverity | null;
@@ -174,6 +176,10 @@ export function SettingsModal(props: SettingsModalProps) {
                       keepRunning={props.keepRunningInBackground}
                       onChange={props.onKeepRunningInBackgroundChange}
                     />
+                    <IdleCompactionSetting
+                      compact={props.compactIdleChats}
+                      onChange={props.onCompactIdleChatsChange}
+                    />
                   </>
                 )}
               </section>
@@ -202,6 +208,29 @@ function BackgroundSetting({
         Closing the window while an agent is mid-turn hides it instead of quitting, so the turn can
         finish; the app quits once it does. Reopen it from the Dock or with wtm. Quitting ends
         sessions; chats can be resumed.
+      </p>
+    </div>
+  );
+}
+
+function IdleCompactionSetting({
+  compact,
+  onChange,
+}: {
+  compact: boolean;
+  onChange: (compact: boolean) => void;
+}) {
+  return (
+    <div className="px-6 pb-6 space-y-1">
+      <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+        <input type="checkbox" checked={compact} onChange={(e) => onChange(e.target.checked)} />
+        Compact idle Claude chats before the cache expires
+      </label>
+      <p className="text-xs text-text-muted">
+        A Claude chat with a large context (over 200k tokens, or half its window) that sits idle
+        runs /compact shortly before Claude's one-hour prompt cache expires, so resuming it doesn't
+        re-read the whole history uncached. Compacting summarizes earlier messages and loses detail.
+        Needs a Claude subscription.
       </p>
     </div>
   );

@@ -910,6 +910,7 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         notify: Arc::new(|_| {}),
         pending_resolution: None,
         questions: None,
+        idle_compaction: None,
     };
     let session = ChatSession::spawn(launched.command, launched.provider, setup).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);

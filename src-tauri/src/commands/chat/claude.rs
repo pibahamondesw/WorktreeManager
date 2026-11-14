@@ -86,6 +86,7 @@ const DIAGNOSTIC_PREFIX: &str = "[ede_diagnostic]";
 const INTERRUPT_MARKER: &str = "[Request interrupted by user";
 const UNSUPPORTED_CONTROL: &str = "Unsupported control request";
 const EVENT_USAGE_INTERVAL: Duration = Duration::from_secs(30);
+const SUBSCRIPTION_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
 
 /// Claude Code over stdio: one stream-json message per line in both directions.
 pub(crate) const HEADLESS_ARGS: [&str; 6] = [
@@ -853,6 +854,12 @@ impl ChatProvider for ClaudeProvider {
 
     fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String> {
         self.send("/compact", &[], out)
+    }
+
+    /// A Claude subscription caches prompts for an hour; with an API key it lasts 5 minutes,
+    /// too short to be worth compacting for.
+    fn prompt_cache_ttl(&self) -> Option<Duration> {
+        self.usage.plan.as_ref().map(|_| SUBSCRIPTION_CACHE_TTL)
     }
 
     fn rename(&mut self, title: &str, out: &mut ProviderOutput) -> Result<(), String> {
@@ -3507,6 +3514,24 @@ mod tests {
             snapshot,
             json!({ "type": "control_response", "response": response }),
         );
+    }
+
+    #[test]
+    fn only_a_subscription_caches_prompts_long_enough_to_compact_idle_chats() {
+        let (mut provider, mut snapshot) = started();
+        assert_eq!(provider.prompt_cache_ttl(), None);
+        let mut start = ProviderOutput::default();
+        provider.start(&mut start);
+        answer(
+            &mut provider,
+            &mut snapshot,
+            &start,
+            "initialize",
+            json!({ "subtype": "success", "response": {
+            "account": { "email": "a@b.c", "subscriptionType": "Claude Max" },
+        } }),
+        );
+        assert_eq!(provider.prompt_cache_ttl(), Some(SUBSCRIPTION_CACHE_TTL));
     }
 
     #[test]

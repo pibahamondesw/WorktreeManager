@@ -14,6 +14,7 @@ vi.mock("../services/store", () => ({
   loadCustomColors: vi.fn().mockResolvedValue(null),
   loadSidebarCollapsed: vi.fn().mockResolvedValue(false),
   loadKeepRunningInBackground: vi.fn().mockResolvedValue(true),
+  loadCompactIdleChats: vi.fn().mockResolvedValue(true),
   loadAgentViews: vi.fn().mockResolvedValue({ claude: "chat", codex: "chat" }),
   persist: vi.fn().mockResolvedValue(undefined),
 }));

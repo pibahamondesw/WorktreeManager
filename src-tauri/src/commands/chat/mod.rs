@@ -20,6 +20,7 @@ mod headless;
 pub mod history;
 #[cfg(test)]
 mod history_tests;
+mod idle_compaction;
 mod images;
 pub mod interrupted;
 mod live;
@@ -44,7 +45,7 @@ use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -122,6 +123,9 @@ pub struct ChatActivity {
     /// The current turn reported an agent error.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     has_error: bool,
+    /// The turn running, or the last one, is an idle compaction the app started, not the user.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    idle_compaction: bool,
 }
 
 struct Shared {
@@ -139,6 +143,9 @@ struct Shared {
     pending_resolution: Option<PendingResolution>,
     pending_deadlines: HashMap<String, Instant>,
     questions: Option<questions::QuestionLog>,
+    /// When the last turn ended, by wall clock so a sleeping Mac still counts toward cache expiry.
+    idle_since: Option<SystemTime>,
+    idle_compacting: bool,
 }
 
 type Notify = Arc<dyn Fn(ChatActivity) + Send + Sync>;
@@ -176,6 +183,8 @@ impl Shared {
             pending_resolution: None,
             pending_deadlines: HashMap::new(),
             questions: None,
+            idle_since: None,
+            idle_compacting: false,
         }
     }
 
@@ -189,6 +198,7 @@ impl Shared {
             waiting: self.waiting(),
             background_agents: self.snapshot.background_agents,
             has_error: self.snapshot.has_error(),
+            idle_compaction: self.idle_compacting,
         }
     }
 
@@ -229,6 +239,7 @@ impl Shared {
 
     fn commit(&mut self, mut out: ProviderOutput, conversation: &dyn Fn(String), notify: &Notify) {
         if out.completes_turn {
+            self.idle_since = Some(SystemTime::now());
             self.snapshot.interrupted = out.interrupted;
             self.turns.complete_turn();
             let unfinished_reasoning = self
@@ -246,6 +257,8 @@ impl Shared {
             out.events.splice(0..0, unfinished_reasoning);
         }
         if out.starts_turn {
+            self.idle_since = None;
+            self.idle_compacting = out.idle_compaction;
             self.snapshot.interrupted = false;
             self.turns.start_turn();
         }
@@ -358,6 +371,50 @@ impl Shared {
             }
         }
     }
+
+    /// Compacts once per idle period, only while nothing runs or waits on the user.
+    fn compact_if_idle(&mut self, now: SystemTime, conversation: &dyn Fn(String), notify: &Notify) {
+        let (Some(idle_since), Some(cache_ttl)) =
+            (self.idle_since, self.provider.prompt_cache_ttl())
+        else {
+            return;
+        };
+        let idle_for = now.duration_since(idle_since).unwrap_or_default();
+        let quiet = self.snapshot.status == ChatStatus::Idle
+            && !self.waiting()
+            && !self.snapshot.background_agents;
+        if !quiet || !idle_compaction::due(idle_for, cache_ttl, self.snapshot.controls.context) {
+            return;
+        }
+        self.idle_since = None;
+        let mut out = ProviderOutput::default();
+        out.keep(idle_compaction::notice());
+        if self.provider.compact(&mut out).is_ok() {
+            out.idle_compaction = true;
+            self.commit(out, conversation, notify);
+        }
+    }
+}
+
+/// Compacts the session when it idles toward cache expiry, until it ends.
+fn watch_idle(
+    shared: &Mutex<Shared>,
+    enabled: &idle_compaction::Enabled,
+    interval: Duration,
+    conversation: &dyn Fn(String),
+    notify: &Notify,
+) {
+    loop {
+        thread::sleep(interval);
+        let enabled = enabled();
+        let mut state = shared.lock().unwrap();
+        if !state.snapshot.status.is_live() {
+            return;
+        }
+        if enabled && !state.history_busy {
+            state.compact_if_idle(SystemTime::now(), conversation, notify);
+        }
+    }
 }
 
 /// Checks the session's pending requests until it ends.
@@ -412,6 +469,8 @@ struct SessionSetup {
     notify: Notify,
     pending_resolution: Option<PendingResolution>,
     questions: Option<questions::QuestionLog>,
+    /// Compacts the session when it idles while this allows it; `None` for unattended sessions.
+    idle_compaction: Option<idle_compaction::Enabled>,
 }
 
 /// Spawns a launch as the task's chat, with its history and the conversation it continues.
@@ -456,6 +515,7 @@ impl ChatSession {
             notify,
             pending_resolution,
             questions,
+            idle_compaction,
         } = setup;
         command
             .stdin(Stdio::piped())
@@ -516,6 +576,23 @@ impl ChatSession {
             );
             thread::spawn(move || {
                 watch_unanswered(&shared, resolution.timeout, &*remember, &notify)
+            });
+        }
+
+        if let Some(enabled) = idle_compaction {
+            let (shared, remember, notify) = (
+                session.shared.clone(),
+                session.remember.clone(),
+                session.notify.clone(),
+            );
+            thread::spawn(move || {
+                watch_idle(
+                    &shared,
+                    &enabled,
+                    idle_compaction::CHECK_INTERVAL,
+                    &*remember,
+                    &notify,
+                )
             });
         }
 
@@ -663,6 +740,7 @@ impl ChatSession {
             waiting: false,
             background_agents: false,
             has_error: false,
+            idle_compaction: false,
         });
     }
 
@@ -997,6 +1075,8 @@ fn session_setup<R: Runtime>(
         turns: turns::TurnTracker::new(checkpoints, target.folders.clone(), expected_conversation),
         remember: remember_conversation(&app_data, target, handoff_link),
         notify: broadcast_activity(app, target),
+        idle_compaction: (target.owner.origin == ChatOrigin::User)
+            .then(|| idle_compaction::enabled_by(app)),
         pending_resolution,
         questions: Some(questions::QuestionLog::new(&app_data)),
     })
@@ -1601,8 +1681,14 @@ pub(crate) mod tests {
         fn configure(&mut self, _: &ChatSetting, _: &mut ProviderOutput) -> Result<(), String> {
             Ok(())
         }
-        fn compact(&mut self, _: &mut ProviderOutput) -> Result<(), String> {
+        fn compact(&mut self, out: &mut ProviderOutput) -> Result<(), String> {
+            out.upsert(ChatItem::new("compact", ItemKind::User, "/compact"));
+            out.starts_turn = true;
+            out.status(ChatStatus::Busy);
             Ok(())
+        }
+        fn prompt_cache_ttl(&self) -> Option<Duration> {
+            Some(Duration::from_secs(3600))
         }
         fn refresh_usage(&mut self, _: &mut ProviderOutput) -> Result<(), String> {
             Ok(())
@@ -1648,6 +1734,7 @@ pub(crate) mod tests {
             }),
             pending_resolution: None,
             questions: None,
+            idle_compaction: None,
         };
         ChatSession::spawn(command, Box::new(Echo), setup).unwrap()
     }
@@ -1701,6 +1788,124 @@ pub(crate) mod tests {
         assert!(Echo.unqueue("x", &mut out).is_err());
         Echo.steer("now", &mut out).unwrap();
         assert_eq!(out.writes, ["now"]);
+    }
+
+    fn idle_after_turn(context_tokens: u64) -> (Shared, SystemTime) {
+        let mut shared = Shared::new(Box::new(Echo), ChatSnapshot::new(1), Default::default());
+        shared.snapshot.status = ChatStatus::Idle;
+        shared.snapshot.controls.context = Some(model::ContextUsage {
+            used: context_tokens,
+            max: 1_000_000,
+        });
+        let notify: Notify = Arc::new(|_| {});
+        let ended = ProviderOutput {
+            completes_turn: true,
+            ..Default::default()
+        };
+        shared.commit(ended, &drop, &notify);
+        let idle_since = shared.idle_since.unwrap();
+        (shared, idle_since)
+    }
+
+    fn compacted_kinds(shared: &mut Shared, at: SystemTime) -> Vec<ItemKind> {
+        let notify: Notify = Arc::new(|_| {});
+        shared.compact_if_idle(at, &drop, &notify);
+        shared.snapshot.items.iter().map(|item| item.kind).collect()
+    }
+
+    #[test]
+    fn an_idle_chat_with_a_large_context_compacts_once_before_its_cache_expires() {
+        let (mut shared, idle_since) = idle_after_turn(250_000);
+        let minutes = |m: u64| idle_since + Duration::from_secs(m * 60);
+        assert!(compacted_kinds(&mut shared, minutes(50)).is_empty());
+        assert_eq!(
+            compacted_kinds(&mut shared, minutes(56)),
+            [ItemKind::Notice, ItemKind::User]
+        );
+        assert_eq!(compacted_kinds(&mut shared, minutes(57)).len(), 2);
+    }
+
+    #[test]
+    fn idle_compaction_turns_are_reported_as_started_by_the_app_until_the_user_starts_one() {
+        let (mut shared, idle_since) = idle_after_turn(250_000);
+        let reported = Arc::new(Mutex::new(Vec::new()));
+        let notify: Notify = {
+            let reported = reported.clone();
+            Arc::new(move |activity: ChatActivity| {
+                reported
+                    .lock()
+                    .unwrap()
+                    .push((activity.status, activity.idle_compaction))
+            })
+        };
+        shared.compact_if_idle(idle_since + Duration::from_secs(56 * 60), &drop, &notify);
+        let mut ended = ProviderOutput {
+            completes_turn: true,
+            ..Default::default()
+        };
+        ended.status(ChatStatus::Idle);
+        shared.commit(ended, &drop, &notify);
+        let mut next = ProviderOutput {
+            starts_turn: true,
+            ..Default::default()
+        };
+        next.status(ChatStatus::Busy);
+        shared.commit(next, &drop, &notify);
+        assert_eq!(
+            *reported.lock().unwrap(),
+            [
+                (ChatStatus::Busy, true),
+                (ChatStatus::Idle, true),
+                (ChatStatus::Busy, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn the_idle_watcher_compacts_while_enabled_and_stops_with_the_session() {
+        let (mut shared, _) = idle_after_turn(250_000);
+        shared.idle_since = Some(SystemTime::now() - Duration::from_secs(56 * 60));
+        let shared = Arc::new(Mutex::new(shared));
+        let enabled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watcher = {
+            let (shared, enabled) = (shared.clone(), enabled.clone());
+            let enabled: idle_compaction::Enabled =
+                Arc::new(move || enabled.load(Ordering::SeqCst));
+            let notify: Notify = Arc::new(|_| {});
+            thread::spawn(move || {
+                watch_idle(&shared, &enabled, Duration::from_millis(5), &drop, &notify)
+            })
+        };
+        let compacted = |shared: &Mutex<Shared>| !shared.lock().unwrap().snapshot.items.is_empty();
+        thread::sleep(Duration::from_millis(50));
+        assert!(!compacted(&shared));
+        enabled.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !compacted(&shared) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(compacted(&shared));
+        shared.lock().unwrap().snapshot.status = ChatStatus::Exited { code: None };
+        watcher.join().unwrap();
+    }
+
+    #[test]
+    fn idle_compaction_skips_small_busy_backgrounded_or_expired_chats() {
+        let due = |idle_since: SystemTime| idle_since + Duration::from_secs(56 * 60);
+        let (mut small, idle_since) = idle_after_turn(10_000);
+        assert!(compacted_kinds(&mut small, due(idle_since)).is_empty());
+
+        let (mut busy, idle_since) = idle_after_turn(250_000);
+        busy.snapshot.status = ChatStatus::Busy;
+        assert!(compacted_kinds(&mut busy, due(idle_since)).is_empty());
+
+        let (mut backgrounded, idle_since) = idle_after_turn(250_000);
+        backgrounded.snapshot.background_agents = true;
+        assert!(compacted_kinds(&mut backgrounded, due(idle_since)).is_empty());
+
+        let (mut expired, idle_since) = idle_after_turn(250_000);
+        let after_expiry = idle_since + Duration::from_secs(61 * 60);
+        assert!(compacted_kinds(&mut expired, after_expiry).is_empty());
     }
 
     #[test]
@@ -1854,6 +2059,7 @@ pub(crate) mod tests {
             notify: Arc::new(|_| {}),
             pending_resolution: unattended(Duration::ZERO, PendingDefault::Deny),
             questions: None,
+            idle_compaction: None,
         };
         let session = ChatSession::spawn(
             command,

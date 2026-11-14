@@ -12,6 +12,7 @@ import {
   loadCustomColors,
   loadSidebarCollapsed,
   loadKeepRunningInBackground,
+  loadCompactIdleChats,
   persist,
 } from "../services/store";
 import {
@@ -39,6 +40,7 @@ export function useStore() {
     customTheme: customColors,
     sidebarCollapsed,
     keepRunningInBackground,
+    compactIdleChats,
   } = preferences;
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
@@ -97,8 +99,9 @@ export function useStore() {
       loadSidebarCollapsed(),
       loadAgentViews(),
       loadKeepRunningInBackground(),
+      loadCompactIdleChats(),
     ])
-      .then(async ([s, editor, theme, custom, collapsed, views, keepRunning]) => {
+      .then(async ([s, editor, theme, custom, collapsed, views, keepRunning, compactIdle]) => {
         await syncNativeShortcuts(s.shortcutOverrides ?? {});
         setShortcutOverrides(s.shortcutOverrides ?? {});
         commit(s);
@@ -109,6 +112,7 @@ export function useStore() {
           customTheme: custom,
           sidebarCollapsed: collapsed,
           keepRunningInBackground: keepRunning,
+          compactIdleChats: compactIdle,
         });
         setLoading(false);
 
@@ -272,6 +276,15 @@ export function useStore() {
     [preferenceSession]
   );
 
+  const updateCompactIdleChats = useCallback(
+    (compact: boolean) =>
+      preferenceSession.update(
+        { compactIdleChats: compact },
+        "Failed to save the idle chat compaction preference"
+      ),
+    [preferenceSession]
+  );
+
   const updateThemeId = useCallback(
     (id: string) =>
       preferenceSession.update(
@@ -337,6 +350,8 @@ export function useStore() {
     toggleSidebarCollapsed,
     keepRunningInBackground,
     updateKeepRunningInBackground,
+    compactIdleChats,
+    updateCompactIdleChats,
     updateThemeId,
     updateCustomColors,
   };

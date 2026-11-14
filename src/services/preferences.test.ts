@@ -30,6 +30,7 @@ const values: Preferences = {
   customTheme: { accent: "#123456" },
   sidebarCollapsed: true,
   keepRunningInBackground: false,
+  compactIdleChats: false,
   scriptApprovals: { "/repo": ["sha256"] },
   agentAlerts: {
     sounds: { done: null, waiting: "Ping" },
@@ -152,6 +153,13 @@ describe("normalization", () => {
     expect(normalizers.keepRunningInBackground(true)).toBe(true);
     expect(normalizers.keepRunningInBackground(false)).toBe(false);
   });
+
+  it("compacts idle chats unless explicitly turned off", async () => {
+    const { normalizers } = await import("./preferences");
+    expect(normalizers.compactIdleChats(undefined)).toBe(true);
+    expect(normalizers.compactIdleChats("false")).toBe(true);
+    expect(normalizers.compactIdleChats(false)).toBe(false);
+  });
 });
 
 describe("shared writer", () => {
@@ -184,6 +192,7 @@ describe("optimistic preferences", () => {
     "customTheme",
     "sidebarCollapsed",
     "keepRunningInBackground",
+    "compactIdleChats",
   ];
 
   it.each(interfaceKeys)("publishes and rolls back %s, reporting the failure", async (key) => {

@@ -191,6 +191,7 @@ pub async fn chat_history<R: Runtime>(
             let fork_generation = registry.generation.fetch_add(1, Ordering::SeqCst) + 1;
             let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
             let history_timeout = registry.history_timeout;
+            let fork_idle_compaction = super::idle_compaction::enabled_by(&app);
             let (new_session, conversation) = blocking(move || {
                 let ForkLaunch {
                     mut launch,
@@ -222,6 +223,7 @@ pub async fn chat_history<R: Runtime>(
                     notify: fork_notify,
                     pending_resolution: None,
                     questions: Some(super::questions::QuestionLog::new(&app_data)),
+                    idle_compaction: Some(fork_idle_compaction),
                 };
                 let session = start_session(&fork_task, launch, handoff, setup)?;
                 let deadline = Instant::now() + history_timeout;

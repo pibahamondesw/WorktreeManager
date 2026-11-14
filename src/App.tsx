@@ -78,6 +78,8 @@ function App() {
     toggleSidebarCollapsed,
     keepRunningInBackground,
     updateKeepRunningInBackground,
+    compactIdleChats,
+    updateCompactIdleChats,
     updateThemeId,
     updateCustomColors,
   } = useStore();
@@ -651,6 +653,8 @@ function App() {
         onKeepRunningInBackgroundChange={(keepRunning) =>
           void updateKeepRunningInBackground(keepRunning)
         }
+        compactIdleChats={compactIdleChats}
+        onCompactIdleChatsChange={(compact) => void updateCompactIdleChats(compact)}
         severity={doctorSeverity}
         report={doctorReport}
         running={doctorRunning || keychainRetrying}

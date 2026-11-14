@@ -1943,6 +1943,12 @@ mod tests {
         assert!(matches!(snapshot.status, ChatStatus::Failed { .. }));
     }
 
+    #[test]
+    fn codex_chats_are_not_compacted_when_idle() {
+        let (provider, _) = ready(None);
+        assert_eq!(provider.prompt_cache_ttl(), None);
+    }
+
     fn resumed() -> (CodexProvider, ChatSnapshot) {
         let (mut provider, mut snapshot) = ready(Some("th1"));
         feed(
