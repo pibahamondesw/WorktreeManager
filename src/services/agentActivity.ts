@@ -210,7 +210,8 @@ const isChatWorking = (chat: ChatActivity) =>
 
 /**
  * Embedded chats report their state directly, so their hook events are ignored. A chat works
- * while its turn runs or its background subagents do, and is done once both have ended.
+ * while its turn runs or its background subagents do, and is done once both have ended. An idle
+ * compaction the app starts on its own is neither: it raises no alerts or automation events.
  */
 export function chatActivityEvent(
   previous: ChatActivity | undefined,
@@ -220,6 +221,7 @@ export function chatActivityEvent(
   const base = { agent: chat.agent, surface: "chat" as const, at };
   if (!isLive(chat.status)) return "end";
   if (chat.waiting) return previous?.waiting ? null : { ...base, state: "waiting" };
+  if (chat.idleCompaction) return null;
   if (isChatWorking(chat))
     return previous && isChatWorking(previous) && !previous.waiting
       ? null

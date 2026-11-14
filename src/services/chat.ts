@@ -220,6 +220,8 @@ export interface ChatInfo {
   backgroundAgents: boolean;
   /** The current turn reported an agent error; cleared by the next prompt. */
   hasError?: boolean;
+  /** The turn running, or the last one, is an idle compaction the app started, not the user. */
+  idleCompaction?: boolean;
 }
 
 export const isLive = (status: ChatStatus) => status.kind !== "exited" && status.kind !== "failed";

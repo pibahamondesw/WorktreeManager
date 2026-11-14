@@ -267,6 +267,17 @@ describe("chatActivityEvent", () => {
     expect(chatActivityEvent(busy, chat({ kind: "exited", code: 0 }), 12)).toBe("end");
   });
 
+  it("ignores idle compactions the app starts until the user starts a turn", () => {
+    const idle = chat({ kind: "idle" });
+    const compacting = { ...chat({ kind: "busy" }), idleCompaction: true };
+    const compacted = { ...idle, idleCompaction: true };
+    expect(chatActivityEvent(idle, compacting, 5)).toBeNull();
+    expect(chatActivityEvent(compacting, compacted, 6)).toBeNull();
+    expect(chatActivityEvent(compacted, chat({ kind: "busy" }), 7)).toMatchObject({
+      state: "working",
+    });
+  });
+
   it("keeps working while background subagents run past the end of the turn", () => {
     const busy = chat({ kind: "busy" });
     const idle = chat({ kind: "idle" });
