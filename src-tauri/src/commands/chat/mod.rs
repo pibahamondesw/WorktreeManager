@@ -66,6 +66,9 @@ use model::{
 pub(crate) const STATUS_EVENT: &str = "chat-status";
 const EXIT_WAIT: Duration = Duration::from_secs(5);
 const STDERR_TAIL: usize = 4096;
+/// A process that left a child holding its stderr never reaches EOF; past this wait its failure is
+/// reported with the stderr read so far.
+const STDERR_DRAIN_WAIT: Duration = Duration::from_secs(2);
 const PENDING_CHECK_MIN: Duration = Duration::from_millis(10);
 const PENDING_CHECK_MAX: Duration = Duration::from_secs(1);
 
@@ -551,9 +554,11 @@ impl ChatSession {
         thread::spawn(move || flush_live_batches(&shared, &wake));
 
         let tail = Arc::new(Mutex::new(String::new()));
+        let (stderr_drained, stderr_read) = std::sync::mpsc::channel::<()>();
         if let Some(stderr) = stderr {
             let tail = tail.clone();
             thread::spawn(move || {
+                let _drained = stderr_drained;
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                     let mut tail = tail.lock().unwrap();
                     tail.push_str(&line);
@@ -616,6 +621,7 @@ impl ChatSession {
                 state.commit(out, &*remember, &notify);
             }
             let code = wait_for_exit(&process);
+            let _ = stderr_read.recv_timeout(STDERR_DRAIN_WAIT);
             let mut state = shared.lock().unwrap();
             if !state.snapshot.status.is_live() {
                 return;
@@ -2191,6 +2197,22 @@ pub(crate) mod tests {
     fn stderr_explains_a_failed_start() {
         let session = spawn(
             "echo 'not logged in' >&2; exit 2",
+            Arc::default(),
+            Arc::default(),
+        );
+        let snapshot = wait_for(&session, |s| !s.status.is_live());
+        assert_eq!(
+            snapshot.status,
+            ChatStatus::Failed {
+                message: "not logged in".into()
+            }
+        );
+    }
+
+    #[test]
+    fn stderr_that_trails_the_exit_still_explains_the_failure() {
+        let session = spawn(
+            "(exec 1>&-; sleep 0.3; echo 'not logged in' >&2) & exit 2",
             Arc::default(),
             Arc::default(),
         );
