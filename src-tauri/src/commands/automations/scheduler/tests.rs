@@ -8,7 +8,7 @@ use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 use tauri::App;
 
 use super::*;
-use crate::commands::agents::{claude, codex, Agents};
+use crate::commands::agents::Agents;
 use crate::commands::automations::store::events::{RunOutcome, AWAITING_SLOT};
 
 struct Scratch(PathBuf);
@@ -722,10 +722,7 @@ fn app(data_dir: &Path, automations_dir: &Path) -> App<MockRuntime> {
     let mut context = mock_context(noop_assets());
     context.config_mut().identifier = data_dir.to_string_lossy().into_owned();
     mock_builder()
-        .manage(Agents::new(
-            claude::Claude::new("/missing-test-agent", None),
-            codex::Codex::new("/missing-test-agent", None, None),
-        ))
+        .manage(Agents::missing())
         .build(context)
         .unwrap()
 }

@@ -7,7 +7,7 @@ use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 use tauri::App;
 
 use super::*;
-use crate::commands::agents::{claude, codex, Agents};
+use crate::commands::agents::Agents;
 use crate::commands::automations::routine::{OperationsBridge, RoutineExecutor};
 
 struct NoOperations;
@@ -45,10 +45,7 @@ impl Harness {
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier = dir.to_string_lossy().into_owned();
         let app = mock_builder()
-            .manage(Agents::new(
-                claude::Claude::new("/missing-test-agent", None),
-                codex::Codex::new("/missing-test-agent", None, None),
-            ))
+            .manage(Agents::missing())
             .build(context)
             .unwrap();
         Self { dir, app }

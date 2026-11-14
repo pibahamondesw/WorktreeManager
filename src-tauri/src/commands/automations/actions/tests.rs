@@ -8,7 +8,7 @@ use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 use tauri::{App, Manager};
 
 use super::*;
-use crate::commands::agents::{claude, codex, Agents};
+use crate::commands::agents::Agents;
 use crate::commands::automations::definition::AppEventKind;
 use crate::commands::automations::store::events::{ItemStatus, RunOutcome};
 use crate::commands::automations::store::{Override, Pace};
@@ -55,10 +55,7 @@ impl Scratch {
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier = self.0.to_string_lossy().into_owned();
         mock_builder()
-            .manage(Agents::new(
-                claude::Claude::new("/missing-test-agent", None),
-                codex::Codex::new("/missing-test-agent", None, None),
-            ))
+            .manage(Agents::missing())
             .manage(AutomationEngine(executor))
             .build(context)
             .unwrap()

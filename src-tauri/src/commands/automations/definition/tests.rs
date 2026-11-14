@@ -6,9 +6,7 @@ use serde_json::{json, Value};
 
 use super::fields::{duration_secs, is_step_id, string_list, template, Fields, Report};
 use super::*;
-use crate::commands::agents::{
-    claude, codex, permission::PermissionMode, AgentCapabilities, AgentDescriptor,
-};
+use crate::commands::agents::{permission::PermissionMode, AgentCapabilities, AgentDescriptor};
 
 const TARGET: &str = "target:\n  workspace: Acme\n  repos: [app]\n";
 const AGENT: &str = "agent: { id: claude }\n";
@@ -1922,10 +1920,7 @@ mod commands {
         let mut context = mock_context(noop_assets());
         context.config_mut().identifier = data_dir.to_string_lossy().into_owned();
         mock_builder()
-            .manage(Agents::new(
-                claude::Claude::new("/missing-test-agent", None),
-                codex::Codex::new("/missing-test-agent", None, None),
-            ))
+            .manage(Agents::missing())
             .build(context)
             .unwrap()
     }
