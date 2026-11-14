@@ -138,14 +138,15 @@ function approvalEntries(
       if (!step || !("approval" in step.kind) || !attempt.wait) return [];
       const { title, detail, params, default: fallback } = step.kind.approval;
       const answer = approvalAnswer(attempt);
+      const shown = attempt.wait.detail ?? detail;
       return [
         {
           ...runFacts(entry, run),
           key: `approval:${entry.name}:${item.id}:${attempt.step}:${run.id}:${attempt.attempt}`,
           kind: "approval" as const,
           title: attempt.wait.title ?? title,
-          detail: answer ?? (detail ? clip(detail) : itemLabel(item)),
-          target: conversationTarget(steps, run, attempt),
+          detail: answer ?? (shown ? clip(shown) : itemLabel(item)),
+          target: conversationTarget(steps, inItemTask(run, item), attempt),
           autoArchived: false,
           notify: policy.notify,
           approval: {
@@ -170,19 +171,24 @@ function takeoverEntries(entry: AutomationEntry, run: AutomationRun): InboxEntry
   return run.items.filter(isTakenOver).map((item) => {
     const attempts = item.steps.filter((attempt) => attempt.step === item.phase);
     const conversation = [...attempts].reverse().find((attempt) => attempt.conversation_id);
-    const itemRun = { ...run, task_id: item.task_id ?? run.task_id };
     return {
       ...runFacts(entry, run),
       key: `takeover:${entry.name}:${run.id}:${item.id}:${item.phase}:${attempts.length}`,
       kind: "taken_over" as const,
       title: `Taken over: ${item.phase}`,
       detail: itemLabel(item) ?? "Hand it back from the Pipeline tab or the CLI",
-      target: conversationTarget(steps, itemRun, conversation),
+      target: conversationTarget(steps, inItemTask(run, item), conversation),
       autoArchived: false,
       notify: false,
     };
   });
 }
+
+/** A campaign item works in its own task, a routine's in its run's. */
+const inItemTask = (run: AutomationRun, item: AutomationItem): AutomationRun => ({
+  ...run,
+  task_id: item.task_id ?? run.task_id,
+});
 
 const itemLabel = (item: AutomationItem) => (item.title ? `Item ${item.title}` : null);
 

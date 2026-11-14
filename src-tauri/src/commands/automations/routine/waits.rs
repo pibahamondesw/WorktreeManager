@@ -6,13 +6,16 @@ use std::time::SystemTime;
 use super::super::command::CommandContext;
 use super::super::definition::{AutomationDefinition, Step, StepKind, WaitStep};
 use super::super::pipeline::{Execution, StepReport, StepRequest};
+use super::super::publish::published_values;
 use super::super::scheduler::{fail_item, is_active, RunRequest, DEFINITION_CHANGED_CAUSE};
 use super::super::store::events::{
-    ItemStatus, LoggedEvent, ProcessEnd, RunEvent, RunState, StepOutcome,
+    ArmedWait, ItemStatus, LoggedEvent, ProcessEnd, RunEvent, RunState, StepOutcome,
 };
 use super::super::wait::{self, parked_on, Ended, WaitLog, Watch, WatchScripts};
 use super::commands::{Item, ItemScope};
-use super::{failed, run_variables, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor};
+use super::{
+    failed, render_partially, run_variables, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor,
+};
 
 impl RoutineExecutor {
     /// Drives again each parked item whose wait can end now.
@@ -149,7 +152,7 @@ impl ItemSteps<'_> {
         let now = now_ms();
         if log.armed.is_none() {
             log.armed_at_ms = Some(now);
-            let armed = wait::arm(request.step, now, self.approval_title(request));
+            let armed = self.armed(request, now, &history);
             self.evidence.push(RunEvent::WaitArmed {
                 item: request.item.to_string(),
                 step: request.step.id.clone(),
@@ -191,13 +194,39 @@ impl ItemSteps<'_> {
         )
     }
 
-    fn approval_title(&self, request: &StepRequest) -> Option<String> {
+    /// An approval's title and detail render with the item's variables and what its effects
+    /// published; a placeholder without a value stays as written and is recorded.
+    fn armed(&self, request: &StepRequest, now: u64, history: &[LoggedEvent]) -> ArmedWait {
         let StepKind::Approval(approval) = &request.step.kind else {
-            return None;
+            return wait::arm(request.step, now, None);
         };
-        let context = self.commands.context();
-        let rendered = super::render(&approval.title, context.variables());
-        Some(rendered.unwrap_or_else(|_| approval.title.clone()))
+        let mut variables = self.commands.context().variables().to_vec();
+        variables.extend(
+            published_values(history, request.item)
+                .into_iter()
+                .map(|(name, value)| (name.to_string(), value)),
+        );
+        let (title, mut unrendered) = render_partially(&approval.title, &variables);
+        let detail = approval.detail.as_ref().map(|detail| {
+            let (detail, problems) = render_partially(detail, &variables);
+            unrendered.extend(problems);
+            detail
+        });
+        if !unrendered.is_empty() {
+            log::warn!(
+                "Automation {}/{} approval {} of item {} kept placeholders: {}",
+                self.request.automation,
+                self.request.run_id,
+                request.step.id,
+                request.item,
+                unrendered.join("; ")
+            );
+        }
+        ArmedWait {
+            detail,
+            unrendered,
+            ..wait::arm(request.step, now, Some(title))
+        }
     }
 
     /// The answer or signal becomes the attempt's result, and edited params the item's data.

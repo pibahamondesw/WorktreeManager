@@ -37,10 +37,7 @@ use super::definition::{
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
-use super::publish::{
-    published_issue, published_pull_request, pushed_commits, CliForge, Forge, PublishScope,
-    Publisher,
-};
+use super::publish::{published_values, pushed_commits, CliForge, Forge, PublishScope, Publisher};
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::selector::OpenPullRequests;
 use super::store::events::{
@@ -873,10 +870,8 @@ impl ItemSteps<'_> {
             .collect();
         let stale_receipts = |repo: &str| stale[repo].clone();
         let history = self.run_history();
-        let events = || history.iter().map(|logged| &logged.event);
-        let pushed = pushed_commits(events(), request.item);
-        let mut published = published_pull_request(events(), request.item);
-        published.extend(published_issue(events(), request.item));
+        let pushed = pushed_commits(history.iter().map(|logged| &logged.event), request.item);
+        let published = published_values(&history, request.item);
         let definition = self.definition;
         let repo_names: BTreeMap<_, _> = definition
             .target
@@ -1273,7 +1268,18 @@ pub(super) fn render<S: AsRef<str>>(
     template: &str,
     variables: &[(S, String)],
 ) -> Result<String, String> {
+    let (rendered, problems) = render_partially(template, variables);
+    problems.into_iter().next().map_or(Ok(rendered), Err)
+}
+
+/// Fills what it can: a placeholder without a value, or an unbalanced brace, stays as written,
+/// with why.
+pub(super) fn render_partially<S: AsRef<str>>(
+    template: &str,
+    variables: &[(S, String)],
+) -> (String, Vec<String>) {
     let mut rendered = String::new();
+    let mut problems = Vec::new();
     let mut rest = template;
     while let Some(position) = rest.find(['{', '}']) {
         rendered.push_str(&rest[..position]);
@@ -1283,18 +1289,24 @@ pub(super) fn render<S: AsRef<str>>(
             rest = &tail[2..];
             continue;
         }
-        let end = tail
-            .find('}')
-            .filter(|_| tail.starts_with('{'))
-            .ok_or("unbalanced braces in template")?;
+        let Some(end) = tail.find('}').filter(|_| tail.starts_with('{')) else {
+            problems.push("unbalanced braces in template".into());
+            rest = tail;
+            break;
+        };
         let name = &tail[1..end];
-        let (_, value) = variables
+        match variables
             .iter()
             .find(|(variable, _)| variable.as_ref() == name)
-            .ok_or_else(|| format!("{{{name}}} has no value for this run"))?;
-        rendered.push_str(value);
+        {
+            Some((_, value)) => rendered.push_str(value),
+            None => {
+                problems.push(format!("{{{name}}} has no value for this run"));
+                rendered.push_str(&tail[..=end]);
+            }
+        }
         rest = &tail[end + 1..];
     }
     rendered.push_str(rest);
-    Ok(rendered)
+    (rendered, problems)
 }

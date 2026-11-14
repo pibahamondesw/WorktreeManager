@@ -1,6 +1,7 @@
-//! System notifications for agent alerts: at most one per task, delivered without waiting for the
-//! user. Clicks reach the app through a notification center delegate, and a task's notification is
-//! replaced by its next alert and removed once the task no longer needs attention.
+//! System notifications for agent alerts: at most one per task, and one per automation Inbox
+//! entry, delivered without waiting for the user. Clicks reach the app through a notification
+//! center delegate, and a task's notification is replaced by its next alert and removed once the
+//! task no longer needs attention.
 
 #[cfg(not(target_os = "macos"))]
 use tauri::{AppHandle, Runtime};
@@ -10,11 +11,22 @@ use super::agent_alerts::NotificationTarget;
 #[cfg(target_os = "macos")]
 const IDENTIFIER_PREFIX: &str = "wtm-agent-task:";
 #[cfg(target_os = "macos")]
+const INBOX_IDENTIFIER_PREFIX: &str = "wtm-automation-inbox:";
+#[cfg(target_os = "macos")]
 const TARGET_KEY: &str = "target";
 
 #[cfg(target_os = "macos")]
 fn task_identifier(task_id: &str) -> String {
     format!("{IDENTIFIER_PREFIX}{task_id}")
+}
+
+/// An Inbox entry's notification never replaces, nor is removed with, its task's alerts.
+#[cfg(target_os = "macos")]
+fn notification_identifier(target: &NotificationTarget) -> String {
+    match &target.inbox_entry {
+        Some(entry) => format!("{INBOX_IDENTIFIER_PREFIX}{entry}"),
+        None => task_identifier(&target.task_id),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -36,7 +48,7 @@ mod macos {
     };
     use tauri::{AppHandle, Runtime};
 
-    use super::{notifies_task, task_identifier, NotificationTarget, TARGET_KEY};
+    use super::{notification_identifier, notifies_task, NotificationTarget, TARGET_KEY};
     use crate::commands::agent_alerts::reveal_target;
 
     type OpenTarget = Box<dyn Fn(NotificationTarget)>;
@@ -127,7 +139,7 @@ mod macos {
         target: &NotificationTarget,
     ) -> Retained<NSUserNotification> {
         let notification = NSUserNotification::new();
-        let identifier = NSString::from_str(&task_identifier(&target.task_id));
+        let identifier = NSString::from_str(&notification_identifier(target));
         notification.setIdentifier(Some(&identifier));
         notification.setTitle(Some(&NSString::from_str(title)));
         notification.setInformativeText(Some(&NSString::from_str(body)));
@@ -160,7 +172,9 @@ mod macos {
         target: NotificationTarget,
     ) {
         on_center(app, move |center| {
-            remove_for_tasks(center, std::slice::from_ref(&target.task_id));
+            if target.inbox_entry.is_none() {
+                remove_for_tasks(center, std::slice::from_ref(&target.task_id));
+            }
             center.deliverNotification(&notification(&title, &body, &target));
         });
     }
@@ -312,6 +326,40 @@ pub(crate) mod tests {
 
         dismiss(app.handle(), vec!["t1".into(), "unknown".into()]);
         assert_eq!(delivered_identifiers(&center), [task_identifier("t2")]);
+    }
+
+    fn inbox_target(task_id: &str, entry: &str) -> NotificationTarget {
+        let mut target = target(task_id);
+        target.inbox_entry = Some(entry.into());
+        target
+    }
+
+    #[test]
+    fn each_inbox_entry_keeps_its_own_notification_beside_its_tasks() {
+        let center = use_fake_center();
+        let app = mock_app();
+        deliver(app.handle(), "Done".into(), "WOR-1".into(), target("t1"));
+        for (task_id, entry) in [
+            ("", "approval:a"),
+            ("", "permission:b"),
+            ("t1", "approval:c"),
+        ] {
+            deliver(
+                app.handle(),
+                "demo".into(),
+                entry.into(),
+                inbox_target(task_id, entry),
+            );
+        }
+        assert_eq!(
+            delivered_identifiers(&center),
+            [
+                task_identifier("t1"),
+                "wtm-automation-inbox:approval:a".into(),
+                "wtm-automation-inbox:permission:b".into(),
+                "wtm-automation-inbox:approval:c".into(),
+            ]
+        );
     }
 
     #[test]

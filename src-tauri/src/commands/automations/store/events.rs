@@ -173,7 +173,7 @@ pub enum RunEvent {
         warnings: Vec<String>,
     },
     /// A `wait` or `approval` attempt started waiting: when its `time` is due and when it times
-    /// out, and the approval's rendered title.
+    /// out, and the approval's rendered title and detail.
     WaitArmed {
         item: String,
         step: String,
@@ -231,6 +231,11 @@ pub struct ArmedWait {
     pub timeout_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Why the title or detail kept placeholders as written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unrendered: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

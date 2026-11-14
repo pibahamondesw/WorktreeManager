@@ -219,6 +219,7 @@ pub fn arm(step: &Step, now_ms: u64, title: Option<String>) -> ArmedWait {
         wake_at_ms,
         timeout_at_ms: step.timeout_secs.map(|secs| now_ms + secs * 1000),
         title,
+        ..ArmedWait::default()
     }
 }
 

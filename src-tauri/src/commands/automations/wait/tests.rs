@@ -93,6 +93,7 @@ fn armed_at(wake_at_ms: Option<u64>, timeout_at_ms: Option<u64>) -> WaitLog {
             wake_at_ms,
             timeout_at_ms,
             title: None,
+            ..ArmedWait::default()
         }),
         ..WaitLog::default()
     }
@@ -120,6 +121,7 @@ fn arming_fixes_when_the_wait_is_due_and_times_out() {
             wake_at_ms: Some(61_000),
             timeout_at_ms: Some(601_000),
             title: None,
+            ..ArmedWait::default()
         }
     );
     let until = step(
@@ -317,6 +319,7 @@ fn the_log_keeps_each_attempt_its_own_wait_and_reuses_earlier_approvals() {
         wake_at_ms: None,
         timeout_at_ms: Some(5),
         title: Some("Ship it?".into()),
+        ..ArmedWait::default()
     };
     let history = [
         signaled(

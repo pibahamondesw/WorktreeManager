@@ -394,6 +394,24 @@ describe("approval entries", () => {
     expect(inboxEntries([{ entry: approving(), runs: [pendingRun([attempt()])] }])).toEqual([]);
   });
 
+  it("shows a campaign item's rendered detail and links the item's task", () => {
+    const rendered = { ...waiting, wait: { title: "Ready: #7", detail: "Review #7" } };
+    const campaignRun = run("7", {
+      status: "running",
+      outcome: null,
+      task_id: null,
+      items: [
+        { id: "a", title: "A", status: "waiting", phase: "ship", steps: [rendered], task_id: "t9" },
+      ],
+    });
+    const [pending] = inboxEntries([{ entry: approving(), runs: [campaignRun] }]);
+    expect(pending).toMatchObject({
+      title: "Ready: #7",
+      detail: "Review #7",
+      target: { taskId: "t9", agent: null, conversationId: null },
+    });
+  });
+
   it("opens approvals in the Inbox and other entries in their task", () => {
     const [pending] = inboxEntries([{ entry: approving(), runs: [pendingRun([waiting])] }]);
     expect(opensInInbox(pending)).toBe(true);
