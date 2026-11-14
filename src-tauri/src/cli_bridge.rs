@@ -861,12 +861,14 @@ mod tests {
 
     #[test]
     fn in_process_calls_wait_on_a_frontend_that_reports_progress() {
+        const SILENCE: Duration = Duration::from_millis(500);
         let server = Server::new();
         answer_with(&server, |pending| {
             let sender = pending.sender.clone();
             std::thread::spawn(move || {
-                for _ in 0..10 {
-                    std::thread::sleep(Duration::from_millis(25));
+                let started = Instant::now();
+                while started.elapsed() < SILENCE * 2 {
+                    std::thread::sleep(Duration::from_millis(20));
                     sender.send(json!({ "progress": "Creating" })).unwrap();
                 }
                 sender
@@ -875,11 +877,9 @@ mod tests {
             });
         });
         let params = json!({ "input": { "branchName": "wtm/demo" } });
-        let response = server.cli_bridge().call_within_silence(
-            "task.create",
-            params,
-            Duration::from_millis(100),
-        );
+        let response = server
+            .cli_bridge()
+            .call_within_silence("task.create", params, SILENCE);
         assert_eq!(response["data"]["id"], "t1");
     }
 
