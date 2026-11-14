@@ -27,6 +27,7 @@ pub fn run() {
         .manage(commands::chat::ChatRegistry::default())
         .manage(commands::code_server::EditorRegistry::default())
         .manage(lifecycle::Background::default())
+        .manage(commands::git_watch::GitWatchRegistry::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -74,6 +75,7 @@ pub fn run() {
                 commands::git::git_worktree_list,
                 commands::git::git_worktree_status,
                 commands::git::git_worktree_status_batch,
+                commands::git_watch::git_status_watch,
                 commands::git::git_remote_url,
                 commands::doctor::doctor_probe,
                 commands::github::github_pr_status_batch,

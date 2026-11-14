@@ -527,7 +527,13 @@ fn compute_worktree_status(worktree_path: &str, upstream: &str) -> WorktreeStatu
     };
 
     let dirty = if let Ok(output) = git_command()
-        .args(["-C", worktree_path, "status", "--porcelain"])
+        .args([
+            "--no-optional-locks",
+            "-C",
+            worktree_path,
+            "status",
+            "--porcelain",
+        ])
         .output()
     {
         output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty()

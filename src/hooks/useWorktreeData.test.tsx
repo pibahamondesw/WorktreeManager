@@ -6,9 +6,14 @@ import { LinearService } from "../services/linear";
 import { IssueLinearInfo, Task, Workspace } from "../types";
 import { resetGithubCache } from "../services/github";
 import { taskLinearStore } from "../services/taskLinear";
+import { onWorktreeGitStatusChanged, watchWorktreeGitStatus } from "../services/gitStatusWatch";
 import { mergeGitStatuses, useWorktreeData } from "./useWorktreeData";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("../services/gitStatusWatch", () => ({
+  watchWorktreeGitStatus: vi.fn(),
+  onWorktreeGitStatusChanged: vi.fn(() => () => undefined),
+}));
 const pr = {
   repoSlug: "org/repo",
   number: 1,
@@ -185,4 +190,68 @@ it("adds newly fetched git statuses without dropping previous ones", () => {
   const merged = mergeGitStatuses(prev, { "/wt/b": { ...status } });
   expect(merged["/wt/a"]).toBe(status);
   expect(merged["/wt/b"]).toEqual(status);
+});
+
+it("watches member worktrees and refreshes only the ones that changed", async () => {
+  const member = {
+    repoId: "r1",
+    repoName: "repo",
+    localPath: "/repo",
+    path: "/wt/b",
+    branchName: "feat",
+  };
+  const gitTasks = [
+    { ...task, linearIssueId: undefined, members: [member, { ...member, path: "/wt/a" }] },
+  ];
+  vi.mocked(invoke).mockResolvedValue({});
+  const { unmount } = renderHook(() => useWorktreeData(gitTasks, workspace));
+  await settle();
+  expect(watchWorktreeGitStatus).toHaveBeenLastCalledWith(["/wt/a", "/wt/b"]);
+  const handler = vi.mocked(onWorktreeGitStatusChanged).mock.lastCall![0];
+  vi.mocked(invoke).mockClear();
+  await act(async () => handler(new Set(["/wt/a", "/elsewhere"])));
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("git_worktree_status_batch", {
+    worktreePaths: ["/wt/a"],
+    repoPath: "/repo",
+  });
+  unmount();
+  expect(watchWorktreeGitStatus).toHaveBeenLastCalledWith([]);
+});
+
+it("does not let an older full refresh overwrite a newer event-driven status", async () => {
+  const member = {
+    repoId: "r1",
+    repoName: "repo",
+    localPath: "/repo",
+    path: "/wt/a",
+    branchName: "feat",
+  };
+  const gitTasks = [{ ...task, linearIssueId: undefined, members: [member] }];
+  const before = { ahead: 0, behind: 0, dirty: false, last_commit_epoch: 1 };
+  const after = { ...before, ahead: 1, last_commit_epoch: 2 };
+  let finishFullRefresh!: (statuses: Record<string, typeof before>) => void;
+  vi.mocked(invoke).mockResolvedValue({});
+  const { result } = renderHook(() => useWorktreeData(gitTasks, workspace));
+  await settle();
+  vi.mocked(invoke).mockImplementation((command) =>
+    command === "git_worktree_status_batch"
+      ? new Promise((done) => {
+          finishFullRefresh = done;
+        })
+      : Promise.resolve({})
+  );
+  let fullRefresh!: Promise<void>;
+  act(() => {
+    fullRefresh = result.current.handleRefresh();
+  });
+  const staleFinish = finishFullRefresh;
+  const handler = vi.mocked(onWorktreeGitStatusChanged).mock.lastCall![0];
+  vi.mocked(invoke).mockResolvedValue({ "/wt/a": after });
+  await act(async () => handler(new Set(["/wt/a"])));
+  expect(result.current.gitStatuses["/wt/a"]).toEqual(after);
+  await act(async () => {
+    staleFinish({ "/wt/a": before });
+    await fullRefresh;
+  });
+  expect(result.current.gitStatuses["/wt/a"]).toEqual(after);
 });
