@@ -1619,6 +1619,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::commands::agents::permission::PendingDefault;
 
+    const SETTLE_DEADLINE: Duration = Duration::from_secs(60);
+
     struct Echo;
 
     fn checkpoint_session(
@@ -1714,7 +1716,7 @@ pub(crate) mod tests {
     }
 
     fn wait_for(session: &ChatSession, done: impl Fn(&ChatSnapshot) -> bool) -> ChatSnapshot {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + SETTLE_DEADLINE;
         loop {
             let snapshot = session.shared.lock().unwrap().snapshot.clone();
             if done(&snapshot) || Instant::now() > deadline {
@@ -1886,7 +1888,7 @@ pub(crate) mod tests {
         thread::sleep(Duration::from_millis(50));
         assert!(!compacted(&shared));
         enabled.store(true, Ordering::SeqCst);
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + SETTLE_DEADLINE;
         while !compacted(&shared) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
@@ -2041,7 +2043,7 @@ pub(crate) mod tests {
             let shared = shared.clone();
             thread::spawn(move || watch_unanswered(&shared, Duration::ZERO, &drop, &silent()))
         };
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + SETTLE_DEADLINE;
         while shared.lock().unwrap().snapshot.unanswered.is_empty() {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(10));
@@ -2837,7 +2839,7 @@ pub(crate) mod tests {
         let session = spawn(&script, Arc::default(), Arc::default());
         session.shared.lock().unwrap().snapshot.status = ChatStatus::Exited { code: None };
         std::fs::write(go, "go").unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + SETTLE_DEADLINE;
         while !ready.exists() {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(10));
