@@ -24,6 +24,7 @@ function renderSettings() {
   const onVaultChange = vi.fn();
   const onAlertsChange = vi.fn();
   const onKeepRunningInBackgroundChange = vi.fn();
+  const onCompactIdleChatsChange = vi.fn();
   const onRecheck = vi.fn();
   const onClose = vi.fn();
   function Harness() {
@@ -47,6 +48,8 @@ function renderSettings() {
         onAlertsChange={onAlertsChange}
         keepRunningInBackground
         onKeepRunningInBackgroundChange={onKeepRunningInBackgroundChange}
+        compactIdleChats
+        onCompactIdleChatsChange={onCompactIdleChatsChange}
         report={null}
         running={false}
         severity="warning"
@@ -60,6 +63,7 @@ function renderSettings() {
     onVaultChange,
     onAlertsChange,
     onKeepRunningInBackgroundChange,
+    onCompactIdleChatsChange,
     onRecheck,
     onClose,
   };
@@ -143,6 +147,18 @@ describe("SettingsModal", () => {
     expect(toggle).toBeChecked();
     fireEvent.click(toggle);
     expect(onKeepRunningInBackgroundChange).toHaveBeenCalledWith(false);
+  });
+
+  it("turns off compacting idle Claude chats", () => {
+    const { onCompactIdleChatsChange } = renderSettings();
+    vi.mocked(invoke).mockResolvedValue(null);
+    fireEvent.click(screen.getByRole("tab", { name: "Agent alerts" }));
+    const toggle = screen.getByRole("checkbox", {
+      name: "Compact idle Claude chats before the cache expires",
+    });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(onCompactIdleChatsChange).toHaveBeenCalledWith(false);
   });
 
   it("shows hooks that report to another app and replaces them only after confirming", async () => {
