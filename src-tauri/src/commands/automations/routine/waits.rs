@@ -213,13 +213,13 @@ impl ItemSteps<'_> {
             detail
         });
         if !unrendered.is_empty() {
+            let kept = unrendered.join("; ");
             log::warn!(
-                "Automation {}/{} approval {} of item {} kept placeholders: {}",
+                "Automation {}/{} approval {} of item {} kept placeholders: {kept}",
                 self.request.automation,
                 self.request.run_id,
                 request.step.id,
                 request.item,
-                unrendered.join("; ")
             );
         }
         ArmedWait {
