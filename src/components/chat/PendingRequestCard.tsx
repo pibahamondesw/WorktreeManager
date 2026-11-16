@@ -6,6 +6,7 @@ import { ApprovalDraft, approvalResponse } from "./approval";
 import { PlanCard } from "./MarkdownPreviewCard";
 import { useMarkdownPreview } from "./markdownPreviewContext";
 import { ChatQuestion, ChatResponse, PendingRequest } from "../../services/chat";
+import { ElicitationForm } from "./ElicitationForm";
 
 interface PendingRequestCardProps {
   request: PendingRequest;
@@ -109,6 +110,9 @@ export function PendingRequestCard({
       )}
       {request.kind === "question" && (
         <QuestionForm questions={request.questions} sending={sending} onSubmit={respond} />
+      )}
+      {request.kind === "elicitation" && (
+        <ElicitationForm request={request} disabled={disabled} onRespond={onRespond} />
       )}
       {request.kind === "unsupported" && (
         <div>

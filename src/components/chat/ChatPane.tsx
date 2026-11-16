@@ -284,6 +284,7 @@ export function ChatPane({
       }
       setPreview(null);
     } catch (e) {
+      if (request.kind === "elicitation") throw e;
       setActionError(String(e));
     } finally {
       respondingRef.current = false;
@@ -413,7 +414,7 @@ export function ChatPane({
             })}
             {pending.map((request, index) => (
               <PendingRequestCard
-                key={request.id}
+                key={`${sessionKey}:${request.id}`}
                 request={request}
                 focused={index === 0}
                 draft={approvalDraft(request.id)}
