@@ -375,9 +375,9 @@ fn holds_slot(item: &ItemState) -> bool {
     matches!(item.status, ItemStatus::Queued | ItemStatus::Active)
 }
 
-/// The retried items awaiting a slot that the items going on leave room for, as `(run, item)`,
-/// oldest run first.
-pub fn retries_due(
+/// The items awaiting a slot that the items going on leave room for, as `(run, item)`, oldest run
+/// first.
+pub fn items_due_a_slot(
     store: &RunStore,
     automation: &str,
     active_pool: u64,

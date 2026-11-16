@@ -4,9 +4,9 @@
 //! retrying a failed or blocked item drives it again from the step it stopped at, or another one,
 //! on the current definition or on the one its run started with, with a fresh count of the
 //! counter that blocked it. Publish effects already recorded are not executed again: later steps
-//! never re-run them and a retried publish step reconciles them. A retried campaign item counts
-//! toward `pools.active`: while it is full the item stays queued until a slot frees, and takes it
-//! before the selector takes new items.
+//! never re-run them and a retried publish step reconciles them. A retried or handed-back campaign
+//! item counts toward `pools.active`: while it is full the item stays queued until a slot frees,
+//! and takes it before the selector takes new items.
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -20,7 +20,7 @@ use super::super::operator::pass_limits;
 use super::super::pipeline::ACTIVE_TIME_BUDGET;
 use super::super::routine::HUMAN_TAKEOVER;
 use super::super::scheduler::{is_active, recorded_request, Executor};
-use super::super::selector::{has_free_slot, retries_due};
+use super::super::selector::{has_free_slot, items_due_a_slot};
 use super::super::store::events::{ItemState, ItemStatus, RunEvent, RunState};
 use super::super::store::{Actor, RunStore};
 use super::{blocking, now, operator, run_owner, valid_definition, AutomationEngine};
@@ -107,8 +107,8 @@ pub fn take_over(
     }
 }
 
-/// Drives a taken-over item again from the step it was taken over at; the next agent step
-/// reads `note`.
+/// Drives a taken-over item again from the step it was taken over at, once a campaign has a free
+/// slot for it; the next agent step reads `note`.
 pub fn hand_back(
     store: &RunStore,
     executor: &dyn Executor,
@@ -140,14 +140,16 @@ pub fn hand_back(
     let writer = store.writer(name)?;
     let reopen = || writer.append(&run.id, &RunEvent::Reopened);
     routine.then(reopen).transpose()?;
+    let awaiting_slot = awaits_a_slot(store, definition, &run)?;
     let handed_back = RunEvent::ItemHandedBack {
         item: item.id.clone(),
         note,
         by,
+        awaiting_slot,
     };
     writer.append(&run.id, &handed_back)?;
     drop(writer);
-    drive_again(store, executor, name, &run.id, &item.id, now)
+    go_on_unless_awaiting(store, executor, name, &run.id, &item.id, awaiting_slot, now)
 }
 
 /// Drives a failed or blocked item again from the step it stopped at, or from `from`, on
@@ -189,8 +191,7 @@ pub fn retry(
     if routine && !is_active(run.status) {
         writer.append(&run.id, &RunEvent::Reopened)?;
     }
-    let awaiting_slot =
-        !routine && !is_test(&run) && !has_free_slot(store, name, max_active(store, chosen)?)?;
+    let awaiting_slot = awaits_a_slot(store, chosen, &run)?;
     let retried = RunEvent::ItemRetried {
         item: item.id.clone(),
         step,
@@ -202,15 +203,41 @@ pub fn retry(
     };
     writer.append(&run.id, &retried)?;
     drop(writer);
-    if awaiting_slot {
-        return reloaded(store, name, &run.id, &item.id);
-    }
-    drive_again(store, executor, name, &run.id, &item.id, now)
+    go_on_unless_awaiting(store, executor, name, &run.id, &item.id, awaiting_slot, now)
 }
 
-/// Drives the campaign's retried items awaiting a slot, oldest run first, as far as the items
-/// going on leave slots of `pools.active` free.
-pub fn start_retries_due(
+/// Whether an item of a campaign's run going on now would take its `pools.active` over its max;
+/// routine and Test run items always go on.
+fn awaits_a_slot(
+    store: &RunStore,
+    definition: &AutomationDefinition,
+    run: &RunState,
+) -> Result<bool, String> {
+    if definition.selector.is_none() || is_test(run) {
+        return Ok(false);
+    }
+    let max_active = max_active(store, definition)?;
+    Ok(!has_free_slot(store, &definition.name, max_active)?)
+}
+
+fn go_on_unless_awaiting(
+    store: &RunStore,
+    executor: &dyn Executor,
+    name: &str,
+    run_id: &str,
+    item: &str,
+    awaiting_slot: bool,
+    now: DateTime<Utc>,
+) -> Result<ItemControl, String> {
+    if awaiting_slot {
+        return reloaded(store, name, run_id, item);
+    }
+    drive_again(store, executor, name, run_id, item, now)
+}
+
+/// Drives the campaign's retried and handed-back items awaiting a slot, oldest run first, as far
+/// as the items going on leave slots of `pools.active` free.
+pub fn start_items_due_a_slot(
     store: &RunStore,
     executor: &dyn Executor,
     definition: &AutomationDefinition,
@@ -218,7 +245,7 @@ pub fn start_retries_due(
 ) -> Result<(), String> {
     let name = &definition.name;
     let writer = store.writer(name)?;
-    let due = retries_due(store, name, max_active(store, definition)?)?;
+    let due = items_due_a_slot(store, name, max_active(store, definition)?)?;
     for (run_id, item) in &due {
         let taken = RunEvent::ItemSlotTaken { item: item.clone() };
         writer.append(run_id, &taken)?;
