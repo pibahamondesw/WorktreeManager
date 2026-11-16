@@ -170,6 +170,7 @@ impl<R: Runtime> Sessions for ChatSessions<R> {
             resume: launch.resume.clone(),
             output_schema: launch.output_schema.clone(),
             env: launch.env.clone(),
+            name: Some(launch.name.clone()),
         };
         let policy = PermissionPolicy::Unattended(UnattendedPolicy {
             grants: launch.grants.clone(),

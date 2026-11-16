@@ -944,6 +944,7 @@ fn missing_executables_fail_and_pinned_codex_launches_keep_the_requested_thread(
         handoff: None,
         permission: Default::default(),
         output_schema: None,
+        name: None,
     };
     let missing = Codex::new("/missing-test-agent", None, None);
     assert!(missing.chat_launch(request(None)).is_err());
@@ -1672,6 +1673,7 @@ fn start_headless(
             resume: None,
             output_schema: None,
             env: vec![("TEST_ENV_NUMBER".into(), "13".into())],
+            name: None,
         },
         policy,
     )

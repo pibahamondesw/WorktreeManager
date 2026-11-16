@@ -42,6 +42,8 @@ pub(crate) struct ChatRequest {
     pub permission: PermissionPolicy,
     /// JSON schema every final reply of the session must follow.
     pub output_schema: Option<Value>,
+    /// Display name of a new conversation; agents that cannot name one at launch ignore it.
+    pub name: Option<String>,
 }
 
 /// A new conversation `fork_id` holding `source` up to (excluding) the user message `item_id`.

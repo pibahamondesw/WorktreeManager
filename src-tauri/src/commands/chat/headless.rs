@@ -47,12 +47,14 @@ pub(crate) struct SettledRequest {
 }
 
 /// Where a headless session runs, the conversation it continues if it is not a new one, the
-/// schema its final replies follow and the environment its agent process starts with.
+/// schema its final replies follow, the environment its agent process starts with and the name
+/// of a new conversation.
 pub(crate) struct HeadlessRequest {
     pub folders: Vec<String>,
     pub resume: Option<String>,
     pub output_schema: Option<Value>,
     pub env: Vec<(String, String)>,
+    pub name: Option<String>,
 }
 
 impl ChatRegistry {
@@ -83,6 +85,7 @@ impl ChatRegistry {
             handoff: None,
             permission: policy,
             output_schema: request.output_schema,
+            name: request.name,
         })?;
         launch.provider.set_headless();
         launch.command.envs(request.env);

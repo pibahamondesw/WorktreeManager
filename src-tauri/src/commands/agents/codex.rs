@@ -504,6 +504,7 @@ mod tests {
             handoff: None,
             permission,
             output_schema: None,
+            name: Some("Fix the parser".into()),
         }
     }
 
@@ -593,6 +594,7 @@ mod tests {
                 handoff: None,
                 permission: PermissionPolicy::Interactive,
                 output_schema: None,
+                name: None,
             })
             .is_err());
     }

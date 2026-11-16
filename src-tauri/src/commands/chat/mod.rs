@@ -39,7 +39,9 @@ pub(crate) use conversations::ConversationFork;
 pub(crate) use headless::{HeadlessRequest, SettledRequest, TurnEnd};
 pub use interrupted::record_interrupted_sessions;
 pub(crate) use model::{ChatItem, ItemKind, PlanUsage, UsageWindow};
-pub(crate) use sessions::{exchange, truncate, SessionList, SessionSummary, LIST_LIMIT};
+pub(crate) use sessions::{
+    exchange, truncate, truncate_to, SessionList, SessionSummary, LIST_LIMIT,
+};
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -1311,6 +1313,7 @@ pub async fn chat_open<R: Runtime>(
                 handoff: handoff.as_ref().map(|handoff| handoff.digest.clone()),
                 permission,
                 output_schema: None,
+                name: None,
             };
             adapter.chat_launch(request).map(|launch| (handoff, launch))
         })

@@ -49,7 +49,7 @@ use super::wait;
 use super::wait::Watchers;
 use super::watchers::{self, CliWatchForge};
 use crate::commands::agents::permission::Grant;
-use crate::commands::chat::{SettledRequest, TurnEnd};
+use crate::commands::chat::{truncate_to, SettledRequest, TurnEnd};
 use commands::{Item, TaskCommands};
 pub use leases::LeasePools;
 use leases::{item_pools_before, NoLeasePools, Quotas, StepLeases};
@@ -62,6 +62,7 @@ const ROUTINE_ITEM: &str = "routine";
 const NOOP_REPLY: &str = "NOOP";
 /// Longest reply kept in the run log as a step's output.
 const MAX_RECORDED_REPLY: usize = 64 * 1024;
+const SESSION_NAME_CHARS: usize = 60;
 
 /// The task a run works in: its id, branch and worktrees, the first one the working directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,6 +130,8 @@ pub struct SessionLaunch {
     pub resume: Option<String>,
     /// The environment of the leases held when the step starts, such as a test slot.
     pub env: Vec<(String, String)>,
+    /// What a new conversation is called, for the owner to find the item's sessions.
+    pub name: String,
 }
 
 /// Task operations, run with the same validation and persistence as the UI and the CLI.
@@ -818,6 +821,10 @@ impl ItemSteps<'_> {
             output_schema,
             resume: None,
             env,
+            name: session_name(
+                self.item,
+                step.fresh_session.then_some(request.step.id.as_str()),
+            ),
         };
         let session_id = match self.session_for(request, step, launch) {
             Ok(session_id) => session_id,
@@ -1167,6 +1174,20 @@ fn ended_report(end: TurnEnd) -> StepReport {
         }
         TurnEnd::TimedOut => failed(ProcessEnd::TimedOut, "timeout"),
         TurnEnd::Completed { .. } => failed(ProcessEnd::TurnCompleted, "agent_error"),
+    }
+}
+
+/// The item's title, or its id without one, followed by the step of a fresh session.
+fn session_name(item: &Item, fresh_step: Option<&str>) -> String {
+    let title = item
+        .title
+        .as_deref()
+        .map(|title| truncate_to(title, SESSION_NAME_CHARS))
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| truncate_to(&item.id, SESSION_NAME_CHARS));
+    match fresh_step {
+        Some(step) => format!("{title} · {step}"),
+        None => title,
     }
 }
 

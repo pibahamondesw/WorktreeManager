@@ -111,6 +111,7 @@ fn chat_sessions_run_turns_of_a_headless_agent_with_the_step_settings() {
         output_schema: None,
         resume: None,
         env: vec![("TEST_ENV_NUMBER".into(), "13".into())],
+        name: "Fix the parser · review".into(),
     };
 
     let session_id = sessions.start(&task, &launch).unwrap();
@@ -147,6 +148,7 @@ fn chat_sessions_run_turns_of_a_headless_agent_with_the_step_settings() {
         TurnEnd::Ended { code: None, .. }
     ));
     assert!(scratch.argv().contains("Bash(git commit *)"));
+    assert!(scratch.argv().contains("--name Fix the parser · review"));
     assert!(scratch.argv().starts_with("slot=13 "));
     let codex = SessionLaunch {
         agent: AgentSettings {
@@ -178,6 +180,7 @@ fn chat_sessions_hold_result_steps_to_their_schema_and_resume_conversations() {
         output_schema: Some(json!({ "type": "object" })),
         resume: Some("c1".into()),
         env: Vec::new(),
+        name: "Fix the parser".into(),
     };
     let task = worktree_task(&scratch);
     let transcripts = scratch.0.join(".claude/projects/elsewhere");
@@ -197,6 +200,7 @@ fn chat_sessions_hold_result_steps_to_their_schema_and_resume_conversations() {
     );
     let argv = scratch.argv();
     assert!(argv.contains(r#"--json-schema {"type":"object"}"#));
+    assert!(!argv.contains("--name"));
     assert!(argv.contains("NotebookEdit"));
     assert!(argv.contains("--resume c1"));
 }
