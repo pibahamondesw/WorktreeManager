@@ -440,13 +440,14 @@ impl RoutineExecutor {
         }
     }
 
-    /// The definition the run drives its items with: the file when it still has the pinned hash,
-    /// else the text kept for a run an item of which was retried.
+    /// The definition the run drives its items with: the file when it still has the hash the run
+    /// pins, which a request for it from before it adopted another may not, else the text kept for
+    /// a run an item of which was retried.
     fn pinned(&self, request: &RunRequest, run: &RunState) -> Option<AutomationDefinition> {
         let name = &request.automation;
-        let hash = &request.definition_hash;
+        let hash = run.pinned_hash().unwrap_or(&request.definition_hash);
         let current = self.definitions.current(name);
-        if let Some(definition) = current.filter(|definition| definition.hash == *hash) {
+        if let Some(definition) = current.filter(|definition| definition.hash == hash) {
             return Some(definition);
         }
         run.retried_hash.as_ref()?;

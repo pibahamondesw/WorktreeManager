@@ -400,57 +400,191 @@ fn a_waiting_routine_item_stops_with_its_run_or_its_definition() {
     );
 }
 
-/// A campaign item waiting on step `go` of a definition that changed since.
-fn waiting_on_a_changed_definition() -> (Harness, String) {
+/// The `go` step of a changed definition that an item waiting on it adopts: still a wait, with
+/// another signal and a timeout.
+const KEPT_WAIT: &str = "  - id: go\n    timeout: 1h\n    wait: { signal: other }\n";
+
+/// A campaign item waiting on step `go` of a definition whose steps became `changed_steps` since.
+fn waiting_on_a_changed_definition(changed_steps: &str) -> (Harness, String) {
     let steps = "steps:\n  - id: go\n    wait: { signal: deploy }\n";
     let harness = Harness::campaign(steps, by_branch(None), FakeSessions::default());
     harness.selector_printing(r#"{"items":[{"id":"a","version":"1"}]}"#);
     let run = harness.run();
     assert_eq!(item(&run, "a").status, ItemStatus::Waiting);
-    harness.scratch.define(&format!(
-        "{CAMPAIGN}steps:\n  - id: go\n    wait: {{ signal: other }}\n"
-    ));
+    harness
+        .scratch
+        .define(&format!("{CAMPAIGN}steps:\n{changed_steps}"));
     (harness, run.id)
 }
 
-/// The item failed on its wait step and a retry on the current definition waits there again.
-fn retried_from_its_wait(harness: &Harness, run_id: &str) {
-    let failed = harness.state(run_id);
-    let stranded = item(&failed, "a");
-    assert_eq!(stranded.status, ItemStatus::Failed);
-    assert_eq!(stranded.cause.as_deref(), Some("definition_changed"));
-    assert_eq!(stranded.phase.as_deref(), Some("go"));
+fn adoptions(harness: &Harness, run_id: &str) -> Vec<Vec<String>> {
+    harness
+        .events(run_id)
+        .into_iter()
+        .filter_map(|logged| match logged.event {
+            RunEvent::DefinitionAdopted { items, .. } => Some(items),
+            _ => None,
+        })
+        .collect()
+}
 
-    harness.retry(run_id, RetryDefinition::Current).unwrap();
-    wait_until(|| item(&harness.state(run_id), "a").status == ItemStatus::Waiting);
+fn rearmed_with_a_timeout(harness: &Harness, run_id: &str) -> bool {
+    let run = harness.state(run_id);
+    let wait = item(&run, "a").steps[0].wait.as_ref();
+    wait.is_some_and(|wait| wait.timeout_at_ms.is_some())
+}
+
+/// The item kept waiting on the same attempt, re-armed with the current definition's step, and
+/// goes on with that definition.
+fn adopted_on_its_wait(harness: &Harness, executor: &RoutineExecutor, run_id: &str) {
+    wait_until(|| rearmed_with_a_timeout(harness, run_id));
+    wait_until(|| executor.parked.lock().unwrap().len() == 1);
+    let run = harness.state(run_id);
+    assert_eq!(run.pinned_hash(), Some(harness.definition().hash.as_str()));
+    assert_eq!(attempts(item(&run, "a")), ["go#1:Waiting"]);
+    assert_eq!(adoptions(harness, run_id), [["a"]]);
+    let armed_a =
+        |event: &RunEvent| matches!(event, RunEvent::WaitArmed { item, .. } if item == "a");
+    assert_eq!(count(&harness.events(run_id), armed_a), 2);
+
     harness.signal(run_id, "go", None, json!({})).unwrap();
-    harness.executor.wake_ready();
+    executor.wake_ready();
     wait_until(|| item(&harness.state(run_id), "a").status == ItemStatus::Completed);
     assert_eq!(
         attempts(item(&harness.state(run_id), "a")),
+        ["go#1:Succeeded"]
+    );
+}
+
+#[test]
+fn a_waiting_item_adopts_a_changed_definition_that_keeps_its_wait_step_when_woken() {
+    let (harness, run_id) = waiting_on_a_changed_definition(KEPT_WAIT);
+
+    harness.executor.wake_ready();
+
+    adopted_on_its_wait(&harness, &harness.executor, &run_id);
+}
+
+#[test]
+fn a_waiting_item_adopts_a_definition_that_changed_before_a_restart() {
+    let (harness, run_id) = waiting_on_a_changed_definition(KEPT_WAIT);
+
+    let restarted = harness.rearmed(&run_id);
+
+    adopted_on_its_wait(&harness, &restarted, &run_id);
+}
+
+/// The item failed on its wait step and a retry on the current definition rests there again.
+fn failed_on_its_wait(harness: &Harness, run_id: &str) {
+    wait_until(|| item(&harness.state(run_id), "a").status == ItemStatus::Failed);
+    let failed = harness.state(run_id);
+    let stranded = item(&failed, "a");
+    assert_eq!(stranded.cause.as_deref(), Some("definition_changed"));
+    assert_eq!(stranded.phase.as_deref(), Some("go"));
+    assert!(adoptions(harness, run_id).is_empty());
+    assert!(harness.executor.parked.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_waiting_item_whose_step_changed_kind_fails_and_retries_from_it() {
+    let (harness, run_id) =
+        waiting_on_a_changed_definition("  - id: go\n    approval: { title: Ship? }\n");
+
+    harness.executor.wake_ready();
+
+    failed_on_its_wait(&harness, &run_id);
+    harness.retry(&run_id, RetryDefinition::Current).unwrap();
+    wait_until(|| item(&harness.state(&run_id), "a").status == ItemStatus::Waiting);
+    let approval = json!({ "decision": "approve" });
+    harness.signal(&run_id, "go", None, approval).unwrap();
+    harness.executor.wake_ready();
+    wait_until(|| item(&harness.state(&run_id), "a").status == ItemStatus::Completed);
+    assert_eq!(
+        attempts(item(&harness.state(&run_id), "a")),
         ["go#1:Waiting", "go#2:Succeeded"]
     );
 }
 
 #[test]
-fn a_waiting_item_whose_definition_changed_before_a_restart_fails_and_retries_from_its_wait() {
-    let (harness, run_id) = waiting_on_a_changed_definition();
+fn a_waiting_item_fails_when_its_step_is_gone_or_its_automation_is_no_longer_a_campaign() {
+    for changed in [
+        format!("{CAMPAIGN}steps:\n  - id: renamed\n    wait: {{ signal: deploy }}\n"),
+        format!("{TARGET}steps:\n{KEPT_WAIT}"),
+    ] {
+        let (harness, run_id) = waiting_on_a_changed_definition(KEPT_WAIT);
+        harness.scratch.define(&changed);
 
-    let restarted = harness.rearmed(&run_id);
+        harness.executor.wake_ready();
 
-    assert!(restarted.parked.lock().unwrap().is_empty());
-    retried_from_its_wait(&harness, &run_id);
+        failed_on_its_wait(&harness, &run_id);
+    }
 }
 
 #[test]
-fn a_waiting_item_whose_definition_changed_fails_when_woken_and_retries_from_its_wait() {
-    let (harness, run_id) = waiting_on_a_changed_definition();
+fn waiting_items_adopt_a_changed_definition_once_no_item_of_their_run_goes_on_the_old_one() {
+    let steps = "pools: { active: 2 }\nsteps:\n  - id: go\n    wait: { signal: deploy }\n";
+    let harness = Harness::campaign(steps, by_branch(None), FakeSessions::default());
+    harness.selector_printing(ITEMS_AB);
+    let run = harness.run();
+    harness.scratch.define(&format!(
+        "{CAMPAIGN}pools: {{ active: 2 }}\nsteps:\n{KEPT_WAIT}"
+    ));
+    let move_b = |status| {
+        let moved = RunEvent::ItemStatus {
+            item: "b".into(),
+            status,
+            phase: Some("go".into()),
+            stage: None,
+            cause: None,
+            counter: None,
+        };
+        let writer = harness.scratch.store().writer("demo").unwrap();
+        writer.append(&run.id, &moved).unwrap();
+    };
+    move_b(ItemStatus::Active);
 
     harness.executor.wake_ready();
-    wait_until(|| item(&harness.state(&run_id), "a").status == ItemStatus::Failed);
+    wait_until(|| harness.executor.parked.lock().unwrap().len() == 1);
 
-    assert!(harness.executor.parked.lock().unwrap().is_empty());
-    retried_from_its_wait(&harness, &run_id);
+    assert!(adoptions(&harness, &run.id).is_empty());
+    assert_eq!(
+        item(&harness.state(&run.id), "a").status,
+        ItemStatus::Waiting
+    );
+    move_b(ItemStatus::Canceled);
+    harness.executor.wake_ready();
+    adopted_on_its_wait(&harness, &harness.executor, &run.id);
+}
+
+#[test]
+fn an_item_driven_on_a_changed_definition_takes_the_parked_items_of_its_run_along() {
+    let steps = "pools: { active: 2 }\nsteps:\n  - id: go\n    wait: { signal: deploy }\n";
+    let harness = Harness::campaign(steps, by_branch(None), FakeSessions::default());
+    harness.selector_printing(ITEMS_AB);
+    let run = harness.run();
+    harness.scratch.define(&format!(
+        "{CAMPAIGN}pools: {{ active: 2 }}\nsteps:\n{KEPT_WAIT}"
+    ));
+    let key = |item: &str| ("demo".to_string(), run.id.clone(), item.to_string());
+    let request = harness
+        .executor
+        .parked
+        .lock()
+        .unwrap()
+        .remove(&key("a"))
+        .unwrap();
+
+    harness.executor.drive_again(request, vec!["a".into()]);
+
+    wait_until(|| harness.executor.parked.lock().unwrap().len() == 2);
+    let armed = |event: &RunEvent| matches!(event, RunEvent::WaitArmed { .. });
+    wait_until(|| count(&harness.events(&run.id), armed) == 4);
+    assert_eq!(adoptions(&harness, &run.id), [["a", "b"]]);
+    let parked = harness.executor.parked.lock().unwrap();
+    let hash = harness.definition().hash;
+    assert!(parked
+        .values()
+        .all(|request| request.definition_hash == hash));
 }
 
 #[test]

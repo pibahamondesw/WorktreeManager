@@ -287,7 +287,7 @@ impl<C: Clock> Scheduler<C> {
 
     /// Resumes the runs and campaign items an earlier app process was driving when it quit, and
     /// ends those it left active otherwise: after a crash, past `MAX_RESUMES` quits or on a
-    /// definition other than the one the run pinned.
+    /// definition other than the one the run pinned, which waiting items adopt or fail on.
     pub fn recover_interrupted(&mut self, automations: &[Automation]) {
         let boot_ms = self.clock.now().timestamp_millis() as u64;
         for automation in automations {
@@ -323,9 +323,6 @@ impl<C: Clock> Scheduler<C> {
         for (run, resumed) in &recoveries {
             let kept = resumed.as_ref().map(|(_, items)| items.as_slice());
             end_interrupted(&writer, run, kept)?;
-            if !is_active(run.status) && pins_another_definition(automation, run) {
-                end_waiting_on_changed_definition(&writer, run)?;
-            }
         }
         drop(writer);
         for (run, resumed) in recoveries {
@@ -348,13 +345,15 @@ impl<C: Clock> Scheduler<C> {
     }
 
     /// The run's request and the open items the app quit while driving, if any may resume; none
-    /// for a run the app quit before its first item, which restarts.
+    /// for a run the app quit before its first item, which restarts. On a definition other than
+    /// the one the run pinned only its waiting items go on, to adopt it or fail.
     fn resumable(
         &self,
         automation: &Automation,
         run: &RunState,
     ) -> Result<Option<(RunRequest, Vec<String>)>, String> {
-        if pins_another_definition(automation, run) {
+        let changed = pins_another_definition(automation, run);
+        if changed && is_active(run.status) {
             return Ok(None);
         }
         let Some(request) = recorded_request(&automation.name, run) else {
@@ -362,6 +361,7 @@ impl<C: Clock> Scheduler<C> {
         };
         let history = self.store.events(&automation.name, &run.id)?;
         let items: Vec<String> = open_items(run)
+            .filter(|_| !changed)
             .chain(waiting_items(run))
             .filter(|item| {
                 parked_on(&history, &item.id).is_some()
@@ -408,18 +408,6 @@ fn pins_another_definition(automation: &Automation, run: &RunState) -> bool {
         && run
             .pinned_hash()
             .is_some_and(|pinned| pinned != automation.definition_hash)
-}
-
-/// Fails the waiting items of a completed campaign run whose definition changed, as they could
-/// never wake on it, so a retry can take them from their wait step.
-fn end_waiting_on_changed_definition(
-    writer: &AutomationWriter,
-    run: &RunState,
-) -> Result<(), String> {
-    for item in waiting_items(run) {
-        fail_item(writer, run, item, DEFINITION_CHANGED_CAUSE)?;
-    }
-    Ok(())
 }
 
 pub(super) fn fail_item(
