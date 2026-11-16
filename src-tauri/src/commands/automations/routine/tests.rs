@@ -700,6 +700,9 @@ fn steps_share_a_session_unless_they_ask_for_a_fresh_one() {
     assert_eq!(*harness.sessions.closed.lock().unwrap(), ["s1", "s2"]);
     let started = harness.sessions.started.lock().unwrap();
     assert_eq!(started[1].agent.effort.as_deref(), Some("high"));
+    let item = &run.items[0].id;
+    assert_eq!(started[0].name, *item);
+    assert_eq!(started[1].name, format!("{item} · review"));
     let prompt = &harness.prompts()[0];
     assert!(prompt.starts_with(&format!(
         "Use the fix-it skill.\n\n{INSTRUCTIONS}\n\nFix the first one."
@@ -1468,3 +1471,37 @@ mod operator;
 mod resume;
 mod takeover;
 mod waits;
+
+fn titled_item(title: Option<&str>) -> Item {
+    Item {
+        id: "style-x".into(),
+        version: "1".into(),
+        title: title.map(String::from),
+        data: serde_json::Map::new(),
+    }
+}
+
+#[test]
+fn sessions_are_named_after_their_item_and_a_fresh_session_after_its_step() {
+    let item = titled_item(Some("Lint: Style/X (3 files)"));
+    assert_eq!(session_name(&item, None), "Lint: Style/X (3 files)");
+    assert_eq!(
+        session_name(&item, Some("review")),
+        "Lint: Style/X (3 files) · review"
+    );
+    assert_eq!(session_name(&titled_item(None), None), "style-x");
+    assert_eq!(session_name(&titled_item(Some(" \n ")), None), "style-x");
+}
+
+#[test]
+fn session_names_keep_one_short_line_of_the_title() {
+    let long = "x".repeat(SESSION_NAME_CHARS + 10);
+    let name = session_name(
+        &titled_item(Some(&format!("\n{long}\nmore"))),
+        Some("review"),
+    );
+    assert_eq!(
+        name,
+        format!("{}… · review", "x".repeat(SESSION_NAME_CHARS))
+    );
+}

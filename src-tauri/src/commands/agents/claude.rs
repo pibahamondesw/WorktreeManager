@@ -259,7 +259,11 @@ impl AgentAdapter for Claude {
                         &session_id,
                         resume.is_some(),
                         &request.extra_dirs,
-                        &session_args(&request.permission, request.output_schema.as_ref()),
+                        &session_args(
+                            &request.permission,
+                            request.output_schema.as_ref(),
+                            request.name.as_deref().filter(|_| resume.is_none()),
+                        ),
                     ),
                 )
                 .command(),
@@ -525,11 +529,18 @@ const ALWAYS_DENIED: [&str; 7] = [
 const EDITING_TOOLS: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
 
 /// The `--json-schema` comes first: the tool-rule flags after it take every following value.
-fn session_args(policy: &PermissionPolicy, output_schema: Option<&Value>) -> Vec<String> {
+fn session_args(
+    policy: &PermissionPolicy,
+    output_schema: Option<&Value>,
+    name: Option<&str>,
+) -> Vec<String> {
+    let name = name
+        .into_iter()
+        .flat_map(|name| ["--name".to_string(), name.to_string()]);
     let schema = output_schema
         .into_iter()
         .flat_map(|schema| ["--json-schema".to_string(), schema.to_string()]);
-    schema.chain(permission_args(policy)).collect()
+    name.chain(schema).chain(permission_args(policy)).collect()
 }
 
 /// Interactive sessions let Claude's classifier approve what it can and ask about the rest.
@@ -1135,15 +1146,25 @@ mod tests {
     }
 
     #[test]
-    fn a_session_schema_precedes_the_variadic_rule_flags() {
+    fn a_session_name_and_schema_precede_the_variadic_rule_flags() {
         let schema = json!({ "type": "object" });
-        let args = session_args(&PermissionPolicy::Interactive, Some(&schema));
-        assert_eq!(
-            args[..3],
-            ["--json-schema", r#"{"type":"object"}"#, "--permission-mode"]
+        let args = session_args(
+            &PermissionPolicy::Interactive,
+            Some(&schema),
+            Some("Fix the parser"),
         );
         assert_eq!(
-            session_args(&PermissionPolicy::Interactive, None),
+            args[..5],
+            [
+                "--name",
+                "Fix the parser",
+                "--json-schema",
+                r#"{"type":"object"}"#,
+                "--permission-mode"
+            ]
+        );
+        assert_eq!(
+            session_args(&PermissionPolicy::Interactive, None, None),
             permission_args(&PermissionPolicy::Interactive)
         );
     }
@@ -1169,6 +1190,7 @@ mod tests {
                 handoff: None,
                 permission: PermissionPolicy::Interactive,
                 output_schema: None,
+                name: None,
             })
             .is_err());
     }

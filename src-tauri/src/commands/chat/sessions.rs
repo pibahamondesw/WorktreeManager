@@ -34,15 +34,20 @@ pub struct SessionList {
 }
 
 pub(crate) fn truncate(text: &str) -> String {
+    truncate_to(text, TITLE_CHARS)
+}
+
+/// The first non-blank line of `text`, cut to `limit` characters.
+pub(crate) fn truncate_to(text: &str, limit: usize) -> String {
     let line = text
         .lines()
         .find(|l| !l.trim().is_empty())
         .unwrap_or("")
         .trim();
-    if line.chars().count() <= TITLE_CHARS {
+    if line.chars().count() <= limit {
         return line.to_string();
     }
-    let cut: String = line.chars().take(TITLE_CHARS).collect();
+    let cut: String = line.chars().take(limit).collect();
     format!("{cut}…")
 }
 
