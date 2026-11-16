@@ -457,6 +457,8 @@ pub enum Effect {
     TaskLog { entry: String },
     #[serde(rename = "wtm.task_delete_clean")]
     TaskDeleteClean,
+    #[serde(rename = "wtm.chat_open")]
+    ChatOpen(ChatOpenEffect),
 }
 
 impl Effect {
@@ -472,6 +474,7 @@ impl Effect {
             Self::TaskCreate => "wtm.task_create",
             Self::TaskLog { .. } => "wtm.task_log",
             Self::TaskDeleteClean => "wtm.task_delete_clean",
+            Self::ChatOpen(_) => "wtm.chat_open",
         }
     }
 
@@ -486,6 +489,7 @@ impl Effect {
             Self::TaskCreate => Verb::TaskCreate,
             Self::TaskLog { .. } => Verb::TaskLog,
             Self::TaskDeleteClean => Verb::TaskDelete,
+            Self::ChatOpen(_) => Verb::ChatOpen,
         }
     }
 
@@ -513,6 +517,19 @@ pub struct PullRequestEffect {
     pub lang: Option<String>,
     pub draft: Option<bool>,
     pub assignee: Option<String>,
+}
+
+/// `wtm.chat_open`: a chat in the item's task, opened as if the owner typed `message` in it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatOpenEffect {
+    pub agent: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    /// Template of the conversation's name.
+    pub name: Option<String>,
+    /// Template of the message.
+    pub message: String,
 }
 
 /// `linear.upsert` overrides of the `tracker.linear` fields.
@@ -604,10 +621,11 @@ pub enum Verb {
     TaskCreate,
     TaskDelete,
     TaskLog,
+    ChatOpen,
 }
 
 impl Verb {
-    pub const ALL: [Verb; 12] = [
+    pub const ALL: [Verb; 13] = [
         Self::Commit,
         Self::Push,
         Self::ForcePush,
@@ -620,6 +638,7 @@ impl Verb {
         Self::TaskCreate,
         Self::TaskDelete,
         Self::TaskLog,
+        Self::ChatOpen,
     ];
 
     /// The name definitions use.
@@ -637,6 +656,7 @@ impl Verb {
             Self::TaskCreate => "task_create",
             Self::TaskDelete => "task_delete",
             Self::TaskLog => "task_log",
+            Self::ChatOpen => "chat_open",
         }
     }
 }

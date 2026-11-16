@@ -18,6 +18,7 @@ pub use codex::purge_stale_chat_images;
 mod conversations;
 mod file_preview;
 mod files;
+pub mod hand_over;
 mod handoff;
 mod headless;
 pub mod history;

@@ -143,6 +143,8 @@ pub fn run() {
                 commands::scripts::write_repo_setup,
                 commands::chat::chat_stop,
                 commands::chat::chat_open,
+                commands::chat::hand_over::chat_hand_over,
+                commands::chat::hand_over::chat_await_reply,
                 commands::chat::chat_send,
                 commands::chat::history::chat_rewind_preview,
                 commands::chat::history::chat_history,

@@ -258,6 +258,7 @@ struct Run {
     lease_env: Vec<(String, String)>,
     pushed: Vec<String>,
     published: Vec<(&'static str, String)>,
+    chats: Vec<String>,
 }
 
 impl Run {
@@ -273,6 +274,7 @@ impl Run {
             lease_env: Vec::new(),
             pushed: Vec::new(),
             published: Vec::new(),
+            chats: Vec::new(),
         }
     }
 
@@ -321,6 +323,7 @@ impl Run {
             lease_env: &self.lease_env,
             pushed: &self.pushed,
             published: &self.published,
+            chats: &self.chats,
         };
         let report = publisher.publish(&request, &effects, &scope);
         let mut events = vec![
@@ -455,6 +458,7 @@ fn test_runs_stage_every_effect_without_running_any() {
             entry: "Opened {pr.url}".into(),
         },
         Effect::TaskDeleteClean,
+        Effect::ChatOpen(chat_open("Review {pr.url}")),
     ];
 
     let (report, effects) = run.publish(&mut publisher(&forge, &bridge), 1, effects);
@@ -482,6 +486,7 @@ fn test_runs_stage_every_effect_without_running_any() {
             "Create or reuse the task on wtm/demo/1",
             "Append to the task log: Opened <PR URL>",
             "Delete task t1 and its worktrees if they are clean",
+            "Open a claude chat in task t1: Review <PR URL>",
         ]
     );
     assert!(forge.calls().is_empty());
@@ -1108,6 +1113,151 @@ fn task_create_creates_the_task_and_keeps_setup_warnings() {
     let without_bases = Run::all();
     without_bases.publish(&mut publisher(&forge, &bridge), 1, vec![Effect::TaskCreate]);
     assert!(bridge.calls()[3].1["input"].get("baseRefs").is_none());
+}
+
+fn chat_open(message: &str) -> ChatOpenEffect {
+    ChatOpenEffect {
+        agent: "claude".into(),
+        model: None,
+        effort: None,
+        name: None,
+        message: message.into(),
+    }
+}
+
+#[test]
+fn chat_open_opens_the_task_chat_once_per_step_and_records_its_conversation() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(FakeBridge::answering(|_, params| {
+        let continued = params["agent"] == "codex";
+        ok(json!({ "conversationId": "c1", "continued": continued }))
+    }));
+    let mut run = Run::all();
+    let named = Effect::ChatOpen(ChatOpenEffect {
+        model: Some("opus".into()),
+        effort: Some("high".into()),
+        name: Some("Review {item.id}".into()),
+        ..chat_open("Look at {task.branch}")
+    });
+    let (report, effects) = run.publish(&mut publisher(&forge, &bridge), 1, vec![named.clone()]);
+    assert_eq!(report.outcome, StepOutcome::Success);
+    assert_eq!(effects[0].status, EffectStatus::Executed);
+    assert_eq!(effects[0].detail.as_deref(), Some("Opened a claude chat"));
+    assert_eq!(effects[0].reference.as_deref(), Some("claude:c1"));
+    assert_eq!(
+        bridge.calls(),
+        [(
+            "task.chat".into(),
+            json!({
+                "id": "t1", "agent": "claude", "message": "Look at wtm/demo/1",
+                "model": "opus", "effort": "high", "name": "Review routine",
+            })
+        )]
+    );
+
+    run.chats = vec!["codex:c0".into(), "claude:c1".into()];
+    let (_, effects) = run.publish(&mut publisher(&forge, &bridge), 2, vec![named]);
+    assert_eq!(effects[0].status, EffectStatus::Reconciled);
+    assert_eq!(effects[0].reference.as_deref(), Some("claude:c1"));
+    assert_eq!(bridge.calls().len(), 1);
+
+    run.chats.clear();
+    let codex = Effect::ChatOpen(ChatOpenEffect {
+        agent: "codex".into(),
+        ..chat_open("Go on")
+    });
+    let (_, effects) = run.publish(&mut publisher(&forge, &bridge), 3, vec![codex]);
+    assert_eq!(
+        effects[0].detail.as_deref(),
+        Some("Sent the message to the codex chat running in the task")
+    );
+    assert_eq!(
+        bridge.calls()[1].1,
+        json!({ "id": "t1", "agent": "codex", "message": "Go on" })
+    );
+}
+
+#[test]
+fn chat_open_needs_its_verb_and_fails_with_the_operation() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let effect = || vec![Effect::ChatOpen(chat_open("Review"))];
+    let (report, effects) = Run::allowing(&[Verb::TaskLog]).publish(
+        &mut publisher(&forge, &Arc::new(silent())),
+        1,
+        effect(),
+    );
+    assert_eq!(report.cause.as_deref(), Some("unauthorized:chat_open"));
+    assert_eq!(statuses(&effects), [EffectStatus::Denied]);
+
+    let failing = Arc::new(FakeBridge::answering(|_, _| failure("chat_failed")));
+    let (report, effects) = Run::all().publish(&mut publisher(&forge, &failing), 1, effect());
+    assert_eq!(report.cause.as_deref(), Some("chat_failed happened"));
+    assert_eq!(statuses(&effects), [EffectStatus::Failed]);
+}
+
+#[test]
+fn opened_chats_are_those_of_the_item_and_step_that_went_through() {
+    let recorded = |item: &str, step: &str, effect: &str, status, reference: Option<&str>| {
+        RunEvent::EffectRecorded {
+            item: item.into(),
+            step: step.into(),
+            attempt: 1,
+            effect: effect.into(),
+            status,
+            detail: None,
+            reference: reference.map(String::from),
+            warnings: Vec::new(),
+        }
+    };
+    let events = [
+        recorded(
+            ITEM,
+            "hand",
+            "wtm.chat_open",
+            EffectStatus::Executed,
+            Some("claude:c1"),
+        ),
+        recorded(
+            ITEM,
+            "hand",
+            "wtm.chat_open",
+            EffectStatus::Reconciled,
+            Some("codex:c2"),
+        ),
+        recorded(
+            ITEM,
+            "hand",
+            "wtm.chat_open",
+            EffectStatus::Failed,
+            Some("claude:c3"),
+        ),
+        recorded(ITEM, "hand", "wtm.chat_open", EffectStatus::Staged, None),
+        recorded(
+            ITEM,
+            "other",
+            "wtm.chat_open",
+            EffectStatus::Executed,
+            Some("claude:c4"),
+        ),
+        recorded(
+            "2",
+            "hand",
+            "wtm.chat_open",
+            EffectStatus::Executed,
+            Some("claude:c5"),
+        ),
+        recorded(
+            ITEM,
+            "hand",
+            "wtm.task_log",
+            EffectStatus::Executed,
+            Some("/vault"),
+        ),
+    ];
+    assert_eq!(
+        opened_chats(&events, ITEM, "hand"),
+        ["claude:c1", "codex:c2"]
+    );
 }
 
 #[test]

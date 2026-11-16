@@ -102,6 +102,30 @@ export interface CreateTaskInput {
   baseRefs?: Record<string, string>;
 }
 
+/** A message the owner would type in the task's chat, sent on their behalf. */
+export interface TaskChatInput {
+  agent: AgentId;
+  message: string;
+  model?: string;
+  effort?: string;
+  /** Names a new conversation; agents that cannot name one leave it unnamed. */
+  name?: string;
+  /** Holds a new conversation's replies to this JSON schema; needs `wait`. */
+  schema?: Record<string, unknown>;
+  /** Waits for the turn to end and returns its reply. */
+  wait?: boolean;
+}
+
+export interface TaskChat {
+  taskId: string;
+  agent: AgentId;
+  sessionId: string;
+  conversationId: string;
+  /** The message went to the agent's chat still running in the task. */
+  continued: boolean;
+  reply?: unknown;
+}
+
 export interface DeleteOptions {
   deleteWorktrees: boolean;
   force?: boolean;
@@ -1023,6 +1047,37 @@ export class Operations {
 
   moveMarkedIssue(workspaceId: string, marker: string, state: string) {
     return linearFailure(this.linear(workspaceId).moveMarkedIssue(marker, state));
+  }
+
+  /**
+   * Sends a message to the task agent's chat as the owner would type it, as its primary
+   * conversation, and makes the agent the one opening the task shows.
+   */
+  async openTaskChat(id: string, input: TaskChatInput): Promise<TaskChat> {
+    const task = this.liveTask(id);
+    const chatFailure = (error: unknown) => {
+      throw new OperationError("chat_failed", String(error));
+    };
+    const started = await invoke<Omit<TaskChat, "taskId" | "agent">>("chat_hand_over", {
+      request: {
+        taskId: id,
+        agent: input.agent,
+        folders: task.members.map((member) => member.path),
+        model: input.model ?? null,
+        effort: input.effort ?? null,
+        name: input.name ?? null,
+        message: input.message,
+        schema: input.schema ?? null,
+      },
+    }).catch(chatFailure);
+    await this.setTaskAgent(id, input.agent);
+    const chat: TaskChat = { taskId: id, agent: input.agent, ...started };
+    if (!input.wait) return chat;
+    const reply = await invoke("chat_await_reply", {
+      sessionId: started.sessionId,
+      structured: input.schema !== undefined,
+    }).catch(chatFailure);
+    return { ...chat, reply };
   }
 
   /** Appends an automation's entry to the task log once per key. */
