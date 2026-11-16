@@ -1,7 +1,8 @@
 //! Leases of the global pools a step `uses`. The app's broker queues every holder of a pool; each
 //! automation also holds at most its `pools` limit of a pool at once, so one campaign cannot take
 //! every slot. A valued pool limits the values the automation may lease and may keep a lease for
-//! the item beyond the attempt that took it.
+//! the item beyond the attempt that took it. An item driven again past the step that took an
+//! `item` lease, after it rested, was retried or the app restarted, takes it again.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -9,7 +10,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use super::super::command::HeldLeases;
-use super::super::definition::{LeaseHold, ValuedPool};
+use super::super::definition::{LeaseHold, Step, StepKind, ValuedPool};
 use super::super::pipeline::StepRequest;
 
 const QUOTA_TICK: Duration = Duration::from_millis(200);
@@ -97,17 +98,21 @@ pub(super) struct StepLeases {
     pub run_id: String,
     pub limits: Arc<BTreeMap<String, u64>>,
     pub valued: Arc<BTreeMap<String, ValuedPool>>,
+    /// The `item` pools the steps before each step that is not a wait use, by step id.
+    pub item_pools_before: Arc<BTreeMap<String, Vec<String>>>,
     /// Waiting for a lease gives up then.
     pub deadline: Instant,
     pub kept: RefCell<Vec<KeptLease>>,
 }
 
 impl StepLeases {
-    /// Every pool of the step's `uses`, in order, plus the leases the item keeps. The attempt's
-    /// own leases are released together when the result drops; kept ones stay with the item.
+    /// Every pool of the step's `uses`, in order, plus the leases the item keeps, taking again
+    /// those of earlier steps it no longer keeps. The attempt's own leases are released together
+    /// when the result drops; kept ones stay with the item.
     pub fn hold(&self, request: &StepRequest) -> Result<HeldLeases, String> {
         let mut held: Vec<HeldLeases> = Vec::new();
-        for pool in &request.step.uses {
+        let earlier = self.item_pools_before.get(&request.step.id);
+        for pool in earlier.into_iter().flatten().chain(&request.step.uses) {
             let valued = self.valued.get(pool);
             let hold = valued.map_or(LeaseHold::Step, |valued| valued.hold);
             if hold != LeaseHold::Step && self.keeps(pool) {
@@ -184,4 +189,27 @@ impl StepLeases {
             release: Some(Box::new(move || drop(both))),
         })
     }
+}
+
+/// For each step that is not a wait, the pools with `hold: item` that the steps before it use, in
+/// order: an item that reaches the step without them takes them again.
+pub(super) fn item_pools_before(
+    steps: &[Step],
+    valued: &BTreeMap<String, ValuedPool>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut earlier: Vec<String> = Vec::new();
+    let mut before = BTreeMap::new();
+    for step in steps {
+        if !matches!(step.kind, StepKind::Wait(_) | StepKind::Approval(_)) {
+            before.insert(step.id.clone(), earlier.clone());
+        }
+        let held_by_item =
+            |pool: &&String| valued.get(*pool).map(|valued| valued.hold) == Some(LeaseHold::Item);
+        for pool in step.uses.iter().filter(held_by_item) {
+            if !earlier.contains(pool) {
+                earlier.push(pool.clone());
+            }
+        }
+    }
+    before
 }
