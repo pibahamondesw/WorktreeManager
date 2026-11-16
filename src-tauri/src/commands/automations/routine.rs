@@ -52,7 +52,7 @@ use crate::commands::agents::permission::Grant;
 use crate::commands::chat::{SettledRequest, TurnEnd};
 use commands::{Item, TaskCommands};
 pub use leases::LeasePools;
-use leases::{NoLeasePools, Quotas, StepLeases};
+use leases::{item_pools_before, NoLeasePools, Quotas, StepLeases};
 pub use live_turns::LiveTurns;
 use prompt::{PriorStep, PromptInput};
 use takeover::Takeovers;
@@ -514,6 +514,10 @@ impl RoutineExecutor {
             run_id: request.run_id.clone(),
             limits: Arc::new(definition.pools.leases.clone()),
             valued: Arc::new(definition.pools.valued.clone()),
+            item_pools_before: Arc::new(item_pools_before(
+                &definition.steps,
+                &definition.pools.valued,
+            )),
             deadline,
             kept: Default::default(),
         };

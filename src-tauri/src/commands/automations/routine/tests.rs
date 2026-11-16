@@ -1021,6 +1021,7 @@ fn commands_fail_for_repositories_without_a_worktree_in_the_task() {
             run_id: "r1".into(),
             limits: Arc::default(),
             valued: Arc::default(),
+            item_pools_before: Arc::default(),
             deadline: Instant::now(),
             kept: Default::default(),
         },

@@ -43,7 +43,7 @@ impl Harness {
             .unwrap()
     }
 
-    fn signal(
+    pub(super) fn signal(
         &self,
         run_id: &str,
         step: &str,
@@ -60,7 +60,7 @@ impl Harness {
         signal(&self.scratch.store(), &Idle, &self.definition(), request)
     }
 
-    fn state(&self, run_id: &str) -> RunState {
+    pub(super) fn state(&self, run_id: &str) -> RunState {
         self.scratch.store().run("demo", run_id).unwrap()
     }
 

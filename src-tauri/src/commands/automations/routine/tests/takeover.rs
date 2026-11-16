@@ -24,7 +24,7 @@ impl Harness {
     }
 
     /// Waits for the threads driving the run to end and returns it.
-    fn settled(&self, run_id: &str) -> RunState {
+    pub(super) fn settled(&self, run_id: &str) -> RunState {
         let deadline = Instant::now() + Duration::from_secs(10);
         while self.executor.owns(run_id) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
@@ -62,7 +62,7 @@ impl Harness {
         self.retry_from(run_id, choice, None)
     }
 
-    fn retry_from(
+    pub(super) fn retry_from(
         &self,
         run_id: &str,
         choice: RetryDefinition,

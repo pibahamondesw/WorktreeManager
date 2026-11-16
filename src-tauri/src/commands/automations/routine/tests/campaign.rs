@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::commands::automations::actions::intervene::RetryDefinition;
 use crate::commands::automations::command::HeldLeases;
 use crate::commands::automations::routine::leases::Quotas;
 use crate::commands::automations::store::events::{ItemState, RunOutcome};
@@ -479,6 +480,49 @@ steps:
     let holder = format!("test_slot:automation:demo/{}/routine", run.id);
     assert_eq!(log.holders, [holder]);
     assert_eq!((log.held, log.released), (0, 1));
+}
+
+#[test]
+fn an_item_driven_again_past_the_step_that_took_its_item_lease_takes_it_again() {
+    let worktree = Scratch::new();
+    let steps = r#"pools: { test_slot: { values: [13, 14], hold: item } }
+steps:
+  - id: implement
+    agent: {}
+    uses: [test_slot]
+  - id: deploy
+    wait: { signal: deploy }
+  - id: verify
+    command: [/bin/sh, -c, '(printenv SLOT || echo none) >> slots.txt; test -f ready']
+"#;
+    let (harness, pools) = leased_routine(steps, &worktree);
+    let slots = || fs::read_to_string(worktree.0.join("slots.txt")).unwrap_or_default();
+    let leases = || {
+        let log = pools.0.lock().unwrap();
+        (log.holders.len(), log.held, log.released)
+    };
+
+    let run = harness.run();
+    assert_eq!(run.items[0].status, ItemStatus::Waiting);
+    assert_eq!(leases(), (1, 0, 1));
+
+    harness.signal(&run.id, "deploy", None, json!({})).unwrap();
+    harness.executor.wake_ready();
+    wait_until(|| harness.state(&run.id).status == RunStatus::Failed);
+    assert_eq!(slots(), "13\n");
+    assert_eq!(leases(), (2, 0, 2));
+
+    fs::write(worktree.0.join("ready"), "").unwrap();
+    harness
+        .retry_from(&run.id, RetryDefinition::Current, Some("verify"))
+        .unwrap();
+    let retried = harness.settled(&run.id);
+
+    assert_eq!(retried.status, RunStatus::Completed, "{retried:?}");
+    assert_eq!(slots(), "13\n13\n");
+    let holder = format!("test_slot:automation:demo/{}/routine", run.id);
+    assert_eq!(pools.0.lock().unwrap().holders, [holder.as_str(); 3]);
+    assert_eq!(leases(), (3, 0, 3));
 }
 
 #[test]
