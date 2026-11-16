@@ -219,6 +219,13 @@ pub enum RunEvent {
     ItemSlotTaken {
         item: String,
     },
+    /// The run goes on with the current definition, `definition_hash`, which it pins from then
+    /// on: its `items` waited on a step the definition still has with the same id and kind, and
+    /// re-arm their wait with it.
+    DefinitionAdopted {
+        definition_hash: String,
+        items: Vec<String>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -445,6 +452,9 @@ pub struct RunState {
     pub reopened_at_ms: Option<u64>,
     /// The definition the latest retry pinned, over the one the run was claimed with.
     pub retried_hash: Option<String>,
+    /// The current definition the run's waiting items adopted after it changed, unless a retry
+    /// pinned another since.
+    pub adopted_hash: Option<String>,
     pub items: Vec<ItemState>,
     pub task_id: Option<String>,
     pub task_error: Option<TaskError>,
@@ -571,6 +581,7 @@ pub fn reduce(id: &str, events: impl IntoIterator<Item = LoggedEvent>) -> RunSta
         ended_at_ms: None,
         reopened_at_ms: None,
         retried_hash: None,
+        adopted_hash: None,
         items: Vec::new(),
         task_id: None,
         task_error: None,
@@ -813,7 +824,14 @@ impl RunState {
                         item.counters.remove(&counter);
                     }
                     self.retried_hash = Some(definition_hash);
+                    self.adopted_hash = None;
                 }
+            }
+            RunEvent::DefinitionAdopted {
+                definition_hash, ..
+            } => {
+                self.retried_hash = None;
+                self.adopted_hash = Some(definition_hash);
             }
             RunEvent::ItemSlotTaken { item } => {
                 if let Some(item) = self.open_item(&item).filter(|item| awaits_slot(item)) {
@@ -842,6 +860,7 @@ impl RunState {
     pub fn pinned_hash(&self) -> Option<&str> {
         self.retried_hash
             .as_deref()
+            .or(self.adopted_hash.as_deref())
             .or_else(|| self.trigger.as_ref()?.definition_hash.as_deref())
     }
 

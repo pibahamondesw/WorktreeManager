@@ -93,7 +93,8 @@ impl Watchers {
     }
 }
 
-/// What the log holds about one open attempt of a `wait` or `approval` step.
+/// What the log holds about one open attempt of a `wait` or `approval` step. An attempt whose
+/// item adopted another definition since it was armed is armed again.
 #[derive(Debug, Default, PartialEq)]
 pub struct WaitLog {
     pub armed: Option<ArmedWait>,
@@ -116,6 +117,10 @@ impl WaitLog {
                 } if armed_item == item && armed_step == step && *armed_attempt == attempt => {
                     log.armed = Some(wait.clone());
                     log.armed_at_ms = Some(logged.at_ms);
+                }
+                RunEvent::DefinitionAdopted { items, .. } if items.iter().any(|id| id == item) => {
+                    log.armed = None;
+                    log.armed_at_ms = None;
                 }
                 RunEvent::StepSignaled {
                     item: signaled_item,
