@@ -1,6 +1,6 @@
 //! Codex through the installed `codex app-server` (JSON-RPC over stdio). Verified against
-//! codex-cli 0.155.1: initialize → account/read → thread/resume|start → turn/start (review/start from 0.159.1), with
-//! command/file approvals and tool questions arriving as server requests.
+//! codex-cli 0.163.0: initialize → account/read → thread/resume|start → turn/start (review/start from 0.159.1), with
+//! command/file approvals, tool questions and MCP elicitations arriving as server requests.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -9,6 +9,7 @@ use base64::Engine;
 
 use serde_json::{json, Value};
 
+use super::codex_elicitation::{self, McpElicitation};
 use super::codex_hooks;
 use super::files;
 use super::model::*;
@@ -85,6 +86,7 @@ enum ServerRequest {
     /// `request_user_input_async`: the question arrives as an agent message and is answered with
     /// a user message in the reply envelope, not a JSON-RPC response. Holds (id, title) per question.
     AsyncQuestion(Vec<(String, String)>),
+    Elicitation(McpElicitation),
     Unsupported,
 }
 
@@ -97,6 +99,8 @@ pub struct CodexProvider {
     next_id: u64,
     calls: HashMap<u64, Call>,
     requests: HashMap<String, (Value, ServerRequest)>,
+    seen_elicitations: HashSet<String>,
+    elicitation_ui: bool,
     thread_id: Option<String>,
     turn_id: Option<String>,
     busy: bool,
@@ -156,6 +160,8 @@ impl CodexProvider {
             next_id: 0,
             calls: HashMap::new(),
             requests: HashMap::new(),
+            seen_elicitations: HashSet::new(),
+            elicitation_ui: true,
             thread_id: None,
             turn_id: None,
             busy: false,
@@ -894,10 +900,21 @@ impl CodexProvider {
                 self.publish_usage(out);
             }
             "serverRequest/resolved" => {
-                let id = request_key(&params["requestId"]);
+                let elicitation_id = codex_elicitation::request_key(&params["requestId"]);
+                let id = if self.requests.contains_key(&elicitation_id) {
+                    elicitation_id
+                } else {
+                    request_key(&params["requestId"])
+                };
                 if let Some((_, kind)) = self.requests.remove(&id) {
-                    if let ServerRequest::Question { item, .. } = kind {
-                        finish_question(snapshot, &item, None, out);
+                    match kind {
+                        ServerRequest::Question { item, .. } => {
+                            finish_question(snapshot, &item, None, out)
+                        }
+                        ServerRequest::Elicitation(elicitation) => {
+                            elicitation.log_resolution(&id, "resolved externally")
+                        }
+                        _ => {}
                     }
                     out.event(ChatEvent::Resolved { id });
                 }
@@ -922,6 +939,10 @@ impl CodexProvider {
         snapshot: &ChatSnapshot,
         out: &mut ProviderOutput,
     ) {
+        if method == "mcpServer/elicitation/request" {
+            self.handle_elicitation(id, params, out);
+            return;
+        }
         let key = request_key(id);
         let (kind, request) = match method {
             "item/commandExecution/requestApproval" => {
@@ -1028,6 +1049,68 @@ impl CodexProvider {
 }
 
 impl CodexProvider {
+    fn handle_elicitation(&mut self, id: &Value, params: &Value, out: &mut ProviderOutput) {
+        let key = codex_elicitation::request_key(id);
+        if !self.seen_elicitations.insert(key.clone()) {
+            return;
+        }
+        codex_elicitation::log_request(id, params);
+        let parsed = if params["threadId"].as_str() != self.thread_id.as_deref()
+            || self.thread_id.is_none()
+        {
+            Err("MCP elicitation belongs to another thread")
+        } else if !self.elicitation_ui {
+            Err("MCP elicitation cancelled: this session has no interactive UI")
+        } else {
+            McpElicitation::parse(params)
+        };
+        let (elicitation, form) = match parsed {
+            Ok(parsed) => parsed,
+            Err(reason) => {
+                log::warn!("MCP elicitation id={id} client failure: {reason}");
+                out.upsert(self.error_item(format!(
+                    "MCP · {} ({}): {reason}",
+                    params["serverName"].as_str().unwrap_or("unknown server"),
+                    params["mode"].as_str().unwrap_or("unknown mode"),
+                )));
+                out.write(codex_elicitation::cancelled(id));
+                return;
+            }
+        };
+        let request = PendingRequest {
+            id: key.clone(),
+            title: format!("MCP · {}", elicitation.server),
+            detail: params["message"].as_str().map(String::from),
+            format: DetailFormat::Text,
+            kind: PendingKind::Elicitation {
+                server_name: elicitation.server.clone(),
+                elicitation: form,
+            },
+        };
+        self.requests
+            .insert(key, (id.clone(), ServerRequest::Elicitation(elicitation)));
+        out.event(ChatEvent::Pending { request });
+    }
+
+    fn cancel_elicitations(&mut self, reason: &str, out: &mut ProviderOutput) {
+        let keys: Vec<_> = self
+            .requests
+            .iter()
+            .filter_map(|(key, (_, kind))| {
+                matches!(kind, ServerRequest::Elicitation(_)).then_some(key.clone())
+            })
+            .collect();
+        for key in keys {
+            if let Some((id, ServerRequest::Elicitation(elicitation))) = self.requests.remove(&key)
+            {
+                elicitation.log_resolution(&key, reason);
+                out.write(codex_elicitation::cancelled(&id));
+                out.upsert(self.error_item(format!("MCP elicitation cancelled: {reason}")));
+                out.event(ChatEvent::Resolved { id: key });
+            }
+        }
+    }
+
     fn register_async_questions(&mut self, item: &Value, out: &mut ProviderOutput) {
         let (Some(message_id), Some(asked)) = (item["id"].as_str(), item["questions"].as_array())
         else {
@@ -1077,6 +1160,14 @@ impl CodexProvider {
 }
 
 impl ChatProvider for CodexProvider {
+    fn set_headless(&mut self) {
+        self.elicitation_ui = false;
+    }
+
+    fn shutdown(&mut self, reason: &str, out: &mut ProviderOutput) {
+        self.cancel_elicitations(reason, out);
+    }
+
     fn restore_selection(&mut self, selection: super::preferences::ModelSelection) {
         self.controls.model = selection.model;
         self.controls.effort = selection.effort;
@@ -1110,7 +1201,11 @@ impl ChatProvider for CodexProvider {
         Ok(())
     }
     fn start(&mut self, out: &mut ProviderOutput) {
-        self.call(out, Call::Initialize, "initialize", initialize_params());
+        let mut params = initialize_params();
+        if self.elicitation_ui {
+            params["capabilities"]["extensions"] = json!({ "openai/form": {} });
+        }
+        self.call(out, Call::Initialize, "initialize", params);
     }
 
     fn handle_line(&mut self, line: &str, snapshot: &ChatSnapshot, out: &mut ProviderOutput) {
@@ -1187,6 +1282,7 @@ impl ChatProvider for CodexProvider {
     }
 
     fn interrupt(&mut self, out: &mut ProviderOutput) {
+        self.cancel_elicitations("turn interrupted", out);
         if let (Some(thread_id), Some(turn_id)) = (self.thread_id.clone(), self.turn_id.clone()) {
             self.call(
                 out,
@@ -1299,7 +1395,7 @@ impl ChatProvider for CodexProvider {
     ) -> Result<(), String> {
         let (id, kind) = self
             .requests
-            .remove(request_id)
+            .get(request_id)
             .ok_or("That request is no longer pending")?;
         let reply = match kind {
             ServerRequest::Command {
@@ -1317,7 +1413,7 @@ impl ChatProvider for CodexProvider {
                     .iter()
                     .map(|question| shown_answer(question, &response.answers))
                     .collect();
-                finish_question(snapshot, &item, Some(shown), out);
+                finish_question(snapshot, item, Some(shown), out);
                 let answers: serde_json::Map<String, Value> = response
                     .answers
                     .iter()
@@ -1326,10 +1422,12 @@ impl ChatProvider for CodexProvider {
                 json!({ "id": id, "result": { "answers": answers } })
             }
             ServerRequest::AsyncQuestion(questions) => {
+                let reply = async_question_reply(questions, &response.answers);
+                self.requests.remove(request_id);
                 out.event(ChatEvent::Resolved {
                     id: request_id.to_string(),
                 });
-                return match async_question_reply(&questions, &response.answers) {
+                return match reply {
                     Some(reply) => self.send(&reply, &[], out),
                     None => Ok(()),
                 };
@@ -1338,7 +1436,17 @@ impl ChatProvider for CodexProvider {
                 "id": id,
                 "error": { "code": UNSUPPORTED, "message": "Not supported by WorktreeManager chat" },
             }),
+            ServerRequest::Elicitation(elicitation) => {
+                let response = response
+                    .elicitation
+                    .as_ref()
+                    .ok_or("Missing MCP elicitation response")?;
+                let result = elicitation.response(response)?;
+                elicitation.log_resolution(request_id, result["action"].as_str().unwrap());
+                json!({ "id": id, "result": result })
+            }
         };
+        self.requests.remove(request_id);
         out.write(reply);
         out.event(ChatEvent::Resolved {
             id: request_id.to_string(),
@@ -1764,7 +1872,7 @@ pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
 mod tests {
     use super::*;
 
-    fn feed(
+    pub(super) fn feed(
         provider: &mut CodexProvider,
         snapshot: &mut ChatSnapshot,
         line: Value,
@@ -1777,7 +1885,7 @@ mod tests {
         out
     }
 
-    fn written(out: &ProviderOutput) -> Vec<Value> {
+    pub(super) fn written(out: &ProviderOutput) -> Vec<Value> {
         out.writes
             .iter()
             .map(|w| serde_json::from_str(w).unwrap())
@@ -1949,7 +2057,7 @@ mod tests {
         assert_eq!(provider.prompt_cache_ttl(), None);
     }
 
-    fn resumed() -> (CodexProvider, ChatSnapshot) {
+    pub(super) fn resumed() -> (CodexProvider, ChatSnapshot) {
         let (mut provider, mut snapshot) = ready(Some("th1"));
         feed(
             &mut provider,
@@ -2626,7 +2734,7 @@ mod tests {
         feed(
             &mut provider,
             &mut snapshot,
-            json!({ "id": 9, "method": "mcpServer/elicitation/request", "params": { "threadId": "th1" } }),
+            json!({ "id": 9, "method": "item/unsupported/request", "params": { "threadId": "th1" } }),
         );
         assert!(
             matches!(&snapshot.pending[0].kind, PendingKind::Question { questions } if questions[0].allow_other)
@@ -3374,3 +3482,7 @@ mod tests {
         assert_eq!(usage.error.as_deref(), Some("backend down"));
     }
 }
+
+#[cfg(test)]
+#[path = "codex_elicitation_tests.rs"]
+mod elicitation_tests;

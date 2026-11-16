@@ -69,6 +69,10 @@ export type PendingRequest = {
       editablePlan?: boolean;
     }
   | { kind: "question"; questions: ChatQuestion[] }
+  | ({ kind: "elicitation"; serverName: string } & (
+      | { mode: "form"; requestedSchema: Record<string, unknown> | boolean }
+      | { mode: "url"; url: string; elicitationId: string }
+    ))
   | { kind: "unsupported" }
 );
 
@@ -203,6 +207,10 @@ export interface ChatResponse {
   message?: string;
   plan?: string;
   answers?: Record<string, string[]>;
+  elicitation?: {
+    action: "accept" | "decline" | "cancel";
+    content: unknown;
+  };
 }
 
 /** A user session is its task agent's primary chat; automations run beside it. */
@@ -482,8 +490,9 @@ export const chatRespond = (
   taskId: string,
   agent: AgentId,
   requestId: string,
-  response: ChatResponse
-) => invoke<void>("chat_respond", { taskId, agent, requestId, response });
+  response: ChatResponse,
+  generation: number
+) => invoke<void>("chat_respond", { taskId, agent, requestId, response, generation });
 
 export const chatDetach = (taskId: string, agent: AgentId, generation: number, sessionId: string) =>
   invoke<void>("chat_detach", { taskId, agent, generation, sessionId }).catch(() => undefined);

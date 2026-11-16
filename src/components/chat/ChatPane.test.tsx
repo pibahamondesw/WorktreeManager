@@ -554,6 +554,56 @@ describe("ChatPane", () => {
     expect(composerText(box)).toBe("@/shots/two.png ");
   });
 
+  it("keeps elicitation validation errors in the original form and removes it on external resolution", async () => {
+    const response = { elicitation: { action: "accept", content: { download: false } } };
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            status: { kind: "busy" },
+            pending: [
+              {
+                id: "elicitation:1",
+                title: "MCP · browser",
+                kind: "elicitation",
+                format: "text",
+                serverName: "browser",
+                mode: "form",
+                detail: "Choose a download",
+                requestedSchema: {
+                  type: "object",
+                  required: ["download"],
+                  properties: { download: { type: "boolean", title: "Download" } },
+                },
+              },
+            ],
+          })
+        );
+      if (command === "chat_respond")
+        return Promise.reject("Form does not satisfy the requested schema");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Download" }), {
+      target: { value: "false" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Form does not satisfy the requested schema"
+    );
+    expect(screen.getByRole("combobox", { name: "Download" })).toHaveValue("false");
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+      taskId: "t1",
+      agent: "codex",
+      requestId: "elicitation:1",
+      generation: 3,
+      response,
+    });
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_send", expect.anything());
+    emit(3, { type: "resolved", id: "elicitation:1" });
+    expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
+  });
+
   it("answers approvals and questions through chat_respond", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"
@@ -599,6 +649,7 @@ describe("ChatPane", () => {
     fireEvent.click(screen.getByRole("button", { name: /Reject$/ }));
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        generation: 3,
         taskId: "t1",
         agent: "codex",
         requestId: "r1",
@@ -615,6 +666,7 @@ describe("ChatPane", () => {
     fireEvent.click(answer);
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        generation: 3,
         taskId: "t1",
         agent: "codex",
         requestId: "q1",
@@ -1013,6 +1065,7 @@ describe("ChatPane", () => {
     fireEvent.keyDown(card, { key: "Escape" });
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        generation: 3,
         taskId: "t1",
         agent: "codex",
         requestId: "r1",
@@ -1396,6 +1449,7 @@ describe("Markdown previews", () => {
     await waitFor(() => expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull());
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        generation: 3,
         taskId: "t1",
         agent: "claude",
         requestId: "r1",
@@ -1454,6 +1508,7 @@ describe("Markdown previews", () => {
     });
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        generation: 3,
         taskId: "t1",
         agent: "claude",
         requestId: "r1",
@@ -1474,6 +1529,7 @@ describe("Markdown previews", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Keep planning" }));
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("chat_respond", {
+        generation: 3,
         taskId: "t1",
         agent: "claude",
         requestId: "r1",

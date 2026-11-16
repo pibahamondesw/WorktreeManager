@@ -84,6 +84,7 @@ impl ChatRegistry {
             permission: policy,
             output_schema: request.output_schema,
         })?;
+        launch.provider.set_headless();
         launch.command.envs(request.env);
         let setup = session_setup(app, self, &target, pending_resolution, None, request.resume)?;
         let session = start_session(task_id, launch, None, setup)?;

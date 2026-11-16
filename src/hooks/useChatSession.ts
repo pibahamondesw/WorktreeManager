@@ -151,8 +151,9 @@ export function useChatSession(
     [taskId, agent]
   );
   const respond = useCallback(
-    (requestId: string, response: ChatResponse) => chatRespond(taskId, agent, requestId, response),
-    [taskId, agent]
+    (requestId: string, response: ChatResponse) =>
+      chatRespond(taskId, agent, requestId, response, snapshot.generation),
+    [taskId, agent, snapshot.generation]
   );
   const previewRewind = (itemId: string) =>
     chatRewindPreview(taskId, agent, snapshot.generation, itemId);

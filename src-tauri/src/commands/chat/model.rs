@@ -174,7 +174,44 @@ pub enum PendingKind {
     Question {
         questions: Vec<Question>,
     },
+    Elicitation {
+        #[serde(rename = "serverName")]
+        server_name: String,
+        #[serde(flatten)]
+        elicitation: Elicitation,
+    },
     Unsupported,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode")]
+pub enum Elicitation {
+    #[serde(rename = "form", alias = "openai/form", alias = "openaiForm")]
+    Form {
+        #[serde(rename = "requestedSchema")]
+        requested_schema: serde_json::Value,
+    },
+    #[serde(rename = "url")]
+    Url {
+        url: String,
+        #[serde(rename = "elicitationId")]
+        elicitation_id: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ElicitationAction {
+    Accept,
+    Decline,
+    Cancel,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ElicitationResponse {
+    pub action: ElicitationAction,
+    #[serde(default)]
+    pub content: serde_json::Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -539,6 +576,7 @@ pub struct ChatResponse {
     pub decision: Option<String>,
     pub message: Option<String>,
     pub plan: Option<String>,
+    pub elicitation: Option<ElicitationResponse>,
     #[serde(default)]
     pub answers: HashMap<String, Vec<String>>,
 }
@@ -621,6 +659,8 @@ pub fn user_display_text(text: &str, image_count: usize) -> String {
 /// queue the message, marked `QUEUED`, rather than refusing it. The session owns the process and threading; the
 /// provider only sees lines and user actions. `snapshot` is the state before this input.
 pub trait ChatProvider: Send {
+    fn set_headless(&mut self) {}
+    fn shutdown(&mut self, _reason: &str, _out: &mut ProviderOutput) {}
     fn restore_selection(&mut self, _selection: super::preferences::ModelSelection) {}
     fn fork(&mut self, _item_id: &str, _out: &mut ProviderOutput) -> Result<(), String> {
         Err("This agent cannot fork a running conversation".into())

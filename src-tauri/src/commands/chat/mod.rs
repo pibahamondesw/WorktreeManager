@@ -9,7 +9,10 @@ mod checkpoint_git;
 mod checkpoints;
 pub(crate) mod claude;
 pub(crate) mod codex;
+mod codex_elicitation;
 mod codex_hooks;
+#[cfg(test)]
+mod elicitation_tests;
 
 pub use codex::purge_stale_chat_images;
 mod conversations;
@@ -265,6 +268,7 @@ impl Shared {
             self.snapshot.interrupted = false;
             self.turns.start_turn();
         }
+        let mut write_failure = None;
         for line in out.writes {
             let written = self
                 .stdin
@@ -272,7 +276,20 @@ impl Shared {
                 .map(|stdin| writeln!(stdin, "{line}").and_then(|_| stdin.flush()));
             if let Some(Err(error)) = written {
                 log::warn!("chat stdin write failed: {error}");
+                write_failure = Some(error.to_string());
+                break;
             }
+        }
+        if let Some(error) = write_failure {
+            let mut failure = ProviderOutput::default();
+            self.provider
+                .shutdown("transport write failed", &mut failure);
+            out.events.extend(failure.events);
+            out.events.push(ChatEvent::Status {
+                status: ChatStatus::Failed {
+                    message: format!("Could not send response to agent: {error}"),
+                },
+            });
         }
         for denial in std::mem::take(&mut out.denials) {
             let denied = &mut self.snapshot.denied;
@@ -543,6 +560,9 @@ impl ChatSession {
             notify,
         };
         session.with_provider(|provider, _, out| {
+            if pending_resolution.is_some() {
+                provider.set_headless();
+            }
             provider.start(out);
             Ok(())
         })?;
@@ -642,6 +662,8 @@ impl ChatSession {
                 completes_turn: state.turns.turn_open(),
                 ..Default::default()
             };
+            state.provider.shutdown("transport disconnected", &mut out);
+            out.writes.clear();
             out.status(status);
             state.stdin = None;
             state.commit(out, &*remember, &notify);
@@ -708,6 +730,20 @@ impl ChatSession {
         })
     }
 
+    fn respond(
+        &self,
+        request_id: &str,
+        response: &ChatResponse,
+        generation: u64,
+    ) -> Result<(), String> {
+        self.with_provider(|provider, snapshot, out| {
+            if snapshot.generation != generation {
+                return Err("That request belongs to an earlier chat session".into());
+            }
+            provider.respond(request_id, response, snapshot, out)
+        })
+    }
+
     fn attach(&self, sink: Channel<LiveBatch>) -> ChatSnapshot {
         let mut state = self.shared.lock().unwrap();
         state.replace_sink(Some(sink));
@@ -753,6 +789,9 @@ impl ChatSession {
     fn terminate(&self) {
         {
             let mut state = self.shared.lock().unwrap();
+            let mut out = ProviderOutput::default();
+            state.provider.shutdown("session closed", &mut out);
+            state.commit(out, &*self.remember, &self.notify);
             state.replace_sink(None);
             state.stdin = None;
             let Shared {
@@ -1462,11 +1501,10 @@ pub fn chat_respond(
     agent: String,
     request_id: String,
     response: ChatResponse,
+    generation: u64,
 ) -> Result<(), String> {
     registry.with_session(&task_id, &agent, |session| {
-        session.with_provider(|provider, snapshot, out| {
-            provider.respond(&request_id, &response, snapshot, out)
-        })
+        session.respond(&request_id, &response, generation)
     })
 }
 
