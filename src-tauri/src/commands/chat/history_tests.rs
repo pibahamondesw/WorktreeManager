@@ -72,17 +72,22 @@ for line in sys.stdin:
         elif method == 'thread/read':
             result = {'thread': thread(message['params']['threadId'], 1)}
         elif method in ['thread/start', 'thread/resume']:
+            if method == 'thread/start' and settings.get('hold_thread_start'):
+                (root / 'thread-start-entered').write_text('ready')
+                while not (root / 'release-thread-start').exists():
+                    time.sleep(0.01)
             result = {'thread': thread(message.get('params', {}).get('threadId', 'fresh'), 0 if method == 'thread/start' else 2)}
         elif method == 'thread/list':
             result = {'data': [{'id': 'parent', 'name': 'Parent thread', 'updatedAt': 5}]}
         elif method == 'account/read':
             result = {'account': {}}
         elif method == 'turn/start':
+            thread_id = message['params'].get('threadId', 'parent')
             send({'id': message['id'], 'result': {'turn': {'id': 't3'}}})
-            send({'method': 'turn/started', 'params': {'threadId': 'parent', 'turn': {'id': 't3'}}})
-            send({'method': 'item/started', 'params': {'threadId': 'parent', 'turnId': 't3',
+            send({'method': 'turn/started', 'params': {'threadId': thread_id, 'turn': {'id': 't3'}}})
+            send({'method': 'item/started', 'params': {'threadId': thread_id, 'turnId': 't3',
                   'item': {'type': 'userMessage', 'id': 'u3', 'content': [{'type': 'text', 'text': 'next'}]}}})
-            send({'method': 'turn/completed', 'params': {'threadId': 'parent', 'turn': {'id': 't3'}}})
+            send({'method': 'turn/completed', 'params': {'threadId': thread_id, 'turn': {'id': 't3'}}})
             continue
         else:
             result = {}
@@ -1822,6 +1827,102 @@ fn headless_sessions_run_unattended_until_a_pane_attaches_and_close_with_their_t
     assert!(attach_to(&fixture, "claude", &session_id).is_err());
 }
 
+fn start_codex_headless(
+    fixture: &Fixture,
+    output_schema: Option<Value>,
+    read_only: bool,
+) -> String {
+    fixture
+        .app
+        .state::<ChatRegistry>()
+        .start_headless(
+            fixture.app.handle(),
+            "task",
+            "codex",
+            HeadlessRequest {
+                folders: fixture.repositories.folders.clone(),
+                resume: None,
+                output_schema,
+                env: Vec::new(),
+                name: None,
+            },
+            PermissionPolicy::Unattended(UnattendedPolicy {
+                read_only,
+                ..Default::default()
+            }),
+        )
+        .unwrap()
+}
+
+/// Runs a turn as an automation step does, right after the start, while Codex holds back its new
+/// thread; returns the `turn/start` Codex received.
+fn codex_headless_runs_its_first_turn(output_schema: Option<Value>, read_only: bool) -> Value {
+    let fixture = Fixture::new();
+    fixture.settings(json!({ "hold_thread_start": true }));
+    let session_id = start_codex_headless(&fixture, output_schema, read_only);
+    let app = fixture.app.handle().clone();
+    let turn = thread::spawn(move || {
+        app.state::<ChatRegistry>().run_turn(
+            &session_id,
+            "review the branch",
+            Instant::now() + SETTLE_DEADLINE,
+        )
+    });
+    fixture.wait_for_file("thread-start-entered");
+    assert!(!turn.is_finished());
+    fs::write(fixture.repositories.dir.join("release-thread-start"), "").unwrap();
+    let end = turn.join().unwrap();
+    assert!(
+        matches!(end, TurnEnd::Completed { error: false, .. }),
+        "{end:?}"
+    );
+    fixture
+        .logged("requests.jsonl")
+        .into_iter()
+        .find(|request| request["method"] == "turn/start")
+        .unwrap()["params"]
+        .clone()
+}
+
+#[test]
+fn a_codex_start_that_outlasts_the_turn_deadline_times_the_turn_out() {
+    let fixture = Fixture::new();
+    fixture.settings(json!({ "hold_thread_start": true }));
+    let session_id = start_codex_headless(&fixture, None, false);
+    fixture.wait_for_file("thread-start-entered");
+    let registry = fixture.app.state::<ChatRegistry>();
+    let soon = Instant::now() + Duration::from_millis(300);
+    assert_eq!(
+        registry.run_turn(&session_id, "review the branch", soon),
+        TurnEnd::TimedOut
+    );
+    assert!(!fixture
+        .logged("requests.jsonl")
+        .iter()
+        .any(|request| request["method"] == "turn/start"));
+    fs::write(fixture.repositories.dir.join("release-thread-start"), "").unwrap();
+}
+
+#[test]
+fn codex_headless_sessions_take_their_first_turn_once_the_thread_exists() {
+    let turn = codex_headless_runs_its_first_turn(None, false);
+    assert_eq!(turn["threadId"], "fresh");
+    assert!(turn.get("outputSchema").is_none());
+}
+
+#[test]
+fn codex_headless_sessions_with_a_result_schema_take_their_first_turn() {
+    let schema = json!({ "type": "object" });
+    let turn = codex_headless_runs_its_first_turn(Some(schema.clone()), false);
+    assert_eq!(turn["outputSchema"], schema);
+}
+
+#[test]
+fn read_only_codex_headless_sessions_take_their_first_turn() {
+    let turn = codex_headless_runs_its_first_turn(None, true);
+    assert_eq!(turn["sandboxPolicy"], json!({ "type": "readOnly" }));
+}
+
 #[test]
 fn headless_starts_refuse_rules_the_agent_cannot_apply_and_tasks_without_folders() {
     let fixture = Fixture::new();
@@ -2009,6 +2110,9 @@ fn codex_hand_overs_stay_unnamed_and_a_busy_chat_or_a_running_one_with_a_schema_
     .unwrap();
     assert!(!opened.continued);
     assert_eq!(launched_with(&fixture, "--name"), [false]);
+    wait_until("the handed-over turn did not finish", || {
+        fixture.snapshot("codex").status == ChatStatus::Idle
+    });
     let registry = fixture.app.state::<ChatRegistry>();
     let controls = fixture.snapshot("codex").controls;
     assert_eq!(controls.model.as_deref(), Some("gpt-5"));
