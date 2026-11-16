@@ -186,15 +186,9 @@ impl<R: Runtime> Sessions for ChatSessions<R> {
     }
 
     fn run_turn(&self, session_id: &str, prompt: &str, timeout: Duration) -> TurnEnd {
-        let registry = self.0.state::<ChatRegistry>();
-        let deadline = Instant::now() + timeout;
-        match registry.send(session_id, prompt, &[]) {
-            Ok(()) => registry.wait_turn(session_id, deadline),
-            Err(message) => TurnEnd::Ended {
-                code: None,
-                message: Some(message),
-            },
-        }
+        self.0
+            .state::<ChatRegistry>()
+            .run_turn(session_id, prompt, Instant::now() + timeout)
     }
 
     fn conversation(&self, session_id: &str) -> Option<String> {

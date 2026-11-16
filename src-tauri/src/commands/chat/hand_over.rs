@@ -1,7 +1,6 @@
 //! A chat started on the owner's behalf by `wtm task chat` or an automation's `wtm.chat_open`. It
 //! is the task agent's primary session, sent the message as the owner would type it, so opening
 //! the task resumes it. A live primary is continued rather than replaced.
-use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -17,7 +16,6 @@ use crate::commands::agents::{AgentDescriptor, Agents};
 const DEFAULT_MODEL: &str = "default";
 const START_WAIT: Duration = Duration::from_secs(60);
 const REPLY_WAIT: Duration = Duration::from_secs(60 * 60);
-const START_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,39 +112,13 @@ impl ChatRegistry {
                 };
                 let policy = PermissionPolicy::Interactive;
                 let session_id = self.start_unattached(app, owner, session, policy)?;
-                self.wait_for(&session_id, deadline, |session| {
-                    (session.status() != ChatStatus::Starting).then_some(())
-                })?;
+                self.wait_started(&session_id, deadline)?;
                 (session_id, false)
             }
         };
         self.configure_agent(&session_id, model(request), effort)?;
         self.send(&session_id, &request.message, &[])?;
         Ok((session_id, continued))
-    }
-
-    /// Polls the session until `ready` yields, failing once it ends or `deadline` passes.
-    fn wait_for<T>(
-        &self,
-        session_id: &str,
-        deadline: Instant,
-        ready: impl Fn(&ChatSession) -> Option<T>,
-    ) -> Result<T, String> {
-        loop {
-            let (value, status) =
-                self.with_session_id(session_id, |session| Ok((ready(session), session.status())))?;
-            match (value, status) {
-                (Some(value), _) => return Ok(value),
-                (None, ChatStatus::Failed { message }) => return Err(message),
-                (None, status) if !status.is_live() => {
-                    return Err("The agent exited before starting the conversation".into())
-                }
-                _ if Instant::now() >= deadline => {
-                    return Err("The agent did not start the conversation in time".into())
-                }
-                _ => thread::sleep(START_POLL),
-            }
-        }
     }
 }
 
@@ -218,7 +190,6 @@ pub async fn chat_await_reply<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::insert_live_session;
     use super::*;
     use serde_json::json;
 
@@ -291,47 +262,6 @@ mod tests {
         assert_eq!(
             check(&missing, &request()),
             Err("Codex is not installed".into())
-        );
-    }
-
-    #[test]
-    fn a_started_conversation_is_awaited_until_the_agent_reports_it_or_ends() {
-        let registry = ChatRegistry::default();
-        insert_live_session(&registry, "task", "claude", None);
-        let session = "task:claude";
-        let soon = || Instant::now() + START_POLL;
-        assert_eq!(
-            registry.wait_for(session, soon(), ChatSession::conversation),
-            Err("The agent did not start the conversation in time".into())
-        );
-        let set_status = |status: ChatStatus| {
-            registry
-                .with_session_id(session, |session| {
-                    session.shared.lock().unwrap().snapshot.status = status;
-                    Ok(())
-                })
-                .unwrap()
-        };
-        set_status(ChatStatus::Exited { code: Some(1) });
-        assert_eq!(
-            registry.wait_for(session, soon(), ChatSession::conversation),
-            Err("The agent exited before starting the conversation".into())
-        );
-        set_status(ChatStatus::Failed {
-            message: "boom".into(),
-        });
-        assert_eq!(
-            registry.wait_for(session, soon(), ChatSession::conversation),
-            Err("boom".into())
-        );
-        assert_eq!(
-            registry.wait_for("missing", soon(), ChatSession::conversation),
-            Err("No chat session with this id".into())
-        );
-        insert_live_session(&registry, "task", "codex", Some("thread"));
-        assert_eq!(
-            registry.wait_for("task:codex", soon(), ChatSession::conversation),
-            Ok("thread".into())
         );
     }
 

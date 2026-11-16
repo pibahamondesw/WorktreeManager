@@ -15,6 +15,7 @@ use crate::commands::agents::permission::{PendingDefault, PermissionPolicy};
 use crate::commands::agents::{Agents, ChatRequest};
 
 const TURN_POLL: Duration = Duration::from_millis(250);
+pub(super) const START_POLL: Duration = Duration::from_millis(50);
 
 /// How a turn sent to a headless session ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +76,37 @@ impl ChatRegistry {
         self.start_unattached(app, owner, request, policy)
     }
 
+    /// Waits for the agent to leave `Starting`: Codex takes turns only once its thread exists.
+    pub(super) fn wait_started(&self, session_id: &str, deadline: Instant) -> Result<(), String> {
+        self.wait_for(session_id, deadline, |session| {
+            (session.status() != ChatStatus::Starting).then_some(())
+        })
+    }
+
+    /// Polls the session until `ready` yields, failing once it ends or `deadline` passes.
+    pub(super) fn wait_for<T>(
+        &self,
+        session_id: &str,
+        deadline: Instant,
+        ready: impl Fn(&ChatSession) -> Option<T>,
+    ) -> Result<T, String> {
+        loop {
+            let (value, status) =
+                self.with_session_id(session_id, |session| Ok((ready(session), session.status())))?;
+            match (value, status) {
+                (Some(value), _) => return Ok(value),
+                (None, ChatStatus::Failed { message }) => return Err(message),
+                (None, status) if !status.is_live() => {
+                    return Err("The agent exited before starting the conversation".into())
+                }
+                _ if Instant::now() >= deadline => {
+                    return Err("The agent did not start the conversation in time".into())
+                }
+                _ => thread::sleep(START_POLL),
+            }
+        }
+    }
+
     /// Starts a session no pane is attached to yet; a user session becomes its task agent's
     /// primary, replacing one that ended.
     pub(super) fn start_unattached<R: Runtime>(
@@ -130,6 +162,22 @@ impl ChatRegistry {
             })?;
         }
         Ok(())
+    }
+
+    /// Sends `text` once the agent can take a turn and waits for the turn to end. Starting counts
+    /// against `deadline` like the turn itself.
+    pub(crate) fn run_turn(&self, session_id: &str, text: &str, deadline: Instant) -> TurnEnd {
+        let sent = self
+            .wait_started(session_id, deadline)
+            .and_then(|()| self.send(session_id, text, &[]));
+        match sent {
+            Ok(()) => self.wait_turn(session_id, deadline),
+            Err(_) if Instant::now() >= deadline => TurnEnd::TimedOut,
+            Err(message) => TurnEnd::Ended {
+                code: None,
+                message: Some(message),
+            },
+        }
     }
 
     /// Blocks until the turn in progress ends, the session ends or `deadline` passes.
@@ -288,6 +336,47 @@ mod tests {
         let mut snapshot = ChatSnapshot::new(1);
         snapshot.status = status;
         snapshot
+    }
+
+    #[test]
+    fn a_started_conversation_is_awaited_until_the_agent_reports_it_or_ends() {
+        let registry = ChatRegistry::default();
+        insert_live_session(&registry, "task", "claude", None);
+        let session = "task:claude";
+        let soon = || Instant::now() + START_POLL;
+        assert_eq!(
+            registry.wait_for(session, soon(), ChatSession::conversation),
+            Err("The agent did not start the conversation in time".into())
+        );
+        let set_status = |status: ChatStatus| {
+            registry
+                .with_session_id(session, |session| {
+                    session.shared.lock().unwrap().snapshot.status = status;
+                    Ok(())
+                })
+                .unwrap()
+        };
+        set_status(ChatStatus::Exited { code: Some(1) });
+        assert_eq!(
+            registry.wait_for(session, soon(), ChatSession::conversation),
+            Err("The agent exited before starting the conversation".into())
+        );
+        set_status(ChatStatus::Failed {
+            message: "boom".into(),
+        });
+        assert_eq!(
+            registry.wait_for(session, soon(), ChatSession::conversation),
+            Err("boom".into())
+        );
+        assert_eq!(
+            registry.wait_for("missing", soon(), ChatSession::conversation),
+            Err("No chat session with this id".into())
+        );
+        insert_live_session(&registry, "task", "codex", Some("thread"));
+        assert_eq!(
+            registry.wait_for("task:codex", soon(), ChatSession::conversation),
+            Ok("thread".into())
+        );
     }
 
     #[test]
