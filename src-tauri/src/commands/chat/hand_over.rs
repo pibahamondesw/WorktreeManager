@@ -82,6 +82,7 @@ impl ChatRegistry {
         request: &HandOver,
         deadline: Instant,
     ) -> Result<(String, bool), String> {
+        check(&Agents::of(app).get(&request.agent)?.descriptor(), request)?;
         let live = self
             .sessions
             .lock()
@@ -177,10 +178,6 @@ pub async fn chat_hand_over<R: Runtime>(
     registry: State<'_, ChatRegistry>,
     request: HandOver,
 ) -> Result<HandedOver, String> {
-    check(
-        &Agents::of(&app).get(&request.agent)?.descriptor(),
-        &request,
-    )?;
     let open_lock = registry.open_lock(&(request.task_id.clone(), request.agent.clone()));
     let _opening = open_lock.lock().await;
     tauri::async_runtime::spawn_blocking(move || {

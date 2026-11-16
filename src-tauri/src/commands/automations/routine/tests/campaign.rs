@@ -509,6 +509,7 @@ steps:
     harness.signal(&run.id, "deploy", None, json!({})).unwrap();
     harness.executor.wake_ready();
     wait_until(|| harness.state(&run.id).status == RunStatus::Failed);
+    wait_until(|| !harness.executor.owns(&run.id));
     assert_eq!(slots(), "13\n");
     assert_eq!(leases(), (2, 0, 2));
 
