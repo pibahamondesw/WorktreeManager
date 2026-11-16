@@ -84,6 +84,9 @@ export function NewWorktreeModal({
   const setIncluded = (repoId: string, included: boolean) =>
     setRepoSel((prev) => ({ ...prev, [repoId]: { ...prev[repoId], included } }));
 
+  const setAllIncluded = (included: boolean) =>
+    setRepoSel(Object.fromEntries(workspace.repos.map((repo) => [repo.id, { included }])));
+
   const handleCreate = async () => {
     if (creatingRef.current) return;
     if (!canCreate) return;
@@ -193,6 +196,7 @@ export function NewWorktreeModal({
       selection={repoSel}
       disabled={creating}
       onChange={setIncluded}
+      onChangeAll={setAllIncluded}
     />
   );
   const footer = (

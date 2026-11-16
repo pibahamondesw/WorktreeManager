@@ -277,6 +277,26 @@ it("validates repository selection before creating an issue and passes only sele
   expect(onCreated.mock.calls[0][0]).toMatchObject({ repoIds: ["web"] });
 });
 
+it("toggles all repositories from the checklist header", async () => {
+  const onCreated = vi.fn().mockResolvedValue({ data: task, warnings: [] });
+  await renderNewIssueForm(onCreated, [
+    ...workspace.repos,
+    { id: "web", name: "Web", localPath: "/web", worktreeBasePath: "/webtrees" },
+  ]);
+  const toggleAll = screen.getByRole("checkbox", {
+    name: /Repositories in this task/,
+  }) as HTMLInputElement;
+  fireEvent.click(toggleAll);
+  expect(screen.getByLabelText("API")).not.toBeChecked();
+  expect(screen.getByLabelText("Web")).not.toBeChecked();
+  fireEvent.click(screen.getByLabelText("Web"));
+  expect(toggleAll.indeterminate).toBe(true);
+  fireEvent.click(toggleAll);
+  expect(screen.getByLabelText("API")).toBeChecked();
+  expect(screen.getByLabelText("Web")).toBeChecked();
+  expect(toggleAll).toBeChecked();
+});
+
 it("prevents duplicate submissions and mode changes while issue creation is pending", async () => {
   const onCreated = vi.fn().mockResolvedValue({ data: task, warnings: [] });
   const service = await renderNewIssueForm(onCreated);
