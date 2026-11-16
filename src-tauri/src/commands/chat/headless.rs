@@ -67,12 +67,24 @@ impl ChatRegistry {
         request: HeadlessRequest,
         policy: PermissionPolicy,
     ) -> Result<String, String> {
-        let adapter = Agents::of(app).get(agent)?;
         let owner = ChatOwner {
             task_id: task_id.to_string(),
             agent: agent.to_string(),
             origin: ChatOrigin::Automation,
         };
+        self.start_unattached(app, owner, request, policy)
+    }
+
+    /// Starts a session no pane is attached to yet; a user session becomes its task agent's
+    /// primary, replacing one that ended.
+    pub(super) fn start_unattached<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        owner: ChatOwner,
+        request: HeadlessRequest,
+        policy: PermissionPolicy,
+    ) -> Result<String, String> {
+        let adapter = Agents::of(app).get(&owner.agent)?;
         let session_id = uuid::Uuid::new_v4().to_string();
         let target = SessionTarget::new(session_id.clone(), owner, &request.folders)?;
         let pending_resolution = policy.pending_resolution();
@@ -87,14 +99,17 @@ impl ChatRegistry {
             output_schema: request.output_schema,
             name: request.name,
         })?;
-        launch.provider.set_headless();
         launch.command.envs(request.env);
         let setup = session_setup(app, self, &target, pending_resolution, None, request.resume)?;
-        let session = start_session(task_id, launch, None, setup)?;
-        self.sessions
-            .lock()
-            .unwrap()
-            .insert(session_id.clone(), target.owner, session);
+        let session = start_session(&target.owner.task_id, launch, None, setup)?;
+        let replaced =
+            self.sessions
+                .lock()
+                .unwrap()
+                .insert(session_id.clone(), target.owner, session);
+        if let Some(replaced) = replaced {
+            replaced.terminate();
+        }
         Ok(session_id)
     }
 
@@ -181,7 +196,7 @@ impl ChatRegistry {
         self.with_session_id(session_id, ChatSession::interrupt)
     }
 
-    fn with_session_id<T>(
+    pub(super) fn with_session_id<T>(
         &self,
         session_id: &str,
         action: impl FnOnce(&ChatSession) -> Result<T, String>,

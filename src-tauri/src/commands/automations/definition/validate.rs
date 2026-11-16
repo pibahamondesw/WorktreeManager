@@ -19,11 +19,12 @@ use super::github_trigger::{github_event_trigger, resolve_repos};
 use super::linear_trigger::linear_event_trigger;
 use super::{
     AgentSettings, AgentStep, AppEventKind, ApprovalDefault, ApprovalStep, Authorization,
-    AutomationDefinition, Bind, Budgets, Capacity, CatchUp, CommandStep, Completion, Concurrency,
-    Effect, Environment, EventTrigger, GotoLimit, InboxPolicy, IssueKind, LeaseHold,
-    LinearOverrides, LinearTracker, Pools, PullRequestEffect, RepoRef, ReportPolicy, ResultSchema,
-    Schedule, SelectorSettings, Step, StepKind, StopAfter, Target, TargetRepo, TaskMode, Tracker,
-    Transition, Trigger, ValuedPool, Verb, WaitStep, WorkspaceRef, APP_EVENT_KINDS,
+    AutomationDefinition, Bind, Budgets, Capacity, CatchUp, ChatOpenEffect, CommandStep,
+    Completion, Concurrency, Effect, Environment, EventTrigger, GotoLimit, InboxPolicy, IssueKind,
+    LeaseHold, LinearOverrides, LinearTracker, Pools, PullRequestEffect, RepoRef, ReportPolicy,
+    ResultSchema, Schedule, SelectorSettings, Step, StepKind, StopAfter, Target, TargetRepo,
+    TaskMode, Tracker, Transition, Trigger, ValuedPool, Verb, WaitStep, WorkspaceRef,
+    APP_EVENT_KINDS,
 };
 use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
@@ -49,7 +50,7 @@ const SELECTOR_TIMEOUT_SECS: u64 = 5 * 60;
 /// The scheduler's tick re-checks waits once a minute.
 const MIN_WATCH_INTERVAL_SECS: u64 = 60;
 const MAX_SCRIPT_WATCH_INTERVAL_SECS: u64 = 5 * 60;
-const EFFECTS: [&str; 10] = [
+const EFFECTS: [&str; 11] = [
     "git.push",
     "github.pr_create",
     "github.pr_update",
@@ -60,6 +61,7 @@ const EFFECTS: [&str; 10] = [
     "wtm.task_create",
     "wtm.task_log",
     "wtm.task_delete_clean",
+    "wtm.chat_open",
 ];
 const FORBIDDEN_VERBS: [&str; 2] = ["merge", "no_verify"];
 
@@ -1827,10 +1829,59 @@ fn effect(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Opt
             .require(report, "entry", template)
             .map(|entry| Effect::TaskLog { entry }),
         "wtm.task_create" => Some(Effect::TaskCreate),
+        "wtm.chat_open" => chat_open(report, scope.context.env, &mut fields).map(Effect::ChatOpen),
         _ => Some(Effect::TaskDeleteClean),
     };
     fields.finish(report);
     effect
+}
+
+/// The agent is checked against its descriptor, as an agent step's is.
+fn chat_open(
+    report: &mut Report,
+    env: &Environment,
+    fields: &mut Fields,
+) -> Option<ChatOpenEffect> {
+    let field = fields.path("agent");
+    let agent = fields.require(report, "agent", |report, value, field| {
+        agent_id(report, env, value, field)
+    });
+    let model = fields.optional(report, "model", string);
+    let effort = fields.optional(report, "effort", string);
+    let name = fields.optional(report, "name", template);
+    let message = fields.require(report, "message", template);
+    let effect = ChatOpenEffect {
+        agent: agent?,
+        model: model?,
+        effort: effort?,
+        name: name?,
+        message: message?,
+    };
+    let descriptor = env.agents.iter().find(|agent| agent.id == effect.agent)?;
+    let capabilities = descriptor.capabilities;
+    let custom_model = effect
+        .model
+        .as_ref()
+        .is_some_and(|model| model != DEFAULT_MODEL);
+    let missing: Vec<_> = [
+        (!capabilities.headless, "headless"),
+        (custom_model && !capabilities.models, "models"),
+        (effect.effort.is_some() && !capabilities.effort, "effort"),
+    ]
+    .into_iter()
+    .filter_map(|(missing, capability)| missing.then_some(capability))
+    .collect();
+    for capability in &missing {
+        report.error(
+            IssueKind::Capability,
+            &field,
+            format!(
+                "{} lacks the {capability} capability this effect needs",
+                descriptor.label
+            ),
+        );
+    }
+    missing.is_empty().then_some(effect)
 }
 
 fn effect_repo(report: &mut Report, scope: &Scope, fields: &mut Fields) -> Option<String> {

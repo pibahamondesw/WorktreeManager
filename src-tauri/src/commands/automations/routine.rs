@@ -37,7 +37,9 @@ use super::definition::{
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
-use super::publish::{published_values, pushed_commits, CliForge, Forge, PublishScope, Publisher};
+use super::publish::{
+    opened_chats, published_values, pushed_commits, CliForge, Forge, PublishScope, Publisher,
+};
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::selector::OpenPullRequests;
 use super::store::events::{
@@ -884,6 +886,8 @@ impl ItemSteps<'_> {
         let history = self.run_history();
         let pushed = pushed_commits(history.iter().map(|logged| &logged.event), request.item);
         let published = published_values(&history, request.item);
+        let events = history.iter().map(|logged| &logged.event);
+        let chats = opened_chats(events, request.item, &request.step.id);
         let definition = self.definition;
         let repo_names: BTreeMap<_, _> = definition
             .target
@@ -907,6 +911,7 @@ impl ItemSteps<'_> {
             lease_env,
             pushed: &pushed,
             published: &published,
+            chats: &chats,
         };
         let report = self.publisher.publish(request, effects, &scope);
         self.evidence.extend(self.publisher.drain_events());
@@ -1244,7 +1249,8 @@ fn grant_of(verb: Verb) -> Option<Grant> {
         | Verb::LinearWrite
         | Verb::TaskCreate
         | Verb::TaskDelete
-        | Verb::TaskLog => None,
+        | Verb::TaskLog
+        | Verb::ChatOpen => None,
     }
 }
 

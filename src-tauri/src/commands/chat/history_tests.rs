@@ -51,6 +51,8 @@ for line in sys.stdin:
             response.update(subtype='error', error='test initialization failed')
         send({'type': 'control_response', 'response': response})
     elif message.get('type') == 'user':
+        if settings.get('reply'):
+            send({'type': 'assistant', 'message': {'id': 'm1', 'content': [{'type': 'text', 'text': settings['reply']}]}})
         send({'type': 'result', 'is_error': False})
     elif 'method' in message and 'id' in message:
         method = message['method']
@@ -1870,4 +1872,175 @@ fn queued_message_actions_reach_the_primary_session() {
     for result in [steered, removed] {
         assert_eq!(result, Err("That message is no longer queued".into()));
     }
+}
+
+fn hand_over(fixture: &Fixture, request: Value) -> Result<hand_over::HandedOver, String> {
+    let mut fields = json!({
+        "taskId": "task",
+        "folders": fixture.repositories.folders,
+        "message": "Review the PR",
+    });
+    fields
+        .as_object_mut()
+        .unwrap()
+        .extend(request.as_object().unwrap().clone());
+    tauri::async_runtime::block_on(hand_over::chat_hand_over(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        serde_json::from_value(fields).unwrap(),
+    ))
+}
+
+fn await_reply(fixture: &Fixture, session_id: &str, structured: bool) -> Result<Value, String> {
+    tauri::async_runtime::block_on(hand_over::chat_await_reply(
+        fixture.app.handle().clone(),
+        session_id.into(),
+        structured,
+    ))
+}
+
+fn launched_with(fixture: &Fixture, flag: &str) -> Vec<bool> {
+    fixture
+        .logged("argv.jsonl")
+        .iter()
+        .filter(|argv| !argv.to_string().contains("--version"))
+        .map(|argv| argv.as_array().unwrap().contains(&json!(flag)))
+        .collect()
+}
+
+#[test]
+fn a_hand_over_starts_the_named_primary_chat_that_opening_the_task_attaches_to() {
+    let fixture = Fixture::new();
+    fixture.settings(json!({ "reply": "On it." }));
+    let opened = hand_over(&fixture, json!({ "agent": "claude", "name": "Review #12" })).unwrap();
+    assert!(!opened.continued);
+    let registry = fixture.app.state::<ChatRegistry>();
+    let primary = registry
+        .sessions
+        .lock()
+        .unwrap()
+        .primary("task", "claude")
+        .map(|(id, _)| id.clone());
+    assert_eq!(primary.as_deref(), Some(opened.session_id.as_str()));
+    let store = conversation_store(fixture.app.handle()).unwrap();
+    let cwd = &fixture.repositories.folders[0];
+    assert_eq!(
+        store.get("task", "claude", cwd),
+        Some(opened.conversation_id.clone())
+    );
+    assert_eq!(
+        await_reply(&fixture, &opened.session_id, false),
+        Ok(json!("On it."))
+    );
+    let argv = fixture.logged("argv.jsonl").pop().unwrap();
+    assert!(argv.to_string().contains(r#""--name","Review #12""#));
+    assert!(!argv.to_string().contains("--json-schema"));
+
+    let attached = tauri::async_runtime::block_on(chat_open(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "claude".into(),
+        fixture.repositories.folders.clone(),
+        OpenMode::Attach,
+        None,
+        None,
+        None,
+        Channel::new(|_| Ok(())),
+    ))
+    .unwrap();
+    assert_eq!(attached.session_id, opened.session_id);
+    let messages: Vec<_> = attached
+        .snapshot
+        .items
+        .iter()
+        .filter(|item| item.kind == ItemKind::User)
+        .map(|item| item.text.as_str())
+        .collect();
+    assert_eq!(messages, ["Review the PR"]);
+
+    let continued = hand_over(
+        &fixture,
+        json!({ "agent": "claude", "name": "Ignored", "message": "Also the docs" }),
+    )
+    .unwrap();
+    assert!(continued.continued);
+    assert_eq!(continued.session_id, opened.session_id);
+    assert_eq!(continued.conversation_id, opened.conversation_id);
+    assert_eq!(launched_with(&fixture, "--name"), [true]);
+}
+
+#[test]
+fn a_hand_over_held_to_a_schema_replies_with_its_json_and_closes_for_a_clean_resume() {
+    let fixture = Fixture::new();
+    fixture.settings(json!({ "reply": "{\"approved\": true}" }));
+    let schema = json!({ "type": "object" });
+    let opened = hand_over(&fixture, json!({ "agent": "claude", "schema": schema })).unwrap();
+    assert_eq!(
+        await_reply(&fixture, &opened.session_id, true),
+        Ok(json!({ "approved": true }))
+    );
+    let registry = fixture.app.state::<ChatRegistry>();
+    assert!(registry
+        .sessions
+        .lock()
+        .unwrap()
+        .primary("task", "claude")
+        .is_none());
+    let store = conversation_store(fixture.app.handle()).unwrap();
+    assert_eq!(
+        store.get("task", "claude", &fixture.repositories.folders[0]),
+        Some(opened.conversation_id)
+    );
+    fixture.open("claude", OpenMode::Attach).unwrap();
+    wait_until("the conversation did not reopen", || {
+        launched_with(&fixture, "--json-schema").len() == 2
+    });
+    assert_eq!(launched_with(&fixture, "--json-schema"), [true, false]);
+}
+
+#[test]
+fn codex_hand_overs_stay_unnamed_and_a_busy_chat_or_a_running_one_with_a_schema_is_refused() {
+    let fixture = Fixture::new();
+    let opened = hand_over(
+        &fixture,
+        json!({ "agent": "codex", "name": "Review #12", "model": "gpt-5", "effort": "high" }),
+    )
+    .unwrap();
+    assert!(!opened.continued);
+    assert_eq!(launched_with(&fixture, "--name"), [false]);
+    let registry = fixture.app.state::<ChatRegistry>();
+    let controls = fixture.snapshot("codex").controls;
+    assert_eq!(controls.model.as_deref(), Some("gpt-5"));
+    assert_eq!(controls.effort.as_deref(), Some("high"));
+
+    let schema = json!({ "agent": "codex", "schema": { "type": "object" } });
+    super::tests::set_turn(&registry, "task", "codex", false);
+    assert_eq!(
+        hand_over(&fixture, schema),
+        Err("A schema needs a new conversation; close the task's chat first".into())
+    );
+    super::tests::set_turn(&registry, "task", "codex", true);
+    assert_eq!(
+        hand_over(&fixture, json!({ "agent": "codex" })),
+        Err("The task's chat has a turn in progress; send to it there".into())
+    );
+    registry
+        .with_session("task", "codex", |session| {
+            session.shared.lock().unwrap().snapshot.status = ChatStatus::Exited { code: None };
+            Ok(())
+        })
+        .unwrap();
+    let replacement = hand_over(&fixture, json!({ "agent": "codex" })).unwrap();
+    assert!(!replacement.continued);
+    assert_ne!(replacement.session_id, opened.session_id);
+    assert_eq!(chat_list(fixture.app.state()).len(), 1);
+    assert_eq!(
+        hand_over(&fixture, json!({ "agent": "missing" })),
+        Err("Unknown agent: missing".into())
+    );
+    assert_eq!(
+        hand_over(&fixture, json!({ "agent": "claude", "folders": [] })),
+        Err("No folders for this task".into())
+    );
 }

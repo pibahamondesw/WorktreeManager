@@ -95,12 +95,13 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 | `wtm.task_create`       | `task_create`  | none                                                                   |
 | `wtm.task_log`          | `task_log`     | `entry`                                                                |
 | `wtm.task_delete_clean` | `task_delete`  | none                                                                   |
+| `wtm.chat_open`         | `chat_open`    | `agent`, `message`, `model`, `effort`, `name`                          |
 
 Effects are idempotent (reconciled before retries) and staged in Test runs.
 
 ## Authorization
 
-Verbs: `commit`, `push`, `force_push`, `pr_create`, `pr_update`, `pr_comment`, `pr_reply`, `pr_ready`, `linear_write`, `task_create`, `task_delete`, `task_log`. `deny` wins over `allow`; `merge` and `no_verify` are never allowed. Every publish effect needs its verb. Allowed verbs also become agent tool rules (for example `commit` allows `git add` and `git commit`); everything else is denied and surfaces in the Inbox.
+Verbs: `commit`, `push`, `force_push`, `pr_create`, `pr_update`, `pr_comment`, `pr_reply`, `pr_ready`, `linear_write`, `task_create`, `task_delete`, `task_log`, `chat_open`. `deny` wins over `allow`; `merge` and `no_verify` are never allowed. Every publish effect needs its verb. Allowed verbs also become agent tool rules (for example `commit` allows `git add` and `git commit`); everything else is denied and surfaces in the Inbox.
 
 ## Budgets
 

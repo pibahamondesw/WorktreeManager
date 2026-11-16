@@ -229,6 +229,88 @@ it("forwards validated agent events to the app and reports the matched task", as
   });
 });
 
+it("sends a task chat message as typed and rejects invalid chat requests", async () => {
+  state.tasks = [
+    {
+      id: "t1",
+      workspaceId: "w1",
+      branchName: "feature",
+      createdAt: "2026-11-16",
+      members: [
+        {
+          repoId: "r1",
+          repoName: "API",
+          localPath: "/repos/api",
+          path: "/wt/api/t1",
+          branchName: "feature",
+        },
+      ],
+    },
+  ];
+  invokeCommand.mockImplementation((command) =>
+    Promise.resolve(
+      command === "chat_hand_over"
+        ? { sessionId: "s1", conversationId: "c1", continued: false }
+        : { approved: true }
+    )
+  );
+  const message = "  Review {item.title}\n";
+  expect(await call("task.chat", { id: "t1", agent: "claude", message })).toEqual({
+    ok: true,
+    data: {
+      taskId: "t1",
+      agent: "claude",
+      sessionId: "s1",
+      conversationId: "c1",
+      continued: false,
+    },
+    warnings: [],
+  });
+  expect(invokeCommand).toHaveBeenLastCalledWith("chat_hand_over", {
+    request: {
+      taskId: "t1",
+      agent: "claude",
+      folders: ["/wt/api/t1"],
+      model: null,
+      effort: null,
+      name: null,
+      message,
+      schema: null,
+    },
+  });
+  const schema = { type: "object" };
+  expect(
+    await call("task.chat", {
+      id: "t1",
+      agent: "codex",
+      message: "Review",
+      model: "gpt-5",
+      effort: "high",
+      name: "Review #12",
+      schema,
+      wait: true,
+    })
+  ).toMatchObject({ ok: true, data: { agent: "codex", reply: { approved: true } } });
+  expect(state.tasks[0].agent).toBe("codex");
+  for (const params of [
+    { id: "t1", agent: "cursor", message: "Hi" },
+    { id: "t1", agent: "claude" },
+    { id: "t1", agent: "claude", message: " " },
+    { id: "t1", agent: "claude", message: "Hi", wait: "yes" },
+    { id: "t1", agent: "claude", message: "Hi", schema: [], wait: true },
+    { id: "t1", agent: "claude", message: "Hi", schema },
+    { id: "t1", agent: "claude", message: "Hi", name: " " },
+  ])
+    expect(await call("task.chat", params)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_params" },
+    });
+  expect(await call("task.chat", { id: "missing", agent: "claude", message: "Hi" })).toMatchObject({
+    ok: false,
+    error: { code: "not_found" },
+  });
+});
+
 it("reads automations and their runs through the Rust commands", async () => {
   invokeCommand.mockImplementation((command) =>
     command === "automation_run_get"

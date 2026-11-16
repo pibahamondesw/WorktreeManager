@@ -30,6 +30,17 @@ task list [--workspace <id>]
 task get <id> [--git]
 task create --input <file|->
 task link-issue <id> --issue <identifier>
+task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
+          [--name <name>] [--schema <file> --wait] [--wait]
+                                     Sends the message to the task's chat as you would
+                                     type it: a new conversation, named with --name
+                                     (agents that cannot name one leave it unnamed),
+                                     or the agent's chat still running in the task.
+                                     Opening the task resumes it. Prints the session
+                                     and conversation ids once the turn starts; --wait
+                                     also waits for the reply, which --schema holds to
+                                     a JSON schema (the chat then closes, so opening
+                                     the task resumes it without the schema).
 task delete <id> <--keep-worktrees|--delete-worktrees> [--force] [--skip-teardown]
 automation list
 automation get <name>
@@ -115,6 +126,7 @@ Examples:
   wtm workspace list
   wtm task create --input task.json
   wtm task link-issue TASK_ID --issue WOR-123
+  wtm task chat TASK_ID --agent claude --name "Review" --message @prompt.md
   wtm task get TASK_ID --git
   wtm task delete TASK_ID --delete-worktrees
   wtm automation runs babysitter --limit 5
@@ -166,6 +178,19 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     "agent".into(),
                     json!(args.next().ok_or("--agent requires claude or codex")?),
                 );
+            }
+            "--model" | "--effort" | "--name" if !params.contains_key(&arg[2..]) => {
+                let value = args.next().ok_or(format!("{arg} requires a value"))?;
+                params.insert(arg[2..].into(), json!(value));
+            }
+            "--message" if !params.contains_key("message") => {
+                params.insert("message".into(), message(args.next())?);
+            }
+            "--schema" if !params.contains_key("schema") => {
+                params.insert("schema".into(), schema(args.next())?);
+            }
+            "--wait" if !params.contains_key("wait") => {
+                params.insert("wait".into(), json!(true));
             }
             "--before" if !params.contains_key("before") => {
                 params.insert(
@@ -263,6 +288,13 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "task.list" => (&[], false, &["workspaceId"]),
         "task.link-issue" => (&["id"], false, &["issue"]),
         "task.get" => (&["id"], false, &["git"]),
+        "task.chat" => (
+            &["id"],
+            false,
+            &[
+                "agent", "model", "effort", "name", "message", "schema", "wait",
+            ],
+        ),
         "agent.event" => (&["state"], false, &["agent"]),
         "automation.get" => (&["name"], false, &[]),
         "automation.runs" => (&["name"], false, &["before", "limit"]),
@@ -327,6 +359,14 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
             return Err("--definition takes current or original".into());
         }
     }
+    if method == "task.chat" {
+        if !params.contains_key("agent") || !params.contains_key("message") {
+            return Err("Provide --agent and --message".into());
+        }
+        if params.contains_key("schema") && !params.contains_key("wait") {
+            return Err("--schema requires --wait".into());
+        }
+    }
     if method == "task.link-issue" && !params.contains_key("issue") {
         return Err("Provide --issue with a Linear issue identifier".into());
     }
@@ -358,6 +398,26 @@ fn payload(value: Option<&String>) -> Result<Value, String> {
         .ok_or_else(|| "--payload requires a JSON object".into())
 }
 
+fn message(value: Option<&String>) -> Result<Value, String> {
+    let value = value.ok_or("--message requires a text or @file")?;
+    let text = match value.strip_prefix('@') {
+        Some(path) => payload_file(path)?,
+        None => value.clone(),
+    };
+    if text.trim().is_empty() {
+        return Err("--message requires a text or @file".into());
+    }
+    Ok(json!(text))
+}
+
+fn schema(path: Option<&String>) -> Result<Value, String> {
+    let path = path.ok_or("--schema requires a JSON schema file")?;
+    serde_json::from_str::<Value>(&payload_file(path)?)
+        .ok()
+        .filter(Value::is_object)
+        .ok_or_else(|| "--schema requires a file with a JSON object".into())
+}
+
 /// `default` goes back to the definition's value.
 fn limit_value(limit: &Value, value: &Value) -> Result<Value, String> {
     if !["max_active", "max_open_prs", "batch_size"].contains(&limit.as_str().unwrap_or_default()) {
@@ -378,7 +438,7 @@ fn payload_file(path: &str) -> Result<String, String> {
     let mut text = String::new();
     fs::File::open(path)
         .and_then(|file| file.take(MAX_MESSAGE + 1).read_to_string(&mut text))
-        .map_err(|_| "Cannot read the payload file")?;
+        .map_err(|_| format!("Cannot read {path}"))?;
     Ok(text)
 }
 
@@ -1349,8 +1409,86 @@ mod tests {
         );
         fs::remove_file(&path).unwrap();
         assert_eq!(
-            parse(&fire.map(String::from)).err().as_deref(),
-            Some("Cannot read the payload file")
+            parse(&fire.map(String::from)).err(),
+            Some(format!("Cannot read {}", path.display()))
         );
+    }
+
+    #[test]
+    fn parses_task_chats_with_message_and_schema_files() {
+        let dir = std::env::temp_dir().join(format!("wtm-cli-chat-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (prompt, schema) = (dir.join("prompt.md"), dir.join("schema.json"));
+        fs::write(&prompt, "Review the PR\nand reply").unwrap();
+        fs::write(&schema, r#"{"type":"object"}"#).unwrap();
+        let chat = |rest: &[&str]| {
+            let mut words = vec!["task", "chat", "t1", "--agent", "claude"];
+            words.extend(rest);
+            parse(
+                &words
+                    .iter()
+                    .map(|word| word.to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let parsed = chat(&["--message", "Look at this", "--name", "Review #12"]).unwrap();
+        assert_eq!(parsed.method, "task.chat");
+        assert_eq!(
+            Value::Object(parsed.params),
+            json!({ "id": "t1", "agent": "claude", "message": "Look at this", "name": "Review #12" })
+        );
+        let (at_prompt, at_schema) = (
+            format!("@{}", prompt.display()),
+            schema.display().to_string(),
+        );
+        let options = [
+            "--message",
+            &at_prompt,
+            "--model",
+            "opus",
+            "--effort",
+            "high",
+            "--schema",
+            &at_schema,
+            "--wait",
+        ];
+        assert_eq!(
+            Value::Object(chat(&options).unwrap().params),
+            json!({
+                "id": "t1", "agent": "claude", "message": "Review the PR\nand reply",
+                "model": "opus", "effort": "high", "schema": { "type": "object" }, "wait": true,
+            })
+        );
+        let failures = [
+            (vec!["--message"], "--message requires a text or @file"),
+            (vec!["--message", " "], "--message requires a text or @file"),
+            (vec!["--name"], "--name requires a value"),
+            (
+                vec!["--message", "hi", "--schema"],
+                "--schema requires a JSON schema file",
+            ),
+            (
+                vec!["--message", "hi", "--schema", &at_prompt[1..]],
+                "--schema requires a file with a JSON object",
+            ),
+            (
+                vec!["--message", "hi", "--schema", &at_schema],
+                "--schema requires --wait",
+            ),
+            (vec!["--wait"], "Provide --agent and --message"),
+            (
+                vec!["--message", "hi", "--name", "a", "--name", "b"],
+                "Unknown, duplicated or conflicting option; see --help",
+            ),
+        ];
+        for (rest, error) in failures {
+            assert_eq!(chat(&rest).err().as_deref(), Some(error), "{rest:?}");
+        }
+        assert_eq!(
+            parse(&args("task chat t1 --message hi")).err().as_deref(),
+            Some("Provide --agent and --message")
+        );
+        assert!(parse(&args("task get t1 --message hi")).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

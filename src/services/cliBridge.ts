@@ -11,6 +11,7 @@ import {
   operationError,
   DeleteOptions,
   CreateTaskInput,
+  TaskChatInput,
 } from "./operations";
 import {
   AGENT_ACTIVITY_STATES,
@@ -198,6 +199,32 @@ async function agentEvent(params: Record<string, unknown>): Promise<AgentEvent> 
   return event;
 }
 
+const optionalText = (value: unknown) => (value === undefined ? undefined : text(value));
+
+async function taskChatInput(params: Record<string, unknown>): Promise<TaskChatInput> {
+  const agent = text(params.agent);
+  if (!(await isCatalogAgent(agent)))
+    throw new OperationError("invalid_params", `agent ${agent} is not in the agent catalog.`);
+  if (typeof params.message !== "string" || !params.message.trim())
+    throw new OperationError("invalid_params", "Provide the message to send.");
+  if (params.wait !== undefined && typeof params.wait !== "boolean")
+    throw new OperationError("invalid_params", "wait must be a boolean.");
+  const schema = params.schema as Record<string, unknown> | undefined;
+  if (schema !== undefined && (!schema || typeof schema !== "object" || Array.isArray(schema)))
+    throw new OperationError("invalid_params", "schema must be a JSON object.");
+  if (schema && !params.wait)
+    throw new OperationError("invalid_params", "A schema needs wait: the reply follows it.");
+  return {
+    agent,
+    message: params.message,
+    model: optionalText(params.model),
+    effort: optionalText(params.effort),
+    name: optionalText(params.name),
+    schema,
+    wait: params.wait === true,
+  };
+}
+
 /** Operations only the automation engine in this process may run, never a socket client. */
 const ENGINE_METHODS = ["linear.issue-upsert", "linear.issue-state", "task.log-append"];
 
@@ -315,6 +342,7 @@ export async function dispatchCliBridge(
       "task.get": ["id", "git"],
       "task.create": ["input"],
       "task.link-issue": ["id", "issue"],
+      "task.chat": ["id", "agent", "model", "effort", "name", "message", "schema", "wait"],
       "task.delete": ["id", "deleteWorktrees", "force", "skipTeardown"],
       "agent.event": [
         "state",
@@ -423,6 +451,9 @@ export async function dispatchCliBridge(
       }
       case "task.link-issue":
         result = await operations.linkTaskIssue(text(params.id), text(params.issue));
+        break;
+      case "task.chat":
+        result = await operations.openTaskChat(text(params.id), await taskChatInput(params));
         break;
       case "task.create":
         return { ok: true, ...(await operations.createTask(taskInput(params.input), progress)) };

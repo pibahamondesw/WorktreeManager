@@ -1969,7 +1969,7 @@ mod commands {
 }
 
 const ALL_VERBS: &str = "authorization:
-  allow: [push, force_push, pr_create, pr_update, pr_comment, pr_ready, linear_write, task_create, task_log, task_delete]
+  allow: [push, force_push, pr_create, pr_update, pr_comment, pr_ready, linear_write, task_create, task_log, task_delete, chat_open]
 tracker: { linear: { team: ENG } }
 ";
 
@@ -1990,6 +1990,7 @@ fn publish_steps_list_effects_with_their_params() {
       - wtm.task_create: null
       - wtm.task_log: {{ entry: \"Opened {{pr.url}}\" }}
       - wtm.task_delete_clean: {{}}
+      - wtm.chat_open: {{ agent: codex, model: gpt-5, effort: high, name: \"Review {{item.id}}\", message: \"Look at {{item.data.url}}\" }}
 "
     ));
     let entry = load_with(&frontmatter, BODY, |folder| {
@@ -2021,6 +2022,8 @@ fn publish_steps_list_effects_with_their_params() {
             { "effect": "wtm.task_create" },
             { "effect": "wtm.task_log", "entry": "Opened {pr.url}" },
             { "effect": "wtm.task_delete_clean" },
+            { "effect": "wtm.chat_open", "agent": "codex", "model": "gpt-5", "effort": "high",
+              "name": "Review {item.id}", "message": "Look at {item.data.url}" },
         ] })
     );
     assert_issue(
@@ -2236,6 +2239,53 @@ fn publish_steps_report_malformed_effects() {
         "schema: 1\nname: demo\ntarget: {{ workspace: Acme, repos: [app, api] }}\n{AGENT}{ALL_VERBS}steps:\n  - id: ship\n    publish: git.push\n"
     );
     assert_issue(&two_repos, "steps[0].publish.repo", IssueKind::Missing);
+}
+
+#[test]
+fn chat_open_effects_need_a_message_and_an_agent_able_to_run_it() {
+    let publish = |effect: &str| {
+        load(&routine(&format!(
+            "{ALL_VERBS}steps:\n  - id: hand\n    publish: {{ wtm.chat_open: {effect} }}\n"
+        )))
+    };
+    let field = "steps[0].publish.wtm.chat_open";
+    assert_eq!(
+        issues(&publish("{ agent: claude }")),
+        [(format!("{field}.message").as_str(), IssueKind::Missing)]
+    );
+    assert_eq!(
+        issues(&publish("{ agent: gemini, message: hi }")),
+        [(format!("{field}.agent").as_str(), IssueKind::UnknownAgent)]
+    );
+    assert_eq!(
+        issues(&publish("{ agent: claude, message: \"{item.nope}\" }")),
+        [(format!("{field}.message").as_str(), IssueKind::Invalid)]
+    );
+    assert_eq!(
+        issues(&publish("{ agent: basic, model: default, message: hi }")),
+        [(format!("{field}.agent").as_str(), IssueKind::Capability)]
+    );
+    let limited = publish("{ agent: basic, model: big, effort: high, message: hi }");
+    let messages: Vec<_> = limited
+        .errors
+        .iter()
+        .map(|issue| issue.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "basic lacks the headless capability this effect needs",
+            "basic lacks the models capability this effect needs",
+            "basic lacks the effort capability this effect needs",
+        ]
+    );
+    let unauthorized = load(&routine(
+        "steps:\n  - id: hand\n    publish: { wtm.chat_open: { agent: claude, message: hi } }\n",
+    ));
+    assert_eq!(
+        unauthorized.errors[0].message,
+        "wtm.chat_open needs chat_open in authorization.allow"
+    );
 }
 
 #[test]

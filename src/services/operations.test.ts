@@ -979,6 +979,80 @@ async function configured(tasks = [task]) {
   return result;
 }
 
+describe("openTaskChat", () => {
+  const started = { sessionId: "s1", conversationId: "c1", continued: false };
+
+  it("records the conversation as the task's chat for its agent", async () => {
+    const { operations, save } = fixture([task]);
+    vi.mocked(invoke).mockResolvedValueOnce(started);
+    const chat = await operations.openTaskChat("t1", {
+      agent: "claude",
+      message: "Review the PR",
+      name: "Review #12",
+    });
+    expect(chat).toEqual({ taskId: "t1", agent: "claude", ...started });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("chat_hand_over", {
+      request: {
+        taskId: "t1",
+        agent: "claude",
+        folders: ["/wt/api/feature", "/wt/web/feature"],
+        model: null,
+        effort: null,
+        name: "Review #12",
+        message: "Review the PR",
+        schema: null,
+      },
+    });
+    expect(operations.task("t1").agent).toBe("claude");
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the reply, structured when held to a schema", async () => {
+    const { operations } = fixture([task]);
+    vi.mocked(invoke).mockResolvedValueOnce(started).mockResolvedValueOnce({ approved: true });
+    const schema = { type: "object" };
+    const chat = await operations.openTaskChat("t1", {
+      agent: "codex",
+      message: "Review",
+      model: "gpt-5",
+      effort: "high",
+      schema,
+      wait: true,
+    });
+    expect(chat.reply).toEqual({ approved: true });
+    expect(invoke).toHaveBeenLastCalledWith("chat_await_reply", {
+      sessionId: "s1",
+      structured: true,
+    });
+    expect(vi.mocked(invoke).mock.calls[0][1]).toMatchObject({
+      request: { model: "gpt-5", effort: "high", schema },
+    });
+    expect(operations.task("t1").agent).toBe("codex");
+  });
+
+  it("keeps the task's agent when the chat cannot start and reports a failed wait", async () => {
+    const { operations } = fixture([task]);
+    vi.mocked(invoke).mockRejectedValueOnce("Claude Code lacks the effort capability");
+    await expect(
+      operations.openTaskChat("t1", { agent: "claude", message: "Hi", effort: "max" })
+    ).rejects.toMatchObject({
+      code: "chat_failed",
+      message: "Claude Code lacks the effort capability",
+    });
+    expect(operations.task("t1").agent).toBeUndefined();
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(started)
+      .mockRejectedValueOnce("The agent exited before replying");
+    await expect(
+      operations.openTaskChat("t1", { agent: "claude", message: "Hi", wait: true })
+    ).rejects.toMatchObject({ code: "chat_failed" });
+    expect(operations.task("t1").agent).toBe("claude");
+    await expect(
+      operations.openTaskChat("missing", { agent: "claude", message: "Hi" })
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
 describe("linkTaskIssue", () => {
   beforeEach(() => {
     vi.spyOn(LinearService.prototype, "getIssue").mockResolvedValue(input.linearIssue!);

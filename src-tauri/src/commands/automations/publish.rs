@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 pub use forge::CliForge;
 
 use super::definition::{
-    Authorization, Effect, LinearOverrides, LinearTracker, PullRequestEffect, Verb,
+    Authorization, ChatOpenEffect, Effect, LinearOverrides, LinearTracker, PullRequestEffect, Verb,
 };
 use super::pipeline::{StepReport, StepRequest};
 use super::routine::{render, OperationsBridge, ResolvedTask};
@@ -125,6 +125,8 @@ pub struct PublishScope<'a> {
     pub pushed: &'a [String],
     /// `{pr.*}` and `{tracker.issue}` the item's effects recorded in the run log so far.
     pub published: &'a [(&'static str, String)],
+    /// The `agent:conversation` of the chats this step's `wtm.chat_open` effects opened so far.
+    pub chats: &'a [String],
 }
 
 enum Stop {
@@ -353,6 +355,12 @@ impl Publisher {
                     scope.task.id
                 )
             }
+            Effect::ChatOpen(chat) => format!(
+                "Open a {} chat in task {}: {}",
+                chat.agent,
+                scope.task.id,
+                self.render(scope, &chat.message)?
+            ),
         })
     }
 
@@ -382,6 +390,7 @@ impl Publisher {
             Effect::TaskCreate => self.create_task(scope),
             Effect::TaskLog { entry } => self.log(request, scope, entry),
             Effect::TaskDeleteClean => self.delete_clean_task(scope),
+            Effect::ChatOpen(chat) => self.open_chat(scope, chat),
         }
     }
 
@@ -741,6 +750,49 @@ impl Publisher {
         })
     }
 
+    /// Opens the chat as `wtm task chat` does, once per step: a retry finds the one it opened.
+    fn open_chat(&self, scope: &PublishScope, chat: &ChatOpenEffect) -> Result<Outcome, String> {
+        let agent = &chat.agent;
+        let opened = scope
+            .chats
+            .iter()
+            .find(|reference| reference.split_once(':').map(|(id, _)| id) == Some(agent.as_str()));
+        if let Some(reference) = opened {
+            return Ok(Outcome::of(
+                EffectStatus::Reconciled,
+                format!("The step already opened the {agent} chat"),
+            )
+            .referencing(reference.clone()));
+        }
+        let mut params = json!({
+            "id": scope.task.id,
+            "agent": agent,
+            "message": self.render(scope, &chat.message)?,
+        });
+        let name = chat
+            .name
+            .as_deref()
+            .map(|name| self.render(scope, name))
+            .transpose()?;
+        for (key, value) in [
+            ("model", chat.model.clone()),
+            ("effort", chat.effort.clone()),
+            ("name", name),
+        ] {
+            if let Some(value) = value {
+                params[key] = json!(value);
+            }
+        }
+        let opened = operation(self.bridge.call("task.chat", params))?;
+        let detail = if opened["continued"] == true {
+            format!("Sent the message to the {agent} chat running in the task")
+        } else {
+            format!("Opened a {agent} chat")
+        };
+        Ok(Outcome::of(EffectStatus::Executed, detail)
+            .referencing(format!("{agent}:{}", text(&opened, "conversationId")?)))
+    }
+
     fn delete_clean_task(&self, scope: &PublishScope) -> Result<Outcome, String> {
         let task = scope.task;
         let found = self.bridge.call("task.get", json!({ "id": task.id }));
@@ -940,6 +992,28 @@ fn published_issue<'a>(
 fn pull_request_number(url: &str) -> Option<u64> {
     let (_, number) = url.trim_end_matches('/').rsplit_once("/pull/")?;
     number.parse().ok().filter(|number| *number > 0)
+}
+
+/// The `agent:conversation` of the chats `item`'s `wtm.chat_open` effects of `step` opened.
+pub fn opened_chats<'a>(
+    events: impl IntoIterator<Item = &'a RunEvent>,
+    item: &str,
+    step: &str,
+) -> Vec<String> {
+    let opened = events.into_iter().filter_map(|event| match event {
+        RunEvent::EffectRecorded {
+            item: recorded,
+            step: recorded_step,
+            effect,
+            status: EffectStatus::Executed | EffectStatus::Reconciled,
+            reference: Some(reference),
+            ..
+        } if recorded == item && recorded_step == step && effect == "wtm.chat_open" => {
+            Some(reference.clone())
+        }
+        _ => None,
+    });
+    opened.collect()
 }
 
 /// The commits `item`'s `git.push` effects pushed or found on `origin`, oldest first.
