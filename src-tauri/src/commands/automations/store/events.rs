@@ -190,12 +190,15 @@ pub enum RunEvent {
         by: Actor,
     },
     /// The owner hands a taken-over item back: it goes on from the step they took over, and the
-    /// next agent step reads the note.
+    /// next agent step reads the note. A campaign item handed back while its `pools.active` is full
+    /// stays queued `awaiting_slot` until it takes a freed slot.
     ItemHandedBack {
         item: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
         by: Actor,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        awaiting_slot: bool,
     },
     /// The owner retries a failed or blocked item from `step`, on the definition with
     /// `definition_hash`, which the run pins from then on. `reset_counter` is the exhausted
@@ -215,7 +218,7 @@ pub enum RunEvent {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         awaiting_slot: bool,
     },
-    /// A retried item awaiting a slot takes one that freed and goes on.
+    /// A retried or handed-back item awaiting a slot takes one that freed and goes on.
     ItemSlotTaken {
         item: String,
     },
@@ -529,10 +532,10 @@ impl ItemStatus {
     }
 }
 
-/// The cause of a retried campaign item queued until a slot of `pools.active` frees.
+/// The cause of a retried or handed-back campaign item queued until a slot of `pools.active` frees.
 pub const AWAITING_SLOT: &str = "awaiting_slot";
 
-/// A retried item queued for a slot: it holds one in the count, but nothing drives it yet.
+/// An item queued for a slot: it holds one in the count, but nothing drives it yet.
 pub fn awaits_slot(item: &ItemState) -> bool {
     item.status == ItemStatus::Queued && item.cause.as_deref() == Some(AWAITING_SLOT)
 }
@@ -802,10 +805,14 @@ impl RunState {
                     attempt.signal = Some(payload);
                 }
             }
-            RunEvent::ItemHandedBack { item, .. } => {
+            RunEvent::ItemHandedBack {
+                item,
+                awaiting_slot,
+                ..
+            } => {
                 if let Some(item) = self.open_item(&item) {
                     item.status = ItemStatus::Queued;
-                    item.cause = None;
+                    item.cause = awaiting_slot.then(|| AWAITING_SLOT.to_string());
                 }
             }
             RunEvent::ItemRetried {

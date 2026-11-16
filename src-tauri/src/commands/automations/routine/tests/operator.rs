@@ -261,8 +261,13 @@ fn a_campaign_run_the_sweep_already_ended_selects_nothing() {
     assert!(harness.state_of(&request).items.is_empty());
 }
 
-#[test]
-fn a_retry_awaiting_a_slot_takes_the_freed_one_before_the_selector_takes_new_items() {
+/// A campaign with one slot, whose item `z` stopped at its first step and was sent back to it
+/// with `awaiting` while the slot was taken, frees that slot.
+fn an_item_awaiting_a_slot_takes_the_freed_one_first(
+    stopped: ItemStatus,
+    cause: Option<&str>,
+    awaiting: impl FnOnce(&Harness, String) -> RunEvent,
+) {
     let harness = Harness::campaign(
         "pools: { active: 1 }\n",
         by_branch(None),
@@ -270,7 +275,7 @@ fn a_retry_awaiting_a_slot_takes_the_freed_one_before_the_selector_takes_new_ite
     );
     harness.selector_printing(r#"{"items":[{"id":"a","version":"1"}]}"#);
     enabled_at(&harness, Pace::Continuous);
-    let retried = harness.claim(false, now());
+    let awaiting_run = harness.claim(false, now());
     let step = harness.definition().steps[0].id.clone();
     let writer = harness.scratch.store().writer("demo").unwrap();
     for event in [
@@ -286,23 +291,15 @@ fn a_retry_awaiting_a_slot_takes_the_freed_one_before_the_selector_takes_new_ite
         },
         RunEvent::ItemStatus {
             item: "z".into(),
-            status: ItemStatus::Blocked,
+            status: stopped,
             phase: Some(step.clone()),
             stage: None,
-            cause: None,
+            cause: cause.map(String::from),
             counter: None,
         },
-        RunEvent::ItemRetried {
-            item: "z".into(),
-            step,
-            definition_hash: harness.hash(),
-            by: Actor::Cli,
-            reset_counter: None,
-            reset_active_time: false,
-            awaiting_slot: true,
-        },
+        awaiting(&harness, step),
     ] {
-        writer.append(&retried.run_id, &event).unwrap();
+        writer.append(&awaiting_run.run_id, &event).unwrap();
     }
     drop(writer);
 
@@ -317,4 +314,35 @@ fn a_retry_awaiting_a_slot_takes_the_freed_one_before_the_selector_takes_new_ite
     assert!(runs[1..]
         .iter()
         .all(|run| source(run) == RunSource::Capacity));
+}
+
+#[test]
+fn a_retry_awaiting_a_slot_takes_the_freed_one_before_the_selector_takes_new_items() {
+    an_item_awaiting_a_slot_takes_the_freed_one_first(
+        ItemStatus::Blocked,
+        None,
+        |harness, step| RunEvent::ItemRetried {
+            item: "z".into(),
+            step,
+            definition_hash: harness.hash(),
+            by: Actor::Cli,
+            reset_counter: None,
+            reset_active_time: false,
+            awaiting_slot: true,
+        },
+    );
+}
+
+#[test]
+fn a_hand_back_awaiting_a_slot_takes_the_freed_one_before_the_selector_takes_new_items() {
+    an_item_awaiting_a_slot_takes_the_freed_one_first(
+        ItemStatus::Paused,
+        Some(HUMAN_TAKEOVER),
+        |_, _| RunEvent::ItemHandedBack {
+            item: "z".into(),
+            note: None,
+            by: Actor::Cli,
+            awaiting_slot: true,
+        },
+    );
 }

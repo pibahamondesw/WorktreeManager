@@ -1,7 +1,7 @@
 use super::*;
 use crate::commands::automations::actions::intervene::{
-    automation_hand_back, automation_retry, automation_take_over, start_retries_due, ItemControl,
-    ItemRequest, RetryDefinition,
+    automation_hand_back, automation_retry, automation_take_over, start_items_due_a_slot,
+    ItemControl, ItemRequest, RetryDefinition,
 };
 use crate::commands::automations::routine::HUMAN_TAKEOVER;
 use crate::commands::automations::store::events::{
@@ -142,9 +142,9 @@ impl Harness {
             .unwrap()
     }
 
-    fn start_retries_due(&self) {
+    fn start_items_due_a_slot(&self) {
         let store = self.scratch.store();
-        start_retries_due(&store, self.executor.as_ref(), &self.campaign(), now()).unwrap();
+        start_items_due_a_slot(&store, self.executor.as_ref(), &self.campaign(), now()).unwrap();
     }
 
     fn events(&self, run_id: &str) -> Vec<RunEvent> {
@@ -228,6 +228,7 @@ fn a_blocked_item_taken_over_is_handed_back_with_its_run_reopened() {
                 item: "routine".into(),
                 note: Some("Use the API".into()),
                 by: Actor::Cli,
+                awaiting_slot: false,
             }
         ]
     );
@@ -587,11 +588,11 @@ fn a_retried_campaign_item_waits_queued_for_a_free_slot_of_max_active() {
     );
     assert!(harness.driven_again().is_empty());
     assert_eq!(harness.refill(), Refill::Idle);
-    harness.start_retries_due();
+    harness.start_items_due_a_slot();
     assert!(harness.driven_again().is_empty());
 
     harness.append(&run_id, &moved("a", ItemStatus::Completed, Some("check")));
-    harness.start_retries_due();
+    harness.start_items_due_a_slot();
 
     let driven = harness.driven_again();
     assert_eq!(driven.len(), 1);
@@ -607,7 +608,7 @@ fn a_retried_campaign_item_waits_queued_for_a_free_slot_of_max_active() {
     assert!(harness
         .events(&run_id)
         .contains(&RunEvent::ItemSlotTaken { item: "c".into() }));
-    harness.start_retries_due();
+    harness.start_items_due_a_slot();
     assert!(harness.driven_again().is_empty());
     assert_eq!(harness.refill(), Refill::Idle);
 }
@@ -640,12 +641,12 @@ fn freed_slots_go_to_the_oldest_retries_awaiting_one_before_new_items() {
         driven.map(|(request, _)| request.run_id).collect()
     };
 
-    harness.start_retries_due();
+    harness.start_items_due_a_slot();
 
     assert_eq!(driven_runs(), [older]);
     assert_eq!(harness.refill(), Refill::Idle);
     harness.append(&newer, &moved("e", ItemStatus::Failed, Some("check")));
-    harness.start_retries_due();
+    harness.start_items_due_a_slot();
     assert_eq!(driven_runs(), [newer]);
     assert_eq!(harness.refill(), Refill::Idle);
     assert!(harness.executed().is_empty());
@@ -680,4 +681,128 @@ fn a_campaign_item_retried_with_a_free_slot_or_in_a_test_run_goes_on_at_once() {
         .unwrap();
     assert_eq!(retried.cause, None);
     assert_eq!(harness.driven_again()[0].1, ["t"]);
+}
+
+fn taken_over(item: &str) -> RunEvent {
+    RunEvent::ItemStatus {
+        item: item.into(),
+        status: ItemStatus::Paused,
+        phase: Some("fix".into()),
+        stage: None,
+        cause: Some(HUMAN_TAKEOVER.into()),
+        counter: None,
+    }
+}
+
+#[test]
+fn a_campaign_item_handed_back_waits_queued_for_a_free_slot_of_max_active() {
+    let harness = Harness::new(&format!("{CAMPAIGN}{STEPS}"));
+    let run_id = campaign_full(&harness);
+    harness.append(&run_id, &taken_over("c"));
+
+    let handed = harness
+        .hand_back(request(&run_id, Some("c"), Actor::User), Some("Go on"))
+        .unwrap();
+
+    assert_eq!(
+        (handed.status, handed.cause.as_deref()),
+        (ItemStatus::Queued, Some(AWAITING_SLOT))
+    );
+    assert!(harness.driven_again().is_empty());
+    assert!(harness.events(&run_id).contains(&RunEvent::ItemHandedBack {
+        item: "c".into(),
+        note: Some("Go on".into()),
+        by: Actor::User,
+        awaiting_slot: true,
+    }));
+    assert_eq!(harness.refill(), Refill::Idle);
+    harness.start_items_due_a_slot();
+    assert!(harness.driven_again().is_empty());
+
+    harness.append(&run_id, &moved("a", ItemStatus::Completed, Some("check")));
+    harness.start_items_due_a_slot();
+
+    let driven = harness.driven_again();
+    assert_eq!(
+        (&driven[0].0.run_id, &driven[0].1),
+        (&run_id, &vec!["c".to_string()])
+    );
+    let item = harness.item(&run_id, "c");
+    assert_eq!(
+        (item.status, item.cause, item.phase.as_deref()),
+        (ItemStatus::Queued, None, Some("fix"))
+    );
+    assert!(harness
+        .events(&run_id)
+        .contains(&RunEvent::ItemSlotTaken { item: "c".into() }));
+}
+
+#[test]
+fn freed_slots_go_to_retried_and_handed_back_items_alike_oldest_run_first() {
+    let harness = Harness::new(&format!("{CAMPAIGN}{STEPS}"));
+    let older = campaign_full(&harness);
+    let newer = campaign_with(&harness, ["d", "e", "f"]);
+    harness.append(&older, &taken_over("c"));
+    harness
+        .retry(
+            request(&newer, Some("f"), Actor::User),
+            RetryDefinition::Current,
+        )
+        .unwrap();
+    harness
+        .hand_back(request(&older, Some("c"), Actor::User), None)
+        .unwrap();
+    assert!(harness.driven_again().is_empty());
+    for item in ["a", "b", "d", "e"] {
+        let run_id = if item < "c" { &older } else { &newer };
+        harness.append(run_id, &moved(item, ItemStatus::Completed, Some("check")));
+    }
+    let driven_runs = || -> Vec<String> {
+        let driven = harness.driven_again().into_iter();
+        driven.map(|(request, _)| request.run_id).collect()
+    };
+
+    harness.start_items_due_a_slot();
+
+    assert_eq!(driven_runs(), [older, newer]);
+}
+
+#[test]
+fn a_campaign_item_handed_back_with_a_free_slot_or_in_a_test_run_goes_on_at_once() {
+    let harness = Harness::new(&format!("{CAMPAIGN}{STEPS}"));
+    let run_id = campaign_full(&harness);
+    harness.append(&run_id, &moved("b", ItemStatus::Waiting, Some("check")));
+    harness.append(&run_id, &taken_over("c"));
+
+    let handed = harness
+        .hand_back(request(&run_id, Some("c"), Actor::User), None)
+        .unwrap();
+
+    assert_eq!((handed.status, handed.cause), (ItemStatus::Queued, None));
+    assert_eq!(harness.driven_again()[0].1, ["c"]);
+
+    let test_run = harness.recorded_test(&[
+        RunEvent::Started,
+        created("a"),
+        created("b"),
+        created("t"),
+        moved("a", ItemStatus::Active, Some("fix")),
+        moved("b", ItemStatus::Active, Some("fix")),
+        taken_over("t"),
+    ]);
+    let handed = harness
+        .hand_back(request(&test_run, Some("t"), Actor::User), None)
+        .unwrap();
+    assert_eq!(handed.cause, None);
+    assert_eq!(harness.driven_again()[0].1, ["t"]);
+}
+
+#[test]
+fn a_hand_back_logged_before_slots_counted_reads_as_going_on_at_once() {
+    let logged = json!({ "type": "item_handed_back", "item": "c", "by": "user" });
+
+    match serde_json::from_value(logged).unwrap() {
+        RunEvent::ItemHandedBack { awaiting_slot, .. } => assert!(!awaiting_slot),
+        other => panic!("expected a hand back, got {other:?}"),
+    }
 }
