@@ -15,7 +15,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime, State};
 
-use super::super::definition::{self, AutomationDefinition, StepKind, StepTask};
+use super::super::definition::{self, AutomationDefinition, StepKind, StepTask, TaskMode};
 use super::super::operator::pass_limits;
 use super::super::pipeline::ACTIVE_TIME_BUDGET;
 use super::super::routine::HUMAN_TAKEOVER;
@@ -173,7 +173,8 @@ pub fn retry(
     let run = store.run(name, target.run_id)?;
     let item = pick(&run, target.item)?;
     let routine = chosen.selector.is_none();
-    if !retriable(&run, item) {
+    let taskless_routine = routine && chosen.target.task == TaskMode::None;
+    if !retriable(&run, item, taskless_routine) {
         return Err(format!(
             "Item {} is {}; only a failed or blocked item can be retried",
             item.id,
@@ -327,12 +328,13 @@ fn is_taskless_step(definition: &AutomationDefinition, step: &str) -> bool {
         .any(|candidate| candidate.id == step && candidate.task == StepTask::None)
 }
 
-/// Failed and blocked items, and those a routine's failed run left open, as on its deadline.
-fn retriable(run: &RunState, item: &ItemState) -> bool {
+/// Failed and blocked items, and those a routine's failed run left open, as on its deadline: a
+/// routine whose target has a task left them open once it had its task.
+fn retriable(run: &RunState, item: &ItemState, taskless_routine: bool) -> bool {
     match item.status {
         ItemStatus::Failed | ItemStatus::Blocked => true,
         ItemStatus::Queued | ItemStatus::Active | ItemStatus::Waiting => {
-            !is_active(run.status) && run.task_id.is_some()
+            !is_active(run.status) && (run.task_id.is_some() || taskless_routine)
         }
         _ => false,
     }

@@ -225,5 +225,14 @@ describe("itemActions", () => {
     expect(itemActions(item("blocked", "check"), steps, null)).toEqual(["retry"]);
     expect(itemActions(item("active", "check"), steps, failedRun)).toEqual(["retry"]);
     expect(itemActions(item("completed", "check"), steps, failedRun)).toEqual([]);
+    const withoutTask = { ...failedRun, task_id: null };
+    expect(itemActions(item("active", "check"), steps, withoutTask)).toEqual([]);
+  });
+
+  it("retries what a taskless routine's failed run left open, but never takes it over", () => {
+    const taskless = steps.map((step) => ({ ...step, task: "none" as const }));
+    const failed = { ...run({}), status: "failed" as const, task_id: null };
+    expect(itemActions(item("active", "check"), taskless, failed)).toEqual(["retry"]);
+    expect(itemActions(item("blocked", "fix"), taskless, null)).toEqual(["retry"]);
   });
 });
