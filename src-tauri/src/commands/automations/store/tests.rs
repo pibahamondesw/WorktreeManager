@@ -7,6 +7,7 @@ use tauri::test::{mock_builder, mock_context, noop_assets};
 
 use super::events::*;
 use super::*;
+use crate::commands::agents::permission::UnattendedMode;
 
 struct Scratch(PathBuf);
 
@@ -392,7 +393,7 @@ fn parsing_ignores_a_truncated_last_line_and_unknown_events() {
 }
 
 #[test]
-fn permission_requests_keep_their_session_request_and_kind_and_read_older_lines() {
+fn permission_requests_keep_their_session_request_kind_and_mode_and_read_older_lines() {
     let older = json!({
         "at_ms": 1, "type": "permission_requested", "item": "routine", "step": "triage",
         "attempt": 1, "tool": "Bash", "resolution": "denied",
@@ -407,6 +408,7 @@ fn permission_requests_keep_their_session_request_and_kind_and_read_older_lines(
         request_id: Some("r1".into()),
         session_id: Some("s1".into()),
         kind: RequestKind::Question,
+        mode: Some(UnattendedMode::Auto),
     };
     let body = format!(
         "{older}\n{}\n",
@@ -425,6 +427,7 @@ fn permission_requests_keep_their_session_request_and_kind_and_read_older_lines(
         request_id: ids.map(|(request, _)| request.into()),
         session_id: ids.map(|(_, session)| session.into()),
         kind,
+        mode: ids.map(|_| UnattendedMode::Auto),
     };
     assert_eq!(
         run.permission_requests,

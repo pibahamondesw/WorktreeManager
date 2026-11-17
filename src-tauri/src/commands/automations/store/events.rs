@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::Actor;
+use crate::commands::agents::permission::UnattendedMode;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoggedEvent {
@@ -154,6 +155,9 @@ pub enum RunEvent {
         session_id: Option<String>,
         #[serde(default)]
         kind: RequestKind,
+        /// How the asking step ran unattended; missing in runs recorded before it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<UnattendedMode>,
     },
     /// One effect of a `publish` attempt: what it did, would do in a Test run, or why not.
     EffectRecorded {
@@ -372,6 +376,7 @@ pub struct PermissionRequest {
     pub request_id: Option<String>,
     pub session_id: Option<String>,
     pub kind: RequestKind,
+    pub mode: Option<UnattendedMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -744,6 +749,7 @@ impl RunState {
                 request_id,
                 session_id,
                 kind,
+                mode,
             } => self.permission_requests.push(PermissionRequest {
                 item,
                 step,
@@ -754,6 +760,7 @@ impl RunState {
                 request_id,
                 session_id,
                 kind,
+                mode,
             }),
             RunEvent::EffectRecorded {
                 item,

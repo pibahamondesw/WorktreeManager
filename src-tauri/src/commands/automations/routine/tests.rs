@@ -7,7 +7,7 @@ use jiff::Timestamp;
 use serde_json::json;
 
 use super::*;
-use crate::commands::agents::permission::{Grant, PermissionMode};
+use crate::commands::agents::permission::{Grant, PermissionMode, UnattendedMode};
 use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
 use crate::commands::automations::command::CommandContext;
 use crate::commands::automations::definition::{
@@ -1242,6 +1242,7 @@ fn a_test_run_records_what_the_policy_settled_and_leaves_the_state_alone() {
         request_id: Some(format!("req-{tool}")),
         session_id: Some("s1".into()),
         kind,
+        mode: Some(UnattendedMode::Auto),
     };
     assert_eq!(
         run.permission_requests,
