@@ -82,8 +82,8 @@ impl Selector for SourceSelector<'_> {
                 linear,
             )?,
             ItemSource::File(file) => file_items(self.target, file)?,
-            ItemSource::Script { .. } => {
-                return Err("selector.run is not a declarative source".into())
+            ItemSource::Script { .. } | ItemSource::Agent(_) => {
+                return Err("only github, linear and file are declarative sources".into())
             }
         };
         for item in &items {

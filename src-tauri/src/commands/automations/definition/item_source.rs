@@ -1,14 +1,14 @@
-//! Where a campaign's items come from: the `selector.run` script, or one of the declarative
-//! sources `github`, `linear` and `file`, exactly one per selector.
+//! Where a campaign's items come from: the `selector.run` script, one of the declarative
+//! sources `github`, `linear` and `file`, or an `agent`, exactly one per selector.
 
 use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::fields::{choice, integer, map, string, Fields, Report};
 use super::validate::target_repo;
-use super::{IssueKind, TargetRepo};
+use super::{AgentSettings, IssueKind, TargetRepo};
 
-pub const SOURCE_KEYS: [&str; 4] = ["run", "github", "linear", "file"];
+pub const SOURCE_KEYS: [&str; 5] = ["run", "github", "linear", "file", "agent"];
 const MAX_GITHUB_LIMIT: u64 = 100;
 const MAX_LINEAR_LIMIT: u64 = 250;
 const DEFAULT_LIMIT: u64 = 50;
@@ -24,6 +24,7 @@ pub enum ItemSource {
     Github(GithubSource),
     Linear(LinearSource),
     File(FileSource),
+    Agent(AgentSource),
 }
 
 /// Issues and pull requests a GitHub search finds, as the owner's `gh` sees them.
@@ -66,12 +67,24 @@ pub struct FileSource {
     pub title: String,
 }
 
+/// A headless agent that lists the items as its structured result, outside any task.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSource {
+    /// The top-level agent with the selector's overrides applied.
+    pub agent: AgentSettings,
+    pub skill: Option<String>,
+    pub prompt: Option<String>,
+    pub readonly: bool,
+}
+
 /// The one source `fields` declares, reading every source key so none is reported unknown.
 pub(super) fn item_source(
     report: &mut Report,
     fields: &mut Fields,
     repos: Option<&[TargetRepo]>,
     run: impl FnOnce(&mut Report, &Value, &str) -> Option<Vec<String>>,
+    agent: impl FnOnce(&mut Report, &Value, &str) -> Option<AgentSource>,
 ) -> Option<ItemSource> {
     let declared: Vec<&str> = SOURCE_KEYS
         .into_iter()
@@ -83,10 +96,11 @@ pub(super) fn item_source(
     let file = fields.optional(report, "file", |report, value, field| {
         file_source(report, repos, value, field)
     });
+    let agent = fields.optional(report, "agent", agent);
     if declared.len() != 1 {
         let message = match declared.len() {
-            0 => "is required, or one of github, linear or file",
-            _ => "set exactly one of run, github, linear or file",
+            0 => "is required, or one of github, linear, file or agent",
+            _ => "set exactly one of run, github, linear, file or agent",
         };
         let kind = match declared.len() {
             0 => IssueKind::Missing,
@@ -95,11 +109,12 @@ pub(super) fn item_source(
         report.error(kind, &fields.path("run"), message);
         return None;
     }
-    match (run?, github?, linear?, file?) {
+    match (run?, github?, linear?, file?, agent?) {
         (Some(run), ..) => Some(ItemSource::Script { run }),
         (_, Some(github), ..) => Some(ItemSource::Github(github)),
-        (_, _, Some(linear), _) => Some(ItemSource::Linear(linear)),
-        (.., file) => file.map(ItemSource::File),
+        (_, _, Some(linear), ..) => Some(ItemSource::Linear(linear)),
+        (_, _, _, Some(file), _) => Some(ItemSource::File(file)),
+        (.., agent) => agent.map(ItemSource::Agent),
     }
 }
 

@@ -415,5 +415,8 @@ fn a_script_is_not_a_declarative_source() {
 
     let error = select(&script, &ItemSources::default(), &target(None)).unwrap_err();
 
-    assert_eq!(error, "selector.run is not a declarative source");
+    assert_eq!(
+        error,
+        "only github, linear and file are declarative sources"
+    );
 }

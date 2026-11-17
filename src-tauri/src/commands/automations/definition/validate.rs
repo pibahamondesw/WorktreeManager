@@ -16,7 +16,7 @@ use super::fields::{
     Fields, Report,
 };
 use super::github_trigger::{github_event_trigger, resolve_repos};
-use super::item_source::item_source;
+use super::item_source::{item_source, AgentSource};
 use super::linear_trigger::linear_event_trigger;
 use super::step_outputs::check_output_references;
 use super::{
@@ -50,6 +50,7 @@ const AGENT_STEP_TIMEOUT_SECS: u64 = 60 * 60;
 const COMMAND_STEP_TIMEOUT_SECS: u64 = 30 * 60;
 const PUBLISH_STEP_TIMEOUT_SECS: u64 = 30 * 60;
 const SELECTOR_TIMEOUT_SECS: u64 = 5 * 60;
+const SELECTOR_AGENT_TIMEOUT_SECS: u64 = 15 * 60;
 /// The scheduler's tick re-checks waits once a minute.
 const MIN_WATCH_INTERVAL_SECS: u64 = 60;
 const MAX_SCRIPT_WATCH_INTERVAL_SECS: u64 = 5 * 60;
@@ -182,7 +183,7 @@ pub(super) fn definition(
     let report_policy = fields.or(report, "report", default_report_policy(), report_policy);
     let completion = fields.or(report, "completion", Completion::default(), completion);
     let selector = fields.optional(report, "selector", |report, value, field| {
-        selector(report, context.folder, scope.repos, value, field)
+        selector(report, &scope, value, field)
     });
     fields.finish(report);
     check_instructions(report, instructions, steps.as_deref());
@@ -2294,37 +2295,107 @@ fn pool_values(report: &mut Report, value: &Value, field: &str) -> Option<Vec<St
 
 fn selector(
     report: &mut Report,
-    folder: &Path,
-    repos: Option<&[TargetRepo]>,
+    scope: &Scope,
     value: &Value,
     field: &str,
 ) -> Option<SelectorSettings> {
+    let folder = scope.context.folder;
     let mut fields = Fields::of(report, value, field)?;
     let run_field = fields.path("run");
-    let source = item_source(report, &mut fields, repos, |report, value, field| {
-        let run = argv(report, value, field)?;
-        executable(report, folder, &run[0], &index(&run_field, 0))?;
-        Some(run)
-    });
+    let source = item_source(
+        report,
+        &mut fields,
+        scope.repos,
+        |report, value, field| {
+            let run = argv(report, value, field)?;
+            executable(report, folder, &run[0], &index(&run_field, 0))?;
+            Some(run)
+        },
+        |report, value, field| selector_agent(report, scope, value, field),
+    );
     let timeout_field = fields.path("timeout");
-    let timed = fields.has("timeout");
-    let timeout = fields.or(report, "timeout", SELECTOR_TIMEOUT_SECS, duration);
+    let timeout = fields.optional(report, "timeout", duration);
     let max_new_items = fields.optional(report, "max_new_items", |report, value, field| {
         integer(report, value, field, 1)
     });
     let exclusive_on = fields.or(report, "exclusive_on", Vec::new(), string_list);
     fields.finish(report);
     let source = source?;
-    if timed && !matches!(source, ItemSource::Script { .. }) {
-        report.error(IssueKind::Invalid, &timeout_field, "applies only to run");
-        return None;
-    }
+    let default_timeout = match source {
+        ItemSource::Script { .. } => SELECTOR_TIMEOUT_SECS,
+        ItemSource::Agent(_) => SELECTOR_AGENT_TIMEOUT_SECS,
+        _ if matches!(timeout, Some(Some(_))) => {
+            report.error(
+                IssueKind::Invalid,
+                &timeout_field,
+                "applies only to run and agent",
+            );
+            return None;
+        }
+        _ => SELECTOR_TIMEOUT_SECS,
+    };
     Some(SelectorSettings {
         source,
-        timeout_secs: timeout?,
+        timeout_secs: timeout?.unwrap_or(default_timeout),
         max_new_items: max_new_items?,
         exclusive_on: exclusive_on?,
     })
+}
+
+/// `selector.agent`: the agent settings of a step, a skill or a prompt, read-only by default.
+fn selector_agent(
+    report: &mut Report,
+    scope: &Scope,
+    value: &Value,
+    field: &str,
+) -> Option<AgentSource> {
+    let env = scope.context.env;
+    let mut fields = Fields::of(report, value, field)?;
+    let overrides = agent_overrides(report, env, &mut fields);
+    let skill = fields.optional(report, "skill", string);
+    let prompt = fields.optional(report, "prompt", string);
+    let readonly = fields.or(report, "readonly", true, boolean);
+    let prompt_field = fields.path("prompt");
+    fields.finish(report);
+    let (skill, prompt) = (skill?, prompt?);
+    if skill.is_none() && prompt.is_none() {
+        report.error(
+            IssueKind::Missing,
+            &prompt_field,
+            "is required unless skill is set",
+        );
+        return None;
+    }
+    let agent = resolve_agent(report, env, overrides?, scope.agent?, field)?;
+    let source = AgentSource {
+        agent,
+        skill,
+        prompt,
+        readonly: readonly?,
+    };
+    let descriptor = env
+        .agents
+        .iter()
+        .find(|agent| agent.id == source.agent.id)?;
+    let capabilities = descriptor.capabilities;
+    let missing: Vec<&str> = [
+        (source.readonly && !capabilities.read_only, "read_only"),
+        (!capabilities.structured_output, "structured_output"),
+    ]
+    .into_iter()
+    .filter_map(|(missing, capability)| missing.then_some(capability))
+    .collect();
+    for capability in &missing {
+        report.error(
+            IssueKind::Capability,
+            field,
+            format!(
+                "{} lacks the {capability} capability the selector needs",
+                descriptor.label
+            ),
+        );
+    }
+    missing.is_empty().then_some(source)
 }
 
 /// `per-item` tasks belong to campaigns and `per-run` tasks to routines.
