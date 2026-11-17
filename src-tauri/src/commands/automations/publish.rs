@@ -4,6 +4,7 @@
 //! staged. Linear and task writes go through the frontend Operations.
 
 mod forge;
+mod task;
 #[cfg(test)]
 mod tests;
 
@@ -74,6 +75,8 @@ pub trait Forge: Send + Sync {
         env: &[(String, String)],
         timeout: Duration,
     ) -> Result<(), String>;
+    /// Fetches `branch` from `origin` and fast-forwards the worktree to it.
+    fn fast_forward(&self, worktree: &Path, branch: &str) -> Result<(), String>;
     fn last_subject(&self, worktree: &Path) -> Result<String, String>;
     /// Uncommitted changes and untracked files, as `git status` names them.
     fn dirty_paths(&self, worktree: &Path) -> Result<Vec<String>, String>;
@@ -139,6 +142,8 @@ struct Outcome {
     detail: Option<String>,
     reference: Option<String>,
     warnings: Vec<String>,
+    /// What the effect adds to the step's output besides its status and reference.
+    output: Option<Value>,
     stop: Option<Stop>,
 }
 
@@ -149,6 +154,7 @@ impl Outcome {
             detail: Some(detail.into()),
             reference: None,
             warnings: Vec::new(),
+            output: None,
             stop: None,
         }
     }
@@ -181,6 +187,9 @@ pub struct Publisher {
     values: BTreeMap<&'static str, String>,
     /// The marker of the item's issue, once an upsert renders it.
     marker: Option<String>,
+    /// The task a `wtm.task_create` effect resolved, and whether it created it; the effects after
+    /// it, and the item's next steps, work in it.
+    task: Option<(ResolvedTask, bool)>,
     events: Vec<RunEvent>,
 }
 
@@ -192,6 +201,7 @@ impl Publisher {
             counts: BTreeMap::new(),
             values: BTreeMap::new(),
             marker: None,
+            task: None,
             events: Vec::new(),
         }
     }
@@ -204,6 +214,11 @@ impl Publisher {
         scope: &PublishScope,
     ) -> StepReport {
         for effect in effects {
+            let resolved = self.task.as_ref().map(|(task, _)| task.clone());
+            let scope = &PublishScope {
+                task: resolved.as_ref().unwrap_or(scope.task),
+                ..*scope
+            };
             let outcome = self.effect(request, effect, scope);
             self.record(request, effect, &outcome);
             match outcome.stop {
@@ -221,6 +236,12 @@ impl Publisher {
         std::mem::take(&mut self.events)
     }
 
+    /// The task a `wtm.task_create` effect resolved since the last call, and whether it created
+    /// it.
+    pub fn take_task(&mut self) -> Option<(ResolvedTask, bool)> {
+        self.task.take()
+    }
+
     fn record(&mut self, request: &StepRequest, effect: &Effect, outcome: &Outcome) {
         self.events.push(RunEvent::EffectRecorded {
             item: request.item.to_string(),
@@ -231,6 +252,7 @@ impl Publisher {
             detail: outcome.detail.clone(),
             reference: outcome.reference.clone(),
             warnings: outcome.warnings.clone(),
+            output: outcome.output.clone(),
         });
     }
 
@@ -345,7 +367,7 @@ impl Publisher {
                 let (marker, name) = self.state_target(scope, state)?;
                 format!("Move the issue marked {marker} to {name}")
             }
-            Effect::TaskCreate => format!("Create or reuse the task on {branch}"),
+            Effect::TaskCreate(task) => self.describe_task(scope, task)?,
             Effect::TaskLog { entry } => {
                 format!("Append to the task log: {}", self.render(scope, entry)?)
             }
@@ -387,7 +409,7 @@ impl Publisher {
             Effect::PrReady { repo } => self.ready(scope, repo),
             Effect::LinearUpsert(overrides) => self.upsert_issue(scope, overrides),
             Effect::LinearState { state } => self.move_issue(scope, state),
-            Effect::TaskCreate => self.create_task(scope),
+            Effect::TaskCreate(task) => self.create_task(scope, task),
             Effect::TaskLog { entry } => self.log(request, scope, entry),
             Effect::TaskDeleteClean => self.delete_clean_task(scope),
             Effect::ChatOpen(chat) => self.open_chat(scope, chat),
@@ -395,7 +417,13 @@ impl Publisher {
     }
 
     fn render(&self, scope: &PublishScope, template: &str) -> Result<String, String> {
-        let mut variables = scope.variables.to_vec();
+        let task = self.task.iter().flat_map(|(task, _)| {
+            [
+                ("task.id".to_string(), task.id.clone()),
+                ("task.branch".to_string(), task.branch.clone()),
+            ]
+        });
+        let mut variables: Vec<_> = task.chain(scope.variables.iter().cloned()).collect();
         for (name, pending) in EFFECT_VARIABLES {
             let recorded = self.values.get(name).or_else(|| published(scope, name));
             let value = match (recorded, scope.staged) {
@@ -686,43 +714,6 @@ impl Publisher {
             )
         };
         Ok(outcome.referencing(identifier))
-    }
-
-    fn create_task(&self, scope: &PublishScope) -> Result<Outcome, String> {
-        let task = scope.task;
-        let params = json!({ "workspaceId": scope.workspace_id });
-        let tasks = operation(self.bridge.call("task.list", params))?;
-        let existing = tasks
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|candidate| candidate["branchName"] == task.branch.as_str());
-        if let Some(existing) = existing {
-            return Ok(Outcome::of(
-                EffectStatus::Reconciled,
-                format!("A task is on {}", task.branch),
-            )
-            .referencing(text(existing, "id")?));
-        }
-        let mut input = json!({
-            "workspaceId": scope.workspace_id,
-            "branchName": task.branch,
-            "repoIds": task.repo_ids,
-            "automationId": scope.automation,
-        });
-        if !scope.bases.is_empty() {
-            input["baseRefs"] = json!(scope.bases);
-        }
-        let response = self.bridge.call("task.create", json!({ "input": input }));
-        let created = operation(response.clone())?;
-        Ok(Outcome {
-            warnings: warnings(&response),
-            ..Outcome::of(
-                EffectStatus::Executed,
-                format!("Created a task on {}", task.branch),
-            )
-            .referencing(text(&created, "id")?)
-        })
     }
 
     fn log(

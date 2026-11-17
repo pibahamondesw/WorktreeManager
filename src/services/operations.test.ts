@@ -308,6 +308,22 @@ describe("shared operations", () => {
     expect(lifecycle.bases.has(second.path)).toBe(false);
   });
 
+  it("keeps an exact branch as given, without the owner's prefix", async () => {
+    const { operations, lifecycle } = fixture();
+    const { data: created } = await operations.createTask({
+      ...input,
+      branchName: "feature/review",
+      linearIssue: undefined,
+      exactBranch: true,
+    });
+    expect(created.branchName).toBe("feature/review");
+    expect(created.members.map((member) => member.path)).toEqual([
+      "/wt/api/feature/review",
+      "/wt/web/feature/review",
+    ]);
+    expect(lifecycle.targets("resolveManualWorktree")).toEqual([]);
+  });
+
   it("creates with another editor, renames the workspace, opens Cursor and cleans by task ID", async () => {
     const { operations, lifecycle } = fixture([], "codex");
     const { data: created } = await operations.createTask(input);

@@ -230,7 +230,7 @@ impl RoutineExecutor {
     }
 
     /// Resolves the item's task, or reattaches to the one it had, and records it; an item without
-    /// one fails. Items of a target without tasks get none.
+    /// one fails. Items of a target without tasks get none until a `wtm.task_create` gives them one.
     fn item_task(
         &self,
         definition: &AutomationDefinition,
@@ -238,7 +238,7 @@ impl RoutineExecutor {
         item: &Item,
         task_id: Option<&str>,
     ) -> Result<Option<ResolvedTask>, String> {
-        if definition.target.task == TaskMode::None {
+        if definition.target.task == TaskMode::None && task_id.is_none() {
             return Ok(None);
         }
         let mut log = WriterLog::of(&self.store, request);

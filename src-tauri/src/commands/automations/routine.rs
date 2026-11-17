@@ -56,6 +56,7 @@ use super::wait::Watchers;
 use super::watchers::{self, CliWatchForge};
 use crate::commands::agents::permission::{Grant, UnattendedMode};
 use crate::commands::chat::{truncate_to, SettledRequest, TurnEnd};
+pub(super) use app::{resolved as resolved_task, task_of};
 use commands::{Item, TaskCommands};
 pub use leases::LeasePools;
 use leases::{item_pools_before, NoLeasePools, Quotas, StepLeases};
@@ -98,7 +99,11 @@ impl ResolvedTask {
         self.id.is_empty()
     }
 
+    /// An empty `repo_id`, for a target that lists no repository, is the first worktree.
     pub(super) fn worktree(&self, repo_id: &str) -> Option<&str> {
+        if repo_id.is_empty() {
+            return self.folders.first().map(String::as_str);
+        }
         let index = self.repo_ids.iter().position(|id| id == repo_id)?;
         self.folders.get(index).map(String::as_str)
     }
@@ -578,7 +583,7 @@ impl RoutineExecutor {
         let mut steps = ItemSteps {
             definition,
             request,
-            task,
+            task: task.clone(),
             scratch: &scratch,
             item,
             sessions: self.sessions.as_ref(),
@@ -743,8 +748,9 @@ impl RunLog for WriterLog<'_> {
 struct ItemSteps<'a> {
     definition: &'a AutomationDefinition,
     request: &'a RunRequest,
-    /// The item's task, or its scratch directory when it has none.
-    task: &'a ResolvedTask,
+    /// The item's task, or its scratch directory until it has one; a `wtm.task_create` effect
+    /// may replace it.
+    task: ResolvedTask,
     scratch: &'a ResolvedTask,
     item: &'a Item,
     sessions: &'a dyn Sessions,
@@ -815,10 +821,10 @@ impl<'a> ItemSteps<'a> {
     }
 
     /// The item's task, or its scratch directory for a step without a task.
-    fn workplace(&self, step: &Step) -> &'a ResolvedTask {
+    fn workplace(&self, step: &Step) -> ResolvedTask {
         match step.task {
-            StepTask::Item => self.task,
-            StepTask::None => self.scratch,
+            StepTask::Item => self.task.clone(),
+            StepTask::None => self.scratch.clone(),
         }
     }
 
@@ -895,7 +901,7 @@ impl<'a> ItemSteps<'a> {
                 step.fresh_session.then_some(request.step.id.as_str()),
             ),
         };
-        let session_id = match self.session_for(request, step, workplace, launch) {
+        let session_id = match self.session_for(request, step, &workplace, launch) {
             Ok(session_id) => session_id,
             Err(error) => return failed(ProcessEnd::Crashed, format!("session_start: {error}")),
         };
@@ -905,7 +911,7 @@ impl<'a> ItemSteps<'a> {
             step,
             attempt: request,
             request: self.request,
-            task: workplace,
+            task: &workplace,
             item: self.item,
             payload: self.payload,
             prior: &self.prior,
@@ -968,7 +974,7 @@ impl<'a> ItemSteps<'a> {
             run_id: &self.request.run_id,
             workspace_id: &definition.target.workspace_id,
             folder: &definition.folder,
-            task: self.task,
+            task: &self.task,
             repo_names: &repo_names,
             bases: &self.bases,
             tracker: definition.tracker.as_ref().map(|tracker| &tracker.linear),
@@ -983,7 +989,33 @@ impl<'a> ItemSteps<'a> {
         };
         let report = self.publisher.publish(request, effects, &scope);
         self.evidence.extend(self.publisher.drain_events());
+        if let Some((task, created)) = self.publisher.take_task() {
+            self.switch_task(request, task, created);
+        }
         Execution::Finished(report)
+    }
+
+    /// The item's next steps work in `task`. Its conversations stay in the task they ran in, so
+    /// the next agent step starts a new one.
+    fn switch_task(&mut self, request: &StepRequest, task: ResolvedTask, created: bool) {
+        if task.id == self.task.id {
+            return;
+        }
+        let campaign = self.definition.selector.is_some();
+        self.evidence.push(RunEvent::TaskResolved {
+            task_id: task.id.clone(),
+            created,
+            item: campaign.then(|| request.item.to_string()),
+        });
+        self.commands.context_mut().switch_task(&task);
+        self.task = task;
+        self.leave_conversations();
+    }
+
+    fn leave_conversations(&mut self) {
+        self.shared_session = None;
+        self.shared_conversation = None;
+        self.interrupted_conversation = None;
     }
 
     /// The run log so far; empty if unreadable, so nothing to force over and no PR yet.

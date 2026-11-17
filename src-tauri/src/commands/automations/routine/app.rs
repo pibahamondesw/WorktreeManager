@@ -108,7 +108,9 @@ impl Tasks for BridgeTasks {
 }
 
 /// Reads an Operations response; a failed creation lists the worktrees it left on disk.
-fn resolved(response: Value) -> Result<ResolvedTask, TaskFailure> {
+pub(in crate::commands::automations) fn resolved(
+    response: Value,
+) -> Result<ResolvedTask, TaskFailure> {
     if response["ok"] == true {
         return task_of(&response["data"])
             .ok_or_else(|| TaskFailure::new("The app answered without a task"));
@@ -131,7 +133,7 @@ fn failure_of(response: &Value) -> TaskFailure {
     }
 }
 
-fn task_of(task: &Value) -> Option<ResolvedTask> {
+pub(in crate::commands::automations) fn task_of(task: &Value) -> Option<ResolvedTask> {
     let members = task["members"].as_array()?;
     let repo_ids = members
         .iter()

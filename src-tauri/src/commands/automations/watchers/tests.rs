@@ -152,6 +152,7 @@ fn effect(effect: &str, reference: &str) -> LoggedEvent {
             detail: None,
             reference: Some(reference.into()),
             warnings: Vec::new(),
+            output: None,
         },
     }
 }

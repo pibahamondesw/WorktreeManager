@@ -100,6 +100,8 @@ export interface CreateTaskInput {
   automationId?: string;
   /** Ref each repository's new branch starts from, by repository id. */
   baseRefs?: Record<string, string>;
+  /** Uses `branchName` as given, without the owner's prefix or a suffix when it is taken. */
+  exactBranch?: boolean;
 }
 
 /** A message the owner would type in the task's chat, sent on their behalf. */
@@ -520,12 +522,13 @@ export class Operations {
       );
       const members: TaskMember[] = await Promise.all(
         repos.map(async (repo) => {
-          const resolved = input.linearIssue
-            ? {
-                branchName: input.branchName.trim(),
-                path: `${repo.worktreeBasePath}/${input.branchName.trim()}`,
-              }
-            : await this.lifecycle.resolveManualWorktree(repo, input.branchName, ownedPaths);
+          const resolved =
+            input.linearIssue || input.exactBranch
+              ? {
+                  branchName: input.branchName.trim(),
+                  path: `${repo.worktreeBasePath}/${input.branchName.trim()}`,
+                }
+              : await this.lifecycle.resolveManualWorktree(repo, input.branchName, ownedPaths);
           return {
             repoId: repo.id,
             repoName: repo.name,

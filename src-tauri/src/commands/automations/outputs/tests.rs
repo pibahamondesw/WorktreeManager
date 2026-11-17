@@ -79,6 +79,7 @@ fn effect(effect: &str, reference: Option<&str>) -> LoggedEvent {
         detail: None,
         reference: reference.map(str::to_string),
         warnings: vec![],
+        output: None,
     })
 }
 

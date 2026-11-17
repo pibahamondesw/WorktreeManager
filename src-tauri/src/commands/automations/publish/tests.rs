@@ -3,9 +3,13 @@ use std::sync::Mutex;
 
 use super::forge::tail;
 use super::*;
-use crate::commands::automations::definition::{Capacity, Step, StepKind, Transition};
+use crate::commands::automations::definition::{
+    Capacity, Step, StepKind, TaskCreateEffect, Transition,
+};
 use crate::commands::automations::store::events::{reduce, LoggedEvent, StepEffect, StepStatus};
 use crate::commands::git::git_command;
+
+mod task_create;
 
 const ITEM: &str = "routine";
 
@@ -33,6 +37,7 @@ struct FakeForge {
     head: String,
     remote_head: Option<String>,
     push_error: Option<String>,
+    fast_forward_error: Option<String>,
     pr: Mutex<Option<PullRequest>>,
     commented: Vec<String>,
     dirty: Vec<String>,
@@ -102,6 +107,11 @@ impl Forge for FakeForge {
             timeout.as_secs()
         ));
         self.push_error.clone().map_or(Ok(()), Err)
+    }
+
+    fn fast_forward(&self, worktree: &Path, branch: &str) -> Result<(), String> {
+        self.call(format!("fast_forward {} {branch}", worktree.display()));
+        self.fast_forward_error.clone().map_or(Ok(()), Err)
     }
 
     fn last_subject(&self, _: &Path) -> Result<String, String> {
@@ -260,6 +270,9 @@ struct Run {
     pushed: Vec<String>,
     published: Vec<(&'static str, String)>,
     chats: Vec<String>,
+    variables: Vec<(String, String)>,
+    /// What the last `publish` recorded.
+    recorded: std::cell::RefCell<Vec<RunEvent>>,
 }
 
 impl Run {
@@ -276,6 +289,8 @@ impl Run {
             pushed: Vec::new(),
             published: Vec::new(),
             chats: Vec::new(),
+            variables: Vec::new(),
+            recorded: Default::default(),
         }
     }
 
@@ -298,11 +313,13 @@ impl Run {
             active_time_left: Duration::from_secs(60),
         };
         let task = task(&self.worktree.0);
-        let variables = vec![
+        let mut variables = vec![
             ("automation".to_string(), "demo".to_string()),
             ("item.id".to_string(), ITEM.to_string()),
+            ("task.id".to_string(), task.id.clone()),
             ("task.branch".to_string(), task.branch.clone()),
         ];
+        variables.extend(self.variables.iter().cloned());
         let stale_receipts = |repo: &str| match repo {
             "broken" => Err("receipts unreadable".to_string()),
             _ => Ok(self.stale.clone()),
@@ -348,7 +365,9 @@ impl Run {
                 head: None,
             },
         ];
-        events.extend(publisher.drain_events());
+        let recorded = publisher.drain_events();
+        *self.recorded.borrow_mut() = recorded.clone();
+        events.extend(recorded);
         let run = reduce(
             "run",
             events
@@ -379,8 +398,11 @@ fn effects_whose_verb_is_not_allowed_or_is_denied_block_the_item() {
     let forge = Arc::new(FakeForge::at("abc"));
     let bridge = Arc::new(silent());
     let mut run = Run::allowing(&[Verb::Push]);
-    let (report, effects) =
-        run.publish(&mut publisher(&forge, &bridge), 1, vec![Effect::TaskCreate]);
+    let (report, effects) = run.publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![Effect::TaskCreate(TaskCreateEffect::default())],
+    );
     assert_eq!(report.verdict, Some(Verdict::Blocked));
     assert_eq!(report.cause.as_deref(), Some("unauthorized:task_create"));
     assert_eq!(statuses(&effects), [EffectStatus::Denied]);
@@ -454,7 +476,7 @@ fn test_runs_stage_every_effect_without_running_any() {
         Effect::LinearState {
             state: "review".into(),
         },
-        Effect::TaskCreate,
+        Effect::TaskCreate(TaskCreateEffect::default()),
         Effect::TaskLog {
             entry: "Opened {pr.url}".into(),
         },
@@ -1060,62 +1082,6 @@ fn linear_failures_fail_the_step_with_the_operation_message() {
     );
 }
 
-#[test]
-fn task_create_reuses_the_task_on_the_branch() {
-    let forge = Arc::new(FakeForge::at("abc"));
-    let bridge = Arc::new(FakeBridge::answering(|_, _| {
-        ok(
-            json!([{ "id": "t0", "branchName": "other" }, { "id": "t1", "branchName": "wtm/demo/1" }]),
-        )
-    }));
-    let run = Run::all();
-
-    let (_, effects) = run.publish(&mut publisher(&forge, &bridge), 1, vec![Effect::TaskCreate]);
-
-    assert_eq!(effects[0].status, EffectStatus::Reconciled);
-    assert_eq!(effects[0].reference.as_deref(), Some("t1"));
-    assert_eq!(
-        bridge.calls()[0],
-        ("task.list".into(), json!({ "workspaceId": "w1" }))
-    );
-}
-
-#[test]
-fn task_create_creates_the_task_and_keeps_setup_warnings() {
-    let forge = Arc::new(FakeForge::at("abc"));
-    let bridge = Arc::new(FakeBridge::answering(|method, _| match method {
-        "task.list" => ok(json!([])),
-        _ => json!({
-            "ok": true,
-            "data": { "id": "t2" },
-            "warnings": [{ "stage": "open", "message": "Could not open the editor" }, {}]
-        }),
-    }));
-    let mut run = Run::all();
-    run.bases = BTreeMap::from([("r1".into(), "origin/develop".into())]);
-
-    let (report, effects) =
-        run.publish(&mut publisher(&forge, &bridge), 1, vec![Effect::TaskCreate]);
-
-    assert_eq!(report.outcome, StepOutcome::Success);
-    assert_eq!(effects[0].reference.as_deref(), Some("t2"));
-    assert_eq!(effects[0].warnings, ["Could not open the editor"]);
-    assert_eq!(
-        bridge.calls()[1].1,
-        json!({ "input": {
-            "workspaceId": "w1",
-            "branchName": "wtm/demo/1",
-            "repoIds": ["r1"],
-            "automationId": "demo",
-            "baseRefs": { "r1": "origin/develop" },
-        } })
-    );
-
-    let without_bases = Run::all();
-    without_bases.publish(&mut publisher(&forge, &bridge), 1, vec![Effect::TaskCreate]);
-    assert!(bridge.calls()[3].1["input"].get("baseRefs").is_none());
-}
-
 fn chat_open(message: &str) -> ChatOpenEffect {
     ChatOpenEffect {
         agent: "claude".into(),
@@ -1208,6 +1174,7 @@ fn opened_chats_are_those_of_the_item_and_step_that_went_through() {
             detail: None,
             reference: reference.map(String::from),
             warnings: Vec::new(),
+            output: None,
         }
     };
     let events = [
@@ -1491,6 +1458,39 @@ fn cli_forge_forces_a_rewritten_branch_only_while_origin_holds_the_lease() {
 }
 
 #[test]
+fn cli_forge_fast_forwards_to_the_remote_branch_and_never_over_local_commits() {
+    let (_remote, clone) = clone_with_remote();
+    let forge = CliForge::with("gh", isolated_git());
+    let first = forge.head(&clone.0).unwrap();
+    git(
+        &clone.0,
+        &[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "Pushed by the author",
+        ],
+    );
+    git(
+        &clone.0,
+        &["push", "-q", "origin", "HEAD:refs/heads/feature"],
+    );
+    let pushed = forge.head(&clone.0).unwrap();
+    git(&clone.0, &["checkout", "-q", "-b", "feature", &first]);
+
+    forge.fast_forward(&clone.0, "feature").unwrap();
+    assert_eq!(forge.head(&clone.0).unwrap(), pushed);
+
+    git(&clone.0, &["reset", "-q", "--hard", &first]);
+    git(&clone.0, &["commit", "-q", "--allow-empty", "-m", "Local"]);
+    let diverged = forge.fast_forward(&clone.0, "feature").unwrap_err();
+    assert!(diverged.starts_with("git merge"), "{diverged}");
+    let missing = forge.fast_forward(&clone.0, "gone").unwrap_err();
+    assert!(missing.starts_with("git fetch"), "{missing}");
+}
+
+#[test]
 fn cli_forge_stops_a_push_whose_hooks_outlast_the_timeout() {
     let (_remote, clone) = clone_with_remote();
     hook(&clone.0, "#!/bin/sh\nsleep 30\n");
@@ -1700,6 +1700,7 @@ fn recorded(item: &str, effect: &str, status: EffectStatus, reference: Option<&s
         detail: None,
         reference: reference.map(String::from),
         warnings: Vec::new(),
+        output: None,
     }
 }
 
