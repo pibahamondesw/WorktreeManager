@@ -122,6 +122,20 @@ impl Forge for CliForge {
         }
     }
 
+    fn fast_forward(&self, worktree: &Path, branch: &str) -> Result<(), String> {
+        let reference = format!("refs/heads/{branch}");
+        let output = self
+            .login("git", &["fetch", "origin", &reference], worktree)
+            .output()
+            .map_err(|e| format!("git fetch: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git fetch: {}", stderr.trim()));
+        }
+        self.git(worktree, &["merge", "--ff-only", "FETCH_HEAD"])
+            .map(drop)
+    }
+
     fn last_subject(&self, worktree: &Path) -> Result<String, String> {
         self.git(worktree, &["log", "-1", "--format=%s"])
     }

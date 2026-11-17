@@ -132,8 +132,8 @@ impl RoutineExecutor {
             (self.runs_changed)(name);
         }
         let task = match run.task_id.as_deref() {
-            _ if definition.target.task == TaskMode::None => Ok(None),
             Some(task_id) => self.tasks.get(task_id).map(Some),
+            None if definition.target.task == TaskMode::None => Ok(None),
             None => Err(TaskFailure::new("The run has no task")),
         };
         let task = match task {
@@ -185,6 +185,11 @@ impl ItemSteps<'_> {
                 RunEvent::ItemHandedBack { item, note, .. } if *item == self.item.id => {
                     self.handback_note = note.clone();
                     self.continue_taken_over_conversation(taken_over.take());
+                }
+                RunEvent::TaskResolved { item, .. }
+                    if item.as_ref().map_or(true, |item| *item == self.item.id) =>
+                {
+                    self.leave_conversations();
                 }
                 RunEvent::StepOutput { item, .. }
                 | RunEvent::StepReceipt { item, .. }

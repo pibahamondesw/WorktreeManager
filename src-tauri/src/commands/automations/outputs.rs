@@ -156,9 +156,13 @@ pub fn attempt_result<'a>(evidence: impl IntoIterator<Item = &'a RunEvent>) -> O
                 effect,
                 status,
                 reference,
+                output,
                 ..
             } => {
                 let mut recorded = json!({ "status": status });
+                if let Some(Value::Object(output)) = output {
+                    recorded.as_object_mut().unwrap().extend(output.clone());
+                }
                 if let Some(reference) = reference {
                     recorded["reference"] = json!(reference);
                 }

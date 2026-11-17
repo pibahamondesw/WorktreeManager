@@ -113,6 +113,25 @@ impl ItemScope {
         }
     }
 
+    /// `{task.*}` and `WTM_TASK_ID` become those of `task`.
+    pub fn switch_task(&mut self, task: &ResolvedTask) {
+        let values = [
+            ("task.id", task.id.clone()),
+            ("task.branch", task.branch.clone()),
+        ];
+        for (name, value) in values {
+            self.variables.retain(|(known, _)| known != name);
+            self.variables.push((name.to_string(), value));
+        }
+        for variable in self
+            .env
+            .iter_mut()
+            .filter(|(name, _)| name == "WTM_TASK_ID")
+        {
+            variable.1 = task.id.clone();
+        }
+    }
+
     /// The `steps.…` variables become those of `outputs`.
     pub fn show_outputs(&mut self, outputs: &StepOutputs) {
         self.variables
@@ -165,6 +184,12 @@ impl TaskCommands {
         &self.scope.variables
     }
 
+    /// The steps that follow work in `task`'s worktrees.
+    pub fn switch_task(&mut self, task: &ResolvedTask) {
+        self.scope.switch_task(task);
+        self.task = task.clone();
+    }
+
     pub fn leases(&self) -> &StepLeases {
         &self.leases
     }
@@ -181,7 +206,7 @@ impl TaskCommands {
 
 impl CommandContext for TaskCommands {
     fn worktree(&self, request: &StepRequest, repo: &str) -> Result<PathBuf, String> {
-        if request.step.task == StepTask::None {
+        if request.step.task == StepTask::None || self.task.is_scratch() {
             return Ok(self.scratch.clone());
         }
         self.task.worktree(repo).map(PathBuf::from).ok_or_else(|| {

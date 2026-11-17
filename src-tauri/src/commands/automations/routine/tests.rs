@@ -1476,6 +1476,7 @@ mod operator;
 mod outputs;
 mod resume;
 mod takeover;
+mod task_create;
 mod taskless;
 mod waits;
 

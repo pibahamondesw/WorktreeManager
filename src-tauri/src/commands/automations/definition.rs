@@ -467,7 +467,7 @@ pub enum Effect {
     #[serde(rename = "linear.state")]
     LinearState { state: String },
     #[serde(rename = "wtm.task_create")]
-    TaskCreate,
+    TaskCreate(TaskCreateEffect),
     #[serde(rename = "wtm.task_log")]
     TaskLog { entry: String },
     #[serde(rename = "wtm.task_delete_clean")]
@@ -486,7 +486,7 @@ impl Effect {
             Self::PrReady { .. } => "github.pr_ready",
             Self::LinearUpsert(_) => "linear.upsert",
             Self::LinearState { .. } => "linear.state",
-            Self::TaskCreate => "wtm.task_create",
+            Self::TaskCreate(_) => "wtm.task_create",
             Self::TaskLog { .. } => "wtm.task_log",
             Self::TaskDeleteClean => "wtm.task_delete_clean",
             Self::ChatOpen(_) => "wtm.chat_open",
@@ -501,7 +501,7 @@ impl Effect {
             Self::PrComment { .. } => Verb::PrComment,
             Self::PrReady { .. } => Verb::PrReady,
             Self::LinearUpsert(_) | Self::LinearState { .. } => Verb::LinearWrite,
-            Self::TaskCreate => Verb::TaskCreate,
+            Self::TaskCreate(_) => Verb::TaskCreate,
             Self::TaskLog { .. } => Verb::TaskLog,
             Self::TaskDeleteClean => Verb::TaskDelete,
             Self::ChatOpen(_) => Verb::ChatOpen,
@@ -545,6 +545,28 @@ pub struct ChatOpenEffect {
     pub name: Option<String>,
     /// Template of the message.
     pub message: String,
+}
+
+/// `wtm.task_create`: templates of what the task works on, rendered when the effect runs. Without
+/// them it is the item's branch and repositories in the target workspace.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCreateEffect {
+    /// A workspace name or id; `repos` is then required.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// Repository names or ids; each may render a JSON array of them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub repos: Vec<String>,
+    /// Used exactly as rendered: no owner prefix and no suffix when it is taken.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Repositories whose worktree checks out `origin/<branch>` instead of a new branch.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub from_remote: Vec<String>,
+    /// A Linear issue identifier; rendering it empty links none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linear_issue: Option<String>,
 }
 
 /// `linear.upsert` overrides of the `tracker.linear` fields.

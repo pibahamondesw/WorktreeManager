@@ -175,6 +175,9 @@ pub enum RunEvent {
         /// Auxiliary cleanup that did not complete; it never fails the effect.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         warnings: Vec<String>,
+        /// What the effect adds to its step's output, such as a task's branch and worktrees.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<serde_json::Value>,
     },
     /// A `wait` or `approval` attempt started waiting: when its `time` is due and when it times
     /// out, and the approval's rendered title and detail.
@@ -771,6 +774,7 @@ impl RunState {
                 detail,
                 reference,
                 warnings,
+                ..
             } => {
                 if let Some(attempt) = self
                     .open_item(&item)

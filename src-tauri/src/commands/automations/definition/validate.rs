@@ -25,8 +25,8 @@ use super::{
     Completion, Concurrency, Effect, Environment, EventTrigger, GotoLimit, InboxPolicy, IssueKind,
     ItemSource, LeaseHold, LinearOverrides, LinearTracker, Pools, PullRequestEffect, RepoRef,
     ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step, StepKind, StepTask, StopAfter,
-    Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, ValuedPool, Verb, WaitStep,
-    WorkspaceRef, APP_EVENT_KINDS,
+    Target, TargetRepo, TaskCreateEffect, TaskMode, Tracker, Transition, Trigger, ValuedPool, Verb,
+    WaitStep, WorkspaceRef, APP_EVENT_KINDS,
 };
 use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
@@ -68,6 +68,8 @@ const EFFECTS: [&str; 11] = [
 ];
 /// Effects that work on the tracker alone, so a step without a task may run them.
 const LINEAR_EFFECTS: &str = "linear.";
+/// The effect that gives an item without a task its task.
+const TASK_CREATE: &str = "wtm.task_create";
 const FORBIDDEN_VERBS: [&str; 2] = ["merge", "no_verify"];
 
 pub(super) struct Context<'a> {
@@ -1017,9 +1019,15 @@ fn implicit_steps(report: &mut Report, scope: &Scope) -> Option<Vec<Step>> {
     }])
 }
 
+/// Steps after one that creates the item's task work in it by default.
 fn steps(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Option<Vec<Step>> {
+    let mut scope = *scope;
     let steps = each(report, value, field, |report, value, field| {
-        step(report, scope, value, field)
+        let step = step(report, &scope, value, field);
+        if step.as_ref().is_some_and(creates_task) {
+            scope.task = StepTask::Item;
+        }
+        step
     })?;
     if steps.is_empty() {
         report.error(IssueKind::Invalid, field, "must list at least one step");
@@ -1075,7 +1083,7 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
                 timeout.flatten(),
             );
             if step_scope.task == StepTask::None && kind.is_some() {
-                check_task_templates(report, name, value, &fields.path(name));
+                check_task_templates(report, name, &before_task_create(value), &fields.path(name));
             }
             kind
         }
@@ -1112,6 +1120,23 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         task,
         kind,
     })
+}
+
+fn creates_task(step: &Step) -> bool {
+    matches!(&step.kind, StepKind::Publish(effects) if effects.iter().any(|effect| matches!(effect, Effect::TaskCreate(_))))
+}
+
+/// The step with its `publish` effects up to the first `wtm.task_create`: the effects after it
+/// work in the task it resolves.
+fn before_task_create(step: &Value) -> Value {
+    let mut step = step.clone();
+    if let Some(Value::Array(effects)) = step.get_mut("publish") {
+        let creates = |effect: &Value| effect == TASK_CREATE || effect.get(TASK_CREATE).is_some();
+        if let Some(position) = effects.iter().position(creates) {
+            effects.truncate(position + 1);
+        }
+    }
+    step
 }
 
 fn step_task(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Option<StepTask> {
@@ -1454,6 +1479,7 @@ fn command_repo(
             target_repo(report, repos, &reference, field)
         }
         (None, [repo]) => Some(repo.id.clone()),
+        (None, []) => Some(String::new()),
         (None, _) => {
             report.error(
                 IssueKind::Missing,
@@ -1874,8 +1900,14 @@ fn publish_step(
     value: &Value,
     field: &str,
 ) -> Option<Vec<Effect>> {
-    let parse =
-        |report: &mut Report, value: &Value, field: &str| effect(report, scope, value, field);
+    let mut scope = *scope;
+    let mut parse = |report: &mut Report, value: &Value, field: &str| {
+        let effect = effect(report, &scope, value, field);
+        if matches!(effect, Some(Effect::TaskCreate(_))) {
+            scope.task = StepTask::Item;
+        }
+        effect
+    };
     let effects = match value {
         Value::Array(_) => each(report, value, field, parse)?,
         _ => vec![parse(report, value, field)?],
@@ -1911,7 +1943,7 @@ fn effect(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Opt
         );
         return None;
     }
-    if scope.task == StepTask::None && !name.starts_with(LINEAR_EFFECTS) {
+    if scope.task == StepTask::None && !name.starts_with(LINEAR_EFFECTS) && name != TASK_CREATE {
         needs_task(report, &params_field);
         return None;
     }
@@ -1953,12 +1985,75 @@ fn effect(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Opt
         "wtm.task_log" => fields
             .require(report, "entry", template)
             .map(|entry| Effect::TaskLog { entry }),
-        "wtm.task_create" => Some(Effect::TaskCreate),
+        "wtm.task_create" => {
+            let taskless = scope.task == StepTask::None;
+            task_create(report, &mut fields, taskless).map(Effect::TaskCreate)
+        }
         "wtm.chat_open" => chat_open(report, scope.context.env, &mut fields).map(Effect::ChatOpen),
         _ => Some(Effect::TaskDeleteClean),
     };
     fields.finish(report);
     effect
+}
+
+/// Without the item's task to default to, `branch` and `repos` are required.
+fn task_create(
+    report: &mut Report,
+    fields: &mut Fields,
+    taskless: bool,
+) -> Option<TaskCreateEffect> {
+    let workspace = fields.optional(report, "workspace", template);
+    let repos = fields.or(report, "repos", Vec::new(), templates);
+    let branch = fields.optional(report, "branch", template);
+    let from_remote = fields.or(report, "from_remote", Vec::new(), templates);
+    let linear_issue = fields.optional(report, "linear_issue", template);
+    let effect = TaskCreateEffect {
+        workspace: workspace?,
+        repos: repos?,
+        branch: branch?,
+        from_remote: from_remote?,
+        linear_issue: linear_issue?,
+    };
+    let missing = [
+        (
+            effect.workspace.is_some() && effect.repos.is_empty(),
+            "repos",
+            "workspace",
+        ),
+        (
+            !effect.from_remote.is_empty() && effect.branch.is_none(),
+            "branch",
+            "from_remote",
+        ),
+        (
+            taskless && effect.branch.is_none(),
+            "branch",
+            "a step without a task",
+        ),
+        (
+            taskless && effect.repos.is_empty(),
+            "repos",
+            "a step without a task",
+        ),
+    ];
+    let mut valid = true;
+    for (_, needed, by) in missing.into_iter().filter(|(missing, ..)| *missing) {
+        report.error(
+            IssueKind::Missing,
+            &fields.path(needed),
+            format!("{by} needs {needed}"),
+        );
+        valid = false;
+    }
+    valid.then_some(effect)
+}
+
+/// One template or a list of them.
+fn templates(report: &mut Report, value: &Value, field: &str) -> Option<Vec<String>> {
+    match value {
+        Value::Array(_) => template_list(report, value, field),
+        _ => template(report, value, field).map(|template| vec![template]),
+    }
 }
 
 /// The agent is checked against its descriptor, as an agent step's is.

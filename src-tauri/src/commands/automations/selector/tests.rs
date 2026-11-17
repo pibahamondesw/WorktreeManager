@@ -479,6 +479,7 @@ fn record_pr_effect(store: &RunStore, run_id: &str, item: &str, url: &str, statu
         detail: None,
         reference: Some(url.into()),
         warnings: Vec::new(),
+        output: None,
     };
     store.writer(NAME).unwrap().append(run_id, &event).unwrap();
 }

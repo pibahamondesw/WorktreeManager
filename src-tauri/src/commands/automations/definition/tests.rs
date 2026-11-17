@@ -8,6 +8,7 @@ use super::*;
 use crate::commands::agents::{permission::PermissionMode, AgentCapabilities, AgentDescriptor};
 
 mod step_outputs;
+mod task_create;
 
 const TARGET: &str = "target:\n  workspace: Acme\n  repos: [app]\n";
 const AGENT: &str = "agent: { id: claude }\n";
