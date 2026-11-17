@@ -12,8 +12,8 @@ use serde_json::{Map, Value};
 use super::circleci_trigger::circleci_event_trigger;
 use super::fields::{
     boolean, choice, duration, duration_secs, each, each_entry, index, integer, is_automation_name,
-    is_instant, is_step_id, join, map, string, string_list, template, template_list, Fields,
-    Report,
+    is_instant, is_step_id, join, map, mentions_task, string, string_list, template, template_list,
+    Fields, Report,
 };
 use super::github_trigger::{github_event_trigger, resolve_repos};
 use super::item_source::item_source;
@@ -24,9 +24,9 @@ use super::{
     AutomationDefinition, Bind, Budgets, Capacity, CatchUp, ChatOpenEffect, CommandStep,
     Completion, Concurrency, Effect, Environment, EventTrigger, GotoLimit, InboxPolicy, IssueKind,
     ItemSource, LeaseHold, LinearOverrides, LinearTracker, Pools, PullRequestEffect, RepoRef,
-    ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step, StepKind, StopAfter, Target,
-    TargetRepo, TaskMode, Tracker, Transition, Trigger, ValuedPool, Verb, WaitStep, WorkspaceRef,
-    APP_EVENT_KINDS,
+    ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step, StepKind, StepTask, StopAfter,
+    Target, TargetRepo, TaskMode, Tracker, Transition, Trigger, ValuedPool, Verb, WaitStep,
+    WorkspaceRef, APP_EVENT_KINDS,
 };
 use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
@@ -66,6 +66,8 @@ const EFFECTS: [&str; 11] = [
     "wtm.task_delete_clean",
     "wtm.chat_open",
 ];
+/// Effects that work on the tracker alone, so a step without a task may run them.
+const LINEAR_EFFECTS: &str = "linear.";
 const FORBIDDEN_VERBS: [&str; 2] = ["merge", "no_verify"];
 
 pub(super) struct Context<'a> {
@@ -75,12 +77,15 @@ pub(super) struct Context<'a> {
 }
 
 /// What every step of the definition shares.
+#[derive(Clone, Copy)]
 struct Scope<'a> {
     context: &'a Context<'a>,
     /// `None` when the top-level agent is invalid, which is already reported.
     agent: Option<&'a AgentOverrides>,
     /// `None` when the target is invalid, which is already reported.
     repos: Option<&'a [TargetRepo]>,
+    /// Where steps work unless they say otherwise; while a step is parsed, where it works.
+    task: StepTask,
 }
 
 #[derive(Clone, Default)]
@@ -154,6 +159,10 @@ pub(super) fn definition(
         context,
         agent: agent.as_ref(),
         repos: target.as_ref().map(|target| target.repos.as_slice()),
+        task: match task_mode {
+            TaskMode::None => StepTask::None,
+            _ => StepTask::Item,
+        },
     };
     let steps = match fields.optional(report, "steps", |report, value, field| {
         steps(report, &scope, value, field)
@@ -528,7 +537,7 @@ fn wall_clock(slot: &Zoned) -> String {
 
 fn default_concurrency(task: TaskMode) -> Concurrency {
     let key = match task {
-        TaskMode::PerRun | TaskMode::PerItem => "{automation}",
+        TaskMode::PerRun | TaskMode::PerItem | TaskMode::None => "{automation}",
         TaskMode::Existing => "task:{task.id}",
     };
     Concurrency {
@@ -571,9 +580,14 @@ fn target(
     let workspace = fields.require(report, "workspace", |report, value, field| {
         workspace(report, env, value, field)
     });
-    let repos = fields.require(report, "repos", |report, value, field| {
+    let parse_repos = |report: &mut Report, value: &Value, field: &str| {
         target_repos(report, workspace, value, field)
-    });
+    };
+    let repos = if value.get("task").and_then(Value::as_str) == Some("none") {
+        fields.or(report, "repos", Vec::new(), parse_repos)
+    } else {
+        fields.require(report, "repos", parse_repos)
+    };
     let bases = fields.optional(report, "base", |report, value, field| {
         bases(report, repos.as_deref(), value, field)
     });
@@ -599,7 +613,7 @@ fn target(
     let default_branch = match task {
         TaskMode::PerRun => Some("wtm/{automation}/{run.short_id}".into()),
         TaskMode::PerItem => Some("wtm/{automation}/{item.branch}".into()),
-        TaskMode::Existing => None,
+        TaskMode::Existing | TaskMode::None => None,
     };
     Some(Target {
         workspace_id: workspace?.id.clone(),
@@ -742,6 +756,7 @@ fn task_mode(report: &mut Report, value: &Value, field: &str) -> Option<TaskMode
             ("per-run", TaskMode::PerRun),
             ("per-item", TaskMode::PerItem),
             ("existing", TaskMode::Existing),
+            ("none", TaskMode::None),
         ],
     )
 }
@@ -989,6 +1004,7 @@ fn implicit_steps(report: &mut Report, scope: &Scope) -> Option<Vec<Step>> {
         timeout_secs: Some(AGENT_STEP_TIMEOUT_SECS),
         capacity: Capacity::Hold,
         uses: Vec::new(),
+        task: scope.task,
         kind: StepKind::Agent(AgentStep {
             agent,
             skill: None,
@@ -1029,6 +1045,10 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         )
     });
     let uses = fields.or(report, "uses", Vec::new(), string_list);
+    let task_field = fields.path("task");
+    let task = fields.or(report, "task", scope.task, |report, value, field| {
+        step_task(report, scope, value, field)
+    });
     let kinds = [
         ("agent", fields.get("agent")),
         ("command", fields.get("command")),
@@ -1041,7 +1061,24 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         .filter_map(|(kind, value)| Some((kind, value?)))
         .collect();
     let kind = match present.as_slice() {
-        [(kind, value)] => step_kind(report, scope, &mut fields, kind, value, timeout.flatten()),
+        [(name, kind_value)] => {
+            let step_scope = Scope {
+                task: task.unwrap_or(scope.task),
+                ..*scope
+            };
+            let kind = step_kind(
+                report,
+                &step_scope,
+                &mut fields,
+                name,
+                kind_value,
+                timeout.flatten(),
+            );
+            if step_scope.task == StepTask::None && kind.is_some() {
+                check_task_templates(report, name, value, &fields.path(name));
+            }
+            kind
+        }
         _ => {
             report.error(
                 IssueKind::Invalid,
@@ -1052,7 +1089,8 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         }
     };
     fields.finish(report);
-    let (id, kind) = (id?, kind?);
+    let (id, kind, task) = (id?, kind?, task?);
+    check_shared_session(report, scope, &kind, task, &task_field);
     let timeout_secs = timeout?.or(match kind {
         StepKind::Agent(_) => Some(AGENT_STEP_TIMEOUT_SECS),
         StepKind::Command(_) => Some(COMMAND_STEP_TIMEOUT_SECS),
@@ -1071,8 +1109,67 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         timeout_secs,
         capacity,
         uses: uses?,
+        task,
         kind,
     })
+}
+
+fn step_task(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Option<StepTask> {
+    let task = choice(
+        report,
+        value,
+        field,
+        &[("item", StepTask::Item), ("none", StepTask::None)],
+    )?;
+    if task == StepTask::Item && scope.task == StepTask::None {
+        report.error(
+            IssueKind::Invalid,
+            field,
+            "needs the item's task, and target.task is none",
+        );
+        return None;
+    }
+    Some(task)
+}
+
+fn needs_task(report: &mut Report, field: &str) {
+    report.error(
+        IssueKind::Invalid,
+        field,
+        "needs a task; this step has none",
+    );
+}
+
+/// A step without a task has no `{task.*}` values for its templates. Agent prompts are not
+/// templated.
+fn check_task_templates(report: &mut Report, kind: &str, value: &Value, field: &str) {
+    if kind != "agent" && mentions_task(value) {
+        report.error(
+            IssueKind::Invalid,
+            field,
+            "uses {task.*}, and this step has no task",
+        );
+    }
+}
+
+/// An agent step that leaves the item's task cannot continue the conversation shared there.
+fn check_shared_session(
+    report: &mut Report,
+    scope: &Scope,
+    kind: &StepKind,
+    task: StepTask,
+    field: &str,
+) {
+    let StepKind::Agent(agent) = kind else {
+        return;
+    };
+    if task == StepTask::None && scope.task == StepTask::Item && !agent.fresh_session {
+        report.error(
+            IssueKind::Invalid,
+            field,
+            "none requires fresh_session: true, since the item's shared conversation is in its task",
+        );
+    }
 }
 
 fn step_id(report: &mut Report, value: &Value, field: &str) -> Option<String> {
@@ -1280,7 +1377,15 @@ fn command_step(
         )
     });
     let repo_field = fields.path("repo");
-    let repo = command_repo(report, fields.get("repo"), scope.repos, &repo_field);
+    let repo = match scope.task {
+        StepTask::Item => command_repo(report, fields.get("repo"), scope.repos, &repo_field),
+        StepTask::None => {
+            if fields.get("repo").is_some() {
+                needs_task(report, &repo_field);
+            }
+            Some(String::new())
+        }
+    };
     let env = fields.or(report, "env", BTreeMap::new(), |report, value, field| {
         let entries = each_entry(report, value, field, |report, name, item, field| {
             Some((name.to_string(), template(report, item, field)?))
@@ -1295,9 +1400,13 @@ fn command_step(
             &[("git_fingerprint", Bind::GitFingerprint)],
         )
     });
+    let bind_field = fields.path("bind");
     let after = fields.or(report, "after", Vec::new(), |report, value, field| {
         each(report, value, field, argv)
     });
+    if scope.task == StepTask::None && matches!(bind, Some(Some(_))) {
+        needs_task(report, &bind_field);
+    }
     runnable?;
     Some(CommandStep {
         command: command?,
@@ -1382,6 +1491,10 @@ fn wait_step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> 
     });
     let signal = fields.optional(report, "signal", string);
     let event = fields.optional(report, "event", |report, value, field| {
+        if scope.task == StepTask::None {
+            needs_task(report, field);
+            return None;
+        }
         event_wait(report, scope, value, field)
     });
     fields.finish(report);
@@ -1796,6 +1909,10 @@ fn effect(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Opt
             field,
             format!("unknown effect {name}; use one of {}", EFFECTS.join(", ")),
         );
+        return None;
+    }
+    if scope.task == StepTask::None && !name.starts_with(LINEAR_EFFECTS) {
+        needs_task(report, &params_field);
         return None;
     }
     let no_params = Value::Object(Map::new());

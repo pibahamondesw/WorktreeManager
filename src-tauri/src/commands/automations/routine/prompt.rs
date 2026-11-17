@@ -174,23 +174,36 @@ fn to_json(value: &(impl Serialize + ?Sized)) -> String {
 }
 
 fn context(input: &PromptInput) -> String {
-    let (request, task, item) = (input.request, input.task, input.item);
+    let (request, item) = (input.request, input.item);
+    format!(
+        "<wtm_context>\nAutomation: {}\nRun: {} (scheduled for {})\n{}\nItem: {} (version {})\nStep: {} (attempt {})\n</wtm_context>",
+        request.automation,
+        request.run_id,
+        rfc3339(request.scheduled_for),
+        workplace(input.task),
+        item.id,
+        item.version,
+        input.attempt.step.id,
+        input.attempt.attempt,
+    )
+}
+
+/// The task the step works in, or the scratch directory of a step without one.
+fn workplace(task: &ResolvedTask) -> String {
+    if task.is_scratch() {
+        let directory = task.folders.join(", ");
+        return format!(
+            "WTM task: none\nWorking directory (scratch, kept with the run): {directory}"
+        );
+    }
     let worktrees: String = task
         .folders
         .iter()
         .map(|folder| format!("\n- {folder}"))
         .collect();
     format!(
-        "<wtm_context>\nAutomation: {}\nRun: {} (scheduled for {})\nWTM task: {} on branch {}\nWorktrees:{worktrees}\nItem: {} (version {})\nStep: {} (attempt {})\n</wtm_context>",
-        request.automation,
-        request.run_id,
-        rfc3339(request.scheduled_for),
-        task.id,
-        task.branch,
-        item.id,
-        item.version,
-        input.attempt.step.id,
-        input.attempt.attempt,
+        "WTM task: {} on branch {}\nWorktrees:{worktrees}",
+        task.id, task.branch
     )
 }
 

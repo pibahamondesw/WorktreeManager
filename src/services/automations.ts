@@ -107,6 +107,8 @@ export interface PipelineStep {
   /** Null goes to the following step. */
   next: string | null;
   onFail: Transition;
+  /** `none`: the step works in a scratch directory of the run instead of the item's task. */
+  task?: "item" | "none";
   kind: StepKind;
 }
 
@@ -369,9 +371,9 @@ export type ItemAction = "take_over" | "hand_back" | "retry";
 const OPEN_ITEM_STATUSES = ["queued", "active", "waiting"];
 
 /**
- * What the owner can do to an item now: take over an agent step it runs or is blocked on, hand
- * back one taken over, retry one that failed or is blocked, or that its routine's failed run
- * left open.
+ * What the owner can do to an item now: take over an agent step with a task it runs or is blocked
+ * on, hand back one taken over, retry one that failed or is blocked, or that its routine's failed
+ * run left open once it had its task, or without one when its steps need none.
  */
 export function itemActions(
   item: AutomationItem,
@@ -380,9 +382,13 @@ export function itemActions(
 ): ItemAction[] {
   if (isTakenOver(item)) return ["hand_back"];
   const step = steps.find((candidate) => candidate.id === item.phase);
-  const onAgent = !!step && "agent" in step.kind;
+  const onAgent = !!step && "agent" in step.kind && step.task !== "none";
+  const taskless = steps.every((candidate) => candidate.task === "none");
   const leftOpen =
-    !!run?.task_id && run.status === "failed" && OPEN_ITEM_STATUSES.includes(item.status);
+    !!run &&
+    (!!run.task_id || taskless) &&
+    run.status === "failed" &&
+    OPEN_ITEM_STATUSES.includes(item.status);
   const actions: ItemAction[] = [];
   if (onAgent && (item.status === "active" || item.status === "blocked")) actions.push("take_over");
   if (item.status === "failed" || item.status === "blocked" || leftOpen) actions.push("retry");

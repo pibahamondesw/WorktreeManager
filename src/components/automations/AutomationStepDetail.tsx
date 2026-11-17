@@ -47,6 +47,7 @@ export function AutomationStepDetail({
   const rejectTransition = onReject(step);
   const facts: Fact[] = [
     ...kindFacts(step, latest, repos),
+    ...tasklessFacts(step, latest),
     ...("command" in step.kind ? receiptFacts(receipt) : []),
     ...attemptFacts(progress),
     ...waitFacts(progress?.latest ?? null),
@@ -94,8 +95,18 @@ export function AutomationStepDetail({
   );
 }
 
+/** A step without a task has no chat to open, so its agent's reply shows here. */
+function tasklessFacts(step: PipelineStep, latest: StepAttempt | null): Fact[] {
+  if (step.task !== "none") return [];
+  const reply = "agent" in step.kind ? latest?.reply : null;
+  return [
+    ["Task", "None: works in a scratch directory of the run"],
+    ...(reply ? [["Reply", <span className="whitespace-pre-wrap">{reply}</span>] as Fact] : []),
+  ];
+}
+
 function kindFacts(
-  { kind }: PipelineStep,
+  { kind, task }: PipelineStep,
   latest: StepAttempt | null,
   repos: TargetRepo[]
 ): Fact[] {
@@ -109,10 +120,14 @@ function kindFacts(
   if ("command" in kind) {
     return [
       ["Command", <code className="font-mono">{kind.command.command.join(" ")}</code>],
-      [
-        "Repository",
-        repos.find((repo) => repo.id === kind.command.repo)?.name ?? kind.command.repo,
-      ],
+      ...(task === "none"
+        ? []
+        : [
+            [
+              "Repository",
+              repos.find((repo) => repo.id === kind.command.repo)?.name ?? kind.command.repo,
+            ] as Fact,
+          ]),
     ];
   }
   if ("wait" in kind) return [["Condition", waitConditionLabel(kind.wait)]];

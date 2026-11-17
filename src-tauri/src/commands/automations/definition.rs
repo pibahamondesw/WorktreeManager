@@ -273,8 +273,8 @@ pub struct Target {
     pub repos: Vec<TargetRepo>,
     pub task: TaskMode,
     pub existing_task: Option<String>,
-    /// `None` for `existing`, whose task keeps its branch, and for `per-item` tasks of a tracked
-    /// campaign, which work on the tracker issue's branch.
+    /// `None` for `existing`, whose task keeps its branch, for `none`, which has no task, and for
+    /// `per-item` tasks of a tracked campaign, which work on the tracker issue's branch.
     pub branch: Option<String>,
 }
 
@@ -296,6 +296,17 @@ pub enum TaskMode {
     PerRun,
     PerItem,
     Existing,
+    /// Items get no task: their steps work in a scratch directory of the run.
+    None,
+}
+
+/// Whether a step works in the item's task or in the item's scratch directory of the run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepTask {
+    #[default]
+    Item,
+    None,
 }
 
 #[derive(Debug, Serialize)]
@@ -310,6 +321,7 @@ pub struct Step {
     pub capacity: Capacity,
     /// Lease pools held for each attempt.
     pub uses: Vec<String>,
+    pub task: StepTask,
     pub kind: StepKind,
 }
 

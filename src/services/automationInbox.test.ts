@@ -313,6 +313,11 @@ describe("conversationTarget", () => {
     });
     expect(conversationTarget(STEPS, run("1", { task_id: null }), attempt())).toBeNull();
   });
+
+  it("has none for a step that works without the task", () => {
+    const taskless = STEPS.map((step) => ({ ...step, task: "none" as const }));
+    expect(conversationTarget(taskless, run("1"), attempt())).toBeNull();
+  });
 });
 
 describe("marks", () => {

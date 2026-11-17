@@ -1,5 +1,5 @@
-//! What a `command` step of the run's item sees: the task's worktrees, the item's template
-//! values and its `WTM_*` environment.
+//! What a `command` step of the run's item sees: the task's worktrees, or the item's scratch
+//! directory for a step without a task, the item's template values and its `WTM_*` environment.
 
 use std::path::{Path, PathBuf};
 
@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::super::command::{CommandContext, HeldLeases};
+use super::super::definition::StepTask;
 use super::super::outputs::StepOutputs;
 use super::super::pipeline::StepRequest;
 use super::super::store::events::ItemState;
@@ -38,6 +39,7 @@ impl From<&ItemState> for Item {
 
 pub(super) struct TaskCommands {
     task: ResolvedTask,
+    scratch: PathBuf,
     data_file: PathBuf,
     data: Map<String, Value>,
     scope: ItemScope,
@@ -90,9 +92,13 @@ impl ItemScope {
             ("item.id".into(), item.id.clone()),
             ("item.branch".into(), item_branch(&item.id)),
             ("item.version".into(), item.version.clone()),
-            ("task.id".into(), task.id.clone()),
-            ("task.branch".into(), task.branch.clone()),
         ]);
+        if !task.is_scratch() {
+            variables.extend([
+                ("task.id".into(), task.id.clone()),
+                ("task.branch".into(), task.branch.clone()),
+            ]);
+        }
         variables.extend(item.title.clone().map(|title| ("item.title".into(), title)));
         variables.extend(item.data.iter().map(item_data_variable));
         Self { variables, env }
@@ -129,6 +135,7 @@ impl TaskCommands {
         write_atomically(&data_file, &data).map_err(|e| format!("{}: {e}", data_file.display()))?;
         Ok(Self {
             task: task.clone(),
+            scratch: scratch_dir(run_dir, &item.id),
             data_file,
             data: item.data.clone(),
             scope: ItemScope::new(run_dir, run_variables, task, item),
@@ -173,7 +180,10 @@ impl TaskCommands {
 }
 
 impl CommandContext for TaskCommands {
-    fn worktree(&self, _: &StepRequest, repo: &str) -> Result<PathBuf, String> {
+    fn worktree(&self, request: &StepRequest, repo: &str) -> Result<PathBuf, String> {
+        if request.step.task == StepTask::None {
+            return Ok(self.scratch.clone());
+        }
         self.task.worktree(repo).map(PathBuf::from).ok_or_else(|| {
             format!(
                 "task {} has no worktree for repository {repo}",
@@ -203,6 +213,11 @@ pub(super) fn item_data_variable((key, value): (&String, &Value)) -> (String, St
         .as_str()
         .map_or_else(|| value.to_string(), str::to_string);
     (format!("item.data.{key}"), text)
+}
+
+/// Where the item's steps without a task work, named by a digest as its other files are.
+pub(super) fn scratch_dir(run_dir: &Path, item_id: &str) -> PathBuf {
+    run_dir.join(format!("scratch-{:x}", Sha256::digest(item_id.as_bytes())))
 }
 
 /// Item ids are free text, so each item's files are named by a digest.

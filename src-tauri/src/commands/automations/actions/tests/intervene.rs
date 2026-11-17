@@ -303,6 +303,55 @@ fn a_retry_pins_the_chosen_definition_and_goes_on_from_the_step_that_failed() {
     assert_eq!(reopened.unwrap().status, ItemStatus::Queued);
 }
 
+#[test]
+fn a_taskless_routine_run_that_failed_leaves_its_item_open_to_retry() {
+    let taskless = "target: { workspace: Acme, task: none }\nagent: { id: claude }\n";
+    let harness = Harness::new(&format!("{taskless}{STEPS}"));
+    let past_deadline = harness.recorded(
+        Some(harness.hash()),
+        &[
+            RunEvent::Started,
+            created("routine"),
+            moved("routine", ItemStatus::Active, Some("check")),
+            RunEvent::Failed {
+                reason: FailureReason::Deadline,
+            },
+        ],
+    );
+
+    let reopened = harness.retry(
+        request(&past_deadline, None, Actor::User),
+        RetryDefinition::Current,
+    );
+
+    assert_eq!(reopened.unwrap().status, ItemStatus::Queued);
+}
+
+#[test]
+fn a_routine_run_with_a_task_that_never_had_it_leaves_nothing_open_to_retry() {
+    let harness = Harness::new(&format!("{TARGET}{STEPS}"));
+    let run_id = harness.recorded(
+        Some(harness.hash()),
+        &[
+            RunEvent::Started,
+            created("routine"),
+            moved("routine", ItemStatus::Active, Some("check")),
+            RunEvent::Failed {
+                reason: FailureReason::Deadline,
+            },
+        ],
+    );
+
+    let refused = harness.retry(
+        request(&run_id, None, Actor::User),
+        RetryDefinition::Current,
+    );
+
+    assert!(refused
+        .unwrap_err()
+        .contains("only a failed or blocked item"));
+}
+
 fn counted(status: ItemStatus, cause: Option<&str>, counter: Option<&str>) -> RunEvent {
     RunEvent::ItemStatus {
         item: "routine".into(),

@@ -1130,6 +1130,8 @@ fn session_setup<R: Runtime>(
     })
 }
 
+/// Keeps the conversation for its task to resume. A session outside any task, as an automation
+/// step without one, has nothing to resume it, so nothing is kept.
 fn remember_conversation(
     app_data: &std::path::Path,
     target: &SessionTarget,
@@ -1145,6 +1147,9 @@ fn remember_conversation(
         target.cwd().to_string(),
     );
     let slot = target.owner.conversation_slot(&target.session_id);
+    if task_id.is_empty() {
+        return Arc::new(|_| {});
+    }
     Arc::new(move |conversation_id| {
         if let Some(link) = &handoff_link {
             handoffs.link(&task_id, &agent, &conversation_id, link);
@@ -3259,6 +3264,24 @@ pub(crate) mod tests {
         let image =
             tauri::async_runtime::block_on(chat_read_image(shot.display().to_string())).unwrap();
         assert_eq!(image.data, "aGk=");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_sessions_of_a_task_remember_their_conversation() {
+        let dir = std::env::temp_dir().join(format!("wtm-chat-remember-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let folders = [dir.display().to_string()];
+        let remembered = |task: &str| {
+            let owner = owner(task, "claude", ChatOrigin::Automation);
+            let target = SessionTarget::new("s1".into(), owner, &folders).unwrap();
+            remember_conversation(&dir, &target, None)("c1".into());
+            let cwd = target.cwd().to_string();
+            ConversationStore::new(&dir).get(task, "claude#s1", &cwd)
+        };
+
+        assert_eq!(remembered(""), None);
+        assert_eq!(remembered("t1").as_deref(), Some("c1"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
