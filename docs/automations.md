@@ -389,12 +389,12 @@ A verdict `blocked` blocks the item, `defer` defers it and `noop` counts as succ
 
 ### Selector
 
-Present only in campaigns. A deterministic script decides what to work on, or a declarative source lists the items without one (see [Item sources](#item-sources)): a selector sets exactly one of `run`, `github`, `linear` or `file`. The script's argv templates get the run variables, and it also sees `WTM_AUTOMATION` and `WTM_RUN_ID`.
+Present only in campaigns. A deterministic script decides what to work on, a declarative source lists the items without one (see [Item sources](#item-sources)), or an agent chooses them (see [Agent selector](#agent-selector)): a selector sets exactly one of `run`, `github`, `linear`, `file` or `agent`. The script's argv templates get the run variables, and it also sees `WTM_AUTOMATION` and `WTM_RUN_ID`.
 
 | Field           | Type              | Default        | Rule                                                                                                                                                                                              |
 | --------------- | ----------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `run`           | list of templates | one source     | argv, as in `command`. Runs in the automation folder with each repository's main checkout as `WTM_BASE_<REPO>` (the name uppercased, other characters as `_`); it never runs in an item worktree. |
-| `timeout`       | duration          | `5m`           | Only with `run`.                                                                                                                                                                                  |
+| `timeout`       | duration          | `5m`, `15m` with `agent` | Only with `run` or `agent`.                                                                                                                                                             |
 | `max_new_items` | integer ≥ 1       | `pools.active` | New items per run.                                                                                                                                                                                |
 | `exclusive_on`  | list of keys      | `[]`           | `item.data` keys whose values may not overlap between active items (for example `files`, `rules`). An overlapping candidate is skipped with `capped`.                                             |
 
@@ -447,6 +447,42 @@ selector:
   github:
     search: "is:pr is:open review-requested:@me"
   max_new_items: 2
+```
+
+#### Agent selector
+
+When choosing takes judgment, such as the next unblocked issues of a project within its constraints, or candidates found in alerts, metrics or the code, `selector.agent` asks an agent instead of a script. Each selection pass is one headless turn of the agent, outside any task: it works in a scratch directory of the run, as a step with `task: none` does, with no worktree, and gets no `authorization` verbs. Its structured result is the list of items, which goes through the same pass as a script's output: `deduped` and `capped` skips, `max_new_items`, `exclusive_on` and the pools apply alike.
+
+| Field                  | Type                       | Default               | Rule                                                                                       |
+| ---------------------- | -------------------------- | --------------------- | ------------------------------------------------------------------------------------------ |
+| `agent.id`             | string                     | the top-level `agent` | As in an agent step, as are `model`, `effort` and `permission`.                            |
+| `agent.skill`          | string                     | none                  | The prompt starts with `Use the <skill> skill.`                                            |
+| `agent.prompt`         | string                     | required unless skill | What to choose and how.                                                                    |
+| `agent.readonly`       | bool                       | `true`                | As an agent step's `readonly` (see Read-only); needs the `read_only` capability.           |
+
+The agent needs the `structured_output` capability. Its prompt has the skill, the prompt, the decisions in force, the item contract and, as untrusted data, what a script reads on stdin: `free`, `active` items, `busy_files`, `cursor` and `run`. The `AUTOMATION.md` body is for the item's steps and is not part of it. The result is held to this schema, strict for every agent:
+
+```json
+{ "items": [{ "id": "ENG-12", "version": "2026-11-17T10:00:00Z", "title": "Fix login", "data": "{\"team\":\"ENG\"}" }], "cursor": "page-2" }
+```
+
+`id`, `version` and `data` follow the script contract; `title` may be null and `data` is the text of a JSON object (`""` or `"{}"` for none). `cursor` is a string the next pass receives as `cursor`, or null to keep the current one; no items completes the run with outcome `noop`. A session that cannot start, a turn that ends with an error or past `timeout`, and a result that breaks the contract fail the run with `selector_failed` and the reason in `selector_error`.
+
+The run detail (`wtm automation status <name> <run>`) shows the pass's conversation as `selector_session`: the session, the agent's conversation id, its final reply and the result read from it. Requests its permission policy settled are listed with the run's, under step `selector` and no item, and reach the Inbox as any step's do. The full transcript stays in the agent's own history.
+
+For example, starting the next unblocked issues of a Linear project, at most two at a time and never two of the same area:
+
+```yaml
+selector:
+  agent:
+    model: sonnet
+    prompt: >
+      List the unstarted issues of the Linear project "Billing revamp" that no open issue
+      blocks, highest priority first. Skip issues whose area label is in an active item's
+      data. Each item's id is the issue identifier, its version the issue's updatedAt, and
+      its data {"area": "<area label>", "url": "<issue url>"}.
+  exclusive_on: [area]
+pools: { active: 2 }
 ```
 
 **Pace.** By default a campaign is `continuous`: each selection pass takes new items as capacity allows. **Next** (Items tab or `wtm automation next <name>`) switches it to `next` and grants one more item: items already queued or active keep going, and selection passes take at most the items granted (`overrides.pace` in `state.json`, `{mode: next, remaining}`), each pass taking its new items off the grant. With nothing granted, a firing is recorded as skipped `capped` without running the selector. Next also starts a selection pass when `trigger.manual` allows it, even while paused, as Run now does. **Continuous** (`wtm automation continuous <name>`) goes back to taking items as capacity allows. Test runs ignore the grant and never take from it.
