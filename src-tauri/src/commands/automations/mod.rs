@@ -4,6 +4,7 @@ pub mod decisions;
 pub mod definition;
 pub mod instants;
 pub mod operator;
+pub mod outputs;
 pub mod pipeline;
 pub mod publish;
 pub mod routine;

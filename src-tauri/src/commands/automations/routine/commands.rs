@@ -7,12 +7,15 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::super::command::{CommandContext, HeldLeases};
+use super::super::outputs::StepOutputs;
 use super::super::pipeline::StepRequest;
 use super::super::store::events::ItemState;
 use super::super::store::write_atomically;
 use super::branch::item_branch;
 use super::leases::StepLeases;
 use super::{render, ResolvedTask};
+
+const STEP_VARIABLES: &str = "steps.";
 
 /// The item a run drives. Its title and data are untrusted.
 pub(super) struct Item {
@@ -39,6 +42,8 @@ pub(super) struct TaskCommands {
     data: Map<String, Value>,
     scope: ItemScope,
     leases: StepLeases,
+    outputs: StepOutputs,
+    outputs_file: PathBuf,
 }
 
 /// The item's template values and `WTM_*` variables, except `WTM_WORKTREE`.
@@ -55,6 +60,7 @@ impl ItemScope {
         item: &Item,
     ) -> Self {
         let data_file = item_data_path(run_dir, &item.id);
+        let outputs_file = step_outputs_path(run_dir, &item.id);
         let value = |name: &str| {
             run_variables
                 .iter()
@@ -69,6 +75,10 @@ impl ItemScope {
             ("WTM_ITEM_VERSION", item.version.clone()),
             ("WTM_ITEM_DATA", data_file.to_string_lossy().into_owned()),
             ("WTM_TASK_ID", task.id.clone()),
+            (
+                "WTM_STEP_OUTPUTS",
+                outputs_file.to_string_lossy().into_owned(),
+            ),
         ]
         .map(|(name, value)| (name.to_string(), value))
         .to_vec();
@@ -96,6 +106,13 @@ impl ItemScope {
             self.variables.push((name, text));
         }
     }
+
+    /// The `steps.…` variables become those of `outputs`.
+    pub fn show_outputs(&mut self, outputs: &StepOutputs) {
+        self.variables
+            .retain(|(name, _)| !name.starts_with(STEP_VARIABLES));
+        self.variables.extend(outputs.variables());
+    }
 }
 
 impl TaskCommands {
@@ -116,6 +133,8 @@ impl TaskCommands {
             data: item.data.clone(),
             scope: ItemScope::new(run_dir, run_variables, task, item),
             leases,
+            outputs: StepOutputs::default(),
+            outputs_file: step_outputs_path(run_dir, &item.id),
         })
     }
 
@@ -142,6 +161,15 @@ impl TaskCommands {
     pub fn leases(&self) -> &StepLeases {
         &self.leases
     }
+
+    pub fn outputs(&self) -> &StepOutputs {
+        &self.outputs
+    }
+
+    pub fn set_outputs(&mut self, outputs: StepOutputs) {
+        self.scope.show_outputs(&outputs);
+        self.outputs = outputs;
+    }
 }
 
 impl CommandContext for TaskCommands {
@@ -158,8 +186,11 @@ impl CommandContext for TaskCommands {
         render(template, &self.scope.variables)
     }
 
-    fn env(&self, _: &StepRequest) -> Vec<(String, String)> {
-        self.scope.env.clone()
+    /// Writes the outputs of the item's earlier steps where `WTM_STEP_OUTPUTS` points.
+    fn env(&self, _: &StepRequest) -> Result<Vec<(String, String)>, String> {
+        write_atomically(&self.outputs_file, &self.outputs.to_json())
+            .map_err(|e| format!("{}: {e}", self.outputs_file.display()))?;
+        Ok(self.scope.env.clone())
     }
 
     fn hold_leases(&self, request: &StepRequest) -> Result<HeldLeases, String> {
@@ -174,10 +205,18 @@ pub(super) fn item_data_variable((key, value): (&String, &Value)) -> (String, St
     (format!("item.data.{key}"), text)
 }
 
-/// Item ids are free text, so each item's data file is named by a digest.
+/// Item ids are free text, so each item's files are named by a digest.
 fn item_data_path(run_dir: &Path, item_id: &str) -> PathBuf {
+    item_file(run_dir, "item-data", item_id)
+}
+
+fn step_outputs_path(run_dir: &Path, item_id: &str) -> PathBuf {
+    item_file(run_dir, "step-outputs", item_id)
+}
+
+fn item_file(run_dir: &Path, kind: &str, item_id: &str) -> PathBuf {
     run_dir.join(format!(
-        "item-data-{:x}.json",
+        "{kind}-{:x}.json",
         Sha256::digest(item_id.as_bytes())
     ))
 }

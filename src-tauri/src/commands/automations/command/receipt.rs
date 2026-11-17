@@ -13,6 +13,7 @@ use crate::commands::automations::store::write_atomically;
 const RECEIPTS_DIR: &str = "receipts";
 const LATEST_RECEIPT: &str = "latest.json";
 pub(super) const TIMEOUT_CAUSE: &str = "timeout";
+const MAX_RESULT_BYTES: u64 = 64 * 1024;
 
 /// The record of one `command` attempt. Paths are relative to the run directory.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -93,6 +94,44 @@ impl ReceiptStore {
         attempt_file(&slot(item, stage, step), attempt, "log")
     }
 
+    /// Where the attempt may write its result, ready to be written and empty.
+    pub fn result_file(
+        &self,
+        item: &str,
+        stage: Option<&str>,
+        step: &str,
+        attempt: u32,
+    ) -> Result<PathBuf, String> {
+        let path = self
+            .run_dir
+            .join(result_file(&slot(item, stage, step), attempt));
+        let ready = fs::create_dir_all(path.parent().unwrap_or(&self.run_dir)).and_then(|()| {
+            match fs::remove_file(&path) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+                _ => Ok(()),
+            }
+        });
+        ready.map_err(|e| format!("result {}: {e}", path.display()))?;
+        Ok(path)
+    }
+
+    /// The JSON the receipt's attempt wrote as its result, if it wrote one.
+    pub fn result(&self, receipt: &Receipt) -> Result<Option<serde_json::Value>, String> {
+        let path = self
+            .run_dir
+            .join(result_file(&receipt.slot(), receipt.attempt));
+        let bytes = match fs::metadata(&path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Ok(metadata) if metadata.len() > MAX_RESULT_BYTES => {
+                return Err(format!("is over {MAX_RESULT_BYTES} bytes"))
+            }
+            _ => fs::read(&path).map_err(|e| e.to_string())?,
+        };
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| format!("is not JSON: {e}"))
+    }
+
     pub fn write_log(&self, relative: &str, output: &str) -> Result<(), String> {
         write_atomically(&self.run_dir.join(relative), output.as_bytes())
             .map_err(|e| format!("log {relative}: {e}"))
@@ -153,6 +192,10 @@ impl ReceiptStore {
 fn slot(item: &str, stage: Option<&str>, step: &str) -> String {
     let key = format!("{item}\0{}\0{step}", stage.unwrap_or_default());
     format!("{RECEIPTS_DIR}/{:x}", Sha256::digest(key.as_bytes()))
+}
+
+fn result_file(slot: &str, attempt: u32) -> String {
+    attempt_file(slot, attempt, "result.json")
 }
 
 fn attempt_file(slot: &str, attempt: u32, extension: &str) -> String {

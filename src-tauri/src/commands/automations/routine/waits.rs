@@ -5,6 +5,7 @@ use std::time::SystemTime;
 
 use super::super::command::CommandContext;
 use super::super::definition::{AutomationDefinition, Step, StepKind, WaitStep};
+use super::super::outputs::StepOutputs;
 use super::super::pipeline::{Execution, StepReport, StepRequest};
 use super::super::publish::published_values;
 use super::super::scheduler::{fail_item, is_active, RunRequest, DEFINITION_CHANGED_CAUSE};
@@ -97,6 +98,7 @@ impl RoutineExecutor {
         let run_dir = self.store.run_dir(&request.automation, &request.run_id)?;
         let mut scope = ItemScope::new(&run_dir, run_variables(request), task, &Item::from(state));
         scope.edit(&wait::approved_params(history, item, &definition.steps));
+        scope.show_outputs(&StepOutputs::from_log(history, item));
         Ok(scope)
     }
 
@@ -223,7 +225,7 @@ impl ItemSteps<'_> {
             task: Some(self.task),
             test: self.request.test,
             wait_per_head_secs: self.definition.budgets.wait_per_head_secs,
-            scripts: Some(self.scripts(request)),
+            scripts: Some(self.scripts(request)?),
         };
         let Some(ended) = wait::resolve(request.step, &log, now, self.watchers, &watch) else {
             self.parked = true;
@@ -232,20 +234,20 @@ impl ItemSteps<'_> {
         Ok(Execution::Finished(self.ended(request, ended)?))
     }
 
-    fn scripts(&self, request: &StepRequest) -> WatchScripts<'_> {
+    fn scripts(&self, request: &StepRequest) -> Result<WatchScripts<'_>, String> {
         let context = self.commands.context();
         let scope = ItemScope {
             variables: context.variables().to_vec(),
-            env: context.env(request),
+            env: context.env(request)?,
         };
-        scripts(
+        Ok(scripts(
             self.definition,
             self.request,
             request.item,
             request.step,
             request.attempt,
             scope,
-        )
+        ))
     }
 
     /// An approval's title and detail render with the item's variables and what its effects

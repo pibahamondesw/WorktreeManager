@@ -35,6 +35,7 @@ use super::definition::{
     Target, TaskMode, Verb,
 };
 use super::instants::rfc3339;
+use super::outputs::attempt_result;
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
@@ -824,6 +825,10 @@ impl ItemSteps<'_> {
             Ok(schema) => schema,
             Err(error) => return failed(ProcessEnd::Crashed, format!("result_schema: {error}")),
         };
+        let outputs = self.commands.context().outputs();
+        if let Some(missing) = prompt::missing_output(step.prompt.as_deref(), outputs) {
+            return failed(ProcessEnd::Crashed, missing);
+        }
         let decisions = match self.log.store.state(&self.request.automation) {
             Ok(state) => state.decisions,
             Err(error) => return failed(ProcessEnd::Crashed, format!("decisions: {error}")),
@@ -854,6 +859,7 @@ impl ItemSteps<'_> {
             item: self.item,
             payload: self.payload,
             prior: &self.prior,
+            outputs: self.commands.context().outputs(),
             decisions: &decisions,
             handback_note: self.handback_note.take().as_deref(),
         });
@@ -1139,13 +1145,16 @@ impl ItemSteps<'_> {
         for event in &self.evidence {
             if let RunEvent::StepOutput { reply, result, .. } = event {
                 prior.reply = reply.clone().filter(|_| result.is_none());
-                prior.result = result.clone();
             }
             if let RunEvent::StepReceipt { receipt, log, .. } = event {
                 prior.receipt = Some(self.run_path(receipt));
                 prior.log = Some(self.run_path(log));
             }
         }
+        prior.result = attempt_result(&self.evidence);
+        let mut outputs = self.commands.context().outputs().clone();
+        outputs.record(&prior.step, prior.outcome, prior.result.as_ref());
+        self.commands.context_mut().set_outputs(outputs);
         self.prior.push(prior);
     }
 

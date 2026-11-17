@@ -2,6 +2,7 @@ use serde_json::{Map, Value};
 
 use super::{DefinitionIssue, IssueKind};
 use crate::commands::automations::instants::parse_rfc3339;
+use crate::commands::automations::outputs::output_reference;
 
 const TEMPLATE_VARIABLES: &[&str] = &[
     "automation",
@@ -333,6 +334,7 @@ fn is_template_variable(name: &str) -> bool {
         || name
             .strip_prefix(ITEM_DATA_PREFIX)
             .is_some_and(|key| !key.is_empty())
+        || output_reference(name).is_some()
 }
 
 pub(super) fn template(report: &mut Report, value: &Value, field: &str) -> Option<String> {
