@@ -226,6 +226,33 @@ describe("inboxEntries", () => {
     expect(entries[0].target).toEqual({ taskId: "t1", agent: "claude", conversationId: "c1" });
   });
 
+  it("links a campaign item's question to the item's task and the asking step's conversation", () => {
+    const asked = question({ item: "a", attempt: 2 });
+    const campaignRun = (task_id: string | null) =>
+      run("1", {
+        outcome: "noop",
+        task_id: null,
+        permission_requests: [asked],
+        items: [
+          { id: "other", title: null, status: "completed", phase: null, steps: [attempt()] },
+          {
+            id: "a",
+            title: "A",
+            status: "deferred",
+            phase: "triage",
+            steps: [attempt(), attempt({ attempt: 2, conversation_id: "c2" })],
+            task_id,
+          },
+        ],
+      });
+    const targetOf = (task_id: string | null) =>
+      inboxEntries([{ entry: entry(), runs: [campaignRun(task_id)] }]).find(
+        (e) => e.kind === "question"
+      )?.target;
+    expect(targetOf("t9")).toEqual({ taskId: "t9", agent: "claude", conversationId: "c2" });
+    expect(targetOf(null)).toBeNull();
+  });
+
   it("uses the question's tool when its questions cannot be read", () => {
     const runs = [run("1", { outcome: "noop", permission_requests: [question({ input: "?" })] })];
     const [asked] = inboxEntries([{ entry: entry(), runs }]).filter((e) => e.kind === "question");

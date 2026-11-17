@@ -305,10 +305,11 @@ function requestEntry(
   index: number
 ): InboxEntry {
   const question = request.kind === "question";
-  const attempt = run.items
-    .filter((item) => request.item === undefined || item.id === request.item)
+  const items = run.items.filter((item) => request.item === undefined || item.id === request.item);
+  const attempt = items
     .flatMap((item) => item.steps)
     .find((step) => step.step === request.step && step.attempt === request.attempt);
+  const asking = items.find((item) => item.id === request.item);
   return {
     ...runFacts(entry, run),
     key: requestKey(entry.name, run, request, index),
@@ -317,7 +318,11 @@ function requestEntry(
       ? (questionText(request.input) ?? request.tool)
       : `${request.resolution === "denied" ? "Denied" : "Allowed by default"}: ${request.tool}`,
     detail: question ? `Unanswered in ${request.step}` : inputDetail(request),
-    target: conversationTarget(entry.definition?.steps ?? [], run, attempt),
+    target: conversationTarget(
+      entry.definition?.steps ?? [],
+      asking ? inItemTask(run, asking) : run,
+      attempt
+    ),
     autoArchived: false,
     notify: policy.notify,
   };
