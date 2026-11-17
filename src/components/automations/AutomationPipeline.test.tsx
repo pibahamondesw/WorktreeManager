@@ -184,7 +184,53 @@ it("shows the definition graph when there are no runs", async () => {
   expect(within(node("Implement")).getByText("claude · implement")).toBeInTheDocument();
   expect(
     container.querySelector('[data-edge="verify → implement on fail (max 3)"]')
-  ).not.toBeNull();
+  ).not.toHaveAttribute("data-taken");
+  const jumps = screen.getByRole("list", { name: "Jumps" });
+  expect(within(jumps).getByText("on fail")).toBeInTheDocument();
+  expect(within(jumps).queryByText(/taken/)).not.toBeInTheDocument();
+});
+
+it("draws the path an item took, with each loop's rounds", async () => {
+  vi.mocked(invoke).mockResolvedValue(
+    page(
+      run("1761800000002-bbbbbbbb", {
+        status: "running",
+        items: [
+          item("pr-1", {
+            phase: "checks",
+            steps: [
+              attempt("implement"),
+              attempt("verify", { status: "failed" }),
+              attempt("implement", { attempt: 2 }),
+              attempt("verify", { attempt: 2 }),
+              attempt("lint"),
+              attempt("checks", { status: "waiting" }),
+            ],
+          }),
+          item("pr-2", { steps: [attempt("implement", { status: "running" })] }),
+        ],
+      })
+    )
+  );
+  const { container } = render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+
+  const jumps = await screen.findByRole("list", { name: "Jumps" });
+  expect(within(jumps).getByText("verify → implement")).toHaveClass("text-text-primary");
+  expect(within(jumps).getByText("max 3")).toBeInTheDocument();
+  expect(within(jumps).getByText("taken ×1")).toBeInTheDocument();
+  const loop = container.querySelector('[data-edge="verify → implement on fail (max 3)"]');
+  expect(loop).toHaveAttribute("data-taken", "1");
+  expect(within(node("checks")).getByText("waiting")).toBeInTheDocument();
+  expect(node("checks")).toHaveAttribute("aria-current", "step");
+  const connectors = container.querySelectorAll("[data-taken='true']");
+  expect(connectors).toHaveLength(1);
+  expect(screen.getByText("Also ran steps no longer in the definition: lint")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByRole("combobox", { name: "Item" }), { target: { value: "pr-2" } });
+  expect(within(jumps).getByText("not taken")).toBeInTheDocument();
+  expect(loop).toHaveClass("opacity-40");
+  expect(container.querySelectorAll("[data-taken='true']")).toHaveLength(0);
+  expect(screen.queryByText(/no longer in the definition/)).not.toBeInTheDocument();
 });
 
 it("defaults to the newest run with items and shows each step's latest attempt", async () => {
