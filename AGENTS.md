@@ -18,6 +18,14 @@ Keep changes small and follow nearby patterns. Prioritize user data, consistent 
 - [Claude config cleanup](src-tauri/src/commands/claude_config.rs) only removes owned worktree entries whose directories are gone. Preserve unrelated settings, skip malformed config and write atomically; never broaden cleanup to arbitrary missing projects.
 - Switching tasks detaches or hides embedded sessions; it does not terminate them. Close/delete/quit owns teardown. Preserve per-task editor isolation and stale-event guards; only the main webview receives [Tauri capabilities](src-tauri/capabilities/default.json).
 
+## Automations
+
+- A new automation capability is complete when it covers: definition validation, [the spec](docs/automations.md) and the [vault-kit reference](vault-kit/skills/wtm-automation/reference.md), the `wtm` CLI and run detail, the Pipeline graph and step editor (which keep what they don't edit), Test runs (effects staged), app restart and resume, retries without repeating done effects, and adoption of an edited definition by waiting items.
+- Templates use `{var}`; validate references when the definition loads, since a missing variable at render time otherwise fails silently.
+- Run logs outlive app versions: prefer optional fields on existing events over new event types, and keep older runs loading.
+- Agent steps must work with every agent adapter. Result schemas stay valid in strict mode (no free-form objects); agent-only features, like naming a conversation, degrade to a no-op elsewhere.
+- Automation sessions never replace the task owner's chat; only an explicit hand-over (`wtm.chat_open`, `wtm task chat`) becomes the task's conversation.
+
 ## Platform and UI conventions
 
 - GUI launches have a minimal environment. Use macOS `open -a` for GUI editors and the shared [login-shell launcher](src-tauri/src/commands/login_shell.rs) for CLI launches and probes. Pass dynamic values as launcher arguments, never as script text.
@@ -30,5 +38,8 @@ Keep changes small and follow nearby patterns. Prioritize user data, consistent 
 - Verify behavior changes with focused tests, including relevant failure paths. Run only affected files/modules and direct neighbours, never the full suite. Frontend example: `pnpm exec vitest run src/services/operations.test.ts`. Rust example: `CARGO_TARGET_DIR="$HOME/.cache/worktreemanager-target" cargo test --manifest-path src-tauri/Cargo.toml --lib commands::notes::tests`.
 - Tests wait on conditions, not durations: poll with a generous deadline, since success paths return as soon as the condition holds. Only tests that assert a timeout use a short one, injected rather than inherited from production defaults.
 - Keep tests independent of the machine and of each other: fake agents and CLIs by absolute path or injected adapters (e.g. `Agents::missing()`), never through real login-shell detection. Split independent cases into separate tests so they run in parallel instead of looping over expensive fixtures.
+- CI requires full coverage of new lines on Linux and macOS. Hoist `log::*` arguments into variables so the macro line itself is covered, and cover failure branches or remove unreachable ones.
+- The repository is public: code, tests, docs, commits and PRs use generic examples, never company, internal repository or campaign names.
+- Parallel branches meet in [the spec](docs/automations.md), definition validation and the routine engine; keep edits there small and localized. The shared Rust target directory grows fast, so check free disk space before heavy builds.
 - Run relevant type, lint and formatting checks from [package scripts](package.json). Native drag, focus and embedded webview changes also need a macOS smoke check; report when it was not possible.
 - Leave commits, pull requests and releases to the user unless explicitly requested. The release script commits and tags as well as bumping versions.
