@@ -11,7 +11,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime, State};
 
@@ -116,7 +116,7 @@ pub fn hand_back(
     target: ItemRef,
     note: Option<String>,
     by: Actor,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<ItemControl, String> {
     let name = &definition.name;
     let run = store.run(name, target.run_id)?;
@@ -162,7 +162,7 @@ pub fn retry(
     target: ItemRef,
     from: Option<&str>,
     by: Actor,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<ItemControl, String> {
     let name = &chosen.name;
     let run = store.run(name, target.run_id)?;
@@ -227,7 +227,7 @@ fn go_on_unless_awaiting(
     run_id: &str,
     item: &str,
     awaiting_slot: bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<ItemControl, String> {
     if awaiting_slot {
         return reloaded(store, name, run_id, item);
@@ -241,7 +241,7 @@ pub fn start_items_due_a_slot(
     store: &RunStore,
     executor: &dyn Executor,
     definition: &AutomationDefinition,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), String> {
     let name = &definition.name;
     let writer = store.writer(name)?;
@@ -394,7 +394,7 @@ fn drive_again(
     name: &str,
     run_id: &str,
     item: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<ItemControl, String> {
     let run = store.run(name, run_id)?;
     let mut request = recorded_request(name, &run).ok_or("The run has no trigger")?;

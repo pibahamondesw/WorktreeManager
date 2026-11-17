@@ -11,9 +11,8 @@ pub mod linear;
 mod tests;
 
 use std::sync::Arc;
-use std::time::SystemTime;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Runtime, State};
@@ -49,7 +48,7 @@ pub fn start_run(
     definition: &AutomationDefinition,
     test: bool,
     payload: Option<Value>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<StartedRun, String> {
     let name = &definition.name;
     if !test && !definition.trigger.manual {
@@ -95,7 +94,7 @@ pub fn refill(
     store: &RunStore,
     executor: &dyn Executor,
     definition: &AutomationDefinition,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Refill, String> {
     let name = &definition.name;
     let writer = store.writer(name)?;
@@ -128,7 +127,7 @@ fn run_request(
     definition: &AutomationDefinition,
     run_id: String,
     test: bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> RunRequest {
     RunRequest {
         automation: definition.name.clone(),
@@ -197,7 +196,7 @@ pub fn resume(
     definition: &AutomationDefinition,
     by: Actor,
     reason: Option<String>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<AutomationState, String> {
     let writer = store.writer(&definition.name)?;
     let mut state = store.state(&definition.name)?;
@@ -252,8 +251,8 @@ fn note(reason: Option<String>) -> Option<String> {
         .filter(|reason| !reason.is_empty())
 }
 
-pub(super) fn now() -> DateTime<Utc> {
-    DateTime::from(SystemTime::now())
+pub(super) fn now() -> Timestamp {
+    Timestamp::now()
 }
 
 pub(super) async fn blocking<T: Send + 'static>(

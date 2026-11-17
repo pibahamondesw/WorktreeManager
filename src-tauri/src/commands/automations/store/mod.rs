@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, Runtime};
 
+use super::instants::rfc3339;
 use events::{parse_log, reduce, ItemState, LoggedEvent, RunEvent, RunState, RunTrigger};
 
 const EVENTS_FILE: &str = "events.jsonl";
@@ -59,8 +60,7 @@ impl Toggle {
 }
 
 fn utc_now() -> String {
-    chrono::DateTime::<chrono::Utc>::from(SystemTime::now())
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    rfc3339(jiff::Timestamp::now())
 }
 
 /// A value the operator set in place of the definition's, with who set it and when.

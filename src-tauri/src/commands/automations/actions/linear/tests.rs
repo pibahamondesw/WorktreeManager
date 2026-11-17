@@ -154,7 +154,7 @@ impl Harness {
             .iter()
             .filter_map(|entry| entry.definition.as_ref())
             .collect();
-        let now = at(T0) + chrono::TimeDelta::seconds(seconds);
+        let now = at(T0) + jiff::SignedDuration::from_secs(seconds);
         let store = self.scratch.store();
         self.triggers
             .poll(&store, &self.executor, &definitions, now)
@@ -178,7 +178,7 @@ impl Harness {
     }
 }
 
-fn at(text: &str) -> DateTime<Utc> {
+fn at(text: &str) -> Timestamp {
     instant(text).unwrap()
 }
 

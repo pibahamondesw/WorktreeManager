@@ -11,7 +11,6 @@ mod tests;
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::SecondsFormat;
 use serde_json::json;
 
 use super::events::EventRun;
@@ -20,6 +19,7 @@ use super::*;
 use crate::commands::automations::definition::{
     Effect, LinearEventKind, LinearEventTrigger, StepKind,
 };
+use crate::commands::automations::instants::{parse_rfc3339, rfc3339_millis};
 use crate::commands::automations::watchers::backoff_ms;
 pub use graphql::{GraphqlLinear, LinearIssues, SecretReader};
 use graphql::{Issue, UpdatedIssues};
@@ -67,9 +67,9 @@ impl LinearTriggers {
         store: &RunStore,
         executor: &dyn Executor,
         definitions: &[&AutomationDefinition],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Vec<EventRun> {
-        let now_ms = now.timestamp_millis();
+        let now_ms = now.as_millisecond();
         let mut runs = Vec::new();
         for (workspace_id, listeners) in listening(store, definitions) {
             let poll = self.polls.entry(workspace_id.clone()).or_default();
@@ -137,8 +137,8 @@ fn listening<'a>(
 fn watched<'a>(
     store: &RunStore,
     listeners: Vec<Listener<'a>>,
-    now: DateTime<Utc>,
-) -> Vec<(&'a AutomationDefinition, DateTime<Utc>)> {
+    now: Timestamp,
+) -> Vec<(&'a AutomationDefinition, Timestamp)> {
     let mut watched = Vec::new();
     for (definition, cursor) in listeners {
         match cursor.as_deref().and_then(instant) {
@@ -162,7 +162,7 @@ fn advance(
     store: &RunStore,
     definition: &AutomationDefinition,
     updated: &UpdatedIssues,
-    cursor: DateTime<Utc>,
+    cursor: Timestamp,
 ) {
     let newest = updated
         .issues
@@ -192,8 +192,8 @@ fn fire_changes(
     executor: &dyn Executor,
     definition: &AutomationDefinition,
     updated: &UpdatedIssues,
-    cursor: DateTime<Utc>,
-    now: DateTime<Utc>,
+    cursor: Timestamp,
+    now: Timestamp,
 ) -> Vec<EventRun> {
     let markers = own_markers(definition);
     let mut runs = Vec::new();
@@ -226,7 +226,7 @@ fn fire_changes(
 
 /// The changes of `issue` after `cursor`: its creation, labels added that it still has, and
 /// moves between states.
-fn changes(issue: &Issue, cursor: DateTime<Utc>) -> Vec<Change<'_>> {
+fn changes(issue: &Issue, cursor: Timestamp) -> Vec<Change<'_>> {
     let after = |at: &str| instant(at).is_some_and(|at| at > cursor);
     let change = |kind, at| Change {
         kind,
@@ -350,7 +350,7 @@ fn fire(
     executor: &dyn Executor,
     definition: &AutomationDefinition,
     change: &Change,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<FiredRun, String> {
     let payload = payload(change);
     check_payload(Some(&payload))?;
@@ -414,12 +414,10 @@ fn payload(change: &Change) -> Value {
     })
 }
 
-fn instant(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|instant| instant.with_timezone(&Utc))
+fn instant(text: &str) -> Option<Timestamp> {
+    parse_rfc3339(text)
 }
 
-fn stamp(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::Millis, true)
+fn stamp(instant: Timestamp) -> String {
+    rfc3339_millis(instant)
 }

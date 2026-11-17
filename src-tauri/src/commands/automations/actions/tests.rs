@@ -10,6 +10,7 @@ use tauri::{App, Manager};
 use super::*;
 use crate::commands::agents::Agents;
 use crate::commands::automations::definition::AppEventKind;
+use crate::commands::automations::instants::parse_rfc3339;
 use crate::commands::automations::store::events::{ItemStatus, RunOutcome};
 use crate::commands::automations::store::{Override, Pace};
 
@@ -285,7 +286,7 @@ fn pause_and_resume_record_who_and_why_and_skip_missed_slots() {
 
     assert!(resumed.enabled);
     assert_eq!(resumed.pause_reason, None);
-    let next = DateTime::parse_from_rfc3339(resumed.next_run_at.as_deref().unwrap()).unwrap();
+    let next = parse_rfc3339(resumed.next_run_at.as_deref().unwrap()).unwrap();
     assert!(next + super::super::scheduler::stagger("demo") > before);
     let toggle = resumed.last_toggle.clone().unwrap();
     assert_eq!(

@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Barrier, Mutex};
 
-use chrono::Timelike;
 use serde_json::json;
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 use tauri::App;
@@ -32,20 +31,20 @@ impl Drop for Scratch {
 }
 
 #[derive(Clone)]
-struct FakeClock(Arc<Mutex<DateTime<Utc>>>);
+struct FakeClock(Arc<Mutex<Timestamp>>);
 
 impl FakeClock {
-    fn at(now: DateTime<Utc>) -> Self {
+    fn at(now: Timestamp) -> Self {
         Self(Arc::new(Mutex::new(now)))
     }
 
-    fn set(&self, now: DateTime<Utc>) {
+    fn set(&self, now: Timestamp) {
         *self.0.lock().unwrap() = now;
     }
 }
 
 impl Clock for FakeClock {
-    fn now(&self) -> DateTime<Utc> {
+    fn now(&self) -> Timestamp {
         *self.0.lock().unwrap()
     }
 }
@@ -65,7 +64,7 @@ impl Executor for FakeExecutor {
     }
 }
 
-fn utc(text: &str) -> DateTime<Utc> {
+fn utc(text: &str) -> Timestamp {
     text.parse().unwrap()
 }
 
@@ -80,7 +79,7 @@ fn automation(name: &str, cron: &str, tz: &str, catch_up: CatchUp) -> Automation
         }),
         max_runs: 1,
         active_pool: 1,
-        run_deadline: TimeDelta::hours(2),
+        run_deadline: SignedDuration::from_hours(2),
     }
 }
 
@@ -115,7 +114,7 @@ fn missed(count: u64, first: &str, last: &str) -> Option<MissedSlots> {
     })
 }
 
-fn resume(store: &RunStore, automation: &Automation, now: DateTime<Utc>) -> Result<(), String> {
+fn resume(store: &RunStore, automation: &Automation, now: Timestamp) -> Result<(), String> {
     let writer = store.writer(&automation.name)?;
     let mut state = store.state(&automation.name)?;
     reschedule(&mut state, automation, now);
@@ -152,7 +151,7 @@ fn fires_daily_slots_in_their_timezone_across_a_dst_change() {
         Some("2026-04-04T12:00:00Z")
     );
 
-    let clock = FakeClock::at(utc("2026-04-04T12:00:00Z") + lag - TimeDelta::seconds(1));
+    let clock = FakeClock::at(utc("2026-04-04T12:00:00Z") + lag - SignedDuration::from_secs(1));
     let (mut scheduler, executor) = scheduler(&scratch, &clock);
     scheduler.tick(std::slice::from_ref(&daily));
     assert_eq!(executor.taken(), []);
@@ -178,6 +177,65 @@ fn fires_daily_slots_in_their_timezone_across_a_dst_change() {
     assert_eq!(
         next_run_at(&store, "daily").as_deref(),
         Some("2026-04-05T13:00:00Z")
+    );
+}
+
+fn slots(cron: &str, tz: &str, start: &str, count: usize) -> Vec<String> {
+    let schedule = Schedule {
+        cron: cron.into(),
+        tz: tz.into(),
+        catch_up: CatchUp::Latest,
+    };
+    let slots = Slots::of(&schedule).unwrap();
+    slots
+        .starting_at(utc(start))
+        .take(count)
+        .map(rfc3339)
+        .collect()
+}
+
+#[test]
+fn a_slot_in_the_skipped_dst_hour_fires_once_right_after_the_jump() {
+    assert_eq!(
+        slots("30 2 * * *", "America/New_York", "2026-03-07T00:00:00Z", 3),
+        [
+            "2026-03-07T07:30:00Z",
+            "2026-03-08T07:00:00Z",
+            "2026-03-09T06:30:00Z"
+        ]
+    );
+}
+
+#[test]
+fn a_slot_in_the_repeated_dst_hour_fires_once() {
+    assert_eq!(
+        slots("30 1 * * *", "America/New_York", "2026-10-31T00:00:00Z", 3),
+        [
+            "2026-10-31T05:30:00Z",
+            "2026-11-01T05:30:00Z",
+            "2026-11-02T06:30:00Z"
+        ]
+    );
+}
+
+#[test]
+fn an_hourly_schedule_fires_in_both_halves_of_the_repeated_dst_hour() {
+    assert_eq!(
+        slots("0 * * * *", "America/New_York", "2026-11-01T04:00:00Z", 4),
+        [
+            "2026-11-01T04:00:00Z",
+            "2026-11-01T05:00:00Z",
+            "2026-11-01T06:00:00Z",
+            "2026-11-01T07:00:00Z"
+        ]
+    );
+}
+
+#[test]
+fn an_inclusive_start_ignores_its_fraction_of_a_second() {
+    assert_eq!(
+        slots("0 * * * *", "UTC", "2026-11-01T04:00:00.500Z", 1),
+        ["2026-11-01T04:00:00Z"]
     );
 }
 
@@ -266,7 +324,7 @@ fn catch_up_skip_fires_only_on_time_slots() {
     let job = automation("strict", "0 * * * *", "UTC", CatchUp::Skip);
     let lag = stagger("strict");
     resume(&store, &job, utc("2025-01-01T00:30:00Z")).unwrap();
-    let clock = FakeClock::at(utc("2025-01-01T03:00:00Z") + lag + TimeDelta::minutes(6));
+    let clock = FakeClock::at(utc("2025-01-01T03:00:00Z") + lag + SignedDuration::from_mins(6));
     let (mut scheduler, executor) = scheduler(&scratch, &clock);
 
     scheduler.tick(std::slice::from_ref(&job));
@@ -279,7 +337,7 @@ fn catch_up_skip_fires_only_on_time_slots() {
         )]
     );
 
-    clock.set(utc("2025-01-01T04:00:00Z") + lag + TimeDelta::minutes(4));
+    clock.set(utc("2025-01-01T04:00:00Z") + lag + SignedDuration::from_mins(4));
     scheduler.tick(std::slice::from_ref(&job));
     assert_eq!(
         executor.taken()[0].scheduled_for,
@@ -476,7 +534,7 @@ fn sweeps_runs_stuck_starting_or_past_their_deadline() {
         "garbage\n",
     )
     .unwrap();
-    let clock = FakeClock::at(SystemClock.now() + TimeDelta::minutes(6));
+    let clock = FakeClock::at(SystemClock.now() + SignedDuration::from_mins(6));
     let (mut scheduler, _) = scheduler(&scratch, &clock);
 
     scheduler.tick(std::slice::from_ref(&job));
@@ -484,7 +542,7 @@ fn sweeps_runs_stuck_starting_or_past_their_deadline() {
     assert_eq!(failure(&stuck), Some(FailureReason::StartTimeout));
     assert_eq!(failure(&running), None);
 
-    clock.set(SystemClock.now() + TimeDelta::hours(3));
+    clock.set(SystemClock.now() + SignedDuration::from_hours(3));
     scheduler.tick(std::slice::from_ref(&job));
     assert_eq!(failure(&running), Some(FailureReason::Deadline));
     assert_eq!(store.state("sweep").unwrap().consecutive_failures, 2);
@@ -579,7 +637,7 @@ fn a_run_its_executor_is_still_starting_only_fails_at_its_deadline() {
     let mut job = hourly("slow");
     job.schedule = None;
     let starting = manual(&store, "slow", "manual:slow", false);
-    let clock = FakeClock::at(SystemClock.now() + TimeDelta::minutes(30));
+    let clock = FakeClock::at(SystemClock.now() + SignedDuration::from_mins(30));
     let mut scheduler = Scheduler::new(scratch.store(), clock.clone(), Arc::new(BusyExecutor));
     BusyExecutor.execute(scheduler_request(), None);
 
@@ -589,7 +647,7 @@ fn a_run_its_executor_is_still_starting_only_fails_at_its_deadline() {
         RunStatus::Starting
     );
 
-    clock.set(SystemClock.now() + TimeDelta::hours(3));
+    clock.set(SystemClock.now() + SignedDuration::from_hours(3));
     scheduler.tick(std::slice::from_ref(&job));
     let run = store.run("slow", &starting).unwrap();
     assert_eq!(run.failure_reason, Some(FailureReason::Deadline));
@@ -643,7 +701,7 @@ fn runs_an_earlier_process_left_active_end_interrupted_without_counting() {
     };
     writer.append(&done, &completed).unwrap();
     drop(writer);
-    let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
+    let clock = FakeClock::at(SystemClock.now() + SignedDuration::from_secs(1));
     let (mut scheduler, _) = scheduler(&scratch, &clock);
 
     scheduler.recover_interrupted(&[hourly("Not A Name"), hourly("quit"), hourly("never-ran")]);
@@ -691,7 +749,7 @@ fn runs_an_earlier_process_left_active_end_interrupted_without_counting() {
     assert_eq!(store.state("quit").unwrap().consecutive_failures, 0);
 
     let current = manual(&store, "quit", "manual:current", false);
-    clock.set(SystemClock.now() - TimeDelta::minutes(1));
+    clock.set(SystemClock.now() - SignedDuration::from_mins(1));
     scheduler.recover_interrupted(&[hourly("quit")]);
     assert_eq!(status(&current), RunStatus::Starting);
 }
@@ -701,7 +759,7 @@ fn stagger_is_stable_and_bounded_per_automation() {
     assert_eq!(stagger("daily"), stagger("daily"));
     assert_ne!(stagger("daily"), stagger("weekly"));
     for name in ["a", "b", "c", "daily", "weekly"] {
-        assert!(stagger(name) <= TimeDelta::seconds(MAX_STAGGER_SECS as i64));
+        assert!(stagger(name) <= SignedDuration::from_secs(MAX_STAGGER_SECS as i64));
     }
 }
 
@@ -752,9 +810,9 @@ fn the_app_scheduler_fires_due_slots_of_loaded_definitions() {
         pause_reason: None,
         ..AutomationState::default()
     };
-    let past = SystemClock.now() - TimeDelta::hours(1);
+    let past = SystemClock.now() - SignedDuration::from_hours(1);
     state.next_run_at = Some(rfc3339(
-        past - TimeDelta::minutes(i64::from(past.minute() % 15)),
+        past - SignedDuration::from_mins(i64::from(past.to_zoned(TimeZone::UTC).minute() % 15)),
     ));
     store.writer("demo").unwrap().save_state(&state).unwrap();
     let (sender, receiver) = mpsc::channel();
@@ -869,7 +927,7 @@ fn items_the_app_quit_while_driving_resume_and_the_rest_end_interrupted() {
     let changed = quit_run(&store, "changed", "other", &[("quit", 1)], false);
     let executor = Arc::new(ResumingExecutor::default());
     executor.execute(scheduler_request(), None);
-    let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
+    let clock = FakeClock::at(SystemClock.now() + SignedDuration::from_secs(1));
     let mut scheduler = Scheduler::new(scratch.store(), clock, executor.clone());
 
     scheduler.recover_interrupted(&[hourly("quit")]);
@@ -914,7 +972,7 @@ fn an_executor_that_cannot_resume_ends_the_quit_items_as_interrupted() {
     let routine = quit_run(&store, "routine", "hash", &[("routine", 1)], true);
     let campaign = quit_run(&store, "campaign", "hash", &[("quit", 1)], false);
     let before_first_item = quit_run(&store, "before-first-item", "hash", &[], true);
-    let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
+    let clock = FakeClock::at(SystemClock.now() + SignedDuration::from_secs(1));
     let (mut scheduler, executor) = scheduler(&scratch, &clock);
     executor.quit();
 
@@ -964,7 +1022,7 @@ fn retried_items_awaiting_a_slot_stay_queued_at_start_and_take_one_that_is_free(
     writer.append(&campaign, &retried).unwrap();
     drop(writer);
     let executor = Arc::new(ResumingExecutor::default());
-    let clock = FakeClock::at(SystemClock.now() + TimeDelta::seconds(1));
+    let clock = FakeClock::at(SystemClock.now() + SignedDuration::from_secs(1));
     let mut scheduler = Scheduler::new(scratch.store(), clock, executor.clone());
 
     scheduler.recover_interrupted(&[hourly("quit"), hourly("idle")]);

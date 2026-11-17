@@ -1,6 +1,7 @@
 use serde_json::{Map, Value};
 
 use super::{DefinitionIssue, IssueKind};
+use crate::commands::automations::instants::parse_rfc3339;
 
 const TEMPLATE_VARIABLES: &[&str] = &[
     "automation",
@@ -297,7 +298,7 @@ pub(super) fn duration(report: &mut Report, value: &Value, field: &str) -> Optio
 }
 
 pub(super) fn is_instant(text: &str) -> bool {
-    chrono::DateTime::parse_from_rfc3339(text).is_ok()
+    parse_rfc3339(text).is_some()
 }
 
 fn template_problem(text: &str) -> Option<String> {

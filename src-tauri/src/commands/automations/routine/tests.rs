@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{mpsc, Mutex};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde_json::json;
 
 use super::*;
@@ -24,8 +24,8 @@ use crate::commands::git::git_command;
 const TARGET: &str = "target: { workspace: Acme, repos: [rails] }\nagent: { id: claude }\n";
 const INSTRUCTIONS: &str = "List my open PRs.";
 
-fn now() -> DateTime<Utc> {
-    DateTime::from(std::time::SystemTime::now())
+fn now() -> Timestamp {
+    Timestamp::now()
 }
 
 struct Scratch(PathBuf);
@@ -352,7 +352,7 @@ impl Harness {
     }
 
     /// Claims a manual run, as Run now does, fired at `fired_at`.
-    fn claim(&self, test: bool, fired_at: DateTime<Utc>) -> RunRequest {
+    fn claim(&self, test: bool, fired_at: Timestamp) -> RunRequest {
         let writer = self.scratch.store().writer("demo").unwrap();
         let trigger = RunTrigger {
             source: RunSource::Manual,
@@ -490,7 +490,7 @@ fn the_run_deadline_bounds_the_turn_and_fails_the_run() {
 #[test]
 fn a_run_fired_past_its_deadline_never_starts_a_turn() {
     let harness = Harness::routine("budgets: { run_deadline: 10m }\n", FakeSessions::default());
-    let request = harness.claim(false, now() - TimeDelta::hours(1));
+    let request = harness.claim(false, now() - SignedDuration::from_hours(1));
 
     harness.executor.run(&request, None);
 
