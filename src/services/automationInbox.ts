@@ -373,14 +373,15 @@ function runFacts(entry: AutomationEntry, run: AutomationRun) {
   };
 }
 
-/** The conversation of an agent attempt in its run's task; null without a task. */
+/** The conversation of an agent attempt in its run's task; null without a task, or for a step
+ * that works without one. */
 export function conversationTarget(
   steps: PipelineStep[],
   run: AutomationRun,
   attempt: StepAttempt | undefined
 ): ConversationTarget | null {
-  if (!run.task_id) return null;
   const step = steps.find((candidate) => candidate.id === attempt?.step);
+  if (!run.task_id || step?.task === "none") return null;
   const agent = step && "agent" in step.kind ? step.kind.agent.agent.id : null;
   const conversationId = isRunActive(run) ? null : (attempt?.conversation_id ?? null);
   return { taskId: run.task_id, agent, conversationId };

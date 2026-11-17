@@ -107,6 +107,8 @@ export interface PipelineStep {
   /** Null goes to the following step. */
   next: string | null;
   onFail: Transition;
+  /** `none`: the step works in a scratch directory of the run instead of the item's task. */
+  task?: "item" | "none";
   kind: StepKind;
 }
 

@@ -176,6 +176,46 @@ it("opens the conversation of a step's latest agent attempt in the run's task", 
   expect(screen.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
 });
 
+it("shows the reply of an agent step without a task instead of opening a conversation", async () => {
+  const taskless: PipelineStep[] = [
+    { ...STEPS[0], task: "none" },
+    { ...STEPS[1], task: "none" },
+  ];
+  vi.mocked(invoke).mockResolvedValue(
+    page(
+      run("1761800000002-bbbbbbbb", {
+        task_id: "t1",
+        items: [
+          item("routine", {
+            steps: [
+              attempt("implement", {
+                session_id: "s1",
+                conversation_id: "c1",
+                reply: "Use app and api",
+              }),
+              attempt("verify"),
+            ],
+          }),
+        ],
+      })
+    )
+  );
+  render(
+    <OpenConversationContext.Provider value={vi.fn()}>
+      <AutomationPipeline name="babysitter" steps={taskless} />
+    </OpenConversationContext.Provider>
+  );
+  fireEvent.click(await screen.findByRole("button", { name: /^Implement/ }));
+
+  expect(screen.queryByRole("button", { name: "Open conversation" })).not.toBeInTheDocument();
+  expect(screen.getByText("Use app and api")).toBeInTheDocument();
+  expect(screen.getByText("None: works in a scratch directory of the run")).toBeInTheDocument();
+
+  fireEvent.click(node("verify"));
+  expect(screen.queryByText("Repository")).not.toBeInTheDocument();
+  expect(screen.queryByText("Reply")).not.toBeInTheDocument();
+});
+
 it("shows the definition graph when there are no runs", async () => {
   vi.mocked(invoke).mockResolvedValue(page());
   const { container } = render(<AutomationPipeline name="babysitter" steps={STEPS} />);
