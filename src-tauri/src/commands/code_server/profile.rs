@@ -275,6 +275,8 @@ mod tests {
         .unwrap();
 
         assert!(task_workspace(&root, "a", &folders).is_err());
+        fs::write(&workspace, json!({"folders": "repo-one"}).to_string()).unwrap();
+        assert!(task_workspace(&root, "a", &folders).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }
