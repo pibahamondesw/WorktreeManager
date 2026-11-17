@@ -145,17 +145,22 @@ With `source: linear`, the app polls Linear with the Linear key of the target wo
 
 #### GitHub events
 
-With `source: github`, the app polls GitHub with `gh` through the login shell, as the watchers do, once a minute for each GitHub repository behind the automation's `target.repos` (the `origin` of each repository's main checkout), backing off up to 15 minutes after failures and pausing until the rate limit resets when fewer than 100 GraphQL points are left. It only polls repositories with an enabled automation listening, from the app process, so it works with the window hidden. It reads the 50 most recently updated open pull requests, with their latest reviews and comments, and the latest failed workflow runs. The run gets the pull request and the change as its payload (untrusted), and no task.
+With `source: github`, the app polls GitHub with `gh` through the login shell, as the watchers do, once a minute for each GitHub repository behind the automation's `target.repos` (the `origin` of each repository's main checkout), backing off up to 15 minutes after failures and pausing until the rate limit resets when fewer than 100 GraphQL points are left. It only polls repositories with an enabled automation listening, from the app process, so it works with the window hidden. It reads the 50 most recently updated open pull requests, with their latest reviews, comments, review requests, assignments and labels added, and the latest failed workflow runs. The run gets the pull request and the change as its payload (untrusted), and no task.
 
-| `type`               | When                                                                        | `trigger_key`                     |
-| -------------------- | --------------------------------------------------------------------------- | --------------------------------- |
-| `pr.opened`          | A pull request was opened.                                                  | `pr:<n>:opened:<head sha>`        |
-| `pr.updated`         | New commits were pushed to a pull request.                                  | `pr:<n>:updated:<head sha>`       |
-| `pr.ci_failed`       | A GitHub Actions run of a pull request failed, on its first or a later try. | `workflow_run:<id>:<attempt>`     |
-| `pr.review_received` | Someone else submitted a review of a pull request.                          | `pr:<n>:review_received:<review>` |
-| `pr.mentioned`       | Someone else mentioned the owner (`@login`) in a pull request comment.      | `pr:<n>:mentioned:<comment>`      |
+| `type`                | When                                                                                | `trigger_key`                     |
+| --------------------- | ----------------------------------------------------------------------------------- | --------------------------------- |
+| `pr.opened`           | A pull request was opened.                                                          | `pr:<n>:opened:<head sha>`        |
+| `pr.updated`          | New commits were pushed to a pull request.                                          | `pr:<n>:updated:<head sha>`       |
+| `pr.ci_failed`        | A GitHub Actions run of a pull request failed, on its first or a later try.         | `workflow_run:<id>:<attempt>`     |
+| `pr.review_received`  | Someone else submitted a review of a pull request.                                  | `pr:<n>:review_received:<review>` |
+| `pr.mentioned`        | Someone else mentioned the owner (`@login`) in a pull request comment.              | `pr:<n>:mentioned:<comment>`      |
+| `pr.review_requested` | A review of a pull request was requested from a user or team, and is still pending. | `pr:<n>:review_requested:<event>` |
+| `pr.assigned`         | A pull request was assigned to someone who is still assigned.                       | `pr:<n>:assigned:<event>`         |
+| `pr.labeled`          | A label was added to a pull request, and it still has it.                           | `pr:<n>:labeled:<event>`          |
 
-- `where` takes `repo` (one of `target.repos`; default all), `author` (the pull request's author: a GitHub login, `me` for the user `gh` is logged in as, or `any`), `branch` (the head branch, or a prefix ending in `*`) and `label` (one of the pull request's labels), case-insensitive except `branch`. `author` defaults to `me`, except for `pr.mentioned`, which defaults to `any`.
+- `where` takes `repo` (one of `target.repos`; default all), `author` (the pull request's author: a GitHub login, `me` for the user `gh` is logged in as, or `any`), `branch` (the head branch, or a prefix ending in `*`) and `label` (one of the pull request's labels), case-insensitive except `branch`. `author` defaults to `me`, except for `pr.mentioned`, `pr.review_requested` and `pr.assigned`, which default to `any`.
+- `pr.review_requested` also takes `reviewer` (who the review was requested from: a login, `me`, a team as `org/team` or `team`, or `any`; default `me`) and `pr.assigned` takes `assignee` (a login, `me` or `any`; default `me`). `me` only matches requests to the owner, not to the owner's teams; listen to a team by naming it. GitHub only names teams to tokens that can read the organization (`read:org`). For `pr.labeled`, `label` is the label added.
+- Their payload adds `pr.assignees`, `pr.reviewRequests` and `timelineEvent` (`id`, `actor`, `createdAt`, and the `requestedReviewer`, `assignee` or `label` it added). They fire whoever acted, the owner included, so labeling or assigning a pull request can start an automation.
 - Runs fired for one pull request serialize: `concurrency.max_runs` counts the active runs for that pull request (`pr:<n>` of the repository, the payload's `concurrencyKey`); the `active` pool still counts every run.
 - Each automation keeps, per repository, GitHub's newest instant it has seen and the head of each open pull request as `github_cursor` in `state.json`. The first poll after enabling only records them, and pausing drops them, so activity before enabling or while paused never fires. A pull request whose head was not recorded counts as updated only when its head commit is newer than the cursor.
 - Pull requests whose head branch starts with the fixed start of `target.branch` (up to its first variable other than `{automation}`, when it contains the automation's name, as the default `wtm/{automation}/…` does) are the automation's own, and so are comments carrying its marker `<!-- wtm:<automation>:`; they never fire it. Everything else the automation does on GitHub acts as the owner, whose reviews and comments never fire `pr.review_received` or `pr.mentioned`. Pushes to branches without such a prefix (tracked Linear branches, `task: existing`) are not told apart.
@@ -621,6 +626,36 @@ report: { inbox: on_findings, archive_noop: true }
 List my open PRs in acme/api with `gh pr list --author @me`. For each one, check CI on the current HEAD, the automated reviewer's verdict on that HEAD and unresolved threads. Do not change code, push or reply.
 
 Return verdict `noop` when every PR is green and has nothing unresolved. Otherwise return `pass` with one finding per PR that needs me: the PR link, what is blocking it, and the WTM task that owns its branch (`wtm task list`).
+```
+
+### Routine: review on request
+
+Reacts within a minute when someone requests the owner's review on any pull request of the repository, instead of a campaign that searches for pending requests every few minutes.
+
+```markdown
+---
+schema: 1
+name: review-on-request
+description: First-pass review when someone asks for mine.
+trigger:
+  manual: false
+  event:
+    - { source: github, type: pr.review_requested, where: { reviewer: me } }
+target:
+  workspace: Acme
+  repos: [api]
+  task: per-run
+agent: { id: claude, model: default, effort: medium }
+steps:
+  - id: review
+    agent:
+      readonly: true
+      fresh_session: true
+      result: verdict
+report: { inbox: always }
+---
+
+The payload names the pull request: `pr.url`, `pr.headRefName`, `pr.baseRefName`, `pr.author` and `pr.title`. Read its diff with `gh pr diff <pr.url>` and its description, then return `pass` with the findings worth raising, each with file and line. Do not comment on GitHub.
 ```
 
 ### Campaign: lint sweep

@@ -2423,19 +2423,27 @@ fn linear_events_supply_no_task_to_an_existing_target() {
 #[test]
 fn github_event_triggers_declare_a_type_and_conditions() {
     let definition = valid(&routine(
-        "trigger:\n  manual: false\n  event:\n    - { source: github, type: pr.ci_failed, where: { repo: app, author: Ada, branch: \"fix/*\", label: \" bug \" } }\n    - { source: github, type: pr.mentioned }\n    - { source: github, type: pr.opened, where: { author: ANY } }\n    - { source: github, type: pr.review_received }\n",
+        "trigger:\n  manual: false\n  event:\n    - { source: github, type: pr.ci_failed, where: { repo: app, author: Ada, branch: \"fix/*\", label: \" bug \" } }\n    - { source: github, type: pr.mentioned }\n    - { source: github, type: pr.opened, where: { author: ANY } }\n    - { source: github, type: pr.review_received }\n    - { source: github, type: pr.review_requested }\n    - { source: github, type: pr.review_requested, where: { reviewer: acme/core, author: me } }\n    - { source: github, type: pr.assigned, where: { assignee: any } }\n    - { source: github, type: pr.labeled, where: { label: ship } }\n",
     ));
     assert!(definition.trigger.events.is_empty());
     assert_eq!(
         serde_json::to_value(&definition.trigger.github_events).unwrap(),
         json!([
-            { "type": "pr.ci_failed", "repo": "r1", "author": "Ada", "branch": "fix/*", "label": "bug" },
-            { "type": "pr.mentioned", "repo": null, "author": null, "branch": null, "label": null },
-            { "type": "pr.opened", "repo": null, "author": null, "branch": null, "label": null },
-            { "type": "pr.review_received", "repo": null, "author": "me", "branch": null, "label": null }
+            { "type": "pr.ci_failed", "repo": "r1", "author": "Ada", "branch": "fix/*", "label": "bug", "reviewer": null, "assignee": null },
+            { "type": "pr.mentioned", "repo": null, "author": null, "branch": null, "label": null, "reviewer": null, "assignee": null },
+            { "type": "pr.opened", "repo": null, "author": null, "branch": null, "label": null, "reviewer": null, "assignee": null },
+            { "type": "pr.review_received", "repo": null, "author": "me", "branch": null, "label": null, "reviewer": null, "assignee": null },
+            { "type": "pr.review_requested", "repo": null, "author": null, "branch": null, "label": null, "reviewer": "me", "assignee": null },
+            { "type": "pr.review_requested", "repo": null, "author": "me", "branch": null, "label": null, "reviewer": "acme/core", "assignee": null },
+            { "type": "pr.assigned", "repo": null, "author": null, "branch": null, "label": null, "reviewer": null, "assignee": null },
+            { "type": "pr.labeled", "repo": null, "author": "me", "branch": null, "label": "ship", "reviewer": null, "assignee": null }
         ])
     );
     assert_eq!(GithubEventKind::ReviewReceived.action(), "review_received");
+    assert_eq!(
+        GithubEventKind::ReviewRequested.action(),
+        "review_requested"
+    );
     let event = |entry: &str| routine(&format!("trigger:\n  event: [{entry}]\n"));
     for (entry, field, kind) in [
         (
@@ -2456,6 +2464,21 @@ fn github_event_triggers_declare_a_type_and_conditions() {
         (
             "{ source: github, type: pr.opened, where: { author: \" \" } }",
             "trigger.event[0].where.author",
+            IssueKind::Invalid,
+        ),
+        (
+            "{ source: github, type: pr.opened, where: { reviewer: me } }",
+            "trigger.event[0].where.reviewer",
+            IssueKind::UnknownField,
+        ),
+        (
+            "{ source: github, type: pr.review_requested, where: { assignee: me } }",
+            "trigger.event[0].where.assignee",
+            IssueKind::UnknownField,
+        ),
+        (
+            "{ source: github, type: pr.assigned, where: { assignee: \" \" } }",
+            "trigger.event[0].where.assignee",
             IssueKind::Invalid,
         ),
         (

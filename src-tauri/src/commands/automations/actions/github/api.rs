@@ -1,5 +1,6 @@
 //! What GitHub event triggers read of a repository: its open pull requests, most recently
-//! updated first, with their latest reviews and comments, and its failed workflow runs. `gh`
+//! updated first, with their latest reviews, comments, review requests, assignments and labels
+//! added, and its failed workflow runs. `gh`
 //! runs through the login shell as the watchers' does, so its own authentication applies, and
 //! GraphQL pauses with GitHub's rate limit as theirs does.
 
@@ -24,12 +25,27 @@ const QUERY: &str = r#"query AutomationTriggerPullRequests($owner: String!, $nam
         number title url isDraft createdAt updatedAt headRefName baseRefName headRefOid
         author { login }
         labels(first: 20) { nodes { name } }
+        assignees(first: 20) { nodes { login } }
+        reviewRequests(first: 20) { nodes { requestedReviewer { ...Requestee } } }
         commits(last: 1) { nodes { commit { committedDate } } }
         reviews(last: 20) { nodes { databaseId state submittedAt url body author { login } } }
         comments(last: 20) { nodes { databaseId createdAt url body author { login } } }
+        timelineItems(last: 20, itemTypes: [REVIEW_REQUESTED_EVENT, ASSIGNED_EVENT, LABELED_EVENT]) {
+          nodes {
+            __typename
+            ... on ReviewRequestedEvent { id createdAt actor { login } requestedReviewer { ...Requestee } }
+            ... on AssignedEvent { id createdAt actor { login } assignee { ... on Actor { login } } }
+            ... on LabeledEvent { id createdAt actor { login } label { name } }
+          }
+        }
       }
     }
   }
+}
+
+fragment Requestee on RequestedReviewer {
+  ... on Actor { login }
+  ... on Team { combinedSlug }
 }"#;
 
 /// GitHub and Git as GitHub event triggers reach them.
@@ -68,6 +84,11 @@ pub struct PullRequest {
     pub author: String,
     #[serde(default, deserialize_with = "label_names")]
     pub labels: Vec<String>,
+    #[serde(default, deserialize_with = "logins")]
+    pub assignees: Vec<String>,
+    /// The reviewers still asked for a review, as [`TimelineEvent::requested_reviewer`] names them.
+    #[serde(default, deserialize_with = "requested_reviewers")]
+    pub review_requests: Vec<String>,
     /// When the head commit was committed.
     #[serde(default, rename = "commits", deserialize_with = "head_committed_at")]
     pub committed_at: Option<String>,
@@ -75,6 +96,27 @@ pub struct PullRequest {
     pub reviews: Vec<Review>,
     #[serde(default, deserialize_with = "nodes")]
     pub comments: Vec<Comment>,
+    #[serde(default, rename = "timelineItems", deserialize_with = "nodes")]
+    pub timeline: Vec<TimelineEvent>,
+}
+
+/// A review request, assignment or label added to a pull request.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineEvent {
+    #[serde(rename = "__typename")]
+    pub typename: String,
+    pub id: String,
+    pub created_at: String,
+    #[serde(default, deserialize_with = "login")]
+    pub actor: String,
+    /// A login, or `org/team` for a team; empty when GitHub does not tell.
+    #[serde(default, deserialize_with = "requestee")]
+    pub requested_reviewer: String,
+    #[serde(default, deserialize_with = "requestee")]
+    pub assignee: String,
+    #[serde(default, deserialize_with = "label_name")]
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -126,6 +168,51 @@ fn login<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error>
         login: String,
     }
     Ok(Option::<Actor>::deserialize(deserializer)?.map_or_else(String::new, |actor| actor.login))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Requestee {
+    login: Option<String>,
+    combined_slug: Option<String>,
+}
+
+impl Requestee {
+    fn name(self) -> String {
+        self.login.or(self.combined_slug).unwrap_or_default()
+    }
+}
+
+fn requestee<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(Option::<Requestee>::deserialize(deserializer)?.map_or_else(String::new, Requestee::name))
+}
+
+fn logins<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    let actors: Vec<Requestee> = nodes(deserializer)?;
+    Ok(actors.into_iter().map(Requestee::name).collect())
+}
+
+fn requested_reviewers<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReviewRequest {
+        requested_reviewer: Option<Requestee>,
+    }
+    let requests: Vec<ReviewRequest> = nodes(deserializer)?;
+    Ok(requests
+        .into_iter()
+        .filter_map(|request| request.requested_reviewer.map(Requestee::name))
+        .collect())
+}
+
+fn label_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    struct Label {
+        name: String,
+    }
+    Ok(Option::<Label>::deserialize(deserializer)?.map_or_else(String::new, |label| label.name))
 }
 
 fn nodes<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
