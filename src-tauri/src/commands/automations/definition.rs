@@ -3,6 +3,7 @@
 //! call. A definition with errors is still listed, with its errors and without a definition.
 
 mod circleci_trigger;
+pub mod edit;
 mod fields;
 mod github_trigger;
 mod item_source;
