@@ -2,6 +2,7 @@
 //! that are new work and fit, and records them as queued items of the run. The caller starts the
 //! items, then completes or fails the run; the cursor is stored only when the run completes.
 pub mod script;
+pub mod sources;
 #[cfg(test)]
 mod tests;
 

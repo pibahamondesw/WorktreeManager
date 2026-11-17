@@ -5,6 +5,7 @@
 mod circleci_trigger;
 mod fields;
 mod github_trigger;
+mod item_source;
 mod linear_trigger;
 mod validate;
 
@@ -27,6 +28,7 @@ use crate::commands::agents::{AgentDescriptor, Agents};
 pub use circleci_trigger::{CircleciEventKind, CircleciEventTrigger, OWNER as CIRCLECI_OWNER};
 use fields::{is_automation_name, Report};
 pub use github_trigger::{GithubEventKind, GithubEventTrigger, OWNER as GITHUB_OWNER};
+pub use item_source::{FileSource, GithubSource, GithubVersion, ItemSource, LinearSource};
 
 const DEFINITION_FILE: &str = "AUTOMATION.md";
 const PREFERENCES_FILE: &str = "store.json";
@@ -102,8 +104,8 @@ pub struct AutomationDefinition {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectorSettings {
-    /// argv templates, run in the automation folder.
-    pub run: Vec<String>,
+    pub source: ItemSource,
+    /// Bounds `selector.run` only.
     pub timeout_secs: u64,
     /// `None` is up to `pools.active`.
     pub max_new_items: Option<u64>,

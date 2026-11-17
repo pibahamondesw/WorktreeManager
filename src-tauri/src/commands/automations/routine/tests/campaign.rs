@@ -6,6 +6,7 @@ use super::*;
 use crate::commands::automations::actions::intervene::RetryDefinition;
 use crate::commands::automations::command::HeldLeases;
 use crate::commands::automations::routine::leases::Quotas;
+use crate::commands::automations::selector::sources::ItemSources;
 use crate::commands::automations::store::events::{ItemState, RunOutcome};
 
 pub(super) const CAMPAIGN: &str = "target: { workspace: Acme, repos: [rails], task: per-item }\nagent: { id: claude }\nselector: { run: [scripts/select.sh] }\n";
@@ -190,6 +191,25 @@ fn only_executing_items_hold_a_slot_of_max_active() {
     assert_eq!(harness.selector_input()["free"], 1);
     assert_eq!(statuses(&after_blocked), [("b", ItemStatus::Completed)]);
     assert_eq!(harness.automation().consecutive_failures, 0);
+}
+
+#[test]
+fn a_declarative_source_selects_without_a_script() {
+    let frontmatter = CAMPAIGN.replace(
+        "{ run: [scripts/select.sh] }",
+        "{ file: { path: queue.json } }",
+    );
+    let mut harness = Harness::new(&frontmatter, by_branch(None), FakeSessions::default());
+    harness.executor = harness
+        .executor
+        .clone()
+        .with_item_sources(ItemSources::default());
+
+    let run = harness.run();
+
+    assert_eq!(run.failure_reason, Some(FailureReason::SelectorFailed));
+    let cause = run.selector_error.unwrap();
+    assert!(cause.starts_with("queue.json: "), "{cause}");
 }
 
 #[test]

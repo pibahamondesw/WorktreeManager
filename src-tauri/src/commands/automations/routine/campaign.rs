@@ -10,13 +10,14 @@ use serde_json::Value;
 use super::super::actions::intervene::start_items_due_a_slot;
 use super::super::actions::{self, now, Refill};
 use super::super::definition::{
-    AutomationDefinition, LinearOverrides, SelectorSettings, Target, TaskMode,
+    AutomationDefinition, ItemSource, LinearOverrides, SelectorSettings, Target, TaskMode,
 };
 use super::super::operator::{pass_limits, take_granted};
 use super::super::pipeline::RunLog;
 use super::super::publish::{marked_issue, operation};
 use super::super::scheduler::{is_active, record_failure, RunRequest};
 use super::super::selector::script::ScriptSelector;
+use super::super::selector::sources::SourceSelector;
 use super::super::selector::{
     self, Candidate, Dispatch, Selection, SelectionPass, SelectionPolicy, Selector, SelectorInput,
     SelectorOutput,
@@ -113,9 +114,17 @@ impl RoutineExecutor {
             run_id: &request.run_id,
             policy: &policy,
         };
-        let script: Box<dyn Selector> = match script_selector(definition, settings, request) {
-            Ok(script) => Box::new(script),
-            Err(error) => Box::new(Unrunnable(error)),
+        let script: Box<dyn Selector + '_> = match &settings.source {
+            ItemSource::Script { run } => match script_selector(definition, run, settings, request)
+            {
+                Ok(script) => Box::new(script),
+                Err(error) => Box::new(Unrunnable(error)),
+            },
+            source => Box::new(SourceSelector {
+                source,
+                sources: &self.item_sources,
+                target: &definition.target,
+            }),
         };
         let selection = match recorded {
             Some(dispatch) => Selection::Dispatch(dispatch),
@@ -377,12 +386,12 @@ fn item_variables(request: &RunRequest, item: &Item) -> Vec<(String, String)> {
 /// checkout as `WTM_BASE_<REPO>`.
 fn script_selector(
     definition: &AutomationDefinition,
+    run: &[String],
     settings: &SelectorSettings,
     request: &RunRequest,
 ) -> Result<ScriptSelector, String> {
     let variables = run_variables(request);
-    let mut argv = settings
-        .run
+    let mut argv = run
         .iter()
         .map(|template| render(template, &variables))
         .collect::<Result<Vec<_>, _>>()?;
