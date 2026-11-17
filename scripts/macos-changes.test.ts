@@ -114,6 +114,7 @@ describe("macOS change detection", () => {
   it.each([
     "src-tauri/src/commands/login_shell.rs",
     "src-tauri/src/commands/agent_notifications.rs",
+    "src-tauri/src/commands/code_server/view.rs",
     "src-tauri/src/commands/embedded/registry.rs",
     "src-tauri/src/menu/shortcuts.rs",
     "src-tauri/src/lifecycle.rs",

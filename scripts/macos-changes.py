@@ -19,6 +19,7 @@ MODULE_DECLARATION = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
 NATIVE_AREAS = (
     "src-tauri/src/commands/login_shell.rs",
     "src-tauri/src/commands/agent_notifications.rs",
+    "src-tauri/src/commands/code_server/view.rs",
     "src-tauri/src/commands/embedded/",
     "src-tauri/src/menu.rs",
     "src-tauri/src/menu/",
