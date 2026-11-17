@@ -75,7 +75,8 @@ export type StepKind =
         onReject: Transition | null;
       };
     }
-  | { publish: PublishEffect[] };
+  | { publish: PublishEffect[] }
+  | { call: { automation: string; inputs: Record<string, string> } };
 
 /** One effect of a publish step, named as in the definition, with its params. */
 interface PublishEffect {
@@ -238,6 +239,22 @@ interface ArmedWait {
   timeout_at_ms?: number;
   title?: string;
   detail?: string;
+  /** The run of another automation a call attempt started and waits on. */
+  call?: CalledRun;
+}
+
+export interface CalledRun {
+  automation: string;
+  run_id: string;
+}
+
+/** The call attempt of another automation's item that started a run. */
+interface CallLink {
+  automation: string;
+  run_id: string;
+  item: string;
+  step: string;
+  attempt: number;
 }
 
 /** An approval's answer: edited params are available to later steps as `item.data`. */
@@ -310,6 +327,8 @@ export interface AutomationRun {
   task_id?: string | null;
   task_error?: { message: string; worktrees: string[] } | null;
   permission_requests?: PermissionRequest[];
+  /** Missing unless a call step of another automation started the run. */
+  called_by?: CallLink;
 }
 
 export interface AutomationRunPage {
@@ -573,6 +592,18 @@ export function runResult(run: AutomationRun): string {
 }
 
 /** Run ids start with the 13-digit claim time, used when the claim event is missing. */
+/** What fired the run; a called run names its caller's automation and run. */
+export function runSource(run: AutomationRun): string {
+  const source = run.trigger?.source ?? "unknown";
+  const caller = run.called_by ? ` from ${calledRunLabel(run.called_by)}` : "";
+  return `${source}${caller}${run.trigger?.test ? " · test" : ""}`;
+}
+
+/** An automation's run, by its short id. */
+export function calledRunLabel({ automation, run_id }: CalledRun): string {
+  return `${automation} run ${run_id.split("-")[1] ?? run_id}`;
+}
+
 export function runStartedAt(run: AutomationRun): Date {
   return new Date(run.claimed_at_ms ?? Number(run.id.slice(0, 13)));
 }

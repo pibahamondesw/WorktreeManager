@@ -5,6 +5,7 @@ import {
   StepStatus,
   Transition,
   WaitCondition,
+  calledRunLabel,
   formatDuration,
 } from "./automations";
 
@@ -244,5 +245,9 @@ export function stepSummary(step: PipelineStep, attempt: StepAttempt | null = nu
   if ("command" in kind) return kind.command.command.join(" ");
   if ("wait" in kind) return waitConditionLabel(kind.wait);
   if ("approval" in kind) return attempt?.wait?.title ?? kind.approval.title;
+  if ("call" in kind) {
+    const called = attempt?.wait?.call;
+    return called ? calledRunLabel(called) : kind.call.automation;
+  }
   return kind.publish.map((effect) => effect.effect).join(" · ");
 }

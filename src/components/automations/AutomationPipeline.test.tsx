@@ -507,6 +507,45 @@ it("shows an approval's title as the run rendered it", async () => {
   expect(invoke).not.toHaveBeenCalledWith("automation_step_receipt", expect.anything());
 });
 
+it("shows the automation a call step runs, its inputs and the run it started", async () => {
+  const call: PipelineStep = {
+    id: "delegate",
+    label: "delegate",
+    next: null,
+    onFail: "block",
+    kind: { call: { automation: "implement-issue", inputs: { issue: "{item.data.issue}" } } },
+  };
+  const called = { automation: "implement-issue", run_id: "1761800000002-bbbbbbbb" };
+  answer(commandRun(attempt("delegate", { status: "waiting", wait: { call: called } })));
+  render(<AutomationPipeline name="babysitter" steps={[...STEPS, call]} />);
+  const delegate = await screen.findByRole("button", { name: /^delegate/ });
+
+  expect(delegate).toHaveTextContent("implement-issue run bbbbbbbb");
+  fireEvent.click(delegate);
+  const detail = screen.getByRole("region", { name: "Step delegate" });
+  expect(within(detail).getByText("Input issue")).toBeInTheDocument();
+  expect(within(detail).getByText("{item.data.issue}")).toBeInTheDocument();
+  expect(within(detail).getByText("implement-issue run bbbbbbbb")).toBeInTheDocument();
+});
+
+it("says when a call step has not started its run yet", async () => {
+  const call: PipelineStep = {
+    id: "delegate",
+    label: "delegate",
+    next: null,
+    onFail: "fail",
+    kind: { call: { automation: "implement-issue", inputs: {} } },
+  };
+  answer(page());
+  render(<AutomationPipeline name="babysitter" steps={[call]} />);
+  const delegate = await screen.findByRole("button", { name: /^delegate/ });
+
+  expect(delegate).toHaveTextContent("implement-issue");
+  fireEvent.click(delegate);
+  const detail = screen.getByRole("region", { name: "Step delegate" });
+  expect(within(detail).getByText("Not recorded for this run yet")).toBeInTheDocument();
+});
+
 it("refreshes while the run is active and stops once it ends", async () => {
   vi.useFakeTimers();
   const live = run("1761800000001-aaaaaaaa", {
