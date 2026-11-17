@@ -459,3 +459,30 @@ impl Harness {
         self.scratch.store().run("demo", run_id).unwrap()
     }
 }
+
+#[test]
+fn a_routine_without_a_task_calls_one_without_a_task() {
+    let harness = Harness::new(
+        &format!(
+            "target: {{ workspace: Acme, task: none }}\nagent: {{ id: claude }}\nsteps:\n{CALL}"
+        ),
+        FakeTasks::default(),
+        FakeSessions::ending([replied(FIXED)]),
+    );
+    let child = "---\nschema: 1\nname: child\ntarget: { workspace: Acme, task: none }\nagent: { id: claude }\ninputs:\n  issue: { required: true }\nsteps:\n  - id: fix\n    agent: { result: verdict }\n---\nFix the issue.\n";
+    fs::create_dir_all(harness.child_folder()).unwrap();
+    fs::write(harness.child_folder().join("AUTOMATION.md"), child).unwrap();
+
+    let run = harness.run();
+    harness.settled_with(&harness.executor, &run.id, completed);
+
+    let run = harness.state_of_run(&run.id);
+    assert_eq!(
+        implement(&run).result,
+        Some(serde_json::from_str(FIXED).unwrap())
+    );
+    let child = harness.only_child();
+    assert_eq!(child.trigger.unwrap().task_id, None);
+    assert_eq!(child.task_id, None);
+    assert!(harness.tasks.created.lock().unwrap().is_empty());
+}

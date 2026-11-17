@@ -11,7 +11,9 @@ use serde_json::Value;
 use super::fields::{
     boolean, each_entry, is_automation_name, is_step_id, join, string, template, Fields, Report,
 };
-use super::{split_frontmatter, CallStep, Environment, Input, IssueKind, Step, DEFINITION_FILE};
+use super::{
+    split_frontmatter, CallStep, Environment, Input, IssueKind, Step, StepTask, DEFINITION_FILE,
+};
 
 /// What a call step is checked against besides the callee.
 pub(super) struct Caller<'a> {
@@ -20,6 +22,8 @@ pub(super) struct Caller<'a> {
     pub name: &'a str,
     /// Ids of `target.repos`; `None` when the target is invalid, which is already reported.
     pub repos: Option<Vec<String>>,
+    /// Whether the call step works in the item's task, which the called run works in too.
+    pub task: StepTask,
 }
 
 pub(super) fn inputs(
@@ -144,6 +148,13 @@ impl Checked<'_> {
         for (input, _) in required.filter(|(input, _)| !step.inputs.contains_key(*input)) {
             let message = format!("{name} requires the input {input}");
             self.error(self.inputs_field, message);
+        }
+        if callee["target"]["task"] == "none" {
+            return;
+        }
+        if caller.task == StepTask::None {
+            let message = format!("{name} needs a task; this step has none");
+            return self.error(self.automation_field, message);
         }
         if let Some(repos) = &caller.repos {
             for repo in callee_repos(caller.env, &callee) {

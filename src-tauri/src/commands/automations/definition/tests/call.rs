@@ -242,3 +242,28 @@ fn a_caller_with_an_invalid_target_only_reports_its_target() {
         [("target.workspace", IssueKind::UnknownWorkspace)]
     );
 }
+
+#[test]
+fn a_step_without_a_task_only_calls_routines_without_one() {
+    let taskless_callee = CALLEE.replace("repos: [app], task: existing", "task: none");
+    let caller = format!(
+        "schema: 1\nname: demo\ntarget: {{ workspace: Acme, task: none }}\n{AGENT}steps:\n  - id: implement\n    call: {{ automation: child, inputs: {{ issue: x }} }}\n"
+    );
+    let errors = |callee: &str| -> Vec<(String, String)> {
+        let entry = load_with(&caller, BODY, |folder| {
+            write_automation(folder.parent().unwrap(), "child", callee, BODY);
+        });
+        let errors = entry.errors.into_iter();
+        errors.map(|issue| (issue.field, issue.message)).collect()
+    };
+    assert_eq!(errors(&taskless_callee), []);
+    assert_eq!(
+        errors(CALLEE),
+        [(
+            "steps[0].call.automation".into(),
+            "child needs a task; this step has none".into()
+        )]
+    );
+    let from_a_task = load_calling(&calling("{ issue: x }"), &[("child", &taskless_callee)]);
+    assert_eq!(from_a_task.errors, Vec::new());
+}

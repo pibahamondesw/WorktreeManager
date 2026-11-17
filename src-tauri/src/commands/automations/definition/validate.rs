@@ -1252,6 +1252,7 @@ fn caller<'a>(scope: &Scope<'a>) -> Caller<'a> {
         repos: scope
             .repos
             .map(|repos| repos.iter().map(|repo| repo.id.clone()).collect()),
+        task: scope.task,
     }
 }
 

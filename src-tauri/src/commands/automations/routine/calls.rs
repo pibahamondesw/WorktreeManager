@@ -100,7 +100,7 @@ impl ItemSteps<'_> {
             scheduled_for: None,
             definition_hash: Some(callee.hash.clone()),
             test: self.request.test,
-            task_id: Some(self.task.id.clone()),
+            task_id: Some(self.workplace(request.step).id.clone()).filter(|id| !id.is_empty()),
         };
         let writer = store.writer(&callee.name)?;
         let run_id = match writer.claim(trigger)? {
