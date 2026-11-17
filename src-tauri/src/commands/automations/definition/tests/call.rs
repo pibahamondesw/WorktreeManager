@@ -227,3 +227,18 @@ fn a_call_step_has_only_its_own_fields() {
         ]
     );
 }
+
+#[test]
+fn a_caller_with_an_invalid_target_only_reports_its_target() {
+    let caller = format!(
+        "schema: 1\nname: demo\ntarget: {{ workspace: Nowhere, repos: [app] }}\n{AGENT}{}",
+        calling("{ issue: x }")
+    );
+    let entry = load_with(&caller, BODY, |folder| {
+        write_automation(folder.parent().unwrap(), "child", CALLEE, BODY);
+    });
+    assert_eq!(
+        issues(&entry),
+        [("target.workspace", IssueKind::UnknownWorkspace)]
+    );
+}
