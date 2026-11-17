@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 use super::Actor;
 use crate::commands::agents::permission::UnattendedMode;
 
+/// The item of the events a selection pass's agent records: none, as no item id is empty.
+pub const SELECTION_ITEM: &str = "";
+/// The step of the events a selection pass's agent records.
+pub const SELECTOR_STEP: &str = "selector";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoggedEvent {
     pub at_ms: u64,
@@ -467,7 +472,19 @@ pub struct RunState {
     pub task_id: Option<String>,
     pub task_error: Option<TaskError>,
     pub selector_error: Option<String>,
+    /// The conversation of a `selector.agent` selection pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector_session: Option<SelectorSession>,
     pub permission_requests: Vec<PermissionRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SelectorSession {
+    pub session_id: String,
+    pub conversation_id: Option<String>,
+    /// The agent's final reply, and the result read from it once it was valid.
+    pub reply: Option<String>,
+    pub result: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -594,6 +611,7 @@ pub fn reduce(id: &str, events: impl IntoIterator<Item = LoggedEvent>) -> RunSta
         task_id: None,
         task_error: None,
         selector_error: None,
+        selector_session: None,
         permission_requests: Vec::new(),
     };
     for logged in events {
@@ -709,6 +727,30 @@ impl RunState {
                 item: None,
             } => self.task_error = Some(TaskError { message, worktrees }),
             RunEvent::SelectorFailed { message } => self.selector_error = Some(message),
+            RunEvent::SessionStarted {
+                item,
+                session_id,
+                conversation_id,
+                ..
+            } if item == SELECTION_ITEM => {
+                self.selector_session = Some(SelectorSession {
+                    session_id,
+                    conversation_id,
+                    reply: None,
+                    result: None,
+                })
+            }
+            RunEvent::StepOutput {
+                item,
+                reply,
+                result,
+                ..
+            } if item == SELECTION_ITEM => {
+                if let Some(session) = &mut self.selector_session {
+                    session.reply = reply;
+                    session.result = result;
+                }
+            }
             RunEvent::SessionStarted {
                 item,
                 step,
