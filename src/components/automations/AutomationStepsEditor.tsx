@@ -11,12 +11,14 @@ import { pipelineLayout, stepKindName, stepSummary } from "../../services/automa
 import {
   DraftStep,
   EDITABLE_KINDS,
+  WRITTEN_KIND_NOTES,
   EditableKind,
   TransitionDraft,
   TransitionMode,
   addStep,
   changeKind,
   draftKind,
+  isWrittenKind,
   draftSteps,
   kindField,
   moveStep,
@@ -321,9 +323,9 @@ function StepForm({ step, ids, onChange, onRename, onMove, onRemove }: StepFormP
               {name}
             </option>
           ))}
-          {kind === "publish" && (
-            <option value="publish" disabled>
-              publish
+          {isWrittenKind(kind) && (
+            <option value={kind} disabled>
+              {kind}
             </option>
           )}
         </select>
@@ -342,11 +344,7 @@ function StepForm({ step, ids, onChange, onRename, onMove, onRemove }: StepFormP
           />
         </Field>
       )}
-      {kind === "publish" && (
-        <p className="text-text-muted">
-          Publish effects are edited in AUTOMATION.md and kept as written.
-        </p>
-      )}
+      {isWrittenKind(kind) && <p className="text-text-muted">{WRITTEN_KIND_NOTES[kind]}</p>}
       <Field label="Next">
         <select
           value={text(step.next)}

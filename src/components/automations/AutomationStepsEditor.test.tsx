@@ -249,3 +249,21 @@ it("opens from the pipeline tab and reloads the automation after a save", async 
   expect(onChanged).toHaveBeenCalled();
   expect(await screen.findByRole("button", { name: "Edit steps" })).toBeInTheDocument();
 });
+
+it("keeps a call step as written and shows the automation it calls", async () => {
+  const call: WrittenStep = {
+    id: "delegate",
+    call: { automation: "fix-issue", inputs: { issue: "{item.id}" } },
+    on_fail: "block",
+  };
+  mockBackend(undefined, [STEPS[0], call]);
+  await renderEditor();
+  expect(node("delegate")).toHaveTextContent("fix-issue");
+  fireEvent.click(node("delegate"));
+  expect(settings().getByText(/called automation and its inputs/)).toBeInTheDocument();
+  expect(settings().getByRole("option", { name: "call" })).toBeDisabled();
+  fireEvent.change(settings().getByLabelText("Label"), { target: { value: "Delegate" } });
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Save" })));
+
+  expect(savedSteps()[1]).toEqual({ source: 1, value: { ...call, label: "Delegate" } });
+});
