@@ -57,7 +57,7 @@ impl Grant {
 }
 
 /// What an unattended session does with a tool call no rule allows or denies.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum UnattendedMode {
     /// The agent's classifier approves what it judges safe; the rest is refused or pending.

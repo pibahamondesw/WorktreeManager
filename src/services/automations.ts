@@ -253,6 +253,8 @@ export interface PermissionRequest {
   request_id?: string | null;
   session_id?: string | null;
   kind?: "permission" | "question";
+  /** How the asking step ran unattended; missing in runs recorded before it. */
+  mode?: "auto" | "strict";
 }
 
 type RunStatus =

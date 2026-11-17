@@ -119,8 +119,8 @@ export function inboxEntries(automations: AutomationRuns[]): InboxEntry[] {
 
 function runEntries(entry: AutomationEntry, run: AutomationRun, policy: ReportPolicy) {
   const outcome = outcomeEntry(entry, run, policy);
-  const requests = (run.permission_requests ?? []).map((request, index) =>
-    requestEntry(entry, run, policy, request, index)
+  const requests = (run.permission_requests ?? []).flatMap((request, index) =>
+    needsOwner(request) ? [requestEntry(entry, run, policy, request, index)] : []
   );
   return outcome ? [outcome, ...requests] : requests;
 }
@@ -296,6 +296,13 @@ function resultSummary(result: unknown): string | null {
   const text = typeof summary === "string" && summary.trim() ? summary : null;
   return [found, text].filter(Boolean).join(": ") || null;
 }
+
+/**
+ * Under `auto` the classifier's refusals are settled and the agent moves on, so only the run
+ * detail lists them. Under `strict` a refusal points at a missing `allow` rule.
+ */
+const needsOwner = (request: PermissionRequest) =>
+  request.kind === "question" || request.resolution === "allowed" || request.mode !== "auto";
 
 function requestEntry(
   entry: AutomationEntry,

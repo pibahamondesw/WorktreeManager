@@ -51,7 +51,7 @@ use super::store::RunStore;
 use super::wait;
 use super::wait::Watchers;
 use super::watchers::{self, CliWatchForge};
-use crate::commands::agents::permission::Grant;
+use crate::commands::agents::permission::{Grant, UnattendedMode};
 use crate::commands::chat::{truncate_to, SettledRequest, TurnEnd};
 use commands::{Item, TaskCommands};
 pub use leases::LeasePools;
@@ -855,7 +855,7 @@ impl ItemSteps<'_> {
         if conversation.is_none() && self.sessions.conversation(&session_id).is_some() {
             self.record_session(request, &session_id);
         }
-        self.record_settled_requests(request, &session_id);
+        self.record_settled_requests(request, &session_id, step.agent.permission.mode);
         if end == TurnEnd::TimedOut && timeout == remaining {
             self.deadline_passed = true;
             return failed(ProcessEnd::TimedOut, "deadline");
@@ -966,7 +966,12 @@ impl ItemSteps<'_> {
     }
 
     /// Logs what the agent asked for and its policy settled, for the owner to allowlist.
-    fn record_settled_requests(&mut self, request: &StepRequest, session_id: &str) {
+    fn record_settled_requests(
+        &mut self,
+        request: &StepRequest,
+        session_id: &str,
+        mode: UnattendedMode,
+    ) {
         let recorded = self.settled.len();
         for settled in self.sessions.settled_requests(session_id) {
             if self.settled.contains(&settled) {
@@ -992,6 +997,7 @@ impl ItemSteps<'_> {
                 request_id: Some(settled.id.clone()),
                 session_id: Some(session_id.to_string()),
                 kind,
+                mode: Some(mode),
             };
             if let Err(error) = self.log.append(event) {
                 log::warn!("Could not record a permission request of {session_id}: {error}");
