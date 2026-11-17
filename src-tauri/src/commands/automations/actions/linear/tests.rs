@@ -609,3 +609,36 @@ fn query_failures_never_carry_the_key() {
         "https://api.linear.app/graphql"
     );
 }
+
+#[test]
+fn a_filter_query_reads_the_matching_issues_with_the_workspace_key() {
+    let issues = page(&["a1", "b2"], None).1;
+    let server = serve(vec![
+        (200, issues),
+        (
+            400,
+            json!({ "errors": [{ "message": format!("Bad filter for {KEY}") }] }).to_string(),
+        ),
+    ]);
+    let linear = GraphqlLinear::at(keychain(Ok(Some(BUNDLE))), &server.url);
+    let filter = json!({ "team": { "key": { "eq": "ENG" } } });
+    let filter = filter.as_object().unwrap();
+
+    let matching = linear.issues_matching("w1", filter, 25).unwrap();
+
+    let ids: Vec<_> = matching.iter().map(|issue| issue.id.as_str()).collect();
+    assert_eq!(ids, ["a1", "b2"]);
+    let requests = server.requests.lock().unwrap().clone();
+    assert!(requests[0]
+        .to_ascii_lowercase()
+        .contains("authorization: lin_api_secret123\r\n"));
+    assert!(requests[0].contains(r#""filter":{"team":{"key":{"eq":"ENG"}}}"#));
+    assert!(requests[0].contains(r#""first":25"#));
+    let failure = linear.issues_matching("w1", filter, 25).unwrap_err();
+    assert_eq!(failure, "Linear answered 400: Bad filter for <redacted>");
+    let missing = GraphqlLinear::at(keychain(Ok(None)), &server.url);
+    assert_eq!(
+        missing.issues_matching("w1", filter, 25).unwrap_err(),
+        "Keychain holds no Linear credentials"
+    );
+}

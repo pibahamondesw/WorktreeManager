@@ -1,12 +1,14 @@
-//! The one Linear query event triggers need: the issues of a workspace updated after an instant,
-//! with their recent history nested so a poll is a few requests whatever the number of issues.
-//! The key is read from Keychain for each poll and never leaves the request header.
+//! The Linear queries automations need: for event triggers, the issues of a workspace updated
+//! after an instant, with their recent history nested so a poll is a few requests whatever the
+//! number of issues; for `selector.linear`, the issues a filter matches, in one request. The key
+//! is read from Keychain for each request and never leaves the request header.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 const ENDPOINT: &str = "https://api.linear.app/graphql";
 const MAX_PAGES: usize = 10;
@@ -25,6 +27,17 @@ const QUERY: &str = r#"query AutomationTriggerIssues($since: DateTimeOrDuration!
     }
   }
 }"#;
+const MATCHING_QUERY: &str = r#"query AutomationItemIssues($filter: IssueFilter, $first: Int) {
+  issues(filter: $filter, orderBy: updatedAt, first: $first) {
+    nodes {
+      id identifier title url branchName createdAt updatedAt
+      team { key name }
+      state { name }
+      assignee { id name displayName email }
+      labels(first: 50) { nodes { id name } }
+    }
+  }
+}"#;
 
 /// Reads the app's Linear credentials from Keychain: `{setup, workspaces: {<id>: <key>}}`.
 pub type SecretReader = Arc<dyn Fn() -> Result<Option<String>, String> + Send + Sync>;
@@ -33,6 +46,17 @@ pub type SecretReader = Arc<dyn Fn() -> Result<Option<String>, String> + Send + 
 pub trait LinearIssues: Send + Sync {
     /// The issues updated after `since` (RFC 3339), newest pages first.
     fn updated_since(&self, workspace_id: &str, since: &str) -> Result<UpdatedIssues, String>;
+}
+
+/// Issues matching a filter, for declarative selectors.
+pub trait LinearSearch: Send + Sync {
+    /// Up to `limit` issues `filter` (a Linear `IssueFilter`) matches, most recently updated first.
+    fn issues_matching(
+        &self,
+        workspace_id: &str,
+        filter: &Map<String, Value>,
+        limit: u64,
+    ) -> Result<Vec<Issue>, String>;
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -138,6 +162,12 @@ struct IssuesPage {
 }
 
 #[derive(Deserialize)]
+struct Matching {
+    #[serde(deserialize_with = "nodes")]
+    issues: Vec<Issue>,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PageInfo {
     has_next_page: bool,
@@ -175,18 +205,22 @@ impl GraphqlLinear {
 
     fn page(&self, key: &str, since: &str, after: Option<&str>) -> Result<Page, String> {
         let body = json!({ "query": QUERY, "variables": { "since": since, "after": after } });
+        self.post(key, &body)
+    }
+
+    fn post<T: DeserializeOwned>(&self, key: &str, body: &Value) -> Result<T, String> {
         let response = self
             .client
             .post(&self.endpoint)
             .header("Authorization", key)
-            .json(&body)
+            .json(body)
             .send()
             .map_err(|error| format!("Linear could not be reached: {error}"))?;
         let status = response.status();
         let answer: Value = response
             .json()
             .map_err(|_| format!("Linear answered {status} without JSON"))?;
-        parse_page(status.is_success(), status.as_u16(), answer)
+        parse_data(status.is_success(), status.as_u16(), answer)
     }
 }
 
@@ -211,6 +245,23 @@ impl LinearIssues for GraphqlLinear {
     }
 }
 
+impl LinearSearch for GraphqlLinear {
+    fn issues_matching(
+        &self,
+        workspace_id: &str,
+        filter: &Map<String, Value>,
+        limit: u64,
+    ) -> Result<Vec<Issue>, String> {
+        let key = self.key(workspace_id)?;
+        let body =
+            json!({ "query": MATCHING_QUERY, "variables": { "filter": filter, "first": limit } });
+        let matching: Matching = self
+            .post(&key, &body)
+            .map_err(|error| redact(error, &key))?;
+        Ok(matching.issues)
+    }
+}
+
 /// The workspace's key, as the app stores it; the setup key belongs to no workspace.
 fn workspace_key(bundle: &str, workspace_id: &str) -> Option<String> {
     let secrets: Value = serde_json::from_str(bundle).ok()?;
@@ -220,7 +271,7 @@ fn workspace_key(bundle: &str, workspace_id: &str) -> Option<String> {
         .map(String::from)
 }
 
-fn parse_page(success: bool, status: u16, answer: Value) -> Result<Page, String> {
+fn parse_data<T: DeserializeOwned>(success: bool, status: u16, answer: Value) -> Result<T, String> {
     if let Some(errors) = answer["errors"]
         .as_array()
         .filter(|errors| !errors.is_empty())
@@ -234,7 +285,7 @@ fn parse_page(success: bool, status: u16, answer: Value) -> Result<Page, String>
     if !success {
         return Err(format!("Linear answered {status}"));
     }
-    Page::deserialize(&answer["data"]).map_err(|error| format!("Unexpected Linear answer: {error}"))
+    T::deserialize(&answer["data"]).map_err(|error| format!("Unexpected Linear answer: {error}"))
 }
 
 /// `key` is never empty: blank keys count as missing.
