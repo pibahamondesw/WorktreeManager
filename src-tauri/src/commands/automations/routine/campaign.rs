@@ -25,6 +25,7 @@ use super::super::selector::{
 use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, RunState, SkipReason};
 use super::branch::{checked_branch, item_branch};
 use super::commands::{item_data_variable, Item};
+use super::selection_agent::AgentSelector;
 use super::{
     bases, render, run_variables, ItemDrive, LinkedIssue, NewTask, ResolvedTask, RoutineExecutor,
     TaskFailure, WriterLog,
@@ -120,6 +121,12 @@ impl RoutineExecutor {
                 Ok(script) => Box::new(script),
                 Err(error) => Box::new(Unrunnable(error)),
             },
+            ItemSource::Agent(source) => Box::new(AgentSelector {
+                executor: self,
+                source,
+                request,
+                timeout: Duration::from_secs(settings.timeout_secs),
+            }),
             source => Box::new(SourceSelector {
                 source,
                 sources: &self.item_sources,
