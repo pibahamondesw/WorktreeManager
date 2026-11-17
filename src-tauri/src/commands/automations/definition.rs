@@ -2,6 +2,7 @@
 //! the spec in `docs/automations.md`. Every read goes to disk, so callers see edits on their next
 //! call. A definition with errors is still listed, with its errors and without a definition.
 
+mod call;
 mod circleci_trigger;
 pub mod edit;
 mod fields;
@@ -96,6 +97,10 @@ pub struct AutomationDefinition {
     pub authorization: Authorization,
     pub report: ReportPolicy,
     pub completion: Completion,
+    /// Present when other automations may call it, with the inputs a call passes.
+    pub inputs: Option<BTreeMap<String, Input>>,
+    /// The step whose output a call gets; `None` is the step that completed the run.
+    pub output: Option<String>,
     /// The Markdown body, included in every agent step prompt.
     pub instructions: String,
     /// SHA-256 of the file, pinned by every run.
@@ -103,6 +108,14 @@ pub struct AutomationDefinition {
     /// The automation folder, which `scripts/…` and `schemas/…` paths are relative to.
     #[serde(skip)]
     pub folder: PathBuf,
+}
+
+/// An input a callable automation declares; a call that omits a required one is invalid.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Input {
+    pub required: bool,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -364,6 +377,16 @@ pub enum StepKind {
     Approval(ApprovalStep),
     /// Side effects the engine runs in order on the owner's behalf.
     Publish(Vec<Effect>),
+    /// Runs another automation in the item's task and waits for its output.
+    Call(CallStep),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallStep {
+    pub automation: String,
+    /// Template of each input, by name.
+    pub inputs: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
