@@ -1,11 +1,12 @@
 //! GitHub pull request activity fires the automations whose `event` triggers match it: pull
-//! requests opened or pushed to, failed workflow runs, reviews received and comments mentioning
-//! the owner. Each GitHub repository of the target repositories of an enabled automation
-//! listening is polled once a minute, backing off after failures as the Linear triggers do. Each
-//! automation keeps per repository GitHub's newest instant it has seen and the heads of the open
-//! pull requests: the first poll after it is enabled only records them, and pausing it drops
-//! them, so activity meanwhile never fires it. Pull requests on its own branches and its own
-//! comments never fire it.
+//! requests opened or pushed to, failed workflow runs, reviews received, comments mentioning
+//! the owner, and review requests, assignments and labels added that are still in place. Each
+//! GitHub repository of the target repositories of an enabled automation listening is polled
+//! once a minute, backing off after failures as the Linear triggers do. Each automation keeps
+//! per repository GitHub's newest instant it has seen and the heads of the open pull requests:
+//! the first poll after it is enabled only records them, and pausing it drops them, so activity
+//! meanwhile never fires it. Pull requests on its own branches and its own comments never fire
+//! it.
 
 mod api;
 #[cfg(test)]
@@ -26,7 +27,7 @@ use crate::commands::automations::scheduler::pool_skip;
 use crate::commands::automations::store::GithubCursor;
 use crate::commands::automations::watchers::backoff_ms;
 pub(super) use api::github_slug;
-use api::{Activity, ActivityReader, Comment, PullRequest, Review, WorkflowRun};
+use api::{Activity, ActivityReader, Comment, PullRequest, Review, TimelineEvent, WorkflowRun};
 pub use api::{CliGithub, GithubActivity};
 
 const INTERVAL_MS: u64 = 60 * 1000;
@@ -63,6 +64,7 @@ struct Change<'a> {
     review: Option<&'a Review>,
     comment: Option<&'a Comment>,
     run: Option<&'a WorkflowRun>,
+    event: Option<&'a TimelineEvent>,
 }
 
 impl GithubTriggers {
@@ -265,6 +267,10 @@ fn advanced(cursor: GithubCursor, activity: &Activity) -> GithubCursor {
                 .map(|comment| comment.created_at.as_str())
         }))
         .chain(
+            prs.iter()
+                .flat_map(|pr| pr.timeline.iter().map(|event| event.created_at.as_str())),
+        )
+        .chain(
             activity
                 .failed_runs
                 .iter()
@@ -348,6 +354,7 @@ fn changes<'a>(activity: &'a Activity, cursor: &GithubCursor, own: &Own) -> Vec<
         review: None,
         comment: None,
         run: None,
+        event: None,
     };
     let prs = || {
         activity
@@ -387,6 +394,14 @@ fn changes<'a>(activity: &'a Activity, cursor: &GithubCursor, own: &Own) -> Vec<
                 ..change(GithubEventKind::Mentioned, pr)
             });
         }
+        for event in pr.timeline.iter().filter(|event| after(&event.created_at)) {
+            if let Some(kind) = still_in_place(pr, event) {
+                changes.push(Change {
+                    event: Some(event),
+                    ..change(kind, pr)
+                });
+            }
+        }
     }
     for run in activity
         .failed_runs
@@ -406,6 +421,25 @@ fn changes<'a>(activity: &'a Activity, cursor: &GithubCursor, own: &Own) -> Vec<
     changes
 }
 
+/// The kind of `event` when the pull request still has the review request, assignee or label it
+/// added.
+fn still_in_place(pr: &PullRequest, event: &TimelineEvent) -> Option<GithubEventKind> {
+    let has = |names: &[String], name: &str| names.iter().any(|candidate| same(name, candidate));
+    let (kind, in_place) = match event.typename.as_str() {
+        "ReviewRequestedEvent" => (
+            GithubEventKind::ReviewRequested,
+            has(&pr.review_requests, &event.requested_reviewer),
+        ),
+        "AssignedEvent" => (
+            GithubEventKind::Assigned,
+            has(&pr.assignees, &event.assignee),
+        ),
+        "LabeledEvent" => (GithubEventKind::Labeled, has(&pr.labels, &event.label)),
+        _ => return None,
+    };
+    in_place.then_some(kind)
+}
+
 /// Whether `body` mentions `@login`, as GitHub links it.
 fn mentions(body: &str, login: &str) -> bool {
     let login_char = |c: char| c.is_ascii_alphanumeric() || c == '-';
@@ -421,15 +455,19 @@ fn mentions(body: &str, login: &str) -> bool {
 
 fn matches(trigger: &GithubEventTrigger, change: &Change, repo_id: &str, viewer: &str) -> bool {
     let pr = change.pr;
+    let login = |who| owner_as(who, viewer);
+    let event = |field: fn(&TimelineEvent) -> &String| change.event.map_or("", |e| field(e));
     trigger.kind == change.kind
         && listens(trigger, repo_id)
-        && trigger.author.as_deref().map_or(true, |author| {
-            let author = if author == GITHUB_OWNER {
-                viewer
-            } else {
-                author
-            };
-            same(author, &pr.author)
+        && trigger
+            .author
+            .as_deref()
+            .map_or(true, |author| same(login(author), &pr.author))
+        && trigger.reviewer.as_deref().map_or(true, |reviewer| {
+            requested(login(reviewer), event(|e| &e.requested_reviewer))
+        })
+        && trigger.assignee.as_deref().map_or(true, |assignee| {
+            same(login(assignee), event(|e| &e.assignee))
         })
         && trigger
             .branch
@@ -438,10 +476,28 @@ fn matches(trigger: &GithubEventTrigger, change: &Change, repo_id: &str, viewer:
                 Some(prefix) => pr.head_ref_name.starts_with(prefix),
                 None => pr.head_ref_name == branch,
             })
-        && trigger
-            .label
-            .as_deref()
-            .map_or(true, |label| pr.labels.iter().any(|name| same(label, name)))
+        && trigger.label.as_deref().map_or(true, |label| {
+            if change.kind == GithubEventKind::Labeled {
+                same(label, event(|e| &e.label))
+            } else {
+                pr.labels.iter().any(|name| same(label, name))
+            }
+        })
+}
+
+/// `who`, with `me` standing for the owner's login.
+fn owner_as<'a>(who: &'a str, viewer: &'a str) -> &'a str {
+    if who == GITHUB_OWNER {
+        viewer
+    } else {
+        who
+    }
+}
+
+/// Whether `reviewer`, a login or a team as `org/team` or `team`, is who `requested` names.
+fn requested(reviewer: &str, requested: &str) -> bool {
+    let team = requested.split_once('/').map(|(_, team)| team);
+    same(reviewer, requested) || team.is_some_and(|team| same(reviewer, team))
 }
 
 fn same(wanted: &str, name: &str) -> bool {
@@ -498,17 +554,24 @@ fn pull_request_capacity_skip(
     }
 }
 
-/// `pr:<n>:<action>:<head sha>` for opened and pushed pull requests, the review or comment id in
-/// place of the head for reviews and mentions, and `workflow_run:<id>:<attempt>` for failed runs.
+/// `pr:<n>:<action>:<head sha>` for opened and pushed pull requests, the review, comment or
+/// timeline event id in place of the head for the others, and `workflow_run:<id>:<attempt>` for
+/// failed runs.
 fn trigger_key(change: &Change) -> String {
-    let action = change.kind.action();
-    let number = change.pr.number;
-    match (change.review, change.comment, change.run) {
-        (Some(review), _, _) => format!("pr:{number}:{action}:{}", review.database_id),
-        (_, Some(comment), _) => format!("pr:{number}:{action}:{}", comment.database_id),
-        (_, _, Some(run)) => format!("workflow_run:{}:{}", run.id, run.run_attempt),
-        _ => format!("pr:{number}:{action}:{}", change.pr.head_ref_oid),
+    if let Some(run) = change.run {
+        return format!("workflow_run:{}:{}", run.id, run.run_attempt);
     }
+    let subject = change
+        .review
+        .map(|review| review.database_id.to_string())
+        .or_else(|| {
+            change
+                .comment
+                .map(|comment| comment.database_id.to_string())
+        })
+        .or_else(|| change.event.map(|event| event.id.clone()))
+        .unwrap_or_else(|| change.pr.head_ref_oid.clone());
+    format!("pr:{}:{}:{subject}", change.pr.number, change.kind.action())
 }
 
 /// Untrusted: everything here comes from GitHub.
@@ -529,6 +592,8 @@ fn payload(slug: &str, change: &Change) -> Value {
             "headSha": pr.head_ref_oid,
             "isDraft": pr.is_draft,
             "labels": pr.labels,
+            "assignees": pr.assignees,
+            "reviewRequests": pr.review_requests,
             "createdAt": pr.created_at,
             "updatedAt": pr.updated_at,
         },
@@ -556,7 +621,19 @@ fn payload(slug: &str, change: &Change) -> Value {
             "event": run.event,
             "updatedAt": run.updated_at,
         })),
+        "timelineEvent": change.event.map(|event| json!({
+            "id": event.id,
+            "actor": event.actor,
+            "createdAt": event.created_at,
+            "requestedReviewer": non_empty(&event.requested_reviewer),
+            "assignee": non_empty(&event.assignee),
+            "label": non_empty(&event.label),
+        })),
     })
+}
+
+fn non_empty(name: &str) -> Option<&str> {
+    (!name.is_empty()).then_some(name)
 }
 
 fn cut(body: &str) -> String {

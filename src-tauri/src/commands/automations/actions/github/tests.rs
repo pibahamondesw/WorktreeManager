@@ -413,6 +413,8 @@ fn matching_activity_fires_once_per_trigger_key_and_advances_the_cursor() {
                 "headSha": "h2b",
                 "isDraft": false,
                 "labels": ["Bug"],
+                "assignees": [],
+                "reviewRequests": [],
                 "createdAt": "2026-11-10T11:00:00Z",
                 "updatedAt": "2026-11-10T12:00:48Z"
             },
@@ -425,7 +427,8 @@ fn matching_activity_fires_once_per_trigger_key_and_advances_the_cursor() {
                 "submittedAt": "2026-11-10T12:00:40Z"
             },
             "comment": null,
-            "workflowRun": null
+            "workflowRun": null,
+            "timelineEvent": null
         })
     );
     assert_eq!(payloads[3]["comment"]["body"], "ping @Ada, please");
@@ -528,6 +531,124 @@ fn runs_for_one_pull_request_serialize() {
             fired("reviews", "pr:8:review_received:81"),
             fired("reviews", "pr:10:review_received:101"),
         ]
+    );
+}
+
+fn timeline(typename: &str, id: &str, created_at: &str, subject: Value) -> Value {
+    let mut event = json!({
+        "__typename": typename, "id": id, "createdAt": created_at, "actor": { "login": "bob" }
+    });
+    if let Value::Object(fields) = subject {
+        event.as_object_mut().unwrap().extend(fields);
+    }
+    event
+}
+
+fn requested(id: &str, created_at: &str, reviewer: Value) -> Value {
+    timeline(
+        "ReviewRequestedEvent",
+        id,
+        created_at,
+        json!({ "requestedReviewer": reviewer }),
+    )
+}
+
+fn assigned(id: &str, created_at: &str, login: &str) -> Value {
+    let assignee = json!({ "assignee": { "login": login } });
+    timeline("AssignedEvent", id, created_at, assignee)
+}
+
+fn labeled(id: &str, created_at: &str, name: &str) -> Value {
+    let label = json!({ "label": { "name": name } });
+    timeline("LabeledEvent", id, created_at, label)
+}
+
+const ASKS: &str = "target: { workspace: Acme, repos: [api] }
+concurrency: { max_runs: 9 }
+pools: { active: 9 }
+trigger:
+  manual: false
+  event:
+    - { source: github, type: pr.review_requested }
+    - { source: github, type: pr.review_requested, where: { reviewer: core } }
+    - { source: github, type: pr.assigned, where: { author: me } }
+    - { source: github, type: pr.labeled, where: { label: ship } }
+";
+
+#[test]
+fn review_requests_assignments_and_labels_still_in_place_fire_matching_triggers() {
+    let mut harness = Harness::new();
+    harness.scratch.define("asks", ASKS);
+    harness.scratch.set_state(
+        "asks",
+        true,
+        &[("acme/api", cursor(T0, &[(2, "h2"), (3, "h3")]))],
+    );
+    let mut theirs = pr(Pr {
+        number: 2,
+        created_at: "2026-11-10T11:00:00Z",
+        head: "h2",
+        branch: "feat/x",
+        author: Some("bob"),
+    });
+    theirs["assignees"] = json!({ "nodes": [{ "login": "ada" }] });
+    theirs["reviewRequests"] = json!({ "nodes": [
+        { "requestedReviewer": { "login": "Ada" } },
+        { "requestedReviewer": { "combinedSlug": "acme/core" } },
+        { "requestedReviewer": null }
+    ] });
+    theirs["timelineItems"] = json!({ "nodes": [
+        requested("RRE0", "2026-11-10T11:00:00Z", json!({ "login": "ada" })),
+        requested("RRE1", "2026-11-10T12:00:10Z", json!({ "login": "ada" })),
+        requested("RRE2", "2026-11-10T12:00:11Z", json!({ "combinedSlug": "acme/core" })),
+        requested("RRE3", "2026-11-10T12:00:12Z", json!({ "login": "carol" })),
+        requested("RRE4", "2026-11-10T12:00:12Z", Value::Null),
+        assigned("AE1", "2026-11-10T12:00:13Z", "ada"),
+        timeline("ClosedEvent", "CE1", "2026-11-10T12:00:14Z", Value::Null),
+    ] });
+    let mut mine = ada(3, "2026-11-10T11:00:00Z", "h3", "feat/y");
+    mine["labels"] = json!({ "nodes": [{ "name": "Bug" }, { "name": "Ship" }] });
+    mine["assignees"] = json!({ "nodes": [{ "login": "ada" }] });
+    mine["timelineItems"] = json!({ "nodes": [
+        assigned("AE2", "2026-11-10T12:00:20Z", "ada"),
+        assigned("AE3", "2026-11-10T12:00:21Z", "bob"),
+        labeled("LE2", "2026-11-10T12:00:22Z", "ship"),
+        labeled("LE3", "2026-11-10T12:00:23Z", "Bug"),
+        labeled("LE4", "2026-11-10T12:00:24Z", "gone"),
+    ] });
+    harness
+        .github
+        .answer("acme/api", Ok(answer(vec![theirs, mine])));
+
+    assert_eq!(
+        harness.poll(0),
+        vec![
+            fired("asks", "pr:2:review_requested:RRE1"),
+            fired("asks", "pr:2:review_requested:RRE2"),
+            fired("asks", "pr:3:assigned:AE2"),
+            fired("asks", "pr:3:labeled:LE2"),
+        ]
+    );
+    let payloads = harness.executed();
+    assert_eq!(payloads[1]["type"], "pr.review_requested");
+    assert_eq!(payloads[1]["pr"]["author"], "bob");
+    assert_eq!(payloads[1]["pr"]["assignees"], json!(["ada"]));
+    assert_eq!(
+        payloads[1]["pr"]["reviewRequests"],
+        json!(["Ada", "acme/core"])
+    );
+    assert_eq!(
+        payloads[1]["timelineEvent"],
+        json!({
+            "id": "RRE2", "actor": "bob", "createdAt": "2026-11-10T12:00:11Z",
+            "requestedReviewer": "acme/core", "assignee": null, "label": null
+        })
+    );
+    assert_eq!(payloads[2]["timelineEvent"]["assignee"], "ada");
+    assert_eq!(payloads[3]["timelineEvent"]["label"], "ship");
+    assert_eq!(
+        harness.scratch.cursors("asks")["acme/api"].since,
+        "2026-11-10T12:00:24.000Z"
     );
 }
 
