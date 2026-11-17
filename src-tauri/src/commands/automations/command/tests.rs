@@ -12,6 +12,8 @@ use crate::commands::automations::pipeline::{drive, ItemMachine, Pipeline, RunLo
 use crate::commands::automations::store::events::{reduce, ItemStatus, LoggedEvent, StepStatus};
 use crate::commands::git::git_command;
 
+mod results;
+
 const ITEM: &str = "unit-1";
 
 struct TempDir(PathBuf);
@@ -99,8 +101,8 @@ impl CommandContext for FakeContext {
         Ok(template.replace("{item.id}", request.item))
     }
 
-    fn env(&self, request: &StepRequest) -> Vec<(String, String)> {
-        vec![("WTM_ITEM_ID".into(), request.item.into())]
+    fn env(&self, request: &StepRequest) -> Result<Vec<(String, String)>, String> {
+        Ok(vec![("WTM_ITEM_ID".into(), request.item.into())])
     }
 }
 
@@ -119,7 +121,7 @@ impl CommandContext for LeasedContext {
         self.inner.render(request, template)
     }
 
-    fn env(&self, request: &StepRequest) -> Vec<(String, String)> {
+    fn env(&self, request: &StepRequest) -> Result<Vec<(String, String)>, String> {
         self.inner.env(request)
     }
 

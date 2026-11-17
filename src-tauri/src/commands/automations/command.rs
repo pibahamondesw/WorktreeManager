@@ -23,6 +23,7 @@ use crate::commands::terminal::{run_headless, HeadlessExit};
 const SCRIPTS_DIR: &str = "scripts/";
 const HYGIENE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const HEADLESS_SESSION: &str = "automation-command";
+const STEP_RESULT_VARIABLE: &str = "WTM_STEP_RESULT";
 
 /// What the item runner knows about the item a command runs for.
 pub trait CommandContext {
@@ -30,8 +31,8 @@ pub trait CommandContext {
     fn worktree(&self, request: &StepRequest, repo: &str) -> Result<PathBuf, String>;
     /// Substitutes the item's values into one argv or env template.
     fn render(&self, request: &StepRequest, template: &str) -> Result<String, String>;
-    /// The `WTM_*` variables of the item, except `WTM_WORKTREE`.
-    fn env(&self, request: &StepRequest) -> Vec<(String, String)>;
+    /// The `WTM_*` variables of the item, except `WTM_WORKTREE`, with the files they point at.
+    fn env(&self, request: &StepRequest) -> Result<Vec<(String, String)>, String>;
     /// Holds the leases of the step's `uses` pools for one attempt. Seam for `wtm lease`
     /// (WOR-255): until pools exist a step has none.
     fn hold_leases(&self, _request: &StepRequest) -> Result<HeldLeases, String> {
@@ -83,10 +84,25 @@ impl<C: CommandContext> CommandExecutor<C> {
         let prepared = self.prepare(request, step)?;
         if let Some(receipt) = self.reusable_receipt(request, step, &prepared)? {
             self.events.push(receipt.event(request.attempt, true));
-            return Ok(Execution::Skipped(receipt.report()));
+            return Ok(Execution::Skipped(self.with_result(request, &receipt)));
         }
         let leases = self.context.hold_leases(request)?;
-        let env = [prepared.env.as_slice(), leases.env.as_slice()].concat();
+        let result_file = self.receipts.result_file(
+            request.item,
+            request.stage,
+            &request.step.id,
+            request.attempt,
+        )?;
+        let result_env = (
+            STEP_RESULT_VARIABLE.to_string(),
+            result_file.to_string_lossy().into_owned(),
+        );
+        let env = [
+            prepared.env.as_slice(),
+            leases.env.as_slice(),
+            &[result_env],
+        ]
+        .concat();
         let log = ReceiptStore::log_file(
             request.item,
             request.stage,
@@ -125,7 +141,34 @@ impl<C: CommandContext> CommandExecutor<C> {
         };
         self.receipts.save(&receipt)?;
         self.events.push(receipt.event(request.attempt, false));
-        Ok(Execution::Finished(receipt.report()))
+        Ok(Execution::Finished(self.with_result(request, &receipt)))
+    }
+
+    /// A succeeded attempt's report, with the result it wrote recorded; a result that cannot be
+    /// read fails it.
+    fn with_result(&mut self, request: &StepRequest, receipt: &Receipt) -> StepReport {
+        let report = receipt.report();
+        if !receipt.succeeded() {
+            return report;
+        }
+        match self.receipts.result(receipt) {
+            Ok(None) => report,
+            Ok(Some(result)) => {
+                self.events.push(RunEvent::StepOutput {
+                    item: request.item.to_string(),
+                    step: request.step.id.clone(),
+                    attempt: request.attempt,
+                    reply: None,
+                    result: Some(result),
+                });
+                report
+            }
+            Err(error) => StepReport {
+                outcome: StepOutcome::Failure,
+                cause: Some(format!("invalid_result: {STEP_RESULT_VARIABLE} {error}")),
+                ..report
+            },
+        }
     }
 
     pub fn context(&self) -> &C {
@@ -180,7 +223,7 @@ impl<C: CommandContext> CommandExecutor<C> {
             .iter()
             .map(|(name, value)| Ok((name.clone(), self.context.render(request, value)?)))
             .collect::<Result<Vec<_>, String>>()?;
-        env.extend(self.context.env(request));
+        env.extend(self.context.env(request)?);
         env.push(("WTM_WORKTREE".into(), cwd.to_string_lossy().into_owned()));
         let after = step
             .after

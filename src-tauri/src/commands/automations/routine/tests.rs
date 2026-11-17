@@ -1469,6 +1469,7 @@ steps:
 mod campaign;
 mod decisions;
 mod operator;
+mod outputs;
 mod resume;
 mod takeover;
 mod waits;

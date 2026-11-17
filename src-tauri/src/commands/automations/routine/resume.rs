@@ -185,7 +185,9 @@ impl ItemSteps<'_> {
                     self.handback_note = note.clone();
                     self.continue_taken_over_conversation(taken_over.take());
                 }
-                RunEvent::StepOutput { item, .. } | RunEvent::StepReceipt { item, .. }
+                RunEvent::StepOutput { item, .. }
+                | RunEvent::StepReceipt { item, .. }
+                | RunEvent::EffectRecorded { item, .. }
                     if *item == self.item.id =>
                 {
                     self.evidence.push(logged.event.clone());
