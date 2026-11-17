@@ -7,6 +7,7 @@ mod fields;
 mod github_trigger;
 mod item_source;
 mod linear_trigger;
+mod step_outputs;
 mod validate;
 
 #[cfg(test)]

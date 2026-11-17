@@ -18,6 +18,7 @@ use super::fields::{
 use super::github_trigger::{github_event_trigger, resolve_repos};
 use super::item_source::item_source;
 use super::linear_trigger::linear_event_trigger;
+use super::step_outputs::check_output_references;
 use super::{
     AgentSettings, AgentStep, AppEventKind, ApprovalDefault, ApprovalStep, Authorization,
     AutomationDefinition, Bind, Budgets, Capacity, CatchUp, ChatOpenEffect, CommandStep,
@@ -176,6 +177,7 @@ pub(super) fn definition(
     });
     fields.finish(report);
     check_instructions(report, instructions, steps.as_deref());
+    check_output_references(report, frontmatter, steps.as_deref());
     let mut target = target;
     if let (Some(target), Some(selector)) = (&mut target, &selector) {
         check_task_mode(report, target, selector.is_some());
