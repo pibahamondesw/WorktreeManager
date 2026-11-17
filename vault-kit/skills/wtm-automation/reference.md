@@ -37,6 +37,8 @@ A condensed v1 summary for authors. The contract, with every rule and default, i
 | `authorization` | `{allow: [], deny: []}`                                  | Verbs; `caps` per verb (default 20 per item).                                  |
 | `report`        | `{inbox: on_findings, archive_noop: true, notify: true}` | When runs reach the Inbox.                                                     |
 | `completion`    | none                                                     | `selector_empty`, `stop_after`, `max_runs`.                                    |
+| `inputs`        | none                                                     | Present ⇒ callable: `{<name>: {required, description}}`.                       |
+| `output`        | the step that completed it                               | The step whose output a call gets.                                             |
 
 ## Routine or campaign
 
@@ -75,12 +77,14 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 | `wait`     | exactly one of `time`, `signal` or `event: {watcher: pr_checks \| pr_integrated \| command, …}`                                                                   | none            |
 | `approval` | `title` (template), `detail`, `params`, `default: approve \| reject` (required with the step's `timeout`), `on_reject`                                            | none            |
 | `publish`  | one effect or a list, each `name` or `{name: {params}}`                                                                                                           | `30m`           |
+| `call`     | `automation` (a routine that declares `inputs`), `inputs` (map of templates)                                                                                      | none            |
 
 - Agent steps of an item share one session unless `fresh_session: true`. The `verdict` result is `{verdict: pass | reject | blocked | defer | noop, summary, findings}`: `reject` takes `on_reject`, `blocked`/`defer` rest the item, `noop` succeeds silently. Without `result`, a final message `NOOP` is a noop.
 - Commands get `WTM_AUTOMATION`, `WTM_RUN_ID`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION`, `WTM_ITEM_DATA` (a JSON file), `WTM_STEP_OUTPUTS` (a JSON file of earlier steps' outputs), `WTM_STEP_RESULT` (where to write this step's JSON result), `WTM_TASK_ID`, `WTM_WORKTREE` and lease variables. Exit 0 succeeds.
 - Later steps reference a step's output (agent structured result, command result, wait/approval answer, publish effects) as `{steps.<id>.result}` or `{steps.<id>.result.<key>}` in templated fields and agent prompts; only earlier steps can be referenced.
 - Watchers: `pr_checks` (`required`, `ignore`, `expect`, `bot_lgtm`, `unresolved_threads`, `request_review_comment`) waits for green CI on the pushed HEAD; `pr_integrated` waits for the PR to land; `command` polls a script that prints `{"status": "pending" | "success" | "fail"}`.
 - Answer signals and approvals with `wtm automation signal <run_id> <step> <json>`.
+- A `call` runs another routine in the item's task with its inputs as item data, waits for it and takes its output; its failures follow `on_fail`. Calls may not form a cycle and nest at most 5 deep; a caller that stops waiting cancels its call.
 
 ### Publish effects
 
