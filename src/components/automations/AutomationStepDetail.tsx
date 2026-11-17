@@ -7,6 +7,7 @@ import {
   StepEffect,
   StepReceipt,
   TargetRepo,
+  calledRunLabel,
   formatDuration,
   readStepReceipt,
 } from "../../services/automations";
@@ -139,6 +140,14 @@ function kindFacts(
         ? [["Params", JSON.stringify(kind.approval.params)] as Fact]
         : []),
       ["Inbox entry", approvalState(latest)],
+    ];
+  }
+  if ("call" in kind) {
+    const called = latest?.wait?.call;
+    return [
+      ["Automation", kind.call.automation],
+      ...Object.entries(kind.call.inputs).map(([name, value]): Fact => [`Input ${name}`, value]),
+      ["Called run", called ? calledRunLabel(called) : NOT_RECORDED],
     ];
   }
   return [["Effects", kind.publish.map((effect) => effect.effect).join(", ")]];

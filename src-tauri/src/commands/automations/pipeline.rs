@@ -282,7 +282,7 @@ impl<'a> ItemMachine<'a> {
     /// time counts from when it was armed.
     fn rearms(&self, request: &StepRequest) -> bool {
         matches!(self.current, Some(Attempt::Open(attempt)) if attempt == request.attempt)
-            && matches!(request.step.kind, StepKind::Wait(_) | StepKind::Approval(_))
+            && rests(&request.step.kind)
     }
 
     fn request(&self, position: Position, step: &'a Step, attempt: u32) -> StepRequest<'a> {
@@ -496,9 +496,10 @@ pub fn drive(
 }
 
 fn start_event(request: &StepRequest) -> RunEvent {
-    let status = match request.step.kind {
-        StepKind::Wait(_) | StepKind::Approval(_) => StepStatus::Waiting,
-        StepKind::Agent(_) | StepKind::Command(_) | StepKind::Publish(_) => StepStatus::Running,
+    let status = if rests(&request.step.kind) {
+        StepStatus::Waiting
+    } else {
+        StepStatus::Running
     };
     step_event(request, status, None)
 }
@@ -559,9 +560,17 @@ fn reject_transition(step: &Step) -> &Transition {
     let on_reject = match &step.kind {
         StepKind::Agent(agent) => agent.on_reject.as_ref(),
         StepKind::Approval(approval) => approval.on_reject.as_ref(),
-        StepKind::Command(_) | StepKind::Wait(_) | StepKind::Publish(_) => None,
+        StepKind::Command(_) | StepKind::Wait(_) | StepKind::Publish(_) | StepKind::Call(_) => None,
     };
     on_reject.unwrap_or(&step.on_fail)
+}
+
+/// Steps whose attempt waits durably in the log: the item parks until it can end.
+pub fn rests(kind: &StepKind) -> bool {
+    matches!(
+        kind,
+        StepKind::Wait(_) | StepKind::Approval(_) | StepKind::Call(_)
+    )
 }
 
 fn counts_active_time(kind: &StepKind) -> bool {

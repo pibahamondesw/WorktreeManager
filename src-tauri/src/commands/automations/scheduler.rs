@@ -18,6 +18,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
 
+use super::call;
 use super::definition::{self, AutomationDefinition, CatchUp, Schedule};
 use super::instants::{iana_zone, parse_rfc3339, rfc3339};
 use super::store::events::{
@@ -199,6 +200,7 @@ impl<C: Clock> Scheduler<C> {
     }
 
     fn tick_automation(&mut self, automation: &Automation, now: Timestamp) -> Result<(), String> {
+        self.cancel_orphans(&automation.name)?;
         self.sweep(automation, now)?;
         self.fire(automation, now)
     }
@@ -222,6 +224,30 @@ impl<C: Clock> Scheduler<C> {
             }
         }
         Ok(active)
+    }
+
+    /// Cancels the called runs whose caller no longer waits on them, and stops driving them.
+    fn cancel_orphans(&mut self, name: &str) -> Result<(), String> {
+        let active = self.active_runs(name)?;
+        let store = &self.store;
+        let orphans: Vec<String> = active
+            .into_iter()
+            .filter(|run| {
+                let link = run.called_by.as_ref();
+                link.is_some_and(|link| call::orphaned(store, link))
+            })
+            .map(|run| run.id)
+            .collect();
+        for run_id in orphans {
+            let writer = self.store.writer(name)?;
+            let run = self.store.run(name, &run_id)?;
+            let items = call::cancel(&writer, &run)?;
+            drop(writer);
+            for item in items {
+                self.executor.take_over(name, &run_id, &item);
+            }
+        }
+        Ok(())
     }
 
     fn sweep(&mut self, automation: &Automation, now: Timestamp) -> Result<(), String> {

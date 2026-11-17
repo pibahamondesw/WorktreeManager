@@ -1470,6 +1470,7 @@ steps:
     assert_eq!(effects(&run, "ship"), [EffectStatus::Executed]);
 }
 
+mod calls;
 mod campaign;
 mod decisions;
 mod operator;

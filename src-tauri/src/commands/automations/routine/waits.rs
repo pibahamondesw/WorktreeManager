@@ -14,6 +14,7 @@ use super::super::store::events::{
     StepOutcome,
 };
 use super::super::wait::{self, parked_on, Ended, WaitLog, Watch, WatchScripts};
+use super::calls::call_ended;
 use super::commands::{Item, ItemScope};
 use super::{
     failed, render_partially, run_variables, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor,
@@ -55,6 +56,9 @@ impl RoutineExecutor {
         let step = definition.steps.iter().find(|step| step.id == step_id);
         let Some(step) = step else { return Ok(true) };
         let log = WaitLog::of(&history, item, &step_id, attempt);
+        if let StepKind::Call(_) = step.kind {
+            return Ok(log.armed.is_none() || call_ended(&self.store, &log, now_ms()).is_some());
+        }
         let task = match &step.kind {
             StepKind::Wait(WaitStep::Event { .. }) => self.waiting_task(&run, item),
             _ => None,
@@ -286,7 +290,11 @@ impl ItemSteps<'_> {
     }
 
     /// The answer or signal becomes the attempt's result, and edited params the item's data.
-    fn ended(&mut self, request: &StepRequest, ended: Ended) -> Result<StepReport, String> {
+    pub(super) fn ended(
+        &mut self,
+        request: &StepRequest,
+        ended: Ended,
+    ) -> Result<StepReport, String> {
         let process_end = if ended.timed_out() {
             ProcessEnd::TimedOut
         } else {
@@ -331,7 +339,7 @@ fn goes_on_pinned(item: &ItemState) -> bool {
 }
 
 /// Whether `definition` still has the step the item waits on, with its kind: an `approval`
-/// armed with its title, else a `wait`.
+/// armed with its title, a `call` armed with its run, else a `wait`.
 fn keeps_its_wait(
     definition: &AutomationDefinition,
     history: &[LoggedEvent],
@@ -344,9 +352,14 @@ fn keeps_its_wait(
             .find(|armed| armed.step == step_id && armed.attempt == attempt)
             .and_then(|armed| armed.wait.as_ref());
         let approval = armed.is_some_and(|wait| wait.title.is_some());
-        let rests = |step: &Step| matches!(step.kind, StepKind::Wait(_) | StepKind::Approval(_));
-        let asks = |step: &Step| matches!(step.kind, StepKind::Approval(_));
-        let kept = |step: &Step| step.id == step_id && rests(step) && asks(step) == approval;
+        let call = armed.is_some_and(|wait| wait.call.is_some());
+        let same_kind = |step: &Step| match step.kind {
+            StepKind::Approval(_) => approval,
+            StepKind::Call(_) => call,
+            StepKind::Wait(_) => !approval && !call,
+            _ => false,
+        };
+        let kept = |step: &Step| step.id == step_id && same_kind(step);
         definition.steps.iter().any(kept)
     })
 }
@@ -376,7 +389,7 @@ fn scripts<'a>(
     }
 }
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_millis() as u64)

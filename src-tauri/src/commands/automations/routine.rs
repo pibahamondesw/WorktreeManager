@@ -6,6 +6,7 @@
 
 mod app;
 mod branch;
+mod calls;
 mod campaign;
 mod commands;
 mod leases;
@@ -436,11 +437,15 @@ impl RoutineExecutor {
             return Ok(());
         }
         log.append(RunEvent::Started)?;
+        let called_by = self
+            .store
+            .run(&request.automation, &request.run_id)?
+            .called_by;
         let item = Item {
             id: ROUTINE_ITEM.into(),
             version: definition.hash.clone(),
-            title: None,
-            data: Default::default(),
+            data: called_inputs(payload, called_by.is_some()),
+            title: called_by.and_then(|link| link.title),
         };
         log.append(RunEvent::ItemCreated {
             item: item.id.clone(),
@@ -460,13 +465,20 @@ impl RoutineExecutor {
         self.finish_routine(&drive)
     }
 
-    /// Drives the routine's item and ends the run with it, unless the app quits meanwhile.
+    /// Drives the routine's item and ends the run with it, unless the app quits meanwhile. A
+    /// called run that ends wakes its caller at once.
     fn finish_routine(&self, drive: &ItemDrive) -> Result<(), String> {
         let ending = self.drive_item(drive)?.1;
         if self.halted() {
             return Ok(());
         }
-        self.finish(drive.request, ending)
+        self.finish(drive.request, ending)?;
+        let request = drive.request;
+        let run = self.store.run(&request.automation, &request.run_id)?;
+        if ending != Ending::Waiting && run.called_by.is_some() {
+            self.wake_ready();
+        }
+        Ok(())
     }
 
     /// Keeps the definition's text, so a retry can go back to it once the file changes.
@@ -612,6 +624,7 @@ impl RoutineExecutor {
             takeovers: &self.takeovers,
             key,
             handback_note: None,
+            executor: self,
         };
         steps.resume_from(history);
         let pipeline = Pipeline {
@@ -638,6 +651,14 @@ impl RoutineExecutor {
             if let Some(task) = self.reattached_task(definition, request)? {
                 return Ok((task, false));
             }
+        }
+        let run = self.store.run(&request.automation, &request.run_id);
+        let caller_task = run
+            .ok()
+            .filter(|run| run.called_by.is_some())
+            .and_then(|run| run.trigger?.task_id);
+        if let Some(task_id) = caller_task {
+            return Ok((self.tasks.get(&task_id)?, false));
         }
         let task = self.resolve_task(definition, request)?;
         Ok((task, definition.target.task == TaskMode::PerRun))
@@ -788,6 +809,8 @@ struct ItemSteps<'a> {
     key: &'a DrivenItem,
     /// What the owner wrote handing the item back, for its next agent step.
     handback_note: Option<String>,
+    /// Starts the runs `call` steps wait on.
+    executor: &'a RoutineExecutor,
 }
 
 impl StepExecutor for ItemSteps<'_> {
@@ -848,6 +871,7 @@ impl<'a> ItemSteps<'a> {
                         leases.env.clone(),
                     )),
                     StepKind::Publish(effects) => self.publish(request, effects, &leases.env),
+                    StepKind::Call(call) => self.call(request, call),
                     _ => self.wait(request),
                 },
             },
@@ -1408,6 +1432,14 @@ fn run_deadline(definition: &AutomationDefinition, request: &RunRequest) -> Inst
     let now = Timestamp::now();
     let remaining: Duration = deadline.duration_since(now).try_into().unwrap_or_default();
     Instant::now() + remaining
+}
+
+/// A called run's item works on the inputs its call passed, which it carries as its payload.
+fn called_inputs(payload: Option<&Value>, called: bool) -> serde_json::Map<String, Value> {
+    match payload {
+        Some(Value::Object(inputs)) if called => inputs.clone(),
+        _ => Default::default(),
+    }
 }
 
 fn per_run_branch(target: &Target, request: &RunRequest) -> Result<String, TaskFailure> {

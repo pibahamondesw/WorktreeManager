@@ -9,6 +9,7 @@ use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp, Zoned};
 use serde_json::{Map, Value};
 
+use super::call::{call_step, check_output, inputs, Caller};
 use super::circleci_trigger::circleci_event_trigger;
 use super::fields::{
     boolean, choice, duration, duration_secs, each, each_entry, index, integer, is_automation_name,
@@ -135,7 +136,10 @@ pub(super) fn definition(
         manual_trigger(),
         |report, value, field| trigger(report, context.env, value, field),
     );
-    let events_supply_task = only_app_events(&frontmatter["trigger"]["event"]);
+    let callable = frontmatter
+        .get("inputs")
+        .is_some_and(|inputs| !inputs.is_null());
+    let events_supply_task = only_app_events(&frontmatter["trigger"]["event"]) || callable;
     let target = fields.require(report, "target", |report, value, field| {
         target(report, context.env, value, field, events_supply_task)
     });
@@ -187,7 +191,12 @@ pub(super) fn definition(
     let selector = fields.optional(report, "selector", |report, value, field| {
         selector(report, &scope, value, field)
     });
+    let inputs = fields.optional(report, "inputs", inputs);
+    let output = fields.optional(report, "output", string);
     fields.finish(report);
+    if let Some(Some(output)) = &output {
+        check_output(report, output, steps.as_deref());
+    }
     check_instructions(report, instructions, steps.as_deref());
     check_output_references(report, frontmatter, steps.as_deref());
     let mut target = target;
@@ -226,6 +235,8 @@ pub(super) fn definition(
         authorization: authorization?,
         report: report_policy?,
         completion: completion?,
+        inputs: inputs?,
+        output: output?,
         instructions: instructions.into(),
         hash,
         folder: context.folder.to_path_buf(),
@@ -1064,6 +1075,7 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         ("wait", fields.get("wait")),
         ("approval", fields.get("approval")),
         ("publish", fields.get("publish")),
+        ("call", fields.get("call")),
     ];
     let present: Vec<_> = kinds
         .into_iter()
@@ -1092,7 +1104,7 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
             report.error(
                 IssueKind::Invalid,
                 field,
-                "must have exactly one of agent, command, wait, approval or publish",
+                "must have exactly one of agent, command, wait, approval, publish or call",
             );
             None
         }
@@ -1104,11 +1116,13 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         StepKind::Agent(_) => Some(AGENT_STEP_TIMEOUT_SECS),
         StepKind::Command(_) => Some(COMMAND_STEP_TIMEOUT_SECS),
         StepKind::Publish(_) => Some(PUBLISH_STEP_TIMEOUT_SECS),
-        StepKind::Wait(_) | StepKind::Approval(_) => None,
+        StepKind::Wait(_) | StepKind::Approval(_) | StepKind::Call(_) => None,
     });
     let capacity = capacity?.unwrap_or(match kind {
         StepKind::Wait(_) | StepKind::Approval(_) => Capacity::Release,
-        StepKind::Agent(_) | StepKind::Command(_) | StepKind::Publish(_) => Capacity::Hold,
+        StepKind::Agent(_) | StepKind::Command(_) | StepKind::Publish(_) | StepKind::Call(_) => {
+            Capacity::Hold
+        }
     });
     Some(Step {
         label: label?.unwrap_or_else(|| id.clone()),
@@ -1225,7 +1239,20 @@ fn step_kind(
         "command" => command_step(report, scope, fields, value).map(StepKind::Command),
         "wait" => wait_step(report, scope, value, &field).map(StepKind::Wait),
         "approval" => approval_step(report, value, &field, timeout).map(StepKind::Approval),
+        "call" => call_step(report, &caller(scope), value, &field).map(StepKind::Call),
         _ => publish_step(report, scope, value, &field).map(StepKind::Publish),
+    }
+}
+
+fn caller<'a>(scope: &Scope<'a>) -> Caller<'a> {
+    Caller {
+        env: scope.context.env,
+        folder: scope.context.folder,
+        name: scope.context.folder_name,
+        repos: scope
+            .repos
+            .map(|repos| repos.iter().map(|repo| repo.id.clone()).collect()),
+        task: scope.task,
     }
 }
 
@@ -1851,7 +1878,7 @@ fn transitions<'a>(step: &'a Step, field: &str) -> Vec<(&'a Transition, String)>
     let on_reject = match &step.kind {
         StepKind::Agent(agent) => agent.on_reject.as_ref().map(|t| (t, "agent")),
         StepKind::Approval(approval) => approval.on_reject.as_ref().map(|t| (t, "approval")),
-        StepKind::Command(_) | StepKind::Wait(_) | StepKind::Publish(_) => None,
+        StepKind::Command(_) | StepKind::Wait(_) | StepKind::Publish(_) | StepKind::Call(_) => None,
     };
     if let Some((transition, kind)) = on_reject {
         transitions.push((transition, join(&join(field, kind), "on_reject")));

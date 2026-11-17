@@ -7,6 +7,7 @@ use super::fields::{duration_secs, is_step_id, string_list, template, Fields, Re
 use super::*;
 use crate::commands::agents::{permission::PermissionMode, AgentCapabilities, AgentDescriptor};
 
+mod call;
 mod selector_agent;
 mod step_outputs;
 mod task_create;

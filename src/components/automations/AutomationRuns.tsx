@@ -1,5 +1,5 @@
 import { useAutomationRuns } from "../../hooks/useAutomations";
-import { runDuration, runResult, runStartedAt } from "../../services/automations";
+import { runDuration, runResult, runSource, runStartedAt } from "../../services/automations";
 import { Button } from "../ui/Button";
 
 export function AutomationRuns({ name }: { name: string }) {
@@ -26,10 +26,7 @@ export function AutomationRuns({ name }: { name: string }) {
               <td className="py-1.5 pr-4 whitespace-nowrap" title={run.id}>
                 {runStartedAt(run).toLocaleString()}
               </td>
-              <td className="py-1.5 pr-4">
-                {run.trigger?.source ?? "unknown"}
-                {run.trigger?.test ? " · test" : ""}
-              </td>
+              <td className="py-1.5 pr-4">{runSource(run)}</td>
               <td className="py-1.5 pr-4">{runResult(run)}</td>
               <td className="py-1.5 whitespace-nowrap">{runDuration(run) ?? "—"}</td>
             </tr>

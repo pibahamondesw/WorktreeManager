@@ -13,6 +13,7 @@ import {
   toggleSummary,
   runDuration,
   runResult,
+  runSource,
   runStartedAt,
   triggerSummary,
 } from "./automations";
@@ -130,6 +131,21 @@ it("describes run results, start and duration", () => {
   );
   expect(runResult(run({ status: "failed" }))).toBe("Failed");
   expect(runResult(run({ status: "running" }))).toBe("Running");
+
+  expect(runSource(run())).toBe("manual");
+  expect(runSource(run({ trigger: null }))).toBe("unknown");
+  const called_by = {
+    automation: "campaign",
+    run_id: "1761800000000-12345678",
+    item: "a",
+    step: "implement",
+    attempt: 1,
+  };
+  const trigger = { source: "call", scheduled_for: null, test: true };
+  expect(runSource(run({ trigger, called_by }))).toBe("call from campaign run 12345678 · test");
+  expect(runSource(run({ trigger, called_by: { ...called_by, run_id: "r1" } }))).toBe(
+    "call from campaign run r1 · test"
+  );
 
   expect(runStartedAt(run()).getTime()).toBe(1_000);
   expect(runStartedAt(run({ claimed_at_ms: null })).getTime()).toBe(1761800000000);

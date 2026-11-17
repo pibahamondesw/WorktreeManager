@@ -16,10 +16,21 @@ export interface DraftStep {
 }
 
 export type EditableKind = "agent" | "command" | "wait" | "approval";
-type KindName = EditableKind | "publish";
+/** Kinds the editor keeps as written. */
+type WrittenKind = "publish" | "call";
+type KindName = EditableKind | WrittenKind;
 
 export const EDITABLE_KINDS: EditableKind[] = ["agent", "command", "wait", "approval"];
-const KIND_NAMES: KindName[] = [...EDITABLE_KINDS, "publish"];
+const KIND_NAMES: KindName[] = [...EDITABLE_KINDS, "publish", "call"];
+
+/** Why a step of a kind the editor keeps as written has no fields here. */
+export const WRITTEN_KIND_NOTES: Record<WrittenKind, string> = {
+  publish: "Publish effects are edited in AUTOMATION.md and kept as written.",
+  call: "The called automation and its inputs are edited in AUTOMATION.md and kept as written.",
+};
+
+export const isWrittenKind = (kind: KindName | null): kind is WrittenKind =>
+  kind === "publish" || kind === "call";
 /** Step keys that only mean something for one kind, dropped when the kind changes. */
 const KIND_SCOPED_KEYS: Partial<Record<KindName, string[]>> = {
   command: ["repo", "env", "bind", "after"],
@@ -204,6 +215,14 @@ function previewKind(step: WrittenStep): StepKind {
         onReject: previewTransition(field("on_reject")),
       },
     };
+  }
+  if (kind === "call") {
+    const inputs = isMap(field("inputs")) ? (field("inputs") as Record<string, unknown>) : {};
+    const written = Object.entries(inputs).map(([name, value]): [string, string] => [
+      name,
+      String(value),
+    ]);
+    return { call: { automation: text(field("automation")), inputs: Object.fromEntries(written) } };
   }
   if (kind === "publish") {
     const effects = Array.isArray(config) ? config : [config];

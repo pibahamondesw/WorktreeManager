@@ -164,6 +164,8 @@ describe("preview", () => {
           { id: "publish", publish: ["git.push", { "github.pr_create": { draft: true } }, 3] },
           { id: "single", publish: "wtm.task_log" },
           { id: "broken", command: "not a list" },
+          { id: "delegate", call: { automation: "fix", inputs: { issue: "{item.id}", n: 2 } } },
+          { id: "bare", call: { automation: "fix" } },
         ],
       })
     );
@@ -199,6 +201,10 @@ describe("preview", () => {
     });
     expect(preview[7].kind).toEqual({ publish: [{ effect: "wtm.task_log" }] });
     expect(preview[8].kind).toEqual({ command: { command: [], repo: "" } });
+    expect(preview[9].kind).toEqual({
+      call: { automation: "fix", inputs: { issue: "{item.id}", n: "2" } },
+    });
+    expect(preview[10].kind).toEqual({ call: { automation: "fix", inputs: {} } });
     expect(previewSteps(draftSteps({ hash: "h", steps: [{ id: "x", wait: {} }] }))[0].kind).toEqual(
       {
         wait: { signal: "" },

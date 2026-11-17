@@ -22,12 +22,12 @@ Terms follow Compose's `CONTEXT.md` where both products have the concept. The ma
 | **Routine**                        | The simple shape: no `selector`. Each run has one implicit item and usually one agent step.                                                                                                       | Compose only has this shape. Compose avoids "routine" as a synonym of Automation; in WTM it names a shape, never the automation itself. |
 | **Campaign**                       | The pipeline shape: a `selector` emits items and every item runs the steps. Long-lived, bounded by pools and budgets, finished by `completion`.                                                   | No equivalent.                                                                                                                          |
 | **Trigger**                        | A condition that fires an automation on its own: `schedule`, `event` or `cli`.                                                                                                                    | Same. Compose has schedule, Slack, GitHub and Linear triggers.                                                                          |
-| **Run source**                     | What fired a run: `manual`, `schedule`, `event`, `cli` or `capacity`. Firing by hand is a run source, not a trigger.                                                                              | Same, plus `cli`.                                                                                                                       |
+| **Run source**                     | What fired a run: `manual`, `schedule`, `event`, `cli`, `capacity` or `call`. Firing by hand is a run source, not a trigger.                                                                            | Same, plus `cli`.                                                                                                                       |
 | **Slot**                           | One time a schedule names.                                                                                                                                                                        | Same, but see catch-up below.                                                                                                           |
 | **Tick**                           | One scheduler pass, once a minute: sweep, then fire due slots.                                                                                                                                    | Same.                                                                                                                                   |
 | **Run**                            | One firing of an automation. A firing that may not start is still recorded, as a skipped run with a skip reason.                                                                                  | Same, but a WTM run may produce many items and sessions.                                                                                |
 | **Item**                           | One unit of work inside a run: in a campaign, one selector entry with its tracker issue, WTM task, worktrees and PR; in a routine, the implicit single item. Identified by `id` + `version`.      | No equivalent.                                                                                                                          |
-| **Step**                           | One node of the pipeline an item goes through: `agent`, `command`, `wait`, `approval` or `publish`. Each execution is a step attempt.                                                             | No equivalent.                                                                                                                          |
+| **Step**                           | One node of the pipeline an item goes through: `agent`, `command`, `wait`, `approval`, `publish` or `call`. Each execution is a step attempt.                                                           | No equivalent.                                                                                                                          |
 | **Receipt**                        | The record of a `command` step attempt: argv, exit code, duration, log and the Git fingerprint of the worktree it ran on.                                                                         | No equivalent.                                                                                                                          |
 | **Pool**                           | Shared capacity: built-in per-automation limits (`active`, `open_prs`) and global lease pools shared by all automations and manual sessions (heavy checks, test slots).                           | Compose's run cap is the closest.                                                                                                       |
 | **Budget**                         | A per-item limit on active time, repair rounds or waiting; exhausting it blocks the item with the cause.                                                                                          | Execution deadline is the closest.                                                                                                      |
@@ -94,6 +94,8 @@ A newly discovered automation starts paused with reason `new`; the user enables 
 | `authorization` | object  | `{allow: [], deny: []}`    | See [Authorization](#authorization).                                                                      |
 | `report`        | object  | see below                  | See [Report](#report).                                                                                    |
 | `completion`    | object  | none                       | See [Completion](#completion).                                                                            |
+| `inputs`        | map     | none                       | Present ⇒ other automations may call it. See [`call`](#call).                                             |
+| `output`        | step id | the step that completed it | The step whose output a call gets. See [`call`](#call).                                                   |
 
 There is one pipeline key, `steps`, for both shapes: in a routine the steps run once for the implicit item, in a campaign once per item. When `steps` is omitted the automation has a single agent step `{id: main, agent: {}}` that runs the instructions with the top-level agent.
 
@@ -198,7 +200,7 @@ With `source: circleci`, the app polls CircleCI's API v2 with the owner's person
 | `repos`         | list of strings                                 | required                  | Non-empty; repositories of that workspace. Each run or item task gets one worktree per listed repository, as for any multi-repo task. Optional with `task: none`. |
 | `base`          | string or map                                   | `origin/<default branch>` | Ref new branches start from and repo-scoped definitions are read from. A map sets it per repository. A base that does not resolve fails task creation.            |
 | `task`          | `per-run` \| `per-item` \| `existing` \| `none` | `per-run`                 | See below.                                                                                                                                                        |
-| `existing_task` | string                                          | none                      | Task id for `task: existing`. May be omitted only when the trigger supplies a task (app events).                                                                  |
+| `existing_task` | string                                          | none                      | Task id for `task: existing`. May be omitted only when the trigger supplies a task (app events) or the automation declares `inputs` (calls supply it).                                                                  |
 | `branch`        | template                                        | see below                 | Branch name for created tasks. A rendered name git rejects fails task creation with `branch "<name>" is not a valid git branch name`.                             |
 
 - `per-run`: each run creates a task named after the automation and run. Default branch `wtm/{automation}/{run.short_id}`. Routines only.
@@ -230,7 +232,7 @@ The top-level `agent` is the default for every agent step; an agent step can ove
 
 ### Steps
 
-Each step is a map with an `id` and **exactly one** kind key: `agent`, `command`, `wait`, `approval` or `publish`.
+Each step is a map with an `id` and **exactly one** kind key: `agent`, `command`, `wait`, `approval`, `publish` or `call`.
 
 Common fields:
 
@@ -363,6 +365,40 @@ Side effects the engine executes on the owner's behalf ("safe outputs"); the age
 
 Before retrying an interrupted effect, the engine reconciles Linear, GitHub and WTM through the key above and reuses what already succeeded. A failure in auxiliary cleanup (archiving a note, an editor that does not open) is recorded as a warning on the effect and never turns a successful effect into a failure.
 
+#### `call`
+
+Runs another automation, the **callee**, as a sub-automation of the item and waits for its output, for flows several automations share (implement an issue, prepare its PR, wait for the owner's LGTM).
+
+| Field        | Type             | Default  | Rule                                                                   |
+| ------------ | ---------------- | -------- | ---------------------------------------------------------------------- |
+| `automation` | string           | required | Name of a routine of the automations directory that declares `inputs`. |
+| `inputs`     | map of templates | `{}`     | One entry per input; the callee's required inputs must be present.     |
+| `timeout`    |                  | none     | Set on the step. Expiry fails the step with cause `timeout`.           |
+
+```yaml
+# The callee, implement-issue/AUTOMATION.md
+inputs:
+  issue: { required: true, description: Linear issue to implement }
+  notes: {}
+output: publish
+target: { workspace: Acme, repos: [app], task: existing }
+
+# A step of the caller
+- id: implement
+  call:
+    automation: implement-issue
+    inputs: { issue: "{item.data.issue}", notes: "{steps.triage.result.summary}" }
+  on_fail: block
+```
+
+- **Callable automations.** An automation is callable when it declares `inputs`, a map from each input name (as step ids) to `{required: bool (default false), description}`; `inputs: {}` takes none. Only routines can be called. Its `output` names the step whose output a call gets; without it, the output of the step whose success completed the callee's item. A callee may still be fired by its own triggers.
+- **Validation.** The callee is read from the automations directory: it must exist, be a routine and declare `inputs`; the call may only pass inputs it declares and must pass its required ones; and the repositories the callee targets must be among the caller's `target.repos`. Calls that lead back to the caller (A calls B calls A, or A calls itself) are a cycle and both definitions are invalid. Since the callee can change after the caller was validated, the call checks it again when it starts.
+- **The called run.** The call claims one run of the callee per attempt (run source `call`, trigger key `call:<automation>:<run>:<item>:<step>:<attempt>`), so a restart never starts a second one, and starts it whether the callee is paused or at its `concurrency.max_runs`: the caller's pools bound it. It is a Test run when the caller's is. It works in the caller item's task, whatever its `target.task` says, so its steps see the worktrees, branch and PR the caller works on; a callee with `target.task: none` works without one, and only such callees can be called from a step without a task. A callee's `wtm.task_create` moves its own later steps to the task it creates, never the caller's. Its item takes the caller item's title, its data are the inputs, rendered as strings with the caller item's variables, and the run carries them as its payload. The run records `called_by` (the caller's automation, run, item, step and attempt, and how deeply calls nest), and the caller's attempt records the run it started in its `wait_armed` (`call`); the run detail and the Pipeline tab show both.
+- **Waiting.** A call waits durably, as a `wait` does: it parks the item and is re-checked on every tick and as soon as the called run ends, and re-arms from the log after a restart. It holds capacity by default (`capacity: hold`), so the caller's `pools.active` also bounds how many called runs work at once.
+- **Outcome.** A called item that completes succeeds the step, with its output as the step's output. One that fails, blocks or defers, or a called run that fails, is canceled or skipped, fails the step with cause `call_failed: <cause>`, `call_blocked: <cause>`, `call_deferred: <cause>`, `call_canceled` or `call_skipped: <reason>`, so `on_fail` applies. A called item the owner took over keeps the call waiting until it is handed back. A call that cannot start fails with `call_unavailable` (the callee is invalid, gone or no longer callable), `call_input` (an input it does not declare, a required one missing or one without a value), or `call_depth`; one whose run is gone fails with `call_lost`.
+- **Cancellation.** A called run whose caller no longer waits on it (the step timed out, the caller's item moved on, failed or was retried, or the caller's run failed or was canceled) is canceled on the next tick: its open items end `canceled` with cause `caller_ended` and its agent turn in progress is interrupted. Calls it made in turn are canceled the same way.
+- **Depth.** Calls nest at most 5 deep; a deeper one fails with `call_depth`, so a cycle no validation saw still ends.
+
 #### Step outputs
 
 Each step exposes its **output** to the steps after it: the result of its latest successful (or `noop`) attempt, so after a retry or a `goto` loop it is the newest one. An attempt that succeeds without a result leaves the step without output.
@@ -374,6 +410,7 @@ Each step exposes its **output** to the steps after it: the result of its latest
 | `wait`     | The signal's payload or the watcher's result.                                                                                                                          |
 | `approval` | The answer: `decision`, `comment` and `params`.                                                                                                                        |
 | `publish`  | A map from each effect name to its `status` and, when it produced one, its `reference` (PR URL, issue identifier, task id or pushed commit); `wtm.task_create` adds `branch` and `worktrees`. |
+| `call`     | The callee's output: the output of its `output` step, or of the step that completed it.                                                                                |
 
 Templated fields of a step and agent `prompt`s reference an output as `{steps.<id>.result}`, or a key inside it as `{steps.<id>.result.<key>}` with any depth and array positions as keys (`{steps.triage.result.repos.0}`). A string renders as written, anything else as JSON. Validation rejects a reference outside `steps`, to a step that does not exist or does not come earlier in `steps`, or to an agent step without `result`; at run time a reference without a value fails the step, as any other variable. In an agent prompt each value is wrapped as untrusted data. Commands, and the scripts of `command` waits, also find every output in the JSON file `WTM_STEP_OUTPUTS`, `{"<id>": {"result": …}}`. Outputs are derived from the run log, so they survive restarts and runs recorded before them load unchanged.
 
@@ -628,7 +665,7 @@ Outcome of a completed run: routines `noop`, `reported` (has findings) or `needs
 | ----------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `queued`    | active   | Created, retried or handed back, waiting for capacity (cause `awaiting_slot`) or setup.                                                |
 | `active`    | active   | Running a step that holds capacity. Phase = step id.                                                                                   |
-| `waiting`   | resting  | On a `wait` or `approval` step that releases capacity.                                                                                 |
+| `waiting`   | resting  | On a `wait`, `approval` or `call` step that releases capacity.                                                                         |
 | `paused`    | resting  | Operator pause or `human_takeover`; resumed by hand back.                                                                              |
 | `blocked`   | resting  | Needs the human: budget exhausted, `blocked` verdict, cap reached, dirty task on delete. Carries cause and evidence; resumed by retry. |
 | `deferred`  | resting  | Set aside on purpose; resumed by the operator.                                                                                         |
