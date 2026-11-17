@@ -15,7 +15,7 @@ A condensed v1 summary for authors. The contract, with every rule and default, i
 - The folder name equals `name`. Paths in the definition are relative to the folder and may not leave it.
 - The body is trusted instructions included in every agent step (≤ 15,000 characters). It may be empty only if every agent step has a `prompt` or `skill`.
 - Keys are `snake_case`; unknown keys are errors except `x-…`. Durations: `90s`, `45m`, `2h`, `7d`.
-- Templates (`{var}`, only in fields marked templated): `{automation}`, `{run.id}`, `{run.short_id}`, `{run.scheduled_for}`, `{item.id}`, `{item.version}`, `{item.title}`, `{item.data.<key>}`, `{tracker.issue}`, `{task.id}`, `{task.branch}`, `{pr.number}`, `{pr.url}`.
+- Templates (`{var}`, only in fields marked templated): `{automation}`, `{run.id}`, `{run.short_id}`, `{run.scheduled_for}`, `{item.id}`, `{item.version}`, `{item.title}`, `{item.data.<key>}`, `{tracker.issue}`, `{task.id}`, `{task.branch}`, `{pr.number}`, `{pr.url}`, and in steps `{steps.<id>.result…}`.
 - Machine state (enabled, runs, cursors, decisions) lives in app data, never in the file. A new automation starts paused.
 
 ## Top-level fields
@@ -70,14 +70,15 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 
 | Kind       | Fields                                                                                                                                                            | Default timeout |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `agent`    | `skill`, `prompt` (not templated), agent overrides, `fresh_session`, `readonly` (needs `fresh_session: true`), `result: verdict` or `schemas/….json`, `on_reject` | `60m`           |
+| `agent`    | `skill`, `prompt` (only `{steps.…}` filled in), agent overrides, `fresh_session`, `readonly` (needs `fresh_session: true`), `result: verdict` or `schemas/….json`, `on_reject` | `60m`           |
 | `command`  | argv list of templates (`scripts/…`, absolute path or `PATH` name), `repo`, `env`, `bind: git_fingerprint`, `after`                                               | `30m`           |
 | `wait`     | exactly one of `time`, `signal` or `event: {watcher: pr_checks \| pr_integrated \| command, …}`                                                                   | none            |
 | `approval` | `title` (template), `detail`, `params`, `default: approve \| reject` (required with the step's `timeout`), `on_reject`                                            | none            |
 | `publish`  | one effect or a list, each `name` or `{name: {params}}`                                                                                                           | `30m`           |
 
 - Agent steps of an item share one session unless `fresh_session: true`. The `verdict` result is `{verdict: pass | reject | blocked | defer | noop, summary, findings}`: `reject` takes `on_reject`, `blocked`/`defer` rest the item, `noop` succeeds silently. Without `result`, a final message `NOOP` is a noop.
-- Commands get `WTM_AUTOMATION`, `WTM_RUN_ID`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION`, `WTM_ITEM_DATA` (a JSON file), `WTM_TASK_ID`, `WTM_WORKTREE` and lease variables. Exit 0 succeeds.
+- Commands get `WTM_AUTOMATION`, `WTM_RUN_ID`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION`, `WTM_ITEM_DATA` (a JSON file), `WTM_STEP_OUTPUTS` (a JSON file of earlier steps' outputs), `WTM_STEP_RESULT` (where to write this step's JSON result), `WTM_TASK_ID`, `WTM_WORKTREE` and lease variables. Exit 0 succeeds.
+- Later steps reference a step's output (agent structured result, command result, wait/approval answer, publish effects) as `{steps.<id>.result}` or `{steps.<id>.result.<key>}` in templated fields and agent prompts; only earlier steps can be referenced.
 - Watchers: `pr_checks` (`required`, `ignore`, `expect`, `bot_lgtm`, `unresolved_threads`, `request_review_comment`) waits for green CI on the pushed HEAD; `pr_integrated` waits for the PR to land; `command` polls a script that prints `{"status": "pending" | "success" | "fail"}`.
 - Answer signals and approvals with `wtm automation signal <run_id> <step> <json>`.
 
