@@ -510,6 +510,7 @@ fn a_waiting_item_fails_when_its_step_is_gone_or_its_automation_is_no_longer_a_c
     for changed in [
         format!("{CAMPAIGN}steps:\n  - id: renamed\n    wait: {{ signal: deploy }}\n"),
         format!("{TARGET}steps:\n{KEPT_WAIT}"),
+        format!("{CAMPAIGN}steps:\n  - id: go\n    agent: {{}}\n"),
     ] {
         let (harness, run_id) = waiting_on_a_changed_definition(KEPT_WAIT);
         harness.scratch.define(&changed);
