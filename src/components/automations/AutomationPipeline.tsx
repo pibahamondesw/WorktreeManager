@@ -10,8 +10,6 @@ import {
   runStartedAt,
 } from "../../services/automations";
 import {
-  EdgeKind,
-  PipelineEdge,
   StepProgress,
   StepState,
   pipelineLayout,
@@ -24,17 +22,15 @@ import {
 } from "../../services/automationPipeline";
 import { conversationTarget } from "../../services/automationInbox";
 import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { AutomationStepsEditor } from "./AutomationStepsEditor";
 import { useOpenConversation } from "./openConversation";
 import { AutomationStepDetail } from "./AutomationStepDetail";
 import { AutomationPermissions } from "./AutomationPermissions";
 import { AutomationItemControls } from "./AutomationItemControls";
+import { JumpList, LANE_WIDTH, NODE_HEIGHT, NODE_WIDTH, PipelineJumps } from "./PipelineJumps";
 
 const LIVE_REFRESH_MS = 2000;
-const NODE_HEIGHT = 56;
-const ROW_PITCH = NODE_HEIGHT + 24;
-const NODE_WIDTH = 288;
-const LANE_WIDTH = 14;
-const ARROW_OFFSET = 6;
 
 const STATE_BADGES: Record<StepState, "default" | "success" | "warning" | "danger" | "accent"> = {
   not_started: "default",
@@ -48,18 +44,6 @@ const STATE_BADGES: Record<StepState, "default" | "success" | "warning" | "dange
   skipped: "default",
 };
 
-const EDGE_CLASSES: Record<EdgeKind, string> = {
-  next: "text-text-muted",
-  on_fail: "text-danger",
-  on_reject: "text-warning",
-};
-
-const EDGE_LABELS: Record<EdgeKind, string> = {
-  next: "next",
-  on_fail: "on fail",
-  on_reject: "on reject",
-};
-
 const humanize = (value: string) => value.replace(/_/g, " ");
 
 interface AutomationPipelineProps {
@@ -67,9 +51,40 @@ interface AutomationPipelineProps {
   steps: PipelineStep[];
   /** The definition's target repositories, to name a command step's repository. */
   repos?: TargetRepo[];
+  /** Called after the editor saved the definition. */
+  onChanged?: () => void;
 }
 
-export function AutomationPipeline({ name, steps, repos = [] }: AutomationPipelineProps) {
+export function AutomationPipeline({
+  name,
+  steps,
+  repos = [],
+  onChanged,
+}: AutomationPipelineProps) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <AutomationStepsEditor
+        name={name}
+        onClose={() => setEditing(false)}
+        onSaved={() => {
+          setEditing(false);
+          onChanged?.();
+        }}
+      />
+    );
+  }
+  return <PipelineRuns name={name} steps={steps} repos={repos} onEdit={() => setEditing(true)} />;
+}
+
+interface PipelineRunsProps {
+  name: string;
+  steps: PipelineStep[];
+  repos: TargetRepo[];
+  onEdit: () => void;
+}
+
+function PipelineRuns({ name, steps, repos, onEdit }: PipelineRunsProps) {
   const { runs, error, loading, reload } = useAutomationRuns(name);
   const [runId, setRunId] = useState<string | null>(null);
   const [itemId, setItemId] = useState<string | null>(null);
@@ -116,6 +131,9 @@ export function AutomationPipeline({ name, steps, repos = [] }: AutomationPipeli
           </select>
         )}
         {live && <span className="text-success">Live</span>}
+        <Button variant="secondary" className="ml-auto h-7 px-3 text-xs" onClick={onEdit}>
+          Edit steps
+        </Button>
       </div>
       {run && item && (
         <AutomationItemControls
@@ -321,84 +339,5 @@ function StepNode({ step, progress, open, focusable, onOpen, onKeyDown }: StepNo
         {attempts > 1 && <span className="text-[10px] text-text-muted">×{attempts}</span>}
       </span>
     </button>
-  );
-}
-
-interface PipelineJumpsProps {
-  edges: PipelineEdge[];
-  steps: PipelineStep[];
-  lanes: number;
-  traversed: Map<string, number> | null;
-}
-
-const jumpTimes = (
-  edge: PipelineEdge,
-  steps: PipelineStep[],
-  traversed: Map<string, number> | null
-) => traversed?.get(transitionKey({ from: steps[edge.from].id, kind: edge.kind })) ?? 0;
-
-const jumpLabel = (edge: PipelineEdge, steps: PipelineStep[]) =>
-  `${steps[edge.from].id} → ${steps[edge.to].id} ${EDGE_LABELS[edge.kind]}${
-    edge.limit ? ` (${edge.limit})` : ""
-  }`;
-
-function JumpList({ edges, steps, traversed }: Omit<PipelineJumpsProps, "lanes">) {
-  if (edges.length === 0) return null;
-  return (
-    <ul aria-label="Jumps" className="space-y-0.5 text-xs text-text-muted select-text">
-      {edges.map((edge) => {
-        const times = jumpTimes(edge, steps, traversed);
-        return (
-          <li key={`${edge.from}-${edge.kind}`} className="flex items-baseline gap-2">
-            <span className={`font-mono ${times > 0 ? "text-text-primary" : ""}`}>
-              {steps[edge.from].id} → {steps[edge.to].id}
-            </span>
-            <span className={EDGE_CLASSES[edge.kind]}>{EDGE_LABELS[edge.kind]}</span>
-            {edge.limit && <span>{edge.limit}</span>}
-            {traversed && <span>{times > 0 ? `taken ×${times}` : "not taken"}</span>}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function PipelineJumps({ edges, steps, lanes, traversed }: PipelineJumpsProps) {
-  if (edges.length === 0) return null;
-  const center = (index: number) => index * ROW_PITCH + NODE_HEIGHT / 2;
-  return (
-    <svg
-      aria-hidden="true"
-      className="absolute top-0 pointer-events-none overflow-visible"
-      style={{ left: NODE_WIDTH }}
-      width={lanes * LANE_WIDTH + 12}
-      height={steps.length * ROW_PITCH - (ROW_PITCH - NODE_HEIGHT)}
-    >
-      {edges.map((edge) => {
-        const x = (edge.lane + 1) * LANE_WIDTH;
-        const start = center(edge.from) - ARROW_OFFSET;
-        const end = center(edge.to) + ARROW_OFFSET;
-        const label = jumpLabel(edge, steps);
-        const times = jumpTimes(edge, steps, traversed);
-        return (
-          <g
-            key={`${edge.from}-${edge.kind}`}
-            data-edge={label}
-            data-taken={traversed ? times : undefined}
-            className={`${EDGE_CLASSES[edge.kind]} ${traversed && times === 0 ? "opacity-40" : ""}`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={times > 0 ? 2 : 1.25}
-          >
-            <title>{label}</title>
-            <path
-              d={`M0 ${start} H${x} V${end} H2`}
-              strokeDasharray={edge.kind === "next" ? undefined : "4 3"}
-            />
-            <path d={`M7 ${end - 4} L2 ${end} L7 ${end + 4}`} />
-          </g>
-        );
-      })}
-    </svg>
   );
 }

@@ -116,6 +116,7 @@ export function AutomationDetail({ summary, editorApp, onChanged }: AutomationDe
               name={entry.name}
               steps={entry.definition.steps}
               repos={entry.definition.target?.repos}
+              onChanged={changed}
             />
           ) : (
             <p className="text-sm text-text-muted">Unavailable until the definition is valid</p>
