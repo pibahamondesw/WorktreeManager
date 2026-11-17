@@ -369,12 +369,12 @@ A verdict `blocked` blocks the item, `defer` defers it and `noop` counts as succ
 
 ### Selector
 
-Present only in campaigns. A deterministic script decides what to work on. Its argv templates get the run variables, and it also sees `WTM_AUTOMATION` and `WTM_RUN_ID`.
+Present only in campaigns. A deterministic script decides what to work on, or a declarative source lists the items without one (see [Item sources](#item-sources)): a selector sets exactly one of `run`, `github`, `linear` or `file`. The script's argv templates get the run variables, and it also sees `WTM_AUTOMATION` and `WTM_RUN_ID`.
 
 | Field           | Type              | Default        | Rule                                                                                                                                                                                              |
 | --------------- | ----------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run`           | list of templates | required       | argv, as in `command`. Runs in the automation folder with each repository's main checkout as `WTM_BASE_<REPO>` (the name uppercased, other characters as `_`); it never runs in an item worktree. |
-| `timeout`       | duration          | `5m`           |                                                                                                                                                                                                   |
+| `run`           | list of templates | one source     | argv, as in `command`. Runs in the automation folder with each repository's main checkout as `WTM_BASE_<REPO>` (the name uppercased, other characters as `_`); it never runs in an item worktree. |
+| `timeout`       | duration          | `5m`           | Only with `run`.                                                                                                                                                                                  |
 | `max_new_items` | integer ≥ 1       | `pools.active` | New items per run.                                                                                                                                                                                |
 | `exclusive_on`  | list of keys      | `[]`           | `item.data` keys whose values may not overlap between active items (for example `files`, `rules`). An overlapping candidate is skipped with `capped`.                                             |
 
@@ -393,6 +393,41 @@ The engine keeps candidates in the selector's order and records the others on th
 - `capped`: no free capacity (`pools.active` minus queued and active items) or `max_new_items` reached; an item with the same `id` and another version is still active or resting; or a value of an `exclusive_on` key is held by an active or resting item or by a candidate already kept. List values compare element by element.
 
 Each kept candidate becomes a `queued` item of the run, with its `title` and `data`.
+
+#### Item sources
+
+The frequent selections need no script. Each source is a map under `selector`, read once per selection pass, and lists its items in its own order. The items go through the same pass as a script's: `deduped` and `capped` skips, `max_new_items`, `exclusive_on` and the pools apply alike. Sources keep no cursor and do not read `busy_files`; `id` + `version` dedupe is what keeps an unchanged item from running again, and `exclusive_on` keeps overlapping items apart. A source that cannot be read, or that lists an invalid item, fails the run with `selector_failed`, as a failing script does.
+
+| Field             | Type                 | Default                          | Rule                                                                                                                                                                                                                                                                     |
+| ----------------- | -------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `github.search`   | string               | required                         | A GitHub search, as on github.com (`is:pr is:open review-requested:@me`, `repo:owner/name label:bug`), run with the owner's `gh` through the login shell. Issues and pull requests both match unless the query says `is:pr` or `is:issue`. GitHub's order; `sort:` applies. |
+| `github.version`  | `head` \| `updated` | `head`                           | A pull request's version: its head commit, or its `updatedAt`. An issue's version is always its `updatedAt`.                                                                                                                                                            |
+| `github.limit`    | integer 1–100        | `50`                             | Results read per pass.                                                                                                                                                                                                                                                   |
+| `linear.filter`   | map                  | required                         | A Linear `IssueFilter`, passed as is (`{assignee: {isMe: {eq: true}}, state: {type: {eq: unstarted}}}`), read with the target workspace's Linear key. Linear rejects an invalid filter at run time. Most recently updated first.                                          |
+| `linear.limit`    | integer 1–250        | `50`                             | Issues read per pass.                                                                                                                                                                                                                                                    |
+| `file.path`       | string               | required                         | A `.json`, `.yaml` or `.yml` file relative to the repository, read from its main checkout (as `WTM_BASE_<REPO>` is for scripts) and never leaving it.                                                                                                                  |
+| `file.repo`       | string               | the only target repository       | One of `target.repos`; required when there are several.                                                                                                                                                                                                                  |
+| `file.list`       | string               | none                             | Top-level key holding the list; without it the file is the list.                                                                                                                                                                                                         |
+| `file.id`         | string               | `id`                             | Key of each map entry holding its id (a string or a number).                                                                                                                                                                                                             |
+| `file.version`    | string               | none                             | Key of each map entry holding its version. Without it, the version is a digest of the entry, so editing an entry makes it new work.                                                                                                                                     |
+| `file.title`      | string               | `title`                          | Key of each map entry holding its title, when it is a string.                                                                                                                                                                                                            |
+
+What each source makes of what it reads:
+
+| Source   | `id`                                                                       | `version`                                     | `data`                                                                                                                                                                 |
+| -------- | -------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github` | `<repo>-pr-<number>` or `<repo>-issue-<number>`; `<repo>` is the repository name, characters ids do not allow as `-` | see `github.version`                          | `kind` (`pr` or `issue`), `repo` (`owner/name`), `number`, `url`, `title`, `author`, `labels`, `updated_at`; pull requests add `branch`, `base`, `head_sha` and `draft`. |
+| `linear` | the issue identifier (`ENG-123`)                                           | its `updatedAt`                               | `identifier`, `linear_id`, `url`, `title`, `branch`, `team` (key), `state`, `assignee` (name), `labels`, `updated_at`.                                                |
+| `file`   | the entry's `file.id` value; a string or number entry is its own id        | see `file.version`                            | the map entry itself; a string or number entry as `{value: <entry>}`.                                                                                                 |
+
+The title is the issue's, the pull request's or the entry's. A pull request reviewer, for example, takes one item per open pull request awaiting the owner's review, and works on it again when the author pushes:
+
+```yaml
+selector:
+  github:
+    search: "is:pr is:open review-requested:@me"
+  max_new_items: 2
+```
 
 **Pace.** By default a campaign is `continuous`: each selection pass takes new items as capacity allows. **Next** (Items tab or `wtm automation next <name>`) switches it to `next` and grants one more item: items already queued or active keep going, and selection passes take at most the items granted (`overrides.pace` in `state.json`, `{mode: next, remaining}`), each pass taking its new items off the grant. With nothing granted, a firing is recorded as skipped `capped` without running the selector. Next also starts a selection pass when `trigger.manual` allows it, even while paused, as Run now does. **Continuous** (`wtm automation continuous <name>`) goes back to taking items as capacity allows. Test runs ignore the grant and never take from it.
 
