@@ -199,7 +199,7 @@ impl RoutineExecutor {
                     definition,
                     request,
                     payload,
-                    task: &task,
+                    task: task.as_ref(),
                     item,
                     history,
                     deadline: Instant::now() + ITEM_DEADLINE,
@@ -223,14 +223,17 @@ impl RoutineExecutor {
     }
 
     /// Resolves the item's task, or reattaches to the one it had, and records it; an item without
-    /// one fails.
+    /// one fails. Items of a target without tasks get none.
     fn item_task(
         &self,
         definition: &AutomationDefinition,
         request: &RunRequest,
         item: &Item,
         task_id: Option<&str>,
-    ) -> Result<ResolvedTask, String> {
+    ) -> Result<Option<ResolvedTask>, String> {
+        if definition.target.task == TaskMode::None {
+            return Ok(None);
+        }
         let mut log = WriterLog::of(&self.store, request);
         let resolved = match task_id {
             Some(task_id) => self.tasks.get(task_id).map(|task| (task, false)),
@@ -243,7 +246,7 @@ impl RoutineExecutor {
                     created,
                     item: Some(item.id.clone()),
                 })?;
-                Ok(task)
+                Ok(Some(task))
             }
             Err(failure) => {
                 let cause = format!("task_create_failed: {}", failure.message);

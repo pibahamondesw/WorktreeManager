@@ -183,6 +183,8 @@ struct FakeSessions {
     start_error: Option<String>,
     ends: Mutex<VecDeque<TurnEnd>>,
     started: Mutex<Vec<SessionLaunch>>,
+    /// Where each session started: its task, or the item's scratch directory.
+    places: Mutex<Vec<ResolvedTask>>,
     turns: Mutex<Vec<(String, String, Duration)>>,
     closed: Mutex<Vec<String>>,
     /// Removed when a session starts, to lose the run log mid-run.
@@ -209,13 +211,14 @@ impl Sessions for FakeSessions {
         !self.unavailable
     }
 
-    fn start(&self, _: &ResolvedTask, launch: &SessionLaunch) -> Result<String, String> {
+    fn start(&self, place: &ResolvedTask, launch: &SessionLaunch) -> Result<String, String> {
         if let Some(error) = &self.start_error {
             return Err(error.clone());
         }
         if let Some(log) = self.doomed_log.lock().unwrap().take() {
             fs::remove_dir_all(log).unwrap();
         }
+        self.places.lock().unwrap().push(place.clone());
         let mut started = self.started.lock().unwrap();
         started.push(launch.clone());
         Ok(format!("s{}", started.len()))
@@ -1038,6 +1041,7 @@ fn commands_fail_for_repositories_without_a_worktree_in_the_task() {
         timeout_secs: None,
         capacity: Capacity::Hold,
         uses: Vec::new(),
+        task: Default::default(),
         kind: StepKind::Wait(WaitStep::Signal("go".into())),
     };
     let request = StepRequest {
@@ -1472,6 +1476,7 @@ mod operator;
 mod outputs;
 mod resume;
 mod takeover;
+mod taskless;
 mod waits;
 
 fn titled_item(title: Option<&str>) -> Item {

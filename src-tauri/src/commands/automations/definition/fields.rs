@@ -329,6 +329,37 @@ fn template_problem(text: &str) -> Option<String> {
     None
 }
 
+/// The variables `text` names, in order; braces doubled for a literal brace name none.
+fn template_variables(text: &str) -> Vec<&str> {
+    let mut variables = Vec::new();
+    let mut rest = text;
+    while let Some(position) = rest.find(['{', '}']) {
+        let tail = &rest[position..];
+        if tail.starts_with("{{") || tail.starts_with("}}") {
+            rest = &tail[2..];
+            continue;
+        }
+        let Some(end) = tail.find('}').filter(|_| tail.starts_with('{')) else {
+            break;
+        };
+        variables.push(&tail[1..end]);
+        rest = &tail[end + 1..];
+    }
+    variables
+}
+
+/// Whether a string anywhere in `value` uses a `{task.*}` variable.
+pub(super) fn mentions_task(value: &Value) -> bool {
+    match value {
+        Value::String(text) => template_variables(text)
+            .iter()
+            .any(|variable| variable.starts_with("task.")),
+        Value::Array(values) => values.iter().any(mentions_task),
+        Value::Object(map) => map.values().any(mentions_task),
+        _ => false,
+    }
+}
+
 fn is_template_variable(name: &str) -> bool {
     TEMPLATE_VARIABLES.contains(&name)
         || name

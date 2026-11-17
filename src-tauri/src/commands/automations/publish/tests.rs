@@ -201,6 +201,7 @@ fn step(effects: Vec<Effect>) -> Step {
         timeout_secs: Some(90),
         capacity: Capacity::Hold,
         uses: Vec::new(),
+        task: Default::default(),
         kind: StepKind::Publish(effects),
     }
 }

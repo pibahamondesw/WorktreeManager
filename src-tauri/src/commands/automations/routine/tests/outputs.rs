@@ -99,6 +99,7 @@ fn commands_fail_when_the_outputs_file_cannot_be_written() {
         timeout_secs: None,
         capacity: Capacity::Hold,
         uses: Vec::new(),
+        task: Default::default(),
         kind: StepKind::Wait(WaitStep::Signal("go".into())),
     };
     let request = StepRequest {

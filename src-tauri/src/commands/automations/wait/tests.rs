@@ -12,6 +12,7 @@ fn step(kind: StepKind, timeout_secs: Option<u64>) -> Step {
         timeout_secs,
         capacity: Capacity::Release,
         uses: Vec::new(),
+        task: Default::default(),
         kind,
     }
 }

@@ -2808,3 +2808,5 @@ fn authoring_skill_examples_are_valid() {
         .collect();
     assert_eq!(shapes, [false, true]);
 }
+
+mod taskless;

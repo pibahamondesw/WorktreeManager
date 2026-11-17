@@ -132,7 +132,8 @@ impl RoutineExecutor {
             (self.runs_changed)(name);
         }
         let task = match run.task_id.as_deref() {
-            Some(task_id) => self.tasks.get(task_id),
+            _ if definition.target.task == TaskMode::None => Ok(None),
+            Some(task_id) => self.tasks.get(task_id).map(Some),
             None => Err(TaskFailure::new("The run has no task")),
         };
         let task = match task {
@@ -143,7 +144,7 @@ impl RoutineExecutor {
             definition: &definition,
             request,
             payload: payload.as_ref(),
-            task: &task,
+            task: task.as_ref(),
             item: &item,
             history: &history,
             deadline: run_deadline(&definition, request),

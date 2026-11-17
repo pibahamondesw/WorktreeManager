@@ -15,7 +15,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime, State};
 
-use super::super::definition::{self, AutomationDefinition, StepKind};
+use super::super::definition::{self, AutomationDefinition, StepKind, StepTask};
 use super::super::operator::pass_limits;
 use super::super::pipeline::ACTIVE_TIME_BUDGET;
 use super::super::routine::HUMAN_TAKEOVER;
@@ -77,6 +77,11 @@ pub fn take_over(
         return Err(format!(
             "Only an agent step can be taken over; item {} is on step {step}",
             item.id
+        ));
+    }
+    if is_taskless_step(definition, step) {
+        return Err(format!(
+            "Step {step} has no task whose chat could continue its conversation"
         ));
     }
     match item.status {
@@ -313,6 +318,13 @@ fn is_agent_step(definition: &AutomationDefinition, step: &str) -> bool {
         .steps
         .iter()
         .any(|candidate| candidate.id == step && matches!(candidate.kind, StepKind::Agent(_)))
+}
+
+fn is_taskless_step(definition: &AutomationDefinition, step: &str) -> bool {
+    definition
+        .steps
+        .iter()
+        .any(|candidate| candidate.id == step && candidate.task == StepTask::None)
 }
 
 /// Failed and blocked items, and those a routine's failed run left open, as on its deadline.

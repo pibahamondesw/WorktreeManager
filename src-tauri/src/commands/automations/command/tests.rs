@@ -65,6 +65,7 @@ fn command_step(argv: &[&str], bind: Option<Bind>, after: Vec<Vec<String>>) -> S
         timeout_secs: Some(60),
         capacity: Capacity::Hold,
         uses: Vec::new(),
+        task: Default::default(),
         kind: StepKind::Command(CommandStep {
             command: argv.iter().map(|arg| arg.to_string()).collect(),
             repo: "repo".into(),

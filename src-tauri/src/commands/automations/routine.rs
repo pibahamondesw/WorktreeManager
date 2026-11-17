@@ -31,8 +31,8 @@ use serde_json::Value;
 
 use super::command::{CommandContext, CommandExecutor};
 use super::definition::{
-    AgentSettings, AgentStep, Authorization, AutomationDefinition, Capacity, Effect, StepKind,
-    Target, TaskMode, Verb,
+    AgentSettings, AgentStep, Authorization, AutomationDefinition, Capacity, Effect, Step,
+    StepKind, StepTask, Target, TaskMode, Verb,
 };
 use super::instants::rfc3339;
 use super::outputs::attempt_result;
@@ -81,6 +81,22 @@ pub struct ResolvedTask {
 }
 
 impl ResolvedTask {
+    /// Where the item's steps without a task work: a directory of the run, with no task id,
+    /// branch or repository.
+    pub(super) fn scratch(directory: &std::path::Path) -> Self {
+        Self {
+            id: String::new(),
+            branch: String::new(),
+            folders: vec![directory.to_string_lossy().into_owned()],
+            repo_ids: Vec::new(),
+            linear_issue_id: None,
+        }
+    }
+
+    pub(super) fn is_scratch(&self) -> bool {
+        self.id.is_empty()
+    }
+
     pub(super) fn worktree(&self, repo_id: &str) -> Option<&str> {
         let index = self.repo_ids.iter().position(|id| id == repo_id)?;
         self.folders.get(index).map(String::as_str)
@@ -394,16 +410,21 @@ impl RoutineExecutor {
             return self.run_campaign(&definition, request, payload);
         }
         let mut log = WriterLog::of(&self.store, request);
-        let (task, created) = match self.routine_task(&definition, request, restarted) {
-            Ok(resolved) => resolved,
-            Err(_) if self.halted() => return Ok(()),
-            Err(failure) => return self.task_failed(request, failure),
+        let task = if definition.target.task == TaskMode::None {
+            None
+        } else {
+            let (task, created) = match self.routine_task(&definition, request, restarted) {
+                Ok(resolved) => resolved,
+                Err(_) if self.halted() => return Ok(()),
+                Err(failure) => return self.task_failed(request, failure),
+            };
+            log.append(RunEvent::TaskResolved {
+                task_id: task.id.clone(),
+                created,
+                item: None,
+            })?;
+            Some(task)
         };
-        log.append(RunEvent::TaskResolved {
-            task_id: task.id.clone(),
-            created,
-            item: None,
-        })?;
         if self.halted() || !is_active(self.store.run(&request.automation, &request.run_id)?.status)
         {
             return Ok(());
@@ -425,7 +446,7 @@ impl RoutineExecutor {
             definition: &definition,
             request,
             payload,
-            task: &task,
+            task: task.as_ref(),
             item: &item,
             history: &[],
             deadline: run_deadline(&definition, request),
@@ -525,6 +546,18 @@ impl RoutineExecutor {
             deadline,
         } = *item_drive;
         let run_dir = self.store.run_dir(&request.automation, &request.run_id)?;
+        let scratch = commands::scratch_dir(&run_dir, &item.id);
+        if task.is_none()
+            || definition
+                .steps
+                .iter()
+                .any(|step| step.task == StepTask::None)
+        {
+            std::fs::create_dir_all(&scratch)
+                .map_err(|error| format!("{}: {error}", scratch.display()))?;
+        }
+        let scratch = ResolvedTask::scratch(&scratch);
+        let task = task.unwrap_or(&scratch);
         let leases = StepLeases {
             pools: self.lease_pools.clone(),
             quotas: self.quotas.clone(),
@@ -545,6 +578,7 @@ impl RoutineExecutor {
             definition,
             request,
             task,
+            scratch: &scratch,
             item,
             sessions: self.sessions.as_ref(),
             runs_changed: self.runs_changed.as_ref(),
@@ -609,20 +643,18 @@ impl RoutineExecutor {
         request: &RunRequest,
     ) -> Result<ResolvedTask, TaskFailure> {
         let target = &definition.target;
-        match target.task {
-            TaskMode::PerRun => {
-                let branch = per_run_branch(target, request)?;
-                self.tasks.create(&NewTask {
-                    workspace_id: target.workspace_id.clone(),
-                    branch,
-                    repo_ids: target.repos.iter().map(|repo| repo.id.clone()).collect(),
-                    bases: bases(target),
-                    automation: definition.name.clone(),
-                    linear_issue: None,
-                })
-            }
-            TaskMode::PerItem | TaskMode::Existing => self.existing_task(definition, request),
+        if target.task != TaskMode::PerRun {
+            return self.existing_task(definition, request);
         }
+        let branch = per_run_branch(target, request)?;
+        self.tasks.create(&NewTask {
+            workspace_id: target.workspace_id.clone(),
+            branch,
+            repo_ids: target.repos.iter().map(|repo| repo.id.clone()).collect(),
+            bases: bases(target),
+            automation: definition.name.clone(),
+            linear_issue: None,
+        })
     }
 
     /// The task an `existing` target works in: the one it names, else the one its app event
@@ -679,7 +711,8 @@ struct ItemDrive<'a> {
     definition: &'a AutomationDefinition,
     request: &'a RunRequest,
     payload: Option<&'a Value>,
-    task: &'a ResolvedTask,
+    /// `None` when the target has no task: the item works in its scratch directory.
+    task: Option<&'a ResolvedTask>,
     item: &'a Item,
     /// The run's log so far, for an item that resumes; empty for a new one.
     history: &'a [LoggedEvent],
@@ -709,7 +742,9 @@ impl RunLog for WriterLog<'_> {
 struct ItemSteps<'a> {
     definition: &'a AutomationDefinition,
     request: &'a RunRequest,
+    /// The item's task, or its scratch directory when it has none.
     task: &'a ResolvedTask,
+    scratch: &'a ResolvedTask,
     item: &'a Item,
     sessions: &'a dyn Sessions,
     runs_changed: &'a (dyn Fn(&str) + Send + Sync),
@@ -773,9 +808,17 @@ impl StepExecutor for ItemSteps<'_> {
     }
 }
 
-impl ItemSteps<'_> {
+impl<'a> ItemSteps<'a> {
     fn taken_over(&self) -> bool {
         self.takeovers.requested(self.key)
+    }
+
+    /// The item's task, or its scratch directory for a step without a task.
+    fn workplace(&self, step: &Step) -> &'a ResolvedTask {
+        match step.task {
+            StepTask::Item => self.task,
+            StepTask::None => self.scratch,
+        }
     }
 
     fn run_step(&mut self, request: &StepRequest) -> Execution {
@@ -833,9 +876,15 @@ impl ItemSteps<'_> {
             Ok(state) => state.decisions,
             Err(error) => return failed(ProcessEnd::Crashed, format!("decisions: {error}")),
         };
+        let workplace = self.workplace(request.step);
+        let grants = if workplace.is_scratch() {
+            Vec::new()
+        } else {
+            self.grants.clone()
+        };
         let launch = SessionLaunch {
             agent: step.agent.clone(),
-            grants: self.grants.clone(),
+            grants,
             read_only: step.readonly,
             output_schema,
             resume: None,
@@ -845,7 +894,7 @@ impl ItemSteps<'_> {
                 step.fresh_session.then_some(request.step.id.as_str()),
             ),
         };
-        let session_id = match self.session_for(request, step, launch) {
+        let session_id = match self.session_for(request, step, workplace, launch) {
             Ok(session_id) => session_id,
             Err(error) => return failed(ProcessEnd::Crashed, format!("session_start: {error}")),
         };
@@ -855,7 +904,7 @@ impl ItemSteps<'_> {
             step,
             attempt: request,
             request: self.request,
-            task: self.task,
+            task: workplace,
             item: self.item,
             payload: self.payload,
             prior: &self.prior,
@@ -1033,6 +1082,7 @@ impl ItemSteps<'_> {
         &mut self,
         request: &StepRequest,
         step: &AgentStep,
+        workplace: &ResolvedTask,
         launch: SessionLaunch,
     ) -> Result<String, String> {
         if step.fresh_session {
@@ -1046,7 +1096,7 @@ impl ItemSteps<'_> {
                 .then(|| self.interrupted_conversation.take())
                 .flatten()
                 .map(|(_, _, conversation)| conversation);
-            return self.open(&SessionLaunch { resume, ..launch });
+            return self.open(workplace, &SessionLaunch { resume, ..launch });
         }
         let resume = match self.shared_session.take() {
             Some((current, session_id)) if current == launch => {
@@ -1064,16 +1114,19 @@ impl ItemSteps<'_> {
                 .filter(|(agent, _)| *agent == launch.agent.id)
                 .map(|(_, conversation)| conversation),
         };
-        let session_id = self.open(&SessionLaunch {
-            resume,
-            ..launch.clone()
-        })?;
+        let session_id = self.open(
+            workplace,
+            &SessionLaunch {
+                resume,
+                ..launch.clone()
+            },
+        )?;
         self.shared_session = Some((launch, session_id.clone()));
         Ok(session_id)
     }
 
-    fn open(&mut self, launch: &SessionLaunch) -> Result<String, String> {
-        let session_id = self.sessions.start(self.task, launch)?;
+    fn open(&mut self, workplace: &ResolvedTask, launch: &SessionLaunch) -> Result<String, String> {
+        let session_id = self.sessions.start(workplace, launch)?;
         self.opened.push(session_id.clone());
         Ok(session_id)
     }

@@ -28,6 +28,7 @@ fn step(id: &str, kind: StepKind) -> Step {
         timeout_secs: None,
         capacity,
         uses: Vec::new(),
+        task: Default::default(),
         kind,
     }
 }
