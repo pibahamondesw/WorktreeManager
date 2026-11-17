@@ -241,6 +241,9 @@ pub enum RunEvent {
         definition_hash: String,
         items: Vec<String>,
     },
+    /// The run was started by a `call` step of another automation's item, recorded right after
+    /// its claim.
+    CalledBy(CallLink),
     #[serde(other)]
     Unknown,
 }
@@ -258,6 +261,34 @@ pub struct ArmedWait {
     /// Why the title or detail kept placeholders as written.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unrendered: Vec<String>,
+    /// The run a `call` attempt started and waits on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<CalledRun>,
+}
+
+/// The run of another automation a `call` attempt started.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalledRun {
+    pub automation: String,
+    pub run_id: String,
+    /// The callee's `output` step when the call started; `None` takes the step that completed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+}
+
+/// The `call` attempt that started a run: the caller's automation, run, item, step and attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallLink {
+    pub automation: String,
+    pub run_id: String,
+    pub item: String,
+    pub step: String,
+    pub attempt: u32,
+    /// 1 for a run an automation fired otherwise calls, one more for each call nested in it.
+    pub depth: u32,
+    /// The caller item's title, which the called run's item takes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,6 +348,8 @@ pub enum RunSource {
     Cli,
     /// A continuous campaign taking the slot an item freed.
     Capacity,
+    /// A `call` step of another automation.
+    Call,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -479,6 +512,9 @@ pub struct RunState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selector_session: Option<SelectorSession>,
     pub permission_requests: Vec<PermissionRequest>,
+    /// The `call` attempt that started the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub called_by: Option<CallLink>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -616,6 +652,7 @@ pub fn reduce(id: &str, events: impl IntoIterator<Item = LoggedEvent>) -> RunSta
         selector_error: None,
         selector_session: None,
         permission_requests: Vec::new(),
+        called_by: None,
     };
     for logged in events {
         run.apply(logged);
@@ -893,6 +930,7 @@ impl RunState {
                 self.retried_hash = None;
                 self.adopted_hash = Some(definition_hash);
             }
+            RunEvent::CalledBy(link) => self.called_by = Some(link),
             RunEvent::ItemSlotTaken { item } => {
                 if let Some(item) = self.open_item(&item).filter(|item| awaits_slot(item)) {
                     item.cause = None;
