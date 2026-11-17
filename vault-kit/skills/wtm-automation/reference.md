@@ -93,12 +93,14 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 | `github.pr_ready`       | `pr_ready`     | `repo`                                                                 |
 | `linear.upsert`         | `linear_write` | overrides of `tracker.linear` fields                                   |
 | `linear.state`          | `linear_write` | `state`                                                                |
-| `wtm.task_create`       | `task_create`  | none                                                                   |
+| `wtm.task_create`       | `task_create`  | `workspace`, `repos`, `branch`, `from_remote`, `linear_issue`          |
 | `wtm.task_log`          | `task_log`     | `entry`                                                                |
 | `wtm.task_delete_clean` | `task_delete`  | none                                                                   |
 | `wtm.chat_open`         | `chat_open`    | `agent`, `message`, `model`, `effort`, `name`                          |
 
 Effects are idempotent (reconciled before retries) and staged in Test runs.
+
+`wtm.task_create` params are templates, usually step outputs: `repos` and `from_remote` take names or a JSON array of them, `branch` is used exactly as rendered, `from_remote` repositories check out `origin/<branch>` (it must exist), and `linear_issue` is an identifier. A task already on the branch is reused. The item's later effects and steps work in the resolved task; its output adds `branch` and `worktrees`. With `target.task: none` it gives the item its task mid-run (it then needs `branch` and `repos`): steps before it have no task, steps after it work in the task.
 
 ## Authorization
 
