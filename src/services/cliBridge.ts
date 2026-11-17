@@ -139,6 +139,7 @@ function taskInput(value: unknown): CreateTaskInput {
     "linearIssue",
     "automationId",
     "baseRefs",
+    "exactBranch",
   ]);
   const result: CreateTaskInput = {
     workspaceId: text(input.workspaceId),
@@ -146,6 +147,11 @@ function taskInput(value: unknown): CreateTaskInput {
   };
   if (input.automationId !== undefined) result.automationId = text(input.automationId);
   if (input.baseRefs !== undefined) result.baseRefs = baseRefs(input.baseRefs);
+  if (input.exactBranch !== undefined) {
+    if (typeof input.exactBranch !== "boolean")
+      throw new OperationError("invalid_params", "exactBranch must be a boolean.");
+    result.exactBranch = input.exactBranch;
+  }
   if (input.repoIds !== undefined) {
     if (!Array.isArray(input.repoIds))
       throw new OperationError("invalid_params", "repoIds must be an array.");
