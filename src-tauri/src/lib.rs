@@ -99,6 +99,8 @@ pub fn run() {
                 commands::agents::agents_catalog,
                 commands::automations::definition::automations_list,
                 commands::automations::definition::automations_get,
+                commands::automations::definition::edit::automation_steps_source,
+                commands::automations::definition::edit::automation_steps_save,
                 commands::automations::store::automation_runs_list,
                 commands::automations::store::automation_run_get,
                 commands::automations::store::automation_state,

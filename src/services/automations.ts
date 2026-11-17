@@ -112,6 +112,33 @@ export interface PipelineStep {
   kind: StepKind;
 }
 
+/** A step of `AUTOMATION.md` as written, with the keys the app does not know. */
+export type WrittenStep = Record<string, unknown> & { id?: unknown };
+
+/** The `steps` of an `AUTOMATION.md` and the hash of the file they were read from. */
+export interface StepsSource {
+  hash: string;
+  steps: WrittenStep[];
+}
+
+/** A step to save; `source` is its position in the loaded `steps`, null for a new one. */
+export interface StepEdit {
+  source: number | null;
+  value: WrittenStep;
+}
+
+/** Nothing is written when the edited file is invalid. */
+export type StepsSave =
+  | { status: "saved"; entry: AutomationEntry }
+  | { status: "invalid"; errors: DefinitionIssue[] };
+
+export const readAutomationSteps = (name: string) =>
+  invoke<StepsSource>("automation_steps_source", { name });
+
+/** Rejects when the file changed since `hash` was read. */
+export const saveAutomationSteps = (name: string, hash: string, steps: StepEdit[]) =>
+  invoke<StepsSave>("automation_steps_save", { name, hash, steps });
+
 export interface AutomationEntry {
   name: string;
   path: string;
