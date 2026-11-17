@@ -1792,7 +1792,9 @@ fn campaigns_read_their_selector_and_work_in_per_item_tasks() {
     let definition = entry.definition.unwrap();
 
     let selector = definition.selector.unwrap();
-    assert_eq!(selector.run, ["scripts/queue.sh", "{automation}"]);
+    assert!(
+        matches!(&selector.source, ItemSource::Script { run } if run == &["scripts/queue.sh", "{automation}"])
+    );
     assert_eq!(selector.timeout_secs, 120);
     assert_eq!(selector.max_new_items, Some(3));
     assert_eq!(selector.exclusive_on, ["files"]);
@@ -1844,6 +1846,178 @@ fn campaigns_check_their_selector_and_task_mode() {
         campaign(tracked).replace("task: per-item", "task: per-item\n  branch: lint/{item.id}");
     let definition = load_campaign(&branched).definition.unwrap();
     assert_eq!(definition.target.branch.as_deref(), Some("lint/{item.id}"));
+}
+
+fn source_issues(frontmatter: &str) -> Vec<(String, IssueKind)> {
+    let entry = load_campaign(frontmatter);
+    assert!(entry.definition.is_none(), "{frontmatter}");
+    entry
+        .errors
+        .iter()
+        .map(|issue| (issue.field.clone(), issue.kind))
+        .collect()
+}
+
+#[test]
+fn campaigns_read_declarative_item_sources() {
+    let source_of = |selector: &str| {
+        let entry = load_campaign(&campaign(selector));
+        assert_eq!(entry.errors, Vec::new(), "{selector}");
+        entry.definition.unwrap().selector.unwrap().source
+    };
+
+    let github =
+        source_of("selector:\n  github: { search: \"is:pr is:open review-requested:@me\" }\n");
+    let ItemSource::Github(github) = github else {
+        panic!("expected a GitHub source")
+    };
+    assert_eq!(github.search, "is:pr is:open review-requested:@me");
+    assert_eq!((github.version, github.limit), (GithubVersion::Head, 50));
+    let updated =
+        source_of("selector:\n  github: { search: is:issue, version: updated, limit: 100 }\n");
+    assert!(matches!(
+        updated,
+        ItemSource::Github(GithubSource {
+            version: GithubVersion::Updated,
+            limit: 100,
+            ..
+        })
+    ));
+
+    let linear = source_of(
+        "selector:\n  linear: { filter: { assignee: { isMe: { eq: true } } }, limit: 250 }\n",
+    );
+    let ItemSource::Linear(linear) = linear else {
+        panic!("expected a Linear source")
+    };
+    assert_eq!(linear.filter["assignee"], json!({ "isMe": { "eq": true } }));
+    assert_eq!(linear.limit, 250);
+
+    let file = source_of("selector:\n  file: { path: lint/queue.yaml }\n");
+    let ItemSource::File(file) = file else {
+        panic!("expected a file source")
+    };
+    assert_eq!(
+        (file.repo.as_str(), file.path.as_str()),
+        ("r1", "lint/queue.yaml")
+    );
+    assert_eq!(
+        (
+            file.list,
+            file.id.as_str(),
+            file.version,
+            file.title.as_str()
+        ),
+        (None, "id", None, "title")
+    );
+    let named = source_of("selector:\n  file: { repo: app, path: q.json, list: items, id: key, version: rev, title: name }\n");
+    assert!(matches!(
+        named,
+        ItemSource::File(FileSource {
+            list: Some(_),
+            version: Some(_),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn campaigns_check_their_declarative_item_sources() {
+    let has = |selector: &str, field: &str, kind: IssueKind| {
+        let issues = source_issues(&campaign(selector));
+        assert!(
+            issues.contains(&(field.into(), kind)),
+            "{selector}: {issues:?}"
+        );
+    };
+    has(
+        "selector:\n  run: [scripts/queue.sh]\n  github: { search: is:pr }\n",
+        "selector.run",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  github: { search: is:pr }\n  timeout: 1m\n",
+        "selector.timeout",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  github: { search: \" \" }\n",
+        "selector.github.search",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  github: {}\n",
+        "selector.github.search",
+        IssueKind::Missing,
+    );
+    has(
+        "selector:\n  github: { search: is:pr, version: base }\n",
+        "selector.github.version",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  github: { search: is:pr, limit: 101 }\n",
+        "selector.github.limit",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  github: { search: is:pr, limit: 0 }\n",
+        "selector.github.limit",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  github: { search: is:pr, query: x }\n",
+        "selector.github.query",
+        IssueKind::UnknownField,
+    );
+    has(
+        "selector:\n  linear: { filter: team }\n",
+        "selector.linear.filter",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  linear: { filter: {}, limit: 251 }\n",
+        "selector.linear.limit",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  file: { path: ../items.json }\n",
+        "selector.file.path",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  file: { path: /items.json }\n",
+        "selector.file.path",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  file: { path: items.txt }\n",
+        "selector.file.path",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  file: { path: items.json, repo: web }\n",
+        "selector.file.repo",
+        IssueKind::UnknownRepo,
+    );
+    has(
+        "selector:\n  file: { path: items.json, repo: 1 }\n",
+        "selector.file.repo",
+        IssueKind::Invalid,
+    );
+    has(
+        "selector:\n  file: { path: items.json, id: \"\" }\n",
+        "selector.file.id",
+        IssueKind::Invalid,
+    );
+    let two_repos = campaign("selector:\n  file: { path: items.json }\n")
+        .replace("repos: [app]", "repos: [app, api]");
+    assert!(source_issues(&two_repos).contains(&("selector.file.repo".into(), IssueKind::Missing)));
+    let unknown_target = campaign("selector:\n  file: { path: items.json }\n")
+        .replace("repos: [app]", "repos: [web]");
+    assert!(!source_issues(&unknown_target)
+        .iter()
+        .any(|(field, _)| field.starts_with("selector")));
 }
 
 #[test]

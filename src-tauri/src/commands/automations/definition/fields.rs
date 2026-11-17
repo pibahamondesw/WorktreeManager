@@ -88,6 +88,10 @@ impl<'a> Fields<'a> {
         join(&self.path, key)
     }
 
+    pub fn has(&self, key: &str) -> bool {
+        self.map.get(key).is_some_and(|value| !value.is_null())
+    }
+
     pub fn get(&mut self, key: &'static str) -> Option<&'a Value> {
         self.known.push(key);
         self.map.get(key).filter(|value| !value.is_null())

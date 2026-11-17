@@ -42,6 +42,7 @@ use super::publish::{
     opened_chats, published_values, pushed_commits, CliForge, Forge, PublishScope, Publisher,
 };
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
+use super::selector::sources::ItemSources;
 use super::selector::OpenPullRequests;
 use super::store::events::{
     FailureReason, ItemStatus, LoggedEvent, PermissionResolution, ProcessEnd, RequestKind,
@@ -188,6 +189,7 @@ pub struct RoutineExecutor {
     forge: Arc<dyn Forge>,
     bridge: Arc<dyn OperationsBridge>,
     pull_requests: Arc<dyn OpenPullRequests>,
+    item_sources: ItemSources,
     lease_pools: Arc<dyn LeasePools>,
     quotas: Arc<Quotas>,
     /// Runs this process is executing, with their automation.
@@ -293,6 +295,7 @@ impl RoutineExecutor {
             forge,
             bridge,
             pull_requests: Arc::new(CliForge::default()),
+            item_sources: ItemSources::default(),
             lease_pools: Arc::new(NoLeasePools),
             quotas: Arc::default(),
             in_flight: Arc::default(),
@@ -319,6 +322,14 @@ impl RoutineExecutor {
     pub fn with_lease_pools(self, lease_pools: Arc<dyn LeasePools>) -> Self {
         Self {
             lease_pools,
+            ..self
+        }
+    }
+
+    /// What declarative selectors read GitHub and Linear with.
+    pub fn with_item_sources(self, item_sources: ItemSources) -> Self {
+        Self {
+            item_sources,
             ..self
         }
     }

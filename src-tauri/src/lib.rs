@@ -202,11 +202,17 @@ pub fn run() {
 /// Runs started by the scheduler and by the owner share one executor.
 #[cfg(unix)]
 fn start_automations(app: &tauri::AppHandle) -> Result<(), String> {
-    use commands::automations::{actions, routine, scheduler};
+    use commands::automations::{actions, routine, scheduler, selector};
     let operations = Arc::new(cli_bridge::AppOperations(app.clone()));
     let leases = app.state::<cli_bridge::CliBridge>().leases();
-    let executor: Arc<dyn scheduler::Executor> =
-        Arc::new(routine::RoutineExecutor::of(app, operations)?.with_lease_pools(Arc::new(leases)));
+    let keychain = app.clone();
+    let secrets: actions::linear::SecretReader =
+        Arc::new(move || commands::keychain::keychain_get(keychain.clone()));
+    let executor: Arc<dyn scheduler::Executor> = Arc::new(
+        routine::RoutineExecutor::of(app, operations)?
+            .with_lease_pools(Arc::new(leases))
+            .with_item_sources(selector::sources::ItemSources::new(secrets)),
+    );
     app.manage(actions::AutomationEngine(executor.clone()));
     start_linear_triggers(app, executor.clone())?;
     start_github_triggers(app, executor.clone())?;

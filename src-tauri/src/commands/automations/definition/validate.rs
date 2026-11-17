@@ -16,14 +16,15 @@ use super::fields::{
     Report,
 };
 use super::github_trigger::{github_event_trigger, resolve_repos};
+use super::item_source::item_source;
 use super::linear_trigger::linear_event_trigger;
 use super::{
     AgentSettings, AgentStep, AppEventKind, ApprovalDefault, ApprovalStep, Authorization,
     AutomationDefinition, Bind, Budgets, Capacity, CatchUp, ChatOpenEffect, CommandStep,
     Completion, Concurrency, Effect, Environment, EventTrigger, GotoLimit, InboxPolicy, IssueKind,
-    LeaseHold, LinearOverrides, LinearTracker, Pools, PullRequestEffect, RepoRef, ReportPolicy,
-    ResultSchema, Schedule, SelectorSettings, Step, StepKind, StopAfter, Target, TargetRepo,
-    TaskMode, Tracker, Transition, Trigger, ValuedPool, Verb, WaitStep, WorkspaceRef,
+    ItemSource, LeaseHold, LinearOverrides, LinearTracker, Pools, PullRequestEffect, RepoRef,
+    ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step, StepKind, StopAfter, Target,
+    TargetRepo, TaskMode, Tracker, Transition, Trigger, ValuedPool, Verb, WaitStep, WorkspaceRef,
     APP_EVENT_KINDS,
 };
 use crate::commands::agents::permission::{
@@ -171,7 +172,7 @@ pub(super) fn definition(
     let report_policy = fields.or(report, "report", default_report_policy(), report_policy);
     let completion = fields.or(report, "completion", Completion::default(), completion);
     let selector = fields.optional(report, "selector", |report, value, field| {
-        selector(report, context.folder, value, field)
+        selector(report, context.folder, scope.repos, value, field)
     });
     fields.finish(report);
     check_instructions(report, instructions, steps.as_deref());
@@ -2175,24 +2176,32 @@ fn pool_values(report: &mut Report, value: &Value, field: &str) -> Option<Vec<St
 fn selector(
     report: &mut Report,
     folder: &Path,
+    repos: Option<&[TargetRepo]>,
     value: &Value,
     field: &str,
 ) -> Option<SelectorSettings> {
     let mut fields = Fields::of(report, value, field)?;
     let run_field = fields.path("run");
-    let run = fields.require(report, "run", argv);
-    let runnable = run
-        .as_ref()
-        .and_then(|run| executable(report, folder, &run[0], &index(&run_field, 0)));
+    let source = item_source(report, &mut fields, repos, |report, value, field| {
+        let run = argv(report, value, field)?;
+        executable(report, folder, &run[0], &index(&run_field, 0))?;
+        Some(run)
+    });
+    let timeout_field = fields.path("timeout");
+    let timed = fields.has("timeout");
     let timeout = fields.or(report, "timeout", SELECTOR_TIMEOUT_SECS, duration);
     let max_new_items = fields.optional(report, "max_new_items", |report, value, field| {
         integer(report, value, field, 1)
     });
     let exclusive_on = fields.or(report, "exclusive_on", Vec::new(), string_list);
     fields.finish(report);
-    runnable?;
+    let source = source?;
+    if timed && !matches!(source, ItemSource::Script { .. }) {
+        report.error(IssueKind::Invalid, &timeout_field, "applies only to run");
+        return None;
+    }
     Some(SelectorSettings {
-        run: run?,
+        source,
         timeout_secs: timeout?,
         max_new_items: max_new_items?,
         exclusive_on: exclusive_on?,

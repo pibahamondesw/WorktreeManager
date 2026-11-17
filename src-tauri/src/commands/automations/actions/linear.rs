@@ -21,8 +21,8 @@ use crate::commands::automations::definition::{
 };
 use crate::commands::automations::instants::{parse_rfc3339, rfc3339_millis};
 use crate::commands::automations::watchers::backoff_ms;
-pub use graphql::{GraphqlLinear, LinearIssues, SecretReader};
-use graphql::{Issue, UpdatedIssues};
+use graphql::UpdatedIssues;
+pub use graphql::{GraphqlLinear, Issue, LinearIssues, LinearSearch, SecretReader};
 
 const INTERVAL_MS: u64 = 60 * 1000;
 const MAX_BACKOFF_MS: u64 = 15 * 60 * 1000;
