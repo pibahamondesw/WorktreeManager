@@ -18,6 +18,9 @@ import {
   stepKindName,
   stepProgress,
   stepSummary,
+  transitionKey,
+  traversedTransitions,
+  unknownAttemptSteps,
 } from "../../services/automationPipeline";
 import { conversationTarget } from "../../services/automationInbox";
 import { Badge } from "../ui/Badge";
@@ -86,6 +89,8 @@ export function AutomationPipeline({ name, steps, repos = [] }: AutomationPipeli
   }, [live, reload]);
 
   const progress = useMemo(() => stepProgress(steps, item), [steps, item]);
+  const traversed = useMemo(() => (item ? traversedTransitions(steps, item) : null), [steps, item]);
+  const unknownSteps = useMemo(() => unknownAttemptSteps(steps, item), [steps, item]);
 
   return (
     <div className="space-y-4">
@@ -124,10 +129,16 @@ export function AutomationPipeline({ name, steps, repos = [] }: AutomationPipeli
       <PipelineGraph
         steps={steps}
         progress={progress}
+        traversed={traversed}
         run={run}
         repos={repos}
         source={run && item ? { name, runId: run.id, item: item.id } : undefined}
       />
+      {unknownSteps.length > 0 && (
+        <p className="text-xs text-text-muted select-text">
+          Also ran steps no longer in the definition: {unknownSteps.join(", ")}
+        </p>
+      )}
       {run?.permission_requests?.length ? (
         <AutomationPermissions requests={run.permission_requests} />
       ) : null}
@@ -161,18 +172,22 @@ function RunPicker({ runs, run, onSelect }: RunPickerProps) {
 interface PipelineGraphProps {
   steps: PipelineStep[];
   progress: Map<string, StepProgress>;
+  /** Times each transition was taken by the selected item; null without one. */
+  traversed: Map<string, number> | null;
   run: AutomationRun | null;
   repos: TargetRepo[];
   source: AttemptSource | undefined;
 }
 
-function PipelineGraph({ steps, progress, run, repos, source }: PipelineGraphProps) {
+function PipelineGraph({ steps, progress, traversed, run, repos, source }: PipelineGraphProps) {
   const openConversation = useOpenConversation();
   const layout = useMemo(() => pipelineLayout(steps), [steps]);
   const [focusIndex, setFocusIndex] = useState(0);
   const [openStepId, setOpenStepId] = useState<string | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
   const openStep = steps.find((step) => step.id === openStepId);
+  const followedNext = (step: PipelineStep) =>
+    traversed?.has(transitionKey({ from: step.id, kind: "next" })) ?? false;
 
   const focusStep = (index: number) => {
     setFocusIndex(index);
@@ -219,14 +234,23 @@ function PipelineGraph({ steps, progress, run, repos, source }: PipelineGraphPro
                 (step.next === null || step.next === steps[index + 1].id) && (
                   <span
                     aria-hidden="true"
-                    className="absolute left-6 top-full h-6 w-px bg-border"
+                    data-taken={followedNext(step)}
+                    className={`absolute left-6 top-full h-6 ${
+                      followedNext(step) ? "w-0.5 bg-accent" : "w-px bg-border"
+                    }`}
                   />
                 )}
             </li>
           ))}
         </ol>
-        <PipelineJumps edges={layout.edges} steps={steps} lanes={layout.lanes} />
+        <PipelineJumps
+          edges={layout.edges}
+          steps={steps}
+          lanes={layout.lanes}
+          traversed={traversed}
+        />
       </div>
+      <JumpList edges={layout.edges} steps={steps} traversed={traversed} />
       {openStep && (
         <AutomationStepDetail
           step={openStep}
@@ -304,9 +328,42 @@ interface PipelineJumpsProps {
   edges: PipelineEdge[];
   steps: PipelineStep[];
   lanes: number;
+  traversed: Map<string, number> | null;
 }
 
-function PipelineJumps({ edges, steps, lanes }: PipelineJumpsProps) {
+const jumpTimes = (
+  edge: PipelineEdge,
+  steps: PipelineStep[],
+  traversed: Map<string, number> | null
+) => traversed?.get(transitionKey({ from: steps[edge.from].id, kind: edge.kind })) ?? 0;
+
+const jumpLabel = (edge: PipelineEdge, steps: PipelineStep[]) =>
+  `${steps[edge.from].id} → ${steps[edge.to].id} ${EDGE_LABELS[edge.kind]}${
+    edge.limit ? ` (${edge.limit})` : ""
+  }`;
+
+function JumpList({ edges, steps, traversed }: Omit<PipelineJumpsProps, "lanes">) {
+  if (edges.length === 0) return null;
+  return (
+    <ul aria-label="Jumps" className="space-y-0.5 text-xs text-text-muted select-text">
+      {edges.map((edge) => {
+        const times = jumpTimes(edge, steps, traversed);
+        return (
+          <li key={`${edge.from}-${edge.kind}`} className="flex items-baseline gap-2">
+            <span className={`font-mono ${times > 0 ? "text-text-primary" : ""}`}>
+              {steps[edge.from].id} → {steps[edge.to].id}
+            </span>
+            <span className={EDGE_CLASSES[edge.kind]}>{EDGE_LABELS[edge.kind]}</span>
+            {edge.limit && <span>{edge.limit}</span>}
+            {traversed && <span>{times > 0 ? `taken ×${times}` : "not taken"}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function PipelineJumps({ edges, steps, lanes, traversed }: PipelineJumpsProps) {
   if (edges.length === 0) return null;
   const center = (index: number) => index * ROW_PITCH + NODE_HEIGHT / 2;
   return (
@@ -321,17 +378,17 @@ function PipelineJumps({ edges, steps, lanes }: PipelineJumpsProps) {
         const x = (edge.lane + 1) * LANE_WIDTH;
         const start = center(edge.from) - ARROW_OFFSET;
         const end = center(edge.to) + ARROW_OFFSET;
-        const label = `${steps[edge.from].id} → ${steps[edge.to].id} ${EDGE_LABELS[edge.kind]}${
-          edge.limit ? ` (${edge.limit})` : ""
-        }`;
+        const label = jumpLabel(edge, steps);
+        const times = jumpTimes(edge, steps, traversed);
         return (
           <g
             key={`${edge.from}-${edge.kind}`}
             data-edge={label}
-            className={EDGE_CLASSES[edge.kind]}
+            data-taken={traversed ? times : undefined}
+            className={`${EDGE_CLASSES[edge.kind]} ${traversed && times === 0 ? "opacity-40" : ""}`}
             fill="none"
             stroke="currentColor"
-            strokeWidth={1.25}
+            strokeWidth={times > 0 ? 2 : 1.25}
           >
             <title>{label}</title>
             <path

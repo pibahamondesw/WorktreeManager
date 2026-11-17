@@ -92,6 +92,91 @@ function assignLanes(jumps: Omit<PipelineEdge, "lane">[]): PipelineLayout {
   return { edges, lanes: lanes.length };
 }
 
+type TransitionEnd = "done" | "fail" | "block" | "defer";
+
+/** Where a step goes on success (`next`), failure or rejection: another step or the item's end. */
+export interface PipelineTransition {
+  from: string;
+  kind: EdgeKind;
+  to: { step: string } | { end: TransitionEnd };
+  limit: string | null;
+}
+
+/** Every transition of the definition, independent of how it is drawn. A rejection without its
+ * own `on_reject` follows `on_fail`, and `continue` follows `next`. */
+export function pipelineTransitions(steps: PipelineStep[]): PipelineTransition[] {
+  return steps.flatMap((step, index) => {
+    const next: PipelineTransition["to"] = step.next
+      ? { step: step.next }
+      : index + 1 < steps.length
+        ? { step: steps[index + 1].id }
+        : { end: "done" };
+    const follow = (kind: EdgeKind, transition: Transition): PipelineTransition => {
+      if (typeof transition !== "string") {
+        return {
+          from: step.id,
+          kind,
+          to: { step: transition.goto.step },
+          limit: gotoLimit(transition),
+        };
+      }
+      return {
+        from: step.id,
+        kind,
+        to: transition === "continue" ? next : { end: transition },
+        limit: null,
+      };
+    };
+    const reject = onReject(step);
+    return [
+      { from: step.id, kind: "next" as const, to: next, limit: null },
+      follow("on_fail", step.onFail),
+      ...(reject === null ? [] : [follow("on_reject", reject)]),
+    ];
+  });
+}
+
+export const transitionKey = ({ from, kind }: Pick<PipelineTransition, "from" | "kind">) =>
+  `${from}:${kind}`;
+
+/** How many times the item took each transition between steps, keyed by `transitionKey`, read
+ * from its attempts in the order they opened. An attempt of a step the definition no longer
+ * has breaks the path there. */
+export function traversedTransitions(
+  steps: PipelineStep[],
+  item: AutomationItem | null
+): Map<string, number> {
+  const transitions = pipelineTransitions(steps);
+  const counts = new Map<string, number>();
+  const attempts = item?.steps ?? [];
+  attempts.slice(1).forEach((reached, index) => {
+    const left = attempts[index];
+    const outgoing = transitions.filter(
+      ({ from, to }) => from === left.step && "step" in to && to.step === reached.step
+    );
+    const taken =
+      attemptExits(left)
+        .map((kind) => outgoing.find((transition) => transition.kind === kind))
+        .find(Boolean) ?? outgoing[0];
+    if (taken) counts.set(transitionKey(taken), (counts.get(transitionKey(taken)) ?? 0) + 1);
+  });
+  return counts;
+}
+
+function attemptExits(attempt: StepAttempt): EdgeKind[] {
+  if (attempt.status === "failed") return ["on_fail"];
+  if (attempt.status === "rejected") return ["on_reject", "on_fail"];
+  return ["next"];
+}
+
+/** Steps an item ran that the definition no longer has, in the order the item reached them. */
+export function unknownAttemptSteps(steps: PipelineStep[], item: AutomationItem | null): string[] {
+  const known = new Set(steps.map((step) => step.id));
+  return [...new Set((item?.steps ?? []).map((attempt) => attempt.step))].filter(
+    (id) => !known.has(id)
+  );
+}
+
 export function stepProgress(
   steps: PipelineStep[],
   item: AutomationItem | null

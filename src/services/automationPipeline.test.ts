@@ -3,10 +3,13 @@ import { AutomationItem, PipelineStep, StepAttempt, StepKind, Transition } from 
 import {
   onReject,
   pipelineLayout,
+  pipelineTransitions,
   stepKindName,
   stepProgress,
   stepSummary,
   transitionLabel,
+  traversedTransitions,
+  unknownAttemptSteps,
   waitConditionLabel,
   waitFacts,
 } from "./automationPipeline";
@@ -100,6 +103,125 @@ describe("pipelineLayout", () => {
       [2, 3, 0],
     ]);
     expect(lanes).toBe(1);
+  });
+});
+
+describe("pipelineTransitions", () => {
+  it("lists each step's success, failure and rejection targets with their limits", () => {
+    const transitions = pipelineTransitions(CAMPAIGN);
+    const from = (id: string) => transitions.filter((transition) => transition.from === id);
+    expect(from("implement")).toEqual([
+      { from: "implement", kind: "next", to: { step: "verify" }, limit: null },
+      { from: "implement", kind: "on_fail", to: { end: "fail" }, limit: null },
+    ]);
+    expect(from("review")).toContainEqual({
+      from: "review",
+      kind: "on_reject",
+      to: { step: "repair" },
+      limit: "budget repair_rounds",
+    });
+    expect(from("checks")).toContainEqual({
+      from: "checks",
+      kind: "on_fail",
+      to: { step: "repair" },
+      limit: "max 5",
+    });
+    expect(from("repair")[0]).toEqual({
+      from: "repair",
+      kind: "next",
+      to: { step: "verify" },
+      limit: null,
+    });
+    expect(from("approve")).toEqual([
+      { from: "approve", kind: "next", to: { end: "done" }, limit: null },
+      { from: "approve", kind: "on_fail", to: { end: "fail" }, limit: null },
+      { from: "approve", kind: "on_reject", to: { end: "block" }, limit: null },
+    ]);
+  });
+
+  it("sends continue where next goes", () => {
+    expect(
+      pipelineTransitions([step("lint", command("make"), { onFail: "continue", next: "done" })])
+    ).toEqual([
+      { from: "lint", kind: "next", to: { step: "done" }, limit: null },
+      { from: "lint", kind: "on_fail", to: { step: "done" }, limit: null },
+    ]);
+  });
+});
+
+describe("traversedTransitions", () => {
+  it("is empty without an item", () => {
+    expect(traversedTransitions(CAMPAIGN, null).size).toBe(0);
+  });
+
+  it("counts every round of a repair loop", () => {
+    const traversed = traversedTransitions(
+      CAMPAIGN,
+      item({
+        steps: [
+          attempt("implement", 1, "succeeded"),
+          attempt("verify", 1, "failed"),
+          attempt("repair", 1, "succeeded"),
+          attempt("verify", 2, "succeeded"),
+          attempt("review", 1, "rejected"),
+          attempt("repair", 2, "succeeded"),
+          attempt("verify", 3, "succeeded"),
+          attempt("review", 2, "succeeded"),
+          attempt("publish", 1, "running"),
+        ],
+      })
+    );
+    expect(Object.fromEntries(traversed)).toEqual({
+      "implement:next": 1,
+      "verify:on_fail": 1,
+      "repair:next": 2,
+      "verify:next": 2,
+      "review:on_reject": 1,
+      "review:next": 1,
+    });
+  });
+
+  it("follows on_fail for a rejection without its own on_reject", () => {
+    const steps = [
+      step("draft", agent(), { onFail: goto("fix") }),
+      step("ok", agent()),
+      step("fix", agent()),
+    ];
+    const rejected = item({
+      steps: [attempt("draft", 1, "rejected"), attempt("fix", 1, "succeeded")],
+    });
+    expect(Object.fromEntries(traversedTransitions(steps, rejected))).toEqual({
+      "draft:on_fail": 1,
+    });
+  });
+
+  it("takes the only transition that reaches the next attempt's step", () => {
+    const steps = [
+      step("draft", agent(), { onFail: goto("fix") }),
+      step("ok", agent()),
+      step("fix", agent()),
+    ];
+    const resumed = item({
+      steps: [attempt("draft", 1, "succeeded"), attempt("fix", 1, "succeeded")],
+    });
+    expect(Object.fromEntries(traversedTransitions(steps, resumed))).toEqual({
+      "draft:on_fail": 1,
+    });
+  });
+
+  it("breaks the path at steps the definition no longer has and at repeated attempts", () => {
+    const steps = [step("draft", agent()), step("ship", agent())];
+    const drifted = item({
+      steps: [
+        attempt("draft", 1, "failed"),
+        attempt("draft", 2, "succeeded"),
+        attempt("removed", 1, "succeeded"),
+        attempt("ship", 1, "succeeded"),
+      ],
+    });
+    expect(traversedTransitions(steps, drifted).size).toBe(0);
+    expect(unknownAttemptSteps(steps, drifted)).toEqual(["removed"]);
+    expect(unknownAttemptSteps(steps, null)).toEqual([]);
   });
 });
 
