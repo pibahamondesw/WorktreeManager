@@ -53,7 +53,7 @@ Present triggers are OR-ed; at least one must allow firing.
 - `event`: a list of `{source, type, where}`:
   - `app`: `task.created`, `task.deleted`, `agent.done`, `agent.waiting`, `pr.merged`, `pr.closed`, `pr.reopened`, `pr.ready`, `pr.checks_passed`, `pr.checks_failed`, `pr.approved`, `pr.changes_requested`; `where: {workspace, agent}`.
   - `linear`: `issue.created`, `issue.label_added`, `issue.state_changed`; `where: {team, label, assignee, state}`.
-  - `github`: `pr.opened`, `pr.updated`, `pr.ci_failed`, `pr.review_received`, `pr.mentioned`; `where: {repo, author, branch, label}`.
+  - `github`: `pr.opened`, `pr.updated`, `pr.ci_failed`, `pr.review_received`, `pr.mentioned`, `pr.review_requested`, `pr.assigned`, `pr.labeled`; `where: {repo, author, branch, label}`, plus `reviewer` for `pr.review_requested` and `assignee` for `pr.assigned` (default `me`).
   - `circleci`: `workflow.failed`, `workflow.finished`, `job.failed`, `job.finished`; `where: {project, branch, author}`.
 
 Payloads from events and the CLI are untrusted data.
