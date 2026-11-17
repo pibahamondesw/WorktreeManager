@@ -161,7 +161,7 @@ fn navigation_decision(
     if target.as_str() == shutdown_url {
         return NavigationDecision::Unload;
     }
-    if target.as_str() == "about:blank" {
+    if target.as_str() == "about:blank" || is_embeddable_extension_frame(target) {
         return NavigationDecision::Allow;
     }
     if target.origin() != origin.origin() {
@@ -208,6 +208,15 @@ fn allows_task_navigation(target: &tauri::Url, workspace: &str) -> bool {
         has_workspace |= key == "workspace";
     }
     target.path() != "/" || has_workspace
+}
+
+const EMBEDDABLE_EXTENSION_FRAME_HOSTS: &[&str] = &["cdn.platform.openai.com"];
+
+fn is_embeddable_extension_frame(target: &tauri::Url) -> bool {
+    target.scheme() == "https"
+        && target
+            .host_str()
+            .is_some_and(|host| EMBEDDABLE_EXTENSION_FRAME_HOSTS.contains(&host))
 }
 
 pub(crate) fn open_external(app: &AppHandle, url: &tauri::Url) {
@@ -416,5 +425,36 @@ mod tests {
         ));
         assert!(!allows("http://127.0.0.1:3000/?folder=/a"));
         assert!(allows("http://127.0.0.1:3000/static/webview/index.html"));
+    }
+
+    const CODEX_SANDBOX_RUNNER: &str =
+        "https://cdn.platform.openai.com/deployments/dil/v14/runner.html";
+
+    #[test]
+    fn navigation_decision_loads_the_codex_sandbox_runner_inside_the_editor() {
+        assert_eq!(decide(CODEX_SANDBOX_RUNNER), NavigationDecision::Allow);
+        assert_eq!(
+            decide("https://cdn.platform.openai.com.evil.test/runner.html"),
+            NavigationDecision::OpenExternally
+        );
+    }
+
+    #[test]
+    fn codex_sandbox_runner_loads_inside_the_editor() {
+        assert!(is_embeddable_extension_frame(&url(CODEX_SANDBOX_RUNNER)));
+    }
+
+    #[test]
+    fn other_external_urls_still_open_outside_the_editor() {
+        let embeds = |value: &str| is_embeddable_extension_frame(&url(value));
+        assert!(!embeds("https://example.com/runner.html"));
+        assert!(!embeds("https://platform.openai.com/"));
+        assert!(!embeds(
+            "https://cdn.platform.openai.com.evil.test/runner.html"
+        ));
+        assert!(!embeds("https://evil.test/cdn.platform.openai.com"));
+        assert!(!embeds(
+            "http://cdn.platform.openai.com/deployments/dil/v14/runner.html"
+        ));
     }
 }
