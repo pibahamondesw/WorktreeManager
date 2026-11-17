@@ -70,7 +70,7 @@ fn dispatch<'a>(
     executor: &dyn Executor,
     definitions: impl IntoIterator<Item = &'a AutomationDefinition>,
     event: &AppEvent,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<EventRun>, String> {
     let key = trigger_key(event)?;
     let payload = payload(event)?;

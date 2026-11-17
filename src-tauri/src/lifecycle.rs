@@ -327,7 +327,7 @@ mod tests {
     }
 
     fn engine_request() -> automations::scheduler::RunRequest {
-        let now = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now());
+        let now = jiff::Timestamp::now();
         automations::scheduler::RunRequest {
             automation: "demo".into(),
             run_id: "1700000000000-abcdef12".into(),

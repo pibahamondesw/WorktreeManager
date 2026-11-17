@@ -2,11 +2,11 @@
 //! decisions in force, the engine context and, wrapped as untrusted data, the item, the trigger payload, what earlier
 //! steps produced and the findings that led here.
 
-use chrono::SecondsFormat;
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::super::definition::{AgentStep, AutomationDefinition};
+use super::super::instants::rfc3339;
 use super::super::pipeline::StepRequest;
 use super::super::scheduler::RunRequest;
 use super::super::store::events::{StepOutcome, Verdict};
@@ -145,9 +145,7 @@ fn context(input: &PromptInput) -> String {
         "<wtm_context>\nAutomation: {}\nRun: {} (scheduled for {})\nWTM task: {} on branch {}\nWorktrees:{worktrees}\nItem: {} (version {})\nStep: {} (attempt {})\n</wtm_context>",
         request.automation,
         request.run_id,
-        request
-            .scheduled_for
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
+        rfc3339(request.scheduled_for),
         task.id,
         task.branch,
         item.id,

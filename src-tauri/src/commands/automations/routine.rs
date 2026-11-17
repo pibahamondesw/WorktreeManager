@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
+use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -34,6 +34,7 @@ use super::definition::{
     AgentSettings, AgentStep, Authorization, AutomationDefinition, Capacity, Effect, StepKind,
     Target, TaskMode, Verb,
 };
+use super::instants::rfc3339;
 use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
@@ -1257,9 +1258,9 @@ fn grant_of(verb: Verb) -> Option<Grant> {
 /// The run's deadline counts from when it fired.
 fn run_deadline(definition: &AutomationDefinition, request: &RunRequest) -> Instant {
     let deadline =
-        request.fired_at + TimeDelta::seconds(definition.budgets.run_deadline_secs as i64);
-    let now = DateTime::<Utc>::from(std::time::SystemTime::now());
-    let remaining = (deadline - now).to_std().unwrap_or_default();
+        request.fired_at + SignedDuration::from_secs(definition.budgets.run_deadline_secs as i64);
+    let now = Timestamp::now();
+    let remaining: Duration = deadline.duration_since(now).try_into().unwrap_or_default();
     Instant::now() + remaining
 }
 
@@ -1278,12 +1279,7 @@ fn run_variables(request: &RunRequest) -> Vec<(&'static str, String)> {
         ("automation", request.automation.clone()),
         ("run.id", request.run_id.clone()),
         ("run.short_id", short_id.to_string()),
-        (
-            "run.scheduled_for",
-            request
-                .scheduled_for
-                .to_rfc3339_opts(SecondsFormat::Secs, true),
-        ),
+        ("run.scheduled_for", rfc3339(request.scheduled_for)),
     ]
 }
 

@@ -21,7 +21,7 @@ pub fn fire(
     definition: &AutomationDefinition,
     key: &str,
     payload: Option<Value>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<FiredRun, String> {
     let name = &definition.name;
     if !definition.trigger.cli {
@@ -53,7 +53,7 @@ pub fn fire(
 pub(super) struct Fired {
     pub trigger: RunTrigger,
     pub payload: Option<Value>,
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
 }
 
 /// Claims the run for the trigger key and launches it, unless the key already fired. A paused

@@ -3,10 +3,10 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
-use chrono_tz::Tz;
 use croner::parser::{CronParser, Seconds, Year};
 use croner::Cron;
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, Timestamp, Zoned};
 use serde_json::{Map, Value};
 
 use super::circleci_trigger::circleci_event_trigger;
@@ -30,6 +30,7 @@ use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
 };
 use crate::commands::agents::{AgentCapabilities, AgentDescriptor};
+use crate::commands::automations::instants::iana_zone;
 use crate::commands::automations::watchers::{COMMAND, PR_CHECKS, PR_INTEGRATED};
 
 const SUPPORTED_SCHEMA: u64 = 1;
@@ -419,12 +420,7 @@ fn event_conditions(
     Some((workspace?, agent?))
 }
 
-fn schedule(
-    report: &mut Report,
-    now: DateTime<Utc>,
-    value: &Value,
-    field: &str,
-) -> Option<Schedule> {
+fn schedule(report: &mut Report, now: Timestamp, value: &Value, field: &str) -> Option<Schedule> {
     let (cron_field, cron, tz, catch_up) = match value {
         Value::String(cron) => (
             field.to_string(),
@@ -456,7 +452,7 @@ fn schedule(
     };
     let (cron, tz) = (cron?, tz?);
     let expression = cron_expression(report, &cron, &cron_field)?;
-    let zone: Tz = tz.parse().ok()?;
+    let zone = iana_zone(&tz)?;
     if let Some(problem) = slot_problem(&expression, zone, now) {
         report.error(IssueKind::Invalid, &cron_field, problem);
         return None;
@@ -470,7 +466,7 @@ fn schedule(
 
 fn timezone(report: &mut Report, value: &Value, field: &str) -> Option<String> {
     let tz = string(report, value, field)?;
-    if tz.parse::<Tz>().is_err() {
+    if iana_zone(&tz).is_none() {
         report.error(
             IssueKind::Invalid,
             field,
@@ -500,22 +496,31 @@ fn cron_expression(report: &mut Report, text: &str, field: &str) -> Option<Cron>
 }
 
 /// Why the slots of the next year are unusable: none at all, or two closer than the minimum.
-fn slot_problem(expression: &Cron, zone: Tz, now: DateTime<Utc>) -> Option<String> {
-    let Ok(first) = expression.find_next_occurrence(&now.with_timezone(&zone), false) else {
+fn slot_problem(expression: &Cron, zone: TimeZone, now: Timestamp) -> Option<String> {
+    let Ok(first) = expression.find_next_occurrence(&now.to_zoned(zone), false) else {
         return Some("never fires".into());
     };
-    let end = first + TimeDelta::days(SCHEDULE_WINDOW_DAYS);
-    let minimum = TimeDelta::minutes(MIN_SCHEDULE_INTERVAL_MINUTES);
-    let mut previous = first;
-    for slot in expression.iter_after(first).take_while(|slot| *slot <= end) {
-        if slot - previous < minimum {
+    let end = first.timestamp() + SignedDuration::from_hours(SCHEDULE_WINDOW_DAYS * 24);
+    let minimum = SignedDuration::from_mins(MIN_SCHEDULE_INTERVAL_MINUTES);
+    let mut previous = first.clone();
+    for slot in expression
+        .iter_after(first)
+        .take_while(|slot| slot.timestamp() <= end)
+    {
+        if slot.timestamp().duration_since(previous.timestamp()) < minimum {
             return Some(format!(
-                "fires at {previous} and {slot}, less than {MIN_SCHEDULE_INTERVAL_MINUTES} minutes apart"
+                "fires at {} and {}, less than {MIN_SCHEDULE_INTERVAL_MINUTES} minutes apart",
+                wall_clock(&previous),
+                wall_clock(&slot)
             ));
         }
         previous = slot;
     }
     None
+}
+
+fn wall_clock(slot: &Zoned) -> String {
+    slot.strftime("%Y-%m-%d %H:%M:%S %Z").to_string()
 }
 
 fn default_concurrency(task: TaskMode) -> Concurrency {

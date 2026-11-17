@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 use super::fields::{duration_secs, is_step_id, string_list, template, Fields, Report};
@@ -97,7 +96,7 @@ fn env() -> Environment {
             },
         ],
         workspaces: stored_workspaces(&json!({ "workspaces": workspaces() })),
-        now: "2026-10-29T12:00:00Z".parse::<DateTime<Utc>>().unwrap(),
+        now: "2026-10-29T12:00:00Z".parse().unwrap(),
     }
 }
 
@@ -478,6 +477,31 @@ fn schedules_need_a_valid_cron_timezone_and_spacing() {
         "trigger.schedule"
     )
     .contains("less than 15 minutes apart"));
+}
+
+#[test]
+fn schedules_name_the_two_closest_slots_in_their_timezone() {
+    assert_eq!(
+        message(
+            &routine("trigger:\n  schedule: { cron: \"*/10 * * * *\", tz: America/Santiago }\n"),
+            "trigger.schedule.cron"
+        ),
+        "fires at 2026-10-29 09:10:00 -03 and 2026-10-29 09:20:00 -03, less than 15 minutes apart"
+    );
+}
+
+#[test]
+fn timezones_must_match_an_iana_name_exactly() {
+    valid(&routine(
+        "trigger:\n  schedule: { cron: \"0 9 * * *\", tz: US/Eastern }\n",
+    ));
+    assert_eq!(
+        message(
+            &routine("trigger:\n  schedule: { cron: \"0 9 * * *\", tz: america/santiago }\n"),
+            "trigger.schedule.tz"
+        ),
+        "america/santiago is not an IANA timezone"
+    );
 }
 
 #[test]

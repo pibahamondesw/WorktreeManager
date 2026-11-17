@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use chrono::DateTime;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
@@ -17,6 +16,7 @@ use super::actions::check_payload;
 use super::definition::{
     ApprovalDefault, ApprovalStep, AutomationDefinition, Step, StepKind, WaitStep,
 };
+use super::instants::parse_rfc3339;
 use super::routine::ResolvedTask;
 use super::scheduler::{is_active, Executor};
 use super::store::events::{ArmedWait, LoggedEvent, RunEvent, StepOutcome, StepStatus, Verdict};
@@ -215,8 +215,7 @@ pub fn arm(step: &Step, now_ms: u64, title: Option<String>) -> ArmedWait {
     let wake_at_ms = match &step.kind {
         StepKind::Wait(WaitStep::DurationSecs(secs)) => Some(now_ms + secs * 1000),
         StepKind::Wait(WaitStep::Until(instant)) => Some(
-            DateTime::parse_from_rfc3339(instant)
-                .map_or(now_ms, |instant| instant.timestamp_millis().max(0) as u64),
+            parse_rfc3339(instant).map_or(now_ms, |instant| instant.as_millisecond().max(0) as u64),
         ),
         _ => None,
     };

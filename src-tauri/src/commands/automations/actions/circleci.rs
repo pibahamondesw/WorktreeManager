@@ -14,7 +14,7 @@ pub mod token;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use chrono::{SecondsFormat, TimeDelta};
+use jiff::SignedDuration;
 use serde_json::json;
 
 use super::events::EventRun;
@@ -23,6 +23,7 @@ use super::*;
 use crate::commands::automations::definition::{
     CircleciEventKind, CircleciEventTrigger, TargetRepo, CIRCLECI_OWNER,
 };
+use crate::commands::automations::instants::{parse_rfc3339, rfc3339_millis};
 use crate::commands::automations::watchers::backoff_ms;
 pub use api::{CircleciApi, RestCircleci, TokenReader};
 use api::{CircleciReader, Job, Pipeline, Workflow};
@@ -146,9 +147,9 @@ impl CircleciTriggers {
         store: &RunStore,
         executor: &dyn Executor,
         definitions: &[&AutomationDefinition],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Vec<EventRun> {
-        let now_ms = now.timestamp_millis();
+        let now_ms = now.as_millisecond();
         let mut runs = Vec::new();
         for (slug, listeners) in self.listening(store, definitions) {
             let poll = self.polls.entry(slug.clone()).or_default();
@@ -264,9 +265,9 @@ impl CircleciTriggers {
     fn read(
         &mut self,
         slug: &str,
-        watched: &[(Listener, DateTime<Utc>)],
-        since: DateTime<Utc>,
-        now: DateTime<Utc>,
+        watched: &[(Listener, Timestamp)],
+        since: Timestamp,
+        now: Timestamp,
     ) -> Result<Activity, String> {
         let triggers = || {
             watched
@@ -282,7 +283,7 @@ impl CircleciTriggers {
         let settled = &self.polls.entry(slug.to_string()).or_default().settled;
         let listed = self
             .reader
-            .pipelines(slug, now - TimeDelta::hours(LOOKBACK_HOURS))?;
+            .pipelines(slug, now - SignedDuration::from_hours(LOOKBACK_HOURS))?;
         let mut pipelines = Vec::new();
         for pipeline in listed.iter().filter(|p| !settled.contains(&p.id)) {
             let mut workflows = Vec::new();
@@ -307,7 +308,7 @@ impl CircleciTriggers {
         }
         let poll = self.polls.entry(slug.to_string()).or_default();
         poll.settled.retain(|id| listed.iter().any(|p| &p.id == id));
-        let settled_before = now - TimeDelta::minutes(SETTLED_MINUTES);
+        let settled_before = now - SignedDuration::from_mins(SETTLED_MINUTES);
         for run in pipelines
             .iter()
             .filter(|run| has_settled(run, settled_before))
@@ -322,10 +323,10 @@ impl CircleciTriggers {
         &mut self,
         store: &RunStore,
         executor: &dyn Executor,
-        (listener, cursor): &(Listener, DateTime<Utc>),
+        (listener, cursor): &(Listener, Timestamp),
         slug: &str,
         activity: &Activity,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Vec<EventRun> {
         let cursor = *cursor;
         let definition = listener.definition;
@@ -464,8 +465,8 @@ fn watched<'a>(
     store: &RunStore,
     listeners: Vec<Listener<'a>>,
     slug: &str,
-    now: DateTime<Utc>,
-) -> Vec<(Listener<'a>, DateTime<Utc>)> {
+    now: Timestamp,
+) -> Vec<(Listener<'a>, Timestamp)> {
     let mut watched = Vec::new();
     for listener in listeners {
         match listener.cursor.as_deref().and_then(instant) {
@@ -485,8 +486,8 @@ fn watched<'a>(
 }
 
 /// Every workflow stopped, the last one before `settled_before`, or the pipeline made none.
-fn has_settled(run: &PipelineRun, settled_before: DateTime<Utc>) -> bool {
-    let stopped: Option<Vec<DateTime<Utc>>> = run
+fn has_settled(run: &PipelineRun, settled_before: Timestamp) -> bool {
+    let stopped: Option<Vec<Timestamp>> = run
         .workflows
         .iter()
         .map(|run| {
@@ -508,7 +509,7 @@ fn has_settled(run: &PipelineRun, settled_before: DateTime<Utc>) -> bool {
 }
 
 /// The workflows and jobs that stopped after `cursor`.
-fn outcomes(activity: &Activity, cursor: DateTime<Utc>) -> Vec<Outcome<'_>> {
+fn outcomes(activity: &Activity, cursor: Timestamp) -> Vec<Outcome<'_>> {
     let mut outcomes = Vec::new();
     for pipeline_run in &activity.pipelines {
         for run in &pipeline_run.workflows {
@@ -532,7 +533,7 @@ fn outcomes(activity: &Activity, cursor: DateTime<Utc>) -> Vec<Outcome<'_>> {
     outcomes
 }
 
-fn stopped_after(outcome: &Outcome, cursor: DateTime<Utc>) -> bool {
+fn stopped_after(outcome: &Outcome, cursor: Timestamp) -> bool {
     TERMINAL.contains(&outcome.status())
         && outcome
             .stopped_at()
@@ -579,13 +580,8 @@ fn branch_matches(wanted: &str, branch: &str) -> bool {
 }
 
 /// Moves the cursor to a while before this poll, never back.
-fn advance(
-    store: &RunStore,
-    definition: &AutomationDefinition,
-    cursor: DateTime<Utc>,
-    now: DateTime<Utc>,
-) {
-    let trailing = now - TimeDelta::minutes(CURSOR_LAG_MINUTES);
+fn advance(store: &RunStore, definition: &AutomationDefinition, cursor: Timestamp, now: Timestamp) {
+    let trailing = now - SignedDuration::from_mins(CURSOR_LAG_MINUTES);
     if trailing > cursor {
         save_cursor(store, definition, Some(stamp(trailing)));
     }
@@ -609,7 +605,7 @@ fn fire(
     definition: &AutomationDefinition,
     outcome: &Outcome,
     payload: Value,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<FiredRun, String> {
     check_payload(Some(&payload))?;
     let trigger = RunTrigger {
@@ -664,12 +660,10 @@ fn app_url(slug: &str) -> String {
     format!("https://app.circleci.com/pipelines/{path}")
 }
 
-fn instant(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|instant| instant.with_timezone(&Utc))
+fn instant(text: &str) -> Option<Timestamp> {
+    parse_rfc3339(text)
 }
 
-fn stamp(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::Millis, true)
+fn stamp(instant: Timestamp) -> String {
+    rfc3339_millis(instant)
 }

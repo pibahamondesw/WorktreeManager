@@ -46,9 +46,8 @@ toml = "0.9"
 similar = "2.7"
 jsonc-parser = { version = "0.34", features = ["serde"] }
 serde_norway = "0.9"
-croner = "4"
-chrono-tz = "0.10"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+croner = { version = "4", default-features = false, features = ["jiff"] }
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 jsonschema = { version = "0.33.0", default-features = false }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

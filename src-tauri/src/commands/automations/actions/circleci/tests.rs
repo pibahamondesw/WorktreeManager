@@ -18,13 +18,13 @@ use crate::commands::automations::store::AutomationState;
 const TOKEN: &str = "circle_secret_123";
 const T0: &str = "2026-11-10T12:00:00.000Z";
 
-fn at(text: &str) -> DateTime<Utc> {
+fn at(text: &str) -> Timestamp {
     instant(text).unwrap()
 }
 
 /// `seconds` after T0, as CircleCI writes instants.
 fn after(seconds: i64) -> String {
-    stamp(at(T0) + TimeDelta::seconds(seconds))
+    stamp(at(T0) + SignedDuration::from_secs(seconds))
 }
 
 struct Scratch(PathBuf);
@@ -175,7 +175,7 @@ impl Harness {
             .iter()
             .filter_map(|entry| entry.definition.as_ref())
             .collect();
-        let now = at(T0) + TimeDelta::seconds(seconds);
+        let now = at(T0) + SignedDuration::from_secs(seconds);
         let store = self.scratch.store();
         self.triggers
             .poll(&store, &self.executor, &definitions, now)

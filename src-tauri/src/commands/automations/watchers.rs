@@ -18,7 +18,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use chrono::DateTime;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -28,6 +27,7 @@ use pr_checks::{BotLgtm, PrChecks};
 use pr_integrated::PrIntegrated;
 use script::ShellScripts;
 
+use super::instants::parse_rfc3339;
 use super::publish::pushed_commits;
 use super::store::events::{EffectStatus, RunEvent};
 use super::wait::{Watch, WatchVerdict, Watchers};
@@ -251,9 +251,7 @@ fn worktree(watch: &Watch, repo: Option<&str>) -> Option<PathBuf> {
 }
 
 fn epoch_ms(instant: &str) -> Option<u64> {
-    DateTime::parse_from_rfc3339(instant)
-        .ok()
-        .map(|instant| instant.timestamp_millis().max(0) as u64)
+    parse_rfc3339(instant).map(|instant| instant.as_millisecond().max(0) as u64)
 }
 
 /// GitHub's GraphQL rate limit, as queries that ask for `rateLimit` report it: once few points

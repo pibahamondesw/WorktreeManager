@@ -256,7 +256,7 @@ impl Harness {
             .iter()
             .filter_map(|entry| entry.definition.as_ref())
             .collect();
-        let now = instant(T0).unwrap() + chrono::TimeDelta::seconds(seconds);
+        let now = instant(T0).unwrap() + jiff::SignedDuration::from_secs(seconds);
         let store = self.scratch.store();
         self.triggers
             .poll(&store, &self.executor, &definitions, now)

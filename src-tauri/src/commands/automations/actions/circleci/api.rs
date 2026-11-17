@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -131,7 +131,7 @@ impl CircleciReader {
     }
 
     /// The pipelines of `slug` created after `since`, newest first, as far as a few pages go.
-    pub fn pipelines(&self, slug: &str, since: DateTime<Utc>) -> Result<Vec<Pipeline>, String> {
+    pub fn pipelines(&self, slug: &str, since: Timestamp) -> Result<Vec<Pipeline>, String> {
         let created_after = |pipeline: &Pipeline| {
             super::instant(&pipeline.created_at).is_some_and(|created| created > since)
         };

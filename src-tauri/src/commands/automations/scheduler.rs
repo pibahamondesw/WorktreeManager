@@ -10,15 +10,16 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
-use chrono_tz::Tz;
 use croner::parser::{CronParser, Seconds, Year};
 use croner::Cron;
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, Timestamp};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
 
 use super::definition::{self, AutomationDefinition, CatchUp, Schedule};
+use super::instants::{iana_zone, parse_rfc3339, rfc3339};
 use super::store::events::{
     awaits_slot, FailureReason, ItemState, ItemStatus, LoggedEvent, MissedSlots, RunEvent,
     RunSource, RunState, RunStatus, RunTrigger, SkipReason,
@@ -31,9 +32,9 @@ use super::wait::parked_on;
 const TICK: Duration = Duration::from_secs(60);
 const MAX_STAGGER_SECS: u64 = 120;
 /// A slot fired this late still counts as on time for `catch_up: skip`.
-const ON_TIME_GRACE: TimeDelta = TimeDelta::minutes(5);
-const CATCH_UP_WINDOW: TimeDelta = TimeDelta::days(7);
-const START_TIMEOUT: TimeDelta = TimeDelta::minutes(5);
+const ON_TIME_GRACE: SignedDuration = SignedDuration::from_mins(5);
+const CATCH_UP_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
+const START_TIMEOUT: SignedDuration = SignedDuration::from_mins(5);
 const AUTO_PAUSE_FAILURES: u32 = 3;
 const INTERRUPTED_CAUSE: &str = "interrupted";
 pub(super) const DEFINITION_CHANGED_CAUSE: &str = "definition_changed";
@@ -41,14 +42,14 @@ pub(super) const DEFINITION_CHANGED_CAUSE: &str = "definition_changed";
 const MAX_RESUMES: usize = 3;
 
 pub trait Clock: Send {
-    fn now(&self) -> DateTime<Utc>;
+    fn now(&self) -> Timestamp;
 }
 
 pub struct SystemClock;
 
 impl Clock for SystemClock {
-    fn now(&self) -> DateTime<Utc> {
-        DateTime::from(std::time::SystemTime::now())
+    fn now(&self) -> Timestamp {
+        Timestamp::now()
     }
 }
 
@@ -57,8 +58,8 @@ pub struct RunRequest {
     pub automation: String,
     pub run_id: String,
     pub definition_hash: String,
-    pub scheduled_for: DateTime<Utc>,
-    pub fired_at: DateTime<Utc>,
+    pub scheduled_for: Timestamp,
+    pub fired_at: Timestamp,
     /// Test runs leave the automation's state alone and stage their side effects.
     pub test: bool,
 }
@@ -113,7 +114,7 @@ pub struct Automation {
     pub schedule: Option<Slots>,
     pub max_runs: u64,
     pub active_pool: u64,
-    pub run_deadline: TimeDelta,
+    pub run_deadline: SignedDuration,
 }
 
 impl Automation {
@@ -124,14 +125,14 @@ impl Automation {
             schedule: definition.trigger.schedule.as_ref().and_then(Slots::of),
             max_runs: definition.concurrency.max_runs,
             active_pool: definition.pools.active,
-            run_deadline: TimeDelta::seconds(definition.budgets.run_deadline_secs as i64),
+            run_deadline: SignedDuration::from_secs(definition.budgets.run_deadline_secs as i64),
         }
     }
 }
 
 pub struct Slots {
     cron: Cron,
-    zone: Tz,
+    zone: TimeZone,
     catch_up: CatchUp,
 }
 
@@ -143,19 +144,19 @@ impl Slots {
             .build();
         Some(Self {
             cron: parser.parse(&schedule.cron).ok()?,
-            zone: schedule.tz.parse().ok()?,
+            zone: iana_zone(&schedule.tz)?,
             catch_up: schedule.catch_up,
         })
     }
 
-    fn next(&self, after: DateTime<Utc>, inclusive: bool) -> Option<DateTime<Utc>> {
+    fn next(&self, after: Timestamp, inclusive: bool) -> Option<Timestamp> {
         self.cron
-            .find_next_occurrence(&after.with_timezone(&self.zone), inclusive)
+            .find_next_occurrence(&after.to_zoned(self.zone.clone()), inclusive)
             .ok()
-            .map(|slot| slot.with_timezone(&Utc))
+            .map(|slot| slot.timestamp())
     }
 
-    fn starting_at(&self, start: DateTime<Utc>) -> impl Iterator<Item = DateTime<Utc>> + '_ {
+    fn starting_at(&self, start: Timestamp) -> impl Iterator<Item = Timestamp> + '_ {
         std::iter::successors(self.next(start, true), |slot| self.next(*slot, false))
     }
 }
@@ -164,9 +165,9 @@ impl Slots {
 #[derive(Debug, PartialEq)]
 struct Plan {
     expected: Option<String>,
-    fire: Option<DateTime<Utc>>,
+    fire: Option<Timestamp>,
     missed: Option<MissedSlots>,
-    next: DateTime<Utc>,
+    next: Timestamp,
 }
 
 pub struct Scheduler<C: Clock> {
@@ -197,11 +198,7 @@ impl<C: Clock> Scheduler<C> {
         self.executor.wake_waiting();
     }
 
-    fn tick_automation(
-        &mut self,
-        automation: &Automation,
-        now: DateTime<Utc>,
-    ) -> Result<(), String> {
+    fn tick_automation(&mut self, automation: &Automation, now: Timestamp) -> Result<(), String> {
         self.sweep(automation, now)?;
         self.fire(automation, now)
     }
@@ -227,7 +224,7 @@ impl<C: Clock> Scheduler<C> {
         Ok(active)
     }
 
-    fn sweep(&mut self, automation: &Automation, now: DateTime<Utc>) -> Result<(), String> {
+    fn sweep(&mut self, automation: &Automation, now: Timestamp) -> Result<(), String> {
         let name = &automation.name;
         let executor = self.executor.clone();
         let overdue =
@@ -252,7 +249,7 @@ impl<C: Clock> Scheduler<C> {
         writer.save_state(&state)
     }
 
-    fn fire(&mut self, automation: &Automation, now: DateTime<Utc>) -> Result<(), String> {
+    fn fire(&mut self, automation: &Automation, now: Timestamp) -> Result<(), String> {
         let Some(slots) = &automation.schedule else {
             return Ok(());
         };
@@ -289,7 +286,7 @@ impl<C: Clock> Scheduler<C> {
     /// ends those it left active otherwise: after a crash, past `MAX_RESUMES` quits or on a
     /// definition other than the one the run pinned, which waiting items adopt or fail on.
     pub fn recover_interrupted(&mut self, automations: &[Automation]) {
-        let boot_ms = self.clock.now().timestamp_millis() as u64;
+        let boot_ms = self.clock.now().as_millisecond() as u64;
         for automation in automations {
             if let Err(error) = self.recover(automation, boot_ms) {
                 log::warn!(
@@ -488,12 +485,12 @@ fn restartable(run: &RunState, history: &[LoggedEvent]) -> bool {
 /// when it fired, and the definition is the one a retry pinned, if any.
 pub(super) fn recorded_request(name: &str, run: &RunState) -> Option<RunRequest> {
     let trigger = run.trigger.as_ref()?;
-    let fired_at = DateTime::from_timestamp_millis(started_at_ms(run)? as i64)?;
+    let fired_at = Timestamp::from_millisecond(started_at_ms(run)? as i64).ok()?;
     let scheduled_for = trigger
         .scheduled_for
         .as_deref()
-        .and_then(|slot| DateTime::parse_from_rfc3339(slot).ok())
-        .map_or(fired_at, |slot| slot.with_timezone(&Utc));
+        .and_then(parse_rfc3339)
+        .unwrap_or(fired_at);
     Some(RunRequest {
         automation: name.to_string(),
         run_id: run.id.clone(),
@@ -506,7 +503,7 @@ pub(super) fn recorded_request(name: &str, run: &RunState) -> Option<RunRequest>
 
 /// Enables the automation, or resumes it after a pause: the failure count restarts and the
 /// schedule fires from its next slot after now, without catching up the slots it missed.
-pub(super) fn reschedule(state: &mut AutomationState, automation: &Automation, now: DateTime<Utc>) {
+pub(super) fn reschedule(state: &mut AutomationState, automation: &Automation, now: Timestamp) {
     state.enabled = true;
     state.pause_reason = None;
     state.consecutive_failures = 0;
@@ -521,17 +518,14 @@ pub(super) fn reschedule(state: &mut AutomationState, automation: &Automation, n
 /// one because the definition changed, is realigned to its next slot without firing.
 fn plan(
     slots: &Slots,
-    stagger: TimeDelta,
+    stagger: SignedDuration,
     state: &AutomationState,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Option<Plan> {
     let horizon = now - stagger;
     let upcoming = slots.next(horizon, false)?;
     let expected = state.next_run_at.clone();
-    let pending = expected
-        .as_deref()
-        .and_then(|next| DateTime::parse_from_rfc3339(next).ok())
-        .map(|next| next.with_timezone(&Utc));
+    let pending = expected.as_deref().and_then(parse_rfc3339);
     let realign = Plan {
         expected: expected.clone(),
         fire: None,
@@ -552,8 +546,8 @@ fn plan(
         return Some(realign);
     };
     let fires = match slots.catch_up {
-        CatchUp::Latest => now - latest <= CATCH_UP_WINDOW,
-        CatchUp::Skip => horizon - latest <= ON_TIME_GRACE,
+        CatchUp::Latest => now.duration_since(latest) <= CATCH_UP_WINDOW,
+        CatchUp::Skip => horizon.duration_since(latest) <= ON_TIME_GRACE,
     };
     let unfired = if fires { earlier } else { &due[..] };
     Some(Plan {
@@ -564,7 +558,7 @@ fn plan(
     })
 }
 
-fn missed(slots: &[DateTime<Utc>]) -> Option<MissedSlots> {
+fn missed(slots: &[Timestamp]) -> Option<MissedSlots> {
     Some(MissedSlots {
         count: slots.len() as u64,
         first: rfc3339(*slots.first()?),
@@ -602,8 +596,8 @@ fn claim_slot(
     automation: &Automation,
     state: &AutomationState,
     active: &[RunState],
-    slot: DateTime<Utc>,
-    now: DateTime<Utc>,
+    slot: Timestamp,
+    now: Timestamp,
 ) -> Result<Option<RunRequest>, String> {
     let scheduled_for = rfc3339(slot);
     let trigger = RunTrigger {
@@ -668,12 +662,12 @@ pub(super) fn pool_skip(automation: &Automation, active: &[RunState]) -> Option<
 
 fn overdue(
     run: &RunState,
-    deadline: TimeDelta,
-    now: DateTime<Utc>,
+    deadline: SignedDuration,
+    now: Timestamp,
     owned: bool,
 ) -> Option<FailureReason> {
-    let claimed = DateTime::from_timestamp_millis(started_at_ms(run)? as i64)?;
-    let age = now - claimed;
+    let claimed = Timestamp::from_millisecond(started_at_ms(run)? as i64).ok()?;
+    let age = now.duration_since(claimed);
     if run.status == RunStatus::Starting && !owned && age >= START_TIMEOUT {
         Some(FailureReason::StartTimeout)
     } else if age >= deadline {
@@ -706,14 +700,10 @@ pub(super) fn is_active(status: RunStatus) -> bool {
 }
 
 /// Spreads automations sharing a slot over the first minutes after it, the same for every tick.
-pub(super) fn stagger(name: &str) -> TimeDelta {
+pub(super) fn stagger(name: &str) -> SignedDuration {
     let digest = Sha256::digest(name.as_bytes());
     let seed = u64::from_be_bytes(digest[..8].try_into().unwrap_or_default());
-    TimeDelta::seconds((seed % (MAX_STAGGER_SECS + 1)) as i64)
-}
-
-pub(super) fn rfc3339(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::Secs, true)
+    SignedDuration::from_secs((seed % (MAX_STAGGER_SECS + 1)) as i64)
 }
 
 fn scheduled<R: Runtime>(app: &AppHandle<R>) -> Vec<Automation> {

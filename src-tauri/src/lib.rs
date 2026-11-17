@@ -233,7 +233,7 @@ fn start_github_triggers(
                         .iter()
                         .filter_map(|e| e.definition.as_ref())
                         .collect();
-                    let now = std::time::SystemTime::now().into();
+                    let now = jiff::Timestamp::now();
                     triggers.poll(&store, executor.as_ref(), &definitions, now);
                 }
                 Err(error) => log::warn!("GitHub triggers could not load the automations: {error}"),
@@ -266,7 +266,7 @@ fn start_linear_triggers(
                         .iter()
                         .filter_map(|e| e.definition.as_ref())
                         .collect();
-                    let now = std::time::SystemTime::now().into();
+                    let now = jiff::Timestamp::now();
                     triggers.poll(&store, executor.as_ref(), &definitions, now);
                 }
                 Err(error) => log::warn!("Linear triggers could not load the automations: {error}"),
@@ -332,7 +332,7 @@ fn start_circleci_triggers(
                         .iter()
                         .filter_map(|e| e.definition.as_ref())
                         .collect();
-                    let now = std::time::SystemTime::now().into();
+                    let now = jiff::Timestamp::now();
                     triggers.poll(&store, executor.as_ref(), &definitions, now);
                 }
                 Err(error) => {

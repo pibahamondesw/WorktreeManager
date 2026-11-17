@@ -16,7 +16,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -725,7 +725,7 @@ pub struct Environment {
     pub agents: Vec<AgentDescriptor>,
     pub workspaces: Vec<WorkspaceRef>,
     /// Start of the window checked for schedule slots closer than the minimum interval.
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
 }
 
 pub fn load_directory(dir: &Path, env: &Environment) -> Result<Vec<AutomationEntry>, String> {
@@ -899,7 +899,7 @@ impl Sources {
         let env = Environment {
             agents: self.agents.catalog(),
             workspaces: self.workspaces,
-            now: DateTime::from(std::time::SystemTime::now()),
+            now: Timestamp::now(),
         };
         (self.dir, env)
     }

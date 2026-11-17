@@ -13,7 +13,6 @@ mod tests;
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::SecondsFormat;
 use serde_json::json;
 
 use super::events::EventRun;
@@ -22,6 +21,7 @@ use super::*;
 use crate::commands::automations::definition::{
     GithubEventKind, GithubEventTrigger, TargetRepo, GITHUB_OWNER,
 };
+use crate::commands::automations::instants::{parse_rfc3339, rfc3339_millis};
 use crate::commands::automations::scheduler::pool_skip;
 use crate::commands::automations::store::GithubCursor;
 use crate::commands::automations::watchers::backoff_ms;
@@ -80,9 +80,9 @@ impl GithubTriggers {
         store: &RunStore,
         executor: &dyn Executor,
         definitions: &[&AutomationDefinition],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Vec<EventRun> {
-        let now_ms = now.timestamp_millis();
+        let now_ms = now.as_millisecond();
         let mut runs = Vec::new();
         for (slug, listeners) in self.listening(store, definitions) {
             let poll = self.polls.entry(slug.clone()).or_default();
@@ -190,7 +190,7 @@ fn see(
     listener: Listener,
     slug: &str,
     activity: &Activity,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Vec<EventRun> {
     let definition = listener.definition;
     let cursor = listener
@@ -454,7 +454,7 @@ fn fire(
     definition: &AutomationDefinition,
     slug: &str,
     change: &Change,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<FiredRun, String> {
     let payload = payload(slug, change);
     check_payload(Some(&payload))?;
@@ -563,12 +563,10 @@ fn cut(body: &str) -> String {
     body.chars().take(MAX_BODY_CHARS).collect()
 }
 
-fn instant(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|instant| instant.with_timezone(&Utc))
+fn instant(text: &str) -> Option<Timestamp> {
+    parse_rfc3339(text)
 }
 
-fn stamp(instant: DateTime<Utc>) -> String {
-    instant.to_rfc3339_opts(SecondsFormat::Millis, true)
+fn stamp(instant: Timestamp) -> String {
+    rfc3339_millis(instant)
 }
