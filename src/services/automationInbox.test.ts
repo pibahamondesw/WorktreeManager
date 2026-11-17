@@ -226,6 +226,29 @@ describe("inboxEntries", () => {
     expect(entries[0].target).toEqual({ taskId: "t1", agent: "claude", conversationId: "c1" });
   });
 
+  it("leaves the denials of auto mode to the run detail but lists strict ones and questions", () => {
+    const denied = (mode: PermissionRequest["mode"], request_id: string) =>
+      question({ kind: "permission", tool: "Bash", input: null, mode, request_id });
+    const runs = [
+      run("2", { outcome: "noop", task_id: null, permission_requests: [denied("auto", "r5")] }),
+      run("1", {
+        outcome: "noop",
+        permission_requests: [
+          denied("auto", "r1"),
+          { ...denied("auto", "r2"), resolution: "allowed" },
+          denied("strict", "r3"),
+          question({ mode: "auto", request_id: "r4" }),
+        ],
+      }),
+    ];
+    const entries = inboxEntries([{ entry: entry(), runs }]).filter((e) => !e.autoArchived);
+    expect(entries.map(({ kind, title }) => [kind, title])).toEqual([
+      ["permission", "Allowed by default: Bash"],
+      ["permission", "Denied: Bash"],
+      ["question", "Which base branch?"],
+    ]);
+  });
+
   it("links a campaign item's question to the item's task and the asking step's conversation", () => {
     const asked = question({ item: "a", attempt: 2 });
     const campaignRun = (task_id: string | null) =>
