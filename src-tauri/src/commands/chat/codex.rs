@@ -1946,6 +1946,12 @@ mod tests {
         request(&out, "config/read");
         let start = &request(&out, "thread/start");
         assert_eq!(start["params"]["cwd"], "/wt/a");
+        let params: Vec<_> = start["params"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            params,
+            ["config", "cwd"],
+            "app-server threads start in any folder, a scratch one that is no git repository too"
+        );
         assert_eq!(
             start["params"]["config"]["sandbox_workspace_write"]["writable_roots"],
             json!(["/wt/b"])
