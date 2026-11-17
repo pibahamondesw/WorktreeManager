@@ -12,6 +12,8 @@ use tauri_plugin_opener::OpenerExt;
 use super::{server, trust, EditorRequest};
 use crate::commands::embedded::{attach_hidden, HiddenView, SessionInfo, View};
 
+const DISPOSABLE_POLYFILL: &str = include_str!("disposable.js");
+
 pub struct EditorView {
     pub view: HiddenView,
     unloaded: Arc<AtomicBool>,
@@ -80,6 +82,7 @@ pub fn create(
         .data_store_identifier(browser_store)
         .initialization_script(&session_script)
         .initialization_script(&trust_script)
+        .initialization_script_for_all_frames(DISPOSABLE_POLYFILL)
         .on_navigation(move |target| {
             if trust.handle(&navigation_app, target) {
                 return false;
