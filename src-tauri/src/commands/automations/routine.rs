@@ -13,6 +13,7 @@ mod live_turns;
 mod prompt;
 mod result;
 mod resume;
+mod selection_agent;
 mod takeover;
 #[cfg(test)]
 mod tests;
@@ -31,8 +32,8 @@ use serde_json::Value;
 
 use super::command::{CommandContext, CommandExecutor};
 use super::definition::{
-    AgentSettings, AgentStep, Authorization, AutomationDefinition, Capacity, Effect, Step,
-    StepKind, StepTask, Target, TaskMode, Verb,
+    AgentSettings, AgentStep, Authorization, AutomationDefinition, Capacity, Effect, ItemSource,
+    Step, StepKind, StepTask, Target, TaskMode, Verb,
 };
 use super::instants::rfc3339;
 use super::outputs::attempt_result;
@@ -403,7 +404,7 @@ impl RoutineExecutor {
             return self.finish(request, Ending::Failed(FailureReason::DefinitionChanged));
         };
         self.keep(&definition);
-        if agent_steps(&definition).any(|step| !self.sessions.available(&step.agent.id)) {
+        if agent_ids(&definition).any(|agent| !self.sessions.available(agent)) {
             return self.finish(request, Ending::Failed(FailureReason::AgentUnavailable));
         }
         if definition.selector.is_some() {
@@ -1043,28 +1044,14 @@ impl<'a> ItemSteps<'a> {
             if self.settled.contains(&settled) {
                 continue;
             }
-            let resolution = if settled.allowed {
-                PermissionResolution::Allowed
-            } else {
-                PermissionResolution::Denied
-            };
-            let kind = if settled.question {
-                RequestKind::Question
-            } else {
-                RequestKind::Permission
-            };
-            let event = RunEvent::PermissionRequested {
-                item: request.item.to_string(),
-                step: request.step.id.clone(),
+            let asking = SettledAsk {
+                item: request.item,
+                step: &request.step.id,
                 attempt: request.attempt,
-                tool: settled.tool.clone(),
-                input: settled.input.clone(),
-                resolution,
-                request_id: Some(settled.id.clone()),
-                session_id: Some(session_id.to_string()),
-                kind,
-                mode: Some(mode),
+                session_id,
+                mode,
             };
+            let event = settled_event(&asking, &settled);
             if let Err(error) = self.log.append(event) {
                 log::warn!("Could not record a permission request of {session_id}: {error}");
             }
@@ -1240,6 +1227,40 @@ impl<'a> ItemSteps<'a> {
     }
 }
 
+/// The attempt and session that asked for a request its policy settled.
+struct SettledAsk<'a> {
+    item: &'a str,
+    step: &'a str,
+    attempt: u32,
+    session_id: &'a str,
+    mode: UnattendedMode,
+}
+
+fn settled_event(asking: &SettledAsk, settled: &SettledRequest) -> RunEvent {
+    let resolution = if settled.allowed {
+        PermissionResolution::Allowed
+    } else {
+        PermissionResolution::Denied
+    };
+    let kind = if settled.question {
+        RequestKind::Question
+    } else {
+        RequestKind::Permission
+    };
+    RunEvent::PermissionRequested {
+        item: asking.item.to_string(),
+        step: asking.step.to_string(),
+        attempt: asking.attempt,
+        tool: settled.tool.clone(),
+        input: settled.input.clone(),
+        resolution,
+        request_id: Some(settled.id.clone()),
+        session_id: Some(asking.session_id.to_string()),
+        kind,
+        mode: Some(asking.mode),
+    }
+}
+
 /// A turn that did not complete cleanly.
 fn ended_report(end: TurnEnd) -> StepReport {
     match end {
@@ -1304,6 +1325,20 @@ fn agent_steps(definition: &AutomationDefinition) -> impl Iterator<Item = &Agent
         StepKind::Agent(agent) => Some(agent),
         _ => None,
     })
+}
+
+/// The agents of the steps and of `selector.agent`.
+fn agent_ids(definition: &AutomationDefinition) -> impl Iterator<Item = &str> {
+    let selector = definition
+        .selector
+        .as_ref()
+        .and_then(|selector| match &selector.source {
+            ItemSource::Agent(source) => Some(source.agent.id.as_str()),
+            _ => None,
+        });
+    agent_steps(definition)
+        .map(|step| step.agent.id.as_str())
+        .chain(selector)
 }
 
 /// The operations `authorization` lets agent steps run; the other verbs are engine effects.

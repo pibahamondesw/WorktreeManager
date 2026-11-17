@@ -7,6 +7,7 @@ use super::fields::{duration_secs, is_step_id, string_list, template, Fields, Re
 use super::*;
 use crate::commands::agents::{permission::PermissionMode, AgentCapabilities, AgentDescriptor};
 
+mod selector_agent;
 mod step_outputs;
 
 const TARGET: &str = "target:\n  workspace: Acme\n  repos: [app]\n";

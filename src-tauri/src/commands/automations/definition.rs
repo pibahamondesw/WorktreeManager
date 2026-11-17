@@ -29,7 +29,9 @@ use crate::commands::agents::{AgentDescriptor, Agents};
 pub use circleci_trigger::{CircleciEventKind, CircleciEventTrigger, OWNER as CIRCLECI_OWNER};
 use fields::{is_automation_name, Report};
 pub use github_trigger::{GithubEventKind, GithubEventTrigger, OWNER as GITHUB_OWNER};
-pub use item_source::{FileSource, GithubSource, GithubVersion, ItemSource, LinearSource};
+pub use item_source::{
+    AgentSource, FileSource, GithubSource, GithubVersion, ItemSource, LinearSource,
+};
 
 const DEFINITION_FILE: &str = "AUTOMATION.md";
 const PREFERENCES_FILE: &str = "store.json";

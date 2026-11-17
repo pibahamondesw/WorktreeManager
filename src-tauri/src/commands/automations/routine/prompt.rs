@@ -5,11 +5,12 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::super::definition::{AgentStep, AutomationDefinition};
+use super::super::definition::{AgentSource, AgentStep, AutomationDefinition};
 use super::super::instants::rfc3339;
 use super::super::outputs::{output_placeholders, output_reference, output_text, StepOutputs};
 use super::super::pipeline::StepRequest;
 use super::super::scheduler::RunRequest;
+use super::super::selector::SelectorInput;
 use super::super::store::events::{StepOutcome, Verdict};
 use super::super::store::Decision;
 use super::commands::Item;
@@ -86,6 +87,53 @@ pub(super) fn agent_prompt(input: &PromptInput) -> String {
     sections.extend(untrusted_blocks);
     sections.join("\n\n")
 }
+
+/// What `selector.agent` is asked in a selection pass.
+pub(super) struct SelectorPrompt<'a> {
+    pub source: &'a AgentSource,
+    pub request: &'a RunRequest,
+    pub workplace: &'a str,
+    /// Untrusted: what a script selector reads on stdin.
+    pub input: &'a SelectorInput,
+    /// Trusted: recorded by the owner.
+    pub decisions: &'a [Decision],
+}
+
+/// The skill invocation, the selector prompt, the decisions in force, the item contract, the
+/// engine context and, wrapped as untrusted data, the selection input.
+pub(super) fn selector_prompt(input: &SelectorPrompt) -> String {
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let request = input.request;
+    let skill = input
+        .source
+        .skill
+        .as_ref()
+        .map(|skill| format!("Use the {skill} skill."));
+    let prompt = input
+        .source
+        .prompt
+        .clone()
+        .filter(|prompt| !prompt.trim().is_empty());
+    let context = format!(
+        "<wtm_context>\nAutomation: {}\nRun: {} (scheduled for {})\nWTM task: none\nWorking directory: {}\nStep: selection pass\n</wtm_context>",
+        request.automation,
+        request.run_id,
+        rfc3339(request.scheduled_for),
+        input.workplace,
+    );
+    [skill, prompt, decisions_in_force(input.decisions)]
+        .into_iter()
+        .flatten()
+        .chain([
+            SELECTOR_CONTRACT.to_string(),
+            context,
+            untrusted("selection input", &to_json(input.input), &suffix[..8]),
+        ])
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+const SELECTOR_CONTRACT: &str = "You choose the next items of this campaign; you do not work on them. Reply with the items to start, most important first, as the structured result. Each item has an `id` (letters, digits and . _ : / @ -, at most 200 characters) that stays the same across passes, a `version` that changes when the item needs work again, a `title` or null, and `data`: the text of a JSON object with what the item's steps need, or \"{}\". `cursor` is a string the next pass receives, or null to keep the current one. With nothing to start, reply with no items. The selection input lists the items still in progress (`active`), the files their open pull requests touch (`busy_files`), the current `cursor` and how many items can start now (`free`); WTM skips items already handled or in progress, and starts at most `free`.";
 
 /// The first step output placeholder of the step prompt that has no value for this run.
 pub(super) fn missing_output(prompt: Option<&str>, outputs: &StepOutputs) -> Option<String> {

@@ -1475,6 +1475,7 @@ mod decisions;
 mod operator;
 mod outputs;
 mod resume;
+mod selector_agent;
 mod takeover;
 mod taskless;
 mod waits;

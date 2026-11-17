@@ -41,7 +41,7 @@ A condensed v1 summary for authors. The contract, with every rule and default, i
 ## Routine or campaign
 
 - **Routine**: no `selector`; each run has one implicit item. `target.task`: `per-run` (new task, branch `wtm/{automation}/{run.short_id}`) or `existing` (with `existing_task`, or the event's task).
-- **Campaign**: `selector.run` is an argv run in the automation folder. It reads `{free, active, busy_files, cursor, run}` on stdin and prints `{"items": [{"id", "version", "title"?, "data"?}], "cursor"?}` or `{"run": false, "reason"?}`. `target.task: per-item`; with `tracker`, each item gets a Linear issue and works on its branch. Other selector fields: `timeout` (`5m`), `max_new_items`, `exclusive_on` (`item.data` keys that may not overlap between active items).
+- **Campaign**: `selector.run` is an argv run in the automation folder. It reads `{free, active, busy_files, cursor, run}` on stdin and prints `{"items": [{"id", "version", "title"?, "data"?}], "cursor"?}` or `{"run": false, "reason"?}`. `target.task: per-item`; with `tracker`, each item gets a Linear issue and works on its branch. Instead of `run`, `selector.agent` (`id`/`model`/`effort`/`permission`, `skill`, `prompt`, `readonly`, `true` by default) chooses the items in one headless turn outside any task; its structured result is `{"items": [{"id", "version", "title", "data": "<JSON object text>"}], "cursor": "<text>" | null}` and it reads the same input in its prompt. Other selector fields: `timeout` (`5m`, `15m` with `agent`), `max_new_items`, `exclusive_on` (`item.data` keys that may not overlap between active items).
 
 ## Triggers
 
