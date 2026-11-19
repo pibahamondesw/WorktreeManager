@@ -213,6 +213,7 @@ fn step(effects: Vec<Effect>) -> Step {
         capacity: Capacity::Hold,
         uses: Vec::new(),
         task: Default::default(),
+        defines_item: false,
         kind: StepKind::Publish(effects),
     }
 }

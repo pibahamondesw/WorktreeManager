@@ -114,7 +114,7 @@ impl ItemSteps<'_> {
             step: request.step.id.clone(),
             attempt: request.attempt,
             depth,
-            title: self.item.title.clone(),
+            title: self.worked_item().title.clone(),
         };
         writer.append(&run_id, &RunEvent::CalledBy(link))?;
         let payload = Value::Object(inputs);

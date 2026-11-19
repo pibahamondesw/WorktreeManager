@@ -50,6 +50,16 @@ pub enum RunEvent {
         #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
         data: serde_json::Map<String, serde_json::Value>,
     },
+    /// A routine's step whose result defines the item: from here on the item's variables,
+    /// environment and prompts use this id, version, title and data. `item` stays the key of the
+    /// item's events.
+    ItemDefined {
+        item: String,
+        step: String,
+        attempt: u32,
+        #[serde(flatten)]
+        defined: DefinedItem,
+    },
     ItemStatus {
         item: String,
         status: ItemStatus,
@@ -532,6 +542,17 @@ pub struct TaskError {
     pub worktrees: Vec<String>,
 }
 
+/// The item a routine's step defined with its result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DefinedItem {
+    pub id: String,
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub data: serde_json::Map<String, serde_json::Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ItemState {
     pub id: String,
@@ -547,6 +568,9 @@ pub struct ItemState {
     pub steps: Vec<StepAttemptState>,
     /// The item's own task, in campaigns.
     pub task_id: Option<String>,
+    /// The item a step of a routine defined, which its later steps work on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defined: Option<DefinedItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -701,6 +725,11 @@ impl RunState {
                 title,
                 data,
             } => self.create_item(item, version, title, data),
+            RunEvent::ItemDefined { item, defined, .. } => {
+                if let Some(item) = self.open_item(&item) {
+                    item.defined = Some(defined);
+                }
+            }
             RunEvent::ItemStatus {
                 item,
                 status,
@@ -999,6 +1028,7 @@ impl RunState {
             counters: BTreeMap::new(),
             steps: Vec::new(),
             task_id: None,
+            defined: None,
         });
     }
 

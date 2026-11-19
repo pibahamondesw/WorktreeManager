@@ -9,6 +9,7 @@ mod branch;
 mod calls;
 mod campaign;
 mod commands;
+mod defined;
 mod leases;
 mod live_turns;
 mod missing_task;
@@ -54,7 +55,6 @@ use super::store::events::{
     RunEvent, RunOutcome, RunState, StepOutcome,
 };
 use super::store::RunStore;
-use super::wait;
 use super::wait::Watchers;
 use super::watchers::{self, CliWatchForge};
 use crate::commands::agents::permission::{Grant, UnattendedMode};
@@ -601,7 +601,11 @@ impl RoutineExecutor {
             kept: Default::default(),
         };
         let mut context = TaskCommands::new(&run_dir, run_variables(request), task, item, leases)?;
-        context.edit_item_data(&wait::approved_params(history, &item.id, &definition.steps))?;
+        let (defined, edited) = defined::logged_item(history, &item.id, &definition.steps);
+        if let Some(defined) = &defined {
+            context.define_item(defined)?;
+        }
+        context.edit_item_data(&edited)?;
         let mut steps = ItemSteps {
             definition,
             request,
@@ -609,6 +613,7 @@ impl RoutineExecutor {
             missing_task: missing_task.map(String::from),
             scratch: &scratch,
             item,
+            defined,
             sessions: self.sessions.as_ref(),
             runs_changed: self.runs_changed.as_ref(),
             log: WriterLog::of(&self.store, request),
@@ -790,7 +795,10 @@ struct ItemSteps<'a> {
     /// The deleted task of an integrated item, until a `wtm.task_create` gives it another.
     missing_task: Option<String>,
     scratch: &'a ResolvedTask,
+    /// The item whose key the run log records its events under.
     item: &'a Item,
+    /// The item a `defines_item` step defined, which the later steps work on.
+    defined: Option<Item>,
     sessions: &'a dyn Sessions,
     runs_changed: &'a (dyn Fn(&str) + Send + Sync),
     log: WriterLog<'a>,
@@ -833,7 +841,10 @@ struct ItemSteps<'a> {
 impl StepExecutor for ItemSteps<'_> {
     /// A step the owner takes over before or while it runs pauses the item instead.
     fn execute(&mut self, request: &StepRequest) -> Execution {
-        let execution = (!self.taken_over()).then(|| self.run_step(request));
+        let execution = (!self.taken_over()).then(|| {
+            let execution = self.run_step(request);
+            self.define_item(request, execution)
+        });
         match execution {
             Some(execution) if !self.taken_over() => {
                 if let Some(report) = execution.report() {
@@ -858,6 +869,46 @@ impl StepExecutor for ItemSteps<'_> {
 impl<'a> ItemSteps<'a> {
     fn taken_over(&self) -> bool {
         self.takeovers.requested(self.key)
+    }
+
+    /// The item the steps work on: the one a step defined, else the run's.
+    fn worked_item(&self) -> &Item {
+        self.defined.as_ref().unwrap_or(self.item)
+    }
+
+    /// A successful attempt of a `defines_item` step defines the item from its result; a result
+    /// that cannot define one fails the attempt. A `noop` without a result defines none.
+    fn define_item(&mut self, request: &StepRequest, execution: Execution) -> Execution {
+        let Some(report) = execution.report().filter(|_| request.step.defines_item) else {
+            return execution;
+        };
+        let result = attempt_result(&self.evidence);
+        let noop = report.outcome == StepOutcome::Noop;
+        if report.outcome != StepOutcome::Success && !(noop && result.is_some()) {
+            return execution;
+        }
+        let process_end = report.process_end;
+        let defined = defined::defined_item(result.as_ref(), &self.item.version)
+            .map(|defined| (Item::from(&defined), defined))
+            .and_then(|(item, defined)| {
+                self.commands.context_mut().define_item(&item)?;
+                Ok((item, defined))
+            });
+        match defined {
+            Ok((item, defined)) => {
+                self.evidence.push(RunEvent::ItemDefined {
+                    item: request.item.to_string(),
+                    step: request.step.id.clone(),
+                    attempt: request.attempt,
+                    defined,
+                });
+                self.defined = Some(item);
+                execution
+            }
+            Err(error) => {
+                Execution::Finished(failed(process_end, format!("invalid_result: {error}")))
+            }
+        }
     }
 
     /// The item's task, or its scratch directory for a step without a task.
@@ -941,7 +992,7 @@ impl<'a> ItemSteps<'a> {
             resume: None,
             env,
             name: session_name(
-                self.item,
+                self.worked_item(),
                 step.fresh_session.then_some(request.step.id.as_str()),
             ),
         };
@@ -950,18 +1001,19 @@ impl<'a> ItemSteps<'a> {
             Err(error) => return failed(ProcessEnd::Crashed, format!("session_start: {error}")),
         };
         let conversation = self.record_session(request, &session_id);
+        let handback_note = self.handback_note.take();
         let prompt = prompt::agent_prompt(&PromptInput {
             definition: self.definition,
             step,
             attempt: request,
             request: self.request,
             task: &workplace,
-            item: self.item,
+            item: self.worked_item(),
             payload: self.payload,
             prior: &self.prior,
             outputs: self.commands.context().outputs(),
             decisions: &decisions,
-            handback_note: self.handback_note.take().as_deref(),
+            handback_note: handback_note.as_deref(),
         });
         let item_turn = self.takeovers.running(self.key, &session_id);
         let live = self

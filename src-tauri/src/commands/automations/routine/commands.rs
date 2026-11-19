@@ -17,6 +17,7 @@ use super::leases::StepLeases;
 use super::{render, ResolvedTask};
 
 const STEP_VARIABLES: &str = "steps.";
+const ITEM_VARIABLES: &str = "item.";
 
 /// The item a run drives. Its title and data are untrusted.
 pub(super) struct Item {
@@ -88,20 +89,28 @@ impl ItemScope {
             .into_iter()
             .map(|(name, value)| (name.to_string(), value))
             .collect();
-        variables.extend([
-            ("item.id".into(), item.id.clone()),
-            ("item.branch".into(), item_branch(&item.id)),
-            ("item.version".into(), item.version.clone()),
-        ]);
+        variables.extend(item_variables(item));
         if !task.is_scratch() {
             variables.extend([
                 ("task.id".into(), task.id.clone()),
                 ("task.branch".into(), task.branch.clone()),
             ]);
         }
-        variables.extend(item.title.clone().map(|title| ("item.title".into(), title)));
-        variables.extend(item.data.iter().map(item_data_variable));
         Self { variables, env }
+    }
+
+    /// `{item.*}`, `WTM_ITEM_ID` and `WTM_ITEM_VERSION` become those of `item`.
+    pub fn define(&mut self, item: &Item) {
+        self.variables
+            .retain(|(name, _)| !name.starts_with(ITEM_VARIABLES));
+        self.variables.extend(item_variables(item));
+        for (name, value) in &mut self.env {
+            match name.as_str() {
+                "WTM_ITEM_ID" => *value = item.id.clone(),
+                "WTM_ITEM_VERSION" => *value = item.version.clone(),
+                _ => {}
+            }
+        }
     }
 
     /// Values an approver edited replace the item's data variables.
@@ -164,6 +173,14 @@ impl TaskCommands {
         })
     }
 
+    /// The item a step defined: the steps that follow work on it, and find its data where
+    /// `WTM_ITEM_DATA` points.
+    pub fn define_item(&mut self, item: &Item) -> Result<(), String> {
+        self.data = item.data.clone();
+        self.scope.define(item);
+        self.write_data()
+    }
+
     /// Values an approver edited: they replace the item's data for the steps that follow.
     pub fn edit_item_data(&mut self, edited: &Map<String, Value>) -> Result<(), String> {
         if edited.is_empty() {
@@ -175,6 +192,10 @@ impl TaskCommands {
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
         self.scope.edit(edited);
+        self.write_data()
+    }
+
+    fn write_data(&self) -> Result<(), String> {
         let data = serde_json::to_vec(&self.data).map_err(|e| e.to_string())?;
         write_atomically(&self.data_file, &data)
             .map_err(|e| format!("{}: {e}", self.data_file.display()))
@@ -231,6 +252,17 @@ impl CommandContext for TaskCommands {
     fn hold_leases(&self, request: &StepRequest) -> Result<HeldLeases, String> {
         self.leases.hold(request)
     }
+}
+
+fn item_variables(item: &Item) -> Vec<(String, String)> {
+    let mut variables = vec![
+        ("item.id".into(), item.id.clone()),
+        ("item.branch".into(), item_branch(&item.id)),
+        ("item.version".into(), item.version.clone()),
+    ];
+    variables.extend(item.title.clone().map(|title| ("item.title".into(), title)));
+    variables.extend(item.data.iter().map(item_data_variable));
+    variables
 }
 
 pub(super) fn item_data_variable((key, value): (&String, &Value)) -> (String, String) {
