@@ -241,7 +241,7 @@ impl<C: Clock> Scheduler<C> {
         for run_id in orphans {
             let writer = self.store.writer(name)?;
             let run = self.store.run(name, &run_id)?;
-            let items = call::cancel(&writer, &run)?;
+            let items = call::cancel(&writer, &run, call::CALLER_ENDED)?;
             drop(writer);
             for item in items {
                 self.executor.take_over(name, &run_id, &item);
