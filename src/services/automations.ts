@@ -268,7 +268,7 @@ export interface ApprovalAnswer {
 }
 
 /** The item a routine's step defined with its result; the later steps work on it. */
-export interface DefinedItem {
+interface DefinedItem {
   id: string;
   version: string;
   title?: string | null;
