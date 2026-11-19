@@ -271,6 +271,7 @@ struct Run {
     published: Vec<(&'static str, String)>,
     chats: Vec<String>,
     variables: Vec<(String, String)>,
+    missing_task: Option<String>,
     /// What the last `publish` recorded.
     recorded: std::cell::RefCell<Vec<RunEvent>>,
 }
@@ -290,6 +291,7 @@ impl Run {
             published: Vec::new(),
             chats: Vec::new(),
             variables: Vec::new(),
+            missing_task: None,
             recorded: Default::default(),
         }
     }
@@ -331,6 +333,7 @@ impl Run {
             workspace_id: "w1",
             folder: &self.folder.0,
             task: &task,
+            missing_task: self.missing_task.as_deref(),
             repo_names: &repo_names,
             bases: &self.bases,
             tracker: self.tracker.as_ref(),
@@ -1328,6 +1331,54 @@ fn task_delete_clean_reconciles_a_deleted_task_and_fails_on_other_errors() {
         vec![Effect::TaskDeleteClean],
     );
     assert_eq!(report.cause.as_deref(), Some("app_closed happened"));
+}
+
+#[test]
+fn effects_of_an_item_whose_task_was_deleted_skip_the_task_and_reconcile_its_deletion() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(linear_bridge(false, false, true));
+    let run = Run {
+        missing_task: Some("t-gone".into()),
+        ..Run::all()
+    };
+
+    let (report, effects) = run.publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![
+            push(),
+            Effect::LinearState {
+                state: "done".into(),
+            },
+            Effect::TaskLog {
+                entry: "Merged".into(),
+            },
+            Effect::TaskDeleteClean,
+        ],
+    );
+
+    assert_eq!(report.outcome, StepOutcome::Success);
+    assert_eq!(
+        statuses(&effects),
+        [
+            EffectStatus::Skipped,
+            EffectStatus::Executed,
+            EffectStatus::Skipped,
+            EffectStatus::Reconciled
+        ]
+    );
+    assert_eq!(
+        effects[0].detail.as_deref(),
+        Some("Task t-gone no longer exists")
+    );
+    assert_eq!(effects[3].reference.as_deref(), Some("t-gone"));
+    let methods: Vec<_> = bridge
+        .calls()
+        .into_iter()
+        .map(|(method, _)| method)
+        .collect();
+    assert_eq!(methods, ["linear.issue-state"]);
+    assert!(forge.calls().is_empty());
 }
 
 // ---- CliForge, against real repositories and a stand-in for gh ----

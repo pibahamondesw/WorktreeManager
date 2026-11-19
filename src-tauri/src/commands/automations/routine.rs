@@ -11,6 +11,7 @@ mod campaign;
 mod commands;
 mod leases;
 mod live_turns;
+mod missing_task;
 mod prompt;
 mod result;
 mod resume;
@@ -115,6 +116,8 @@ pub struct TaskFailure {
     pub message: String,
     /// Worktrees a failed creation left on disk.
     pub worktrees: Vec<String>,
+    /// The app answered that the task does not exist.
+    pub missing: bool,
 }
 
 impl TaskFailure {
@@ -122,6 +125,7 @@ impl TaskFailure {
         Self {
             message: message.into(),
             worktrees: Vec::new(),
+            missing: false,
         }
     }
 }
@@ -458,6 +462,7 @@ impl RoutineExecutor {
             request,
             payload,
             task: task.as_ref(),
+            missing_task: None,
             item: &item,
             history: &[],
             deadline: run_deadline(&definition, request),
@@ -559,6 +564,7 @@ impl RoutineExecutor {
             request,
             payload,
             task,
+            missing_task,
             item,
             history,
             deadline,
@@ -596,6 +602,7 @@ impl RoutineExecutor {
             definition,
             request,
             task: task.clone(),
+            missing_task: missing_task.map(String::from),
             scratch: &scratch,
             item,
             sessions: self.sessions.as_ref(),
@@ -740,6 +747,8 @@ struct ItemDrive<'a> {
     payload: Option<&'a Value>,
     /// `None` when the target has no task: the item works in its scratch directory.
     task: Option<&'a ResolvedTask>,
+    /// The task of an integrated item that the app no longer has, which it goes on without.
+    missing_task: Option<&'a str>,
     item: &'a Item,
     /// The run's log so far, for an item that resumes; empty for a new one.
     history: &'a [LoggedEvent],
@@ -772,6 +781,8 @@ struct ItemSteps<'a> {
     /// The item's task, or its scratch directory until it has one; a `wtm.task_create` effect
     /// may replace it.
     task: ResolvedTask,
+    /// The deleted task of an integrated item, until a `wtm.task_create` gives it another.
+    missing_task: Option<String>,
     scratch: &'a ResolvedTask,
     item: &'a Item,
     sessions: &'a dyn Sessions,
@@ -852,6 +863,9 @@ impl<'a> ItemSteps<'a> {
     }
 
     fn run_step(&mut self, request: &StepRequest) -> Execution {
+        if let Some(execution) = self.without_task(request.step) {
+            return execution;
+        }
         let Some(remaining) = self.deadline.checked_duration_since(Instant::now()) else {
             self.deadline_passed = true;
             return Execution::Parked;
@@ -999,6 +1013,7 @@ impl<'a> ItemSteps<'a> {
             workspace_id: &definition.target.workspace_id,
             folder: &definition.folder,
             task: &self.task,
+            missing_task: self.missing_task.as_deref(),
             repo_names: &repo_names,
             bases: &self.bases,
             tracker: definition.tracker.as_ref().map(|tracker| &tracker.linear),
@@ -1033,6 +1048,7 @@ impl<'a> ItemSteps<'a> {
         });
         self.commands.context_mut().switch_task(&task);
         self.task = task;
+        self.missing_task = None;
         self.leave_conversations();
     }
 

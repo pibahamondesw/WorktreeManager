@@ -268,6 +268,7 @@ fn bridge_tasks_go_through_the_frontend_operations() {
         Err(TaskFailure {
             message: "Worktrees exist but the task could not be saved.".into(),
             worktrees: vec!["/w/rails".into()],
+            missing: false,
         })
     );
 }
@@ -285,11 +286,22 @@ fn bridge_answers_need_a_task_with_worktrees() {
         Err(TaskFailure {
             message: "The task could not be resolved".into(),
             worktrees: vec!["/w/rails".into()],
+            missing: false,
         })
     );
     assert_eq!(
         resolved(json!({ "ok": false })),
         Err(TaskFailure::new("The task could not be resolved"))
+    );
+    assert_eq!(
+        resolved(
+            json!({ "ok": false, "error": { "code": "not_found", "message": "Task not found." } })
+        ),
+        Err(TaskFailure {
+            message: "Task not found.".into(),
+            worktrees: Vec::new(),
+            missing: true,
+        })
     );
 }
 

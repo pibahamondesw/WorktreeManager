@@ -110,6 +110,8 @@ pub struct PublishScope<'a> {
     /// The automation folder, which `body_template` paths are relative to.
     pub folder: &'a Path,
     pub task: &'a ResolvedTask,
+    /// The item's task when the app no longer has it: effects on it are skipped.
+    pub missing_task: Option<&'a str>,
     /// Repository names by id, for what a Test run shows.
     pub repo_names: &'a BTreeMap<String, String>,
     /// Ref each repository's branch starts from, for a task the effect creates.
@@ -217,6 +219,7 @@ impl Publisher {
             let resolved = self.task.as_ref().map(|(task, _)| task.clone());
             let scope = &PublishScope {
                 task: resolved.as_ref().unwrap_or(scope.task),
+                missing_task: scope.missing_task.filter(|_| resolved.is_none()),
                 ..*scope
             };
             let outcome = self.effect(request, effect, scope);
@@ -282,7 +285,9 @@ impl Publisher {
             return Outcome::of(EffectStatus::Capped, format!("{cap} per item reached"))
                 .stopping(Stop::Block(cause));
         }
-        let outcome = if scope.staged {
+        let outcome = if let Some(outcome) = without_task(effect, scope.missing_task) {
+            outcome
+        } else if scope.staged {
             self.staged(effect, scope)
         } else {
             self.execute(request, effect, scope)
@@ -813,6 +818,25 @@ impl Publisher {
                 .referencing(task.id.clone())
         })
     }
+}
+
+/// What an effect on the item's task does once the task is deleted: a deletion is already done,
+/// and the others are skipped. Linear effects and `wtm.task_create` do not need it.
+fn without_task(effect: &Effect, missing_task: Option<&str>) -> Option<Outcome> {
+    let task_id = missing_task?;
+    let outcome = match effect {
+        Effect::LinearUpsert(_) | Effect::LinearState { .. } | Effect::TaskCreate(_) => {
+            return None
+        }
+        Effect::TaskDeleteClean => {
+            Outcome::of(EffectStatus::Reconciled, "The task is already deleted")
+        }
+        _ => Outcome::of(
+            EffectStatus::Skipped,
+            format!("Task {task_id} no longer exists"),
+        ),
+    };
+    Some(outcome.referencing(task_id))
 }
 
 fn report(outcome: StepOutcome, verdict: Option<Verdict>, cause: Option<String>) -> StepReport {
