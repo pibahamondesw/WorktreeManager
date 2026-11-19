@@ -10,14 +10,15 @@ use super::super::pipeline::{Execution, StepReport, StepRequest};
 use super::super::publish::published_values;
 use super::super::scheduler::{fail_item, is_active, RunRequest, DEFINITION_CHANGED_CAUSE};
 use super::super::store::events::{
-    awaits_slot, ArmedWait, ItemState, ItemStatus, LoggedEvent, ProcessEnd, RunEvent, RunState,
-    StepOutcome,
+    awaits_slot, ArmedWait, FailureReason, ItemState, ItemStatus, LoggedEvent, ProcessEnd,
+    RunEvent, RunState, StepOutcome,
 };
 use super::super::wait::{self, parked_on, Ended, WaitLog, Watch, WatchScripts};
 use super::calls::call_ended;
 use super::commands::{Item, ItemScope};
 use super::{
-    failed, render_partially, run_variables, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor,
+    failed, render_partially, run_variables, DrivenItem, Ending, ItemSteps, ResolvedTask,
+    RoutineExecutor, ROUTINE_ITEM,
 };
 
 impl RoutineExecutor {
@@ -113,18 +114,20 @@ impl RoutineExecutor {
         self.tasks.get(task_id.or(run.task_id.as_deref())?).ok()
     }
 
-    /// The waiting items of a completed campaign run whose definition changed adopt the current
-    /// one when it still has their step with the same id and kind, and re-arm their wait with
-    /// it; the rest fail so a retry can take them from their wait step. The run pins one
-    /// definition, so it adopts only once none of its items is driven on the one it pinned: until
-    /// then `items` stay parked. A routine's run keeps its item until its deadline.
+    /// The waiting items of a completed campaign run, or the waiting item of a running routine
+    /// run, whose definition changed adopt the current one when it is still of their kind and
+    /// has their step with the same id and kind, and re-arm their wait with it; the rest fail so
+    /// a retry can take them from their wait step, and a routine's run fails with them. The run
+    /// pins one definition, so it adopts only once none of its items is driven on the one it
+    /// pinned: until then `items` stay parked.
     pub(super) fn adopt_current_definition(
         &self,
         request: &RunRequest,
         run: &RunState,
         items: &[String],
     ) -> Result<(), String> {
-        if is_active(run.status) {
+        let routine = is_waiting_routine(run);
+        if is_active(run.status) != routine {
             return Err("its definition changed".into());
         }
         if run.items.iter().any(goes_on_pinned) {
@@ -133,19 +136,19 @@ impl RoutineExecutor {
         }
         let name = &request.automation;
         let current = self.definitions.current(name);
-        let campaign = current.filter(|definition| definition.selector.is_some());
+        let same_kind = current.filter(|definition| definition.selector.is_none() == routine);
         let history = self.store.events(name, &run.id)?;
         let writer = self.store.writer(name)?;
         let mut adopted = Vec::new();
         for item in waiting(run) {
-            match &campaign {
+            match &same_kind {
                 Some(definition) if keeps_its_wait(definition, &history, item) => {
                     adopted.push(item.id.clone());
                 }
                 _ => fail_item(&writer, run, item, DEFINITION_CHANGED_CAUSE)?,
             }
         }
-        let adopting = campaign.filter(|_| !adopted.is_empty());
+        let adopting = same_kind.filter(|_| !adopted.is_empty());
         if let Some(definition) = &adopting {
             let event = RunEvent::DefinitionAdopted {
                 definition_hash: definition.hash.clone(),
@@ -154,6 +157,9 @@ impl RoutineExecutor {
             writer.append(&run.id, &event)?;
         }
         drop(writer);
+        if routine && adopting.is_none() {
+            return self.finish(request, Ending::Failed(FailureReason::DefinitionChanged));
+        }
         (self.runs_changed)(name);
         let Some(definition) = adopting else {
             return Ok(());
@@ -324,6 +330,14 @@ impl ItemSteps<'_> {
             head: None,
         })
     }
+}
+
+/// Whether the run is a routine's whose item rests on a wait: such a run stays active meanwhile.
+pub(in super::super) fn is_waiting_routine(run: &RunState) -> bool {
+    matches!(
+        run.items.as_slice(),
+        [item] if item.id == ROUTINE_ITEM && item.status == ItemStatus::Waiting
+    )
 }
 
 fn waiting(run: &RunState) -> impl Iterator<Item = &ItemState> {

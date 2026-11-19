@@ -21,6 +21,7 @@ use tauri::{AppHandle, Runtime};
 use super::call;
 use super::definition::{self, AutomationDefinition, CatchUp, Schedule};
 use super::instants::{iana_zone, parse_rfc3339, rfc3339};
+use super::routine::is_waiting_routine;
 use super::store::events::{
     awaits_slot, FailureReason, ItemState, ItemStatus, LoggedEvent, MissedSlots, RunEvent,
     RunSource, RunState, RunStatus, RunTrigger, SkipReason,
@@ -376,7 +377,7 @@ impl<C: Clock> Scheduler<C> {
         run: &RunState,
     ) -> Result<Option<(RunRequest, Vec<String>)>, String> {
         let changed = pins_another_definition(automation, run);
-        if changed && is_active(run.status) {
+        if changed && is_active(run.status) && !is_waiting_routine(run) {
             return Ok(None);
         }
         let Some(request) = recorded_request(&automation.name, run) else {
