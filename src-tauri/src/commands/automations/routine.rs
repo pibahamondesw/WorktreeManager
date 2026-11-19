@@ -115,6 +115,8 @@ pub struct TaskFailure {
     pub message: String,
     /// Worktrees a failed creation left on disk.
     pub worktrees: Vec<String>,
+    /// The app answered that the task does not exist.
+    pub missing: bool,
 }
 
 impl TaskFailure {
@@ -122,6 +124,7 @@ impl TaskFailure {
         Self {
             message: message.into(),
             worktrees: Vec::new(),
+            missing: false,
         }
     }
 }

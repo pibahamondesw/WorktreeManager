@@ -594,6 +594,7 @@ fn a_failed_task_creation_records_the_worktrees_it_left() {
     let failure = TaskFailure {
         message: "Some worktrees could not be created.".into(),
         worktrees: vec!["/worktrees/rails".into()],
+        missing: false,
     };
     let tasks = FakeTasks {
         failure: Some(failure.clone()),

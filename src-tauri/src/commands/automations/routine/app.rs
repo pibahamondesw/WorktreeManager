@@ -130,6 +130,7 @@ fn failure_of(response: &Value) -> TaskFailure {
             .unwrap_or("The task could not be resolved")
             .to_string(),
         worktrees: members.map(|members| paths(members)).unwrap_or_default(),
+        missing: error["code"] == "not_found",
     }
 }
 

@@ -316,6 +316,7 @@ fn an_item_whose_task_cannot_be_created_fails_and_counts() {
         failure: Some(TaskFailure {
             message: "Worktrees exist".into(),
             worktrees: vec!["/w/a".into()],
+            missing: false,
         }),
         ..by_branch(None)
     };
