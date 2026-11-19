@@ -242,6 +242,7 @@ Common fields:
 | `label`    | string              | `id`                                                  | Board column for items on this step, for example `awaiting_review`.                            |
 | `next`     | step id             | the following step                                    | Where to go on success. The last step's success completes the item.                            |
 | `on_fail`  | transition          | `fail`                                                | See [Transitions](#transitions).                                                               |
+| `on_noop`  | `continue` \| `complete` | `continue`                                            | Where a `noop` attempt of an `agent` or `command` step goes: on as a success, or `complete`, which completes the item. See [Transitions](#transitions).|
 | `timeout`  | duration            | per kind                                              | Attempt timeout; expiry is a failure with cause `timeout`.                                     |
 | `uses`     | list of pool names  | `[]`                                                  | Leases taken for the attempt; a valued pool's `hold` may keep them longer.                     |
 | `capacity` | `hold` \| `release` | `release` for `wait` and `approval`, `hold` otherwise | Whether an item on this step counts toward the `active` pool.                                  |
@@ -293,7 +294,7 @@ Runs a deterministic command in a worktree of the item's task through a headless
 | `after`   | list of argv      | `[]`          | Hygiene commands run after the attempt whatever its result (for example stopping a dev server). Their failure is recorded, never fails the step.                                                                                                                                       |
 | `timeout` |                   | `30m`         |                                                                                                                                                                                                                                                                                        |
 
-Exit code 0 is success, anything else is failure. The engine exports `WTM_AUTOMATION`, `WTM_RUN_ID`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION`, `WTM_ITEM_DATA` (path to a JSON file), `WTM_STEP_OUTPUTS` (path to a JSON file of the [step outputs](#step-outputs) so far), `WTM_STEP_RESULT` (where the command may write its result), `WTM_TASK_ID` (empty when the item has no task), `WTM_WORKTREE` (the scratch directory for a step without a task) and the environment of held leases. Templates get the run, item and task variables; `{tracker.issue}` and `{pr.*}` only have values in publish effects and approvals (below), and a command that uses them fails.
+Exit code 0 is success, anything else is failure. A command that exits 0 after writing a result with `"verdict": "noop"` to `WTM_STEP_RESULT` ends its attempt `noop`, as an agent's `noop` verdict does; other `verdict` values in a command's result are plain output. The engine exports `WTM_AUTOMATION`, `WTM_RUN_ID`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION`, `WTM_ITEM_DATA` (path to a JSON file), `WTM_STEP_OUTPUTS` (path to a JSON file of the [step outputs](#step-outputs) so far), `WTM_STEP_RESULT` (where the command may write its result), `WTM_TASK_ID` (empty when the item has no task), `WTM_WORKTREE` (the scratch directory for a step without a task) and the environment of held leases. Templates get the run, item and task variables; `{tracker.issue}` and `{pr.*}` only have values in publish effects and approvals (below), and a command that uses them fails.
 
 #### `wait`
 
@@ -424,7 +425,29 @@ Templated fields of a step and agent `prompt`s reference an output as `{steps.<i
 - `continue`: go to `next` as if it succeeded, recording the failure.
 - `{goto: <step id>, max: <integer or budget name>}`: jump back or forward. The counter is per item and per transition and carries across resumes. When it is exhausted the item becomes `blocked` with cause `budget:<name>` or `retries:<step id>`.
 
-A verdict `blocked` blocks the item, `defer` defers it and `noop` counts as success. Validation rejects unknown step ids and cycles without a `max`. `foreach` stages (one sub-pipeline per value, such as strictness levels `loose → standard → strict`) are **Deferred (WOR-254/WOR-268)**.
+A verdict `blocked` blocks the item, `defer` defers it and `noop` counts as success. A `noop` attempt (an agent's verdict or `NOOP` reply, or a command's `noop` result) goes to `next` unless its step sets `on_noop: complete`: then the item completes there. An item that completes on a `noop` attempt ends `noop`, so a routine's run ends with outcome `noop`, is archived under `report.archive_noop` and resets the auto-pause count as any completed run does; a campaign's item completes the same way. Validation rejects unknown step ids and cycles without a `max`. `foreach` stages (one sub-pipeline per value, such as strictness levels `loose → standard → strict`) are **Deferred (WOR-254/WOR-268)**.
+
+A routine whose first step takes work from a queue ends the run `noop` when the queue is empty, without failing and without starting the agent:
+
+```yaml
+steps:
+  - id: pick
+    command: [scripts/pick.sh]
+    on_noop: complete
+  - id: work
+    agent: { prompt: "Work on {steps.pick.result.entry}." }
+```
+
+```sh
+#!/bin/sh
+# scripts/pick.sh
+entry=$(head -n 1 queue.txt)
+if [ -z "$entry" ]; then
+  printf '{"verdict":"noop"}' > "$WTM_STEP_RESULT"
+else
+  printf '{"entry":"%s"}' "$entry" > "$WTM_STEP_RESULT"
+fi
+```
 
 ### Selector
 
