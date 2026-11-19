@@ -181,6 +181,19 @@ impl RoutineExecutor {
         }
     }
 
+    /// Starts the run a routine's ended run frees a slot for, when it opts in. Failing to start it
+    /// leaves the ended run as it is.
+    pub(super) fn refill_routine(&self, ended: &RunRequest) {
+        let automation = &ended.automation;
+        let refilled = self.definitions.current(automation).map(|definition| {
+            let run = self.store.run(automation, &ended.run_id)?;
+            actions::refill_routine(&self.store, self, &definition, &run, now())
+        });
+        if let Some(Err(error)) = refilled {
+            log::warn!("Automation {automation} did not refill a freed slot: {error}");
+        }
+    }
+
     /// Retries the refills a pass in flight held back.
     pub(super) fn refill_pending(&self) {
         let pending = std::mem::take(&mut *self.refills_pending.lock().unwrap());
