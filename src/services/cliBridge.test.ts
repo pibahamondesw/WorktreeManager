@@ -386,10 +386,14 @@ it("signals a waiting step for the CLI", async () => {
   });
 });
 
-it("takes over, hands back and retries items for the CLI", async () => {
+it("cancels runs and takes over, hands back and retries items for the CLI", async () => {
   invokeCommand.mockImplementation((command) => Promise.resolve({ command }));
   const target = (item: string | null) => ({ name: null, runId: "r1", item, by: "cli" });
 
+  expect(await call("automation.cancel", { runId: "r1" })).toMatchObject({ ok: true });
+  expect(invokeCommand).toHaveBeenLastCalledWith("automation_cancel", {
+    target: { name: null, runId: "r1", by: "cli" },
+  });
   expect(await call("automation.take-over", { runId: "r1" })).toMatchObject({ ok: true });
   expect(invokeCommand).toHaveBeenLastCalledWith("automation_take_over", { target: target(null) });
   await call("automation.hand-back", { runId: "r1", item: "a", note: "Use the API" });

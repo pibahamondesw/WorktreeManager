@@ -469,6 +469,17 @@ export const handBackItem = (source: AttemptSource, note: string | null) =>
 export const retryItem = (source: AttemptSource, definition: RetryDefinition) =>
   invoke<ItemControl>("automation_retry", { target: itemTarget(source), definition });
 
+/** What canceling a run left: its status and the items that were still open. */
+export interface CanceledRun {
+  automation: string;
+  run_id: string;
+  status: string;
+  items: string[];
+}
+
+export const cancelRun = (name: string, runId: string) =>
+  invoke<CanceledRun>("automation_cancel", { target: { name, runId, by: "user" } });
+
 interface GitFingerprint {
   head: string | null;
   branch: string | null;

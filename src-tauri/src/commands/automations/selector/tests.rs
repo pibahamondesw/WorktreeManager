@@ -871,3 +871,49 @@ fn the_script_selector_fails_on_exit_code_timeout_or_empty_command() {
         "selector: empty command"
     );
 }
+
+/// Cancels the run as the owner does while the selector runs, then answers with `output`.
+struct CanceledWhileSelecting<'a> {
+    store: &'a RunStore,
+    run_id: &'a str,
+    output: Result<SelectorOutput, String>,
+}
+
+impl Selector for CanceledWhileSelecting<'_> {
+    fn select(&self, _: &SelectorInput) -> Result<SelectorOutput, String> {
+        let writer = self.store.writer(NAME).unwrap();
+        writer.append(self.run_id, &RunEvent::Canceled).unwrap();
+        self.output.clone()
+    }
+}
+
+#[test]
+fn a_run_canceled_while_its_selector_ran_takes_no_items_and_records_no_failure() {
+    let scratch = Scratch::new();
+    let store = scratch.store();
+    let policy = policy();
+    let outputs = [
+        Ok(SelectorOutput::Items {
+            items: vec![candidate("a", "1")],
+            cursor: Some(json!("next")),
+        }),
+        Err("exit 1".into()),
+    ];
+
+    for output in outputs {
+        let run_id = claim(&store, false);
+        let selector = CanceledWhileSelecting {
+            store: &store,
+            run_id: &run_id,
+            output,
+        };
+        let selection = select(&pass(&store, &run_id, &policy), &selector, &no_busy_files());
+
+        assert_eq!(selection, Ok(Selection::Completed));
+        let run = store.run(NAME, &run_id).unwrap();
+        assert_eq!(run.status, RunStatus::Canceled);
+        assert!(run.items.is_empty());
+        assert_eq!(run.selector_error, None);
+    }
+    assert_eq!(store.state(NAME).unwrap(), AutomationState::default());
+}

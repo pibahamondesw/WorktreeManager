@@ -738,3 +738,41 @@ it("says when a step taken over is still stopping", async () => {
     await screen.findByText("The step is still stopping; it pauses once its turn ends")
   ).toBeInTheDocument();
 });
+
+it("cancels an active run once the owner confirms and shows why a cancel was refused", async () => {
+  let current = run("1761800000003-cccccccc", {
+    status: "running",
+    outcome: null,
+    items: [item("routine", { phase: "checks", status: "waiting" })],
+  });
+  let refusal: string | null = "Run 1761800000003-cccccccc is completed";
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command !== "automation_cancel") return page(current);
+    if (refusal) throw refusal;
+    current = {
+      ...current,
+      status: "canceled",
+      items: [{ ...current.items[0], status: "canceled" }],
+    };
+    return { automation: "babysitter", run_id: current.id, status: "canceled", items: ["routine"] };
+  });
+  render(<AutomationPipeline name="babysitter" steps={STEPS} />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel run" }));
+  fireEvent.click(screen.getByRole("button", { name: "Keep running" }));
+  expect(invoke).not.toHaveBeenCalledWith("automation_cancel", expect.anything());
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+  const confirm = screen.getByLabelText("Confirm cancel run");
+  fireEvent.click(within(confirm).getByRole("button", { name: "Cancel run" }));
+  expect(await screen.findByText(refusal)).toHaveClass("select-text");
+
+  refusal = null;
+  fireEvent.click(within(confirm).getByRole("button", { name: "Cancel run" }));
+  await act(async () => undefined);
+  expect(invoke).toHaveBeenCalledWith("automation_cancel", {
+    target: { name: "babysitter", runId: current.id, by: "user" },
+  });
+  expect(screen.queryByRole("button", { name: "Cancel run" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Live")).not.toBeInTheDocument();
+});

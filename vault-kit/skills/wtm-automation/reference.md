@@ -85,6 +85,7 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 - Later steps reference a step's output (agent structured result, command result, wait/approval answer, publish effects) as `{steps.<id>.result}` or `{steps.<id>.result.<key>}` in templated fields and agent prompts; only earlier steps can be referenced.
 - Watchers: `pr_checks` (`required`, `ignore`, `expect`, `bot_lgtm`, `unresolved_threads`, `request_review_comment`) waits for green CI on the pushed HEAD; `pr_integrated` waits for the PR to land; `command` polls a script that prints `{"status": "pending" | "success" | "fail"}`.
 - Answer signals and approvals with `wtm automation signal <run_id> <step> <json>`.
+- Cancel a run in progress with `wtm automation cancel <run_id>`: open items end `canceled`, agent turns stop and called runs are canceled; tasks and PRs stay.
 - A `call` runs another routine in the item's task with its inputs as item data, waits for it and takes its output; its failures follow `on_fail`. Calls may not form a cycle and nest at most 5 deep; a caller that stops waiting cancels its call.
 
 ### Publish effects

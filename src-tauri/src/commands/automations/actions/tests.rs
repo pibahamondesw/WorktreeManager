@@ -764,6 +764,7 @@ fn an_automation_that_cannot_fire_does_not_stop_the_others() {
     );
 }
 
+mod cancel;
 mod intervene;
 
 const CAMPAIGN: &str = "target: { workspace: Acme, repos: [api], task: per-item }\nagent: { id: claude }\nselector: { run: [/bin/true] }\npools: { active: 2 }\ntrigger: { manual: false, cli: true }\n";

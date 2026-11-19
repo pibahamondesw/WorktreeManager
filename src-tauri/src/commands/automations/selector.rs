@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::scheduler::record_failure;
+use super::scheduler::{is_active, record_failure};
 use super::store::events::{
     awaits_slot, EffectStatus, FailureReason, ItemState, ItemStatus, RunEvent, RunOutcome,
     RunSource, RunState, RunStatus, SkipReason,
@@ -102,7 +102,7 @@ pub struct SelectionPass<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum Selection {
-    /// The run ended without new items.
+    /// The run ended without new items, also when the owner canceled it while the selector ran.
     Completed,
     /// The run failed with `selector_failed`.
     Failed(String),
@@ -147,6 +147,9 @@ pub fn select(
             };
             selector.select(&input)
         });
+    if !is_active(pass.store.run(pass.automation, pass.run_id)?.status) {
+        return Ok(Selection::Completed);
+    }
     let (candidates, cursor) = match output {
         Err(error) => {
             log::warn!("Selector of {} failed: {error}", pass.automation);

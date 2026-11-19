@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use super::outputs::{OutputReference, StepOutputs};
 use super::store::events::{
-    CallLink, CalledRun, ItemStatus, LoggedEvent, RunEvent, RunState, RunStatus, StepOutcome,
+    CallLink, CalledRun, ItemStatus, LoggedEvent, ProcessEnd, RunEvent, RunState, RunStatus,
+    StepAttemptState, StepOutcome, StepStatus,
 };
 use super::store::{AutomationWriter, RunStore};
 use super::wait::{parked_on, Ended};
@@ -105,24 +106,55 @@ pub fn orphaned(store: &RunStore, link: &CallLink) -> bool {
     run_ended || !waits
 }
 
-/// Cancels the called run and its open items, so nothing goes on in its caller's task.
-pub fn cancel(writer: &AutomationWriter, run: &RunState) -> Result<Vec<String>, String> {
+/// Cancels the run and its open items, so nothing goes on in its task: their open attempts end
+/// `canceled` and the items end `canceled` with `cause`.
+pub fn cancel(
+    writer: &AutomationWriter,
+    run: &RunState,
+    cause: &str,
+) -> Result<Vec<String>, String> {
     let open: Vec<_> = run
         .items
         .iter()
         .filter(|item| !item.status.is_terminal())
         .collect();
     for item in &open {
+        for attempt in item.steps.iter().filter(|attempt| is_open(attempt.status)) {
+            writer.append(&run.id, &canceled_attempt(&item.id, attempt, cause))?;
+        }
         let canceled = RunEvent::ItemStatus {
             item: item.id.clone(),
             status: ItemStatus::Canceled,
             phase: item.phase.clone(),
             stage: item.stage.clone(),
-            cause: Some(CALLER_ENDED.into()),
+            cause: Some(cause.into()),
             counter: None,
         };
         writer.append(&run.id, &canceled)?;
     }
     writer.append(&run.id, &RunEvent::Canceled)?;
     Ok(open.into_iter().map(|item| item.id.clone()).collect())
+}
+
+fn is_open(status: StepStatus) -> bool {
+    matches!(
+        status,
+        StepStatus::Pending | StepStatus::Running | StepStatus::Waiting
+    )
+}
+
+fn canceled_attempt(item: &str, attempt: &StepAttemptState, cause: &str) -> RunEvent {
+    RunEvent::StepStatus {
+        item: item.into(),
+        step: attempt.step.clone(),
+        attempt: attempt.attempt,
+        status: StepStatus::Canceled,
+        process_end: Some(ProcessEnd::Killed),
+        exit_code: None,
+        outcome: None,
+        stage: attempt.stage.clone(),
+        verdict: None,
+        cause: Some(cause.into()),
+        head: None,
+    }
 }

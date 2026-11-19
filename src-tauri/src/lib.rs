@@ -119,6 +119,7 @@ pub fn run() {
                 commands::automations::actions::intervene::automation_take_over,
                 commands::automations::actions::intervene::automation_hand_back,
                 commands::automations::actions::intervene::automation_retry,
+                commands::automations::actions::cancel::automation_cancel,
                 commands::automations::command::view::automation_step_receipt,
                 commands::agent_alerts::agent_hooks_status,
                 commands::agent_alerts::agent_hooks_install,

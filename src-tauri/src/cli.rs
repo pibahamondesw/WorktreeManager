@@ -93,6 +93,11 @@ automation retry <run_id> [--item <id>] [--definition <current|original>] [--fro
                                      its run started with. An item blocked by an
                                      exhausted budget gets a fresh count of it.
                                      Publish effects already done are not repeated.
+automation cancel <run_id>           Stops a starting, running or interrupted run:
+                                     open items end canceled, agent turns in
+                                     progress stop and runs it called are canceled.
+                                     Tasks, PRs and issues stay; never counts
+                                     toward the auto-pause.
 agent event <state> --agent <name>   Agent hook: reads the hook JSON from stdin,
                                      prints nothing and always exits 0.
 lease run --pool <name> [--holder <key>] [--values <v,…>] -- <command> [args]
@@ -313,6 +318,7 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
         "automation.take-over" => (&["runId"], false, &["item"]),
         "automation.hand-back" => (&["runId"], false, &["item", "note"]),
         "automation.retry" => (&["runId"], false, &["item", "definition", "from"]),
+        "automation.cancel" => (&["runId"], false, &[]),
         _ => return Err("Unknown operation; see --help".into()),
     };
     if words.len() != 2 + positional.len()
@@ -1160,6 +1166,12 @@ mod tests {
 
     #[test]
     fn parses_automation_item_takeovers_and_retries() {
+        let canceled = parse(&args("automation cancel r1")).unwrap();
+        assert_eq!(canceled.method, "automation.cancel");
+        assert_eq!(
+            canceled.params,
+            *json!({ "runId": "r1" }).as_object().unwrap()
+        );
         let taken = parse(&args("automation take-over r1 --item unit-1")).unwrap();
         assert_eq!(taken.method, "automation.take-over");
         assert_eq!(
@@ -1204,6 +1216,8 @@ mod tests {
             "automation retry r1 --definition",
             "automation retry r1 --from",
             "automation retry r1 r2",
+            "automation cancel",
+            "automation cancel r1 --item a",
         ] {
             assert!(parse(&args(invalid)).is_err(), "{invalid}");
         }

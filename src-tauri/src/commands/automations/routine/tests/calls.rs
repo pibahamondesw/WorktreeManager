@@ -1,6 +1,7 @@
 use super::super::calls::check_inputs;
 use super::campaign::{by_branch, item, wait_until, CAMPAIGN};
 use super::*;
+use crate::commands::automations::actions::cancel::{cancel_run, OWNER_CANCELED};
 use crate::commands::automations::definition::{CallStep, Input};
 use crate::commands::automations::scheduler::{Automation, Scheduler, SystemClock};
 use crate::commands::automations::store::events::{
@@ -485,4 +486,48 @@ fn a_routine_without_a_task_calls_one_without_a_task() {
     assert_eq!(child.trigger.unwrap().task_id, None);
     assert_eq!(child.task_id, None);
     assert!(harness.tasks.created.lock().unwrap().is_empty());
+}
+
+#[test]
+fn canceling_a_caller_cancels_the_run_it_waits_on() {
+    let harness = Harness::calling(CALL, SIGNALED_CHILD, FakeSessions::default());
+    let run = harness.run();
+    wait_until(|| harness.executor.parked.lock().unwrap().len() == 2);
+
+    let store = harness.scratch.store();
+    cancel_run(&store, &harness.executor, "demo", &run.id).unwrap();
+    harness
+        .scheduler_of(&harness.executor)
+        .tick(&harness.automations());
+
+    let caller = harness.state_of_run(&run.id);
+    assert_eq!(caller.items[0].cause.as_deref(), Some(OWNER_CANCELED));
+    assert_eq!(implement(&caller).status, StepStatus::Canceled);
+    let child = harness.only_child();
+    assert_eq!(child.status, RunStatus::Canceled);
+    assert_eq!(child.items[0].cause.as_deref(), Some("caller_ended"));
+    assert_eq!(child.items[0].steps[0].status, StepStatus::Canceled);
+    wait_until(|| {
+        harness.executor.wake_ready();
+        harness.executor.parked.lock().unwrap().is_empty()
+    });
+}
+
+#[test]
+fn canceling_a_called_run_fails_its_callers_step() {
+    let harness = Harness::calling(CALL, SIGNALED_CHILD, FakeSessions::default());
+    let run = harness.run();
+    wait_until(|| harness.executor.parked.lock().unwrap().len() == 2);
+
+    let store = harness.scratch.store();
+    let child = harness.only_child();
+    cancel_run(&store, &harness.executor, CHILD, &child.id).unwrap();
+    harness.settled_with(&harness.executor, &run.id, failed);
+
+    let caller = harness.state_of_run(&run.id);
+    assert_eq!(implement(&caller).cause.as_deref(), Some("call_canceled"));
+    assert_eq!(
+        harness.only_child().items[0].cause.as_deref(),
+        Some(OWNER_CANCELED)
+    );
 }
