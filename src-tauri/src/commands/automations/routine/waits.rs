@@ -226,7 +226,7 @@ impl ItemSteps<'_> {
             armed_at_ms: log.armed_at_ms.unwrap_or(now),
             now_ms: now,
             history: &history,
-            task: Some(&self.task),
+            task: Some(&self.task).filter(|_| self.missing_task.is_none()),
             test: self.request.test,
             wait_per_head_secs: self.definition.budgets.wait_per_head_secs,
             scripts: Some(self.scripts(request)?),

@@ -200,13 +200,14 @@ impl RoutineExecutor {
     ) {
         let (history, task_id) = resumed.unwrap_or_default();
         let status = self
-            .item_task(definition, request, item, task_id)
-            .and_then(|task| {
+            .item_task(definition, request, item, (history, task_id))
+            .and_then(|(task, missing_task)| {
                 let drive = ItemDrive {
                     definition,
                     request,
                     payload,
                     task: task.as_ref(),
+                    missing_task,
                     item,
                     history,
                     deadline: Instant::now() + ITEM_DEADLINE,
@@ -230,20 +231,26 @@ impl RoutineExecutor {
     }
 
     /// Resolves the item's task, or reattaches to the one it had, and records it; an item without
-    /// one fails. Items of a target without tasks get none until a `wtm.task_create` gives them one.
-    fn item_task(
+    /// one fails, unless the task was deleted once its PR integrated or while it waits on the PR:
+    /// it goes on without it.
+    /// Items of a target without tasks get none until a `wtm.task_create` gives them one.
+    fn item_task<'a>(
         &self,
         definition: &AutomationDefinition,
         request: &RunRequest,
         item: &Item,
-        task_id: Option<&str>,
-    ) -> Result<Option<ResolvedTask>, String> {
+        (history, task_id): (&[LoggedEvent], Option<&'a str>),
+    ) -> Result<(Option<ResolvedTask>, Option<&'a str>), String> {
         if definition.target.task == TaskMode::None && task_id.is_none() {
-            return Ok(None);
+            return Ok((None, None));
         }
         let mut log = WriterLog::of(&self.store, request);
         let resolved = match task_id {
-            Some(task_id) => self.tasks.get(task_id).map(|task| (task, false)),
+            Some(task_id) => match self.reattach(definition, history, &item.id, task_id) {
+                Ok(Some(task)) => Ok((task, false)),
+                Ok(None) => return Ok((None, Some(task_id))),
+                Err(failure) => Err(failure),
+            },
             None => self.resolve_item_task(definition, request, item),
         };
         match resolved {
@@ -253,7 +260,7 @@ impl RoutineExecutor {
                     created,
                     item: Some(item.id.clone()),
                 })?;
-                Ok(Some(task))
+                Ok((Some(task), None))
             }
             Err(failure) => {
                 let cause = format!("task_create_failed: {}", failure.message);

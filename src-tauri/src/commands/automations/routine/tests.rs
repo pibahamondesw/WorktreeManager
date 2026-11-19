@@ -120,6 +120,8 @@ struct FakeTasks {
     by_branch: bool,
     /// Holds every creation, once recorded, until it receives.
     gate: Mutex<Option<mpsc::Receiver<()>>>,
+    /// Tasks deleted outside the automation, which `get` no longer finds.
+    deleted: Mutex<Vec<String>>,
 }
 
 fn task(id: &str) -> ResolvedTask {
@@ -151,6 +153,13 @@ impl Tasks for FakeTasks {
 
     fn get(&self, task_id: &str) -> Result<ResolvedTask, TaskFailure> {
         self.fetched.lock().unwrap().push(task_id.into());
+        if self.deleted.lock().unwrap().iter().any(|id| id == task_id) {
+            return Err(TaskFailure {
+                message: "Task not found.".into(),
+                worktrees: Vec::new(),
+                missing: true,
+            });
+        }
         let mut fetched = task(task_id);
         if let Some(worktree) = &self.worktree {
             fetched.folders = vec![worktree.to_string_lossy().into_owned()];
@@ -1474,6 +1483,7 @@ steps:
 mod calls;
 mod campaign;
 mod decisions;
+mod missing_task;
 mod operator;
 mod outputs;
 mod resume;
