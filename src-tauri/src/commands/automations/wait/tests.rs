@@ -9,6 +9,7 @@ fn step(kind: StepKind, timeout_secs: Option<u64>) -> Step {
         label: "gate".into(),
         next: None,
         on_fail: Transition::Fail,
+        on_noop: Default::default(),
         timeout_secs,
         capacity: Capacity::Release,
         uses: Vec::new(),

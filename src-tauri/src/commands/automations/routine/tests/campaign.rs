@@ -194,6 +194,35 @@ fn only_executing_items_hold_a_slot_of_max_active() {
 }
 
 #[test]
+fn a_campaign_item_with_nothing_to_do_completes_without_counting_a_failure() {
+    let worktree = Scratch::new();
+    let steps = r#"pools: { active: 2 }
+steps:
+  - id: pick
+    command: [/bin/sh, -c, 'printf "\173\"verdict\":\"noop\"\175" > "$WTM_STEP_RESULT"']
+    on_noop: complete
+  - id: fix
+    agent: {}
+"#;
+    let harness = Harness::campaign(
+        steps,
+        by_branch(Some(worktree.0.clone())),
+        FakeSessions::default(),
+    );
+    harness.save(enabled_with_failures(2));
+    harness.selector_printing(ITEMS_AB);
+
+    let run = harness.run();
+
+    assert_eq!(
+        statuses(&run),
+        [("a", ItemStatus::Completed), ("b", ItemStatus::Completed)]
+    );
+    assert!(harness.sessions.started.lock().unwrap().is_empty());
+    assert_eq!(harness.automation().consecutive_failures, 0);
+}
+
+#[test]
 fn a_declarative_source_selects_without_a_script() {
     let frontmatter = CAMPAIGN.replace(
         "{ run: [scripts/select.sh] }",

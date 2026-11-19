@@ -96,6 +96,7 @@ fn commands_fail_when_the_outputs_file_cannot_be_written() {
         label: "check".into(),
         next: None,
         on_fail: Transition::Fail,
+        on_noop: Default::default(),
         timeout_secs: None,
         capacity: Capacity::Hold,
         uses: Vec::new(),

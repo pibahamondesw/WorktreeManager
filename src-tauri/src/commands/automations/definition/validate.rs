@@ -24,10 +24,10 @@ use super::{
     AgentSettings, AgentStep, AppEventKind, ApprovalDefault, ApprovalStep, Authorization,
     AutomationDefinition, Bind, Budgets, Capacity, CatchUp, ChatOpenEffect, CommandStep,
     Completion, Concurrency, Effect, Environment, EventTrigger, GotoLimit, InboxPolicy, IssueKind,
-    ItemSource, LeaseHold, LinearOverrides, LinearTracker, Pools, PullRequestEffect, RepoRef,
-    ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step, StepKind, StepTask, StopAfter,
-    Target, TargetRepo, TaskCreateEffect, TaskMode, Tracker, Transition, Trigger, ValuedPool, Verb,
-    WaitStep, WorkspaceRef, APP_EVENT_KINDS,
+    ItemSource, LeaseHold, LinearOverrides, LinearTracker, OnNoop, Pools, PullRequestEffect,
+    RepoRef, ReportPolicy, ResultSchema, Schedule, SelectorSettings, Step, StepKind, StepTask,
+    StopAfter, Target, TargetRepo, TaskCreateEffect, TaskMode, Tracker, Transition, Trigger,
+    ValuedPool, Verb, WaitStep, WorkspaceRef, APP_EVENT_KINDS,
 };
 use crate::commands::agents::permission::{
     PendingDefault, PermissionMode, UnattendedMode, UnattendedPolicy,
@@ -1015,6 +1015,7 @@ fn implicit_steps(report: &mut Report, scope: &Scope) -> Option<Vec<Step>> {
         label: IMPLICIT_STEP_ID.into(),
         next: None,
         on_fail: Transition::Fail,
+        on_noop: OnNoop::Continue,
         timeout_secs: Some(AGENT_STEP_TIMEOUT_SECS),
         capacity: Capacity::Hold,
         uses: Vec::new(),
@@ -1055,6 +1056,8 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
     let label = fields.optional(report, "label", string);
     let next = fields.optional(report, "next", string);
     let on_fail = fields.or(report, "on_fail", Transition::Fail, transition);
+    let on_noop_field = fields.path("on_noop");
+    let on_noop = fields.optional(report, "on_noop", noop_transition);
     let timeout = fields.optional(report, "timeout", duration);
     let capacity = fields.optional(report, "capacity", |report, value, field| {
         choice(
@@ -1112,6 +1115,15 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
     fields.finish(report);
     let (id, kind, task) = (id?, kind?, task?);
     check_shared_session(report, scope, &kind, task, &task_field);
+    let on_noop = on_noop?;
+    if on_noop.is_some() && !can_noop(&kind) {
+        report.error(
+            IssueKind::Invalid,
+            &on_noop_field,
+            "only agent and command steps can end noop",
+        );
+        return None;
+    }
     let timeout_secs = timeout?.or(match kind {
         StepKind::Agent(_) => Some(AGENT_STEP_TIMEOUT_SECS),
         StepKind::Command(_) => Some(COMMAND_STEP_TIMEOUT_SECS),
@@ -1129,12 +1141,29 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         id,
         next: next?,
         on_fail: on_fail?,
+        on_noop: on_noop.unwrap_or_default(),
         timeout_secs,
         capacity,
         uses: uses?,
         task,
         kind,
     })
+}
+
+fn noop_transition(report: &mut Report, value: &Value, field: &str) -> Option<OnNoop> {
+    choice(
+        report,
+        value,
+        field,
+        &[
+            ("continue", OnNoop::Continue),
+            ("complete", OnNoop::Complete),
+        ],
+    )
+}
+
+fn can_noop(kind: &StepKind) -> bool {
+    matches!(kind, StepKind::Agent(_) | StepKind::Command(_))
 }
 
 fn creates_task(step: &Step) -> bool {

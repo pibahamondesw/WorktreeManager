@@ -862,6 +862,32 @@ fn a_noop_verdict_completes_the_run_with_nothing_to_report() {
 }
 
 #[test]
+fn a_command_with_nothing_to_do_completes_the_run_as_noop() {
+    let worktree = Scratch::new();
+    let tasks = FakeTasks {
+        worktree: Some(worktree.0.clone()),
+        ..FakeTasks::default()
+    };
+    let steps = r#"steps:
+  - id: pick
+    command: [/bin/sh, -c, 'printf "\173\"verdict\":\"noop\"\175" > "$WTM_STEP_RESULT"']
+    on_noop: complete
+  - id: work
+    agent: {}
+"#;
+    let harness = Harness::new(&format!("{TARGET}{steps}"), tasks, FakeSessions::default());
+    harness.save(enabled_with_failures(2));
+
+    let run = harness.run();
+
+    assert_eq!(run.outcome, Some(RunOutcome::Noop));
+    assert_eq!(run.items[0].status, ItemStatus::Completed);
+    assert_eq!(run.items[0].steps.len(), 1);
+    assert!(harness.sessions.started.lock().unwrap().is_empty());
+    assert_eq!(harness.automation().consecutive_failures, 0);
+}
+
+#[test]
 fn an_unreadable_result_fails_the_step_with_the_reply_as_evidence() {
     let harness = Harness::routine(
         "steps:\n  - id: triage\n    agent: { result: verdict }\n",
@@ -1038,6 +1064,7 @@ fn commands_fail_for_repositories_without_a_worktree_in_the_task() {
         label: "check".into(),
         next: None,
         on_fail: Transition::Fail,
+        on_noop: Default::default(),
         timeout_secs: None,
         capacity: Capacity::Hold,
         uses: Vec::new(),

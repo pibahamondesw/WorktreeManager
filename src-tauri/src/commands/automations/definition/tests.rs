@@ -1515,6 +1515,52 @@ fn transitions_name_existing_steps_and_bound_their_cycles() {
 }
 
 #[test]
+fn agent_and_command_steps_may_complete_the_item_on_noop() {
+    let definition = valid(&routine(
+        "steps:
+  - id: pick
+    command: [/bin/echo]
+    on_noop: complete
+  - id: triage
+    agent: { result: verdict }
+    on_noop: continue
+  - id: report
+    agent: {}
+",
+    ));
+    let on_noop: Vec<_> = definition.steps.iter().map(|step| step.on_noop).collect();
+    assert_eq!(
+        on_noop,
+        [OnNoop::Complete, OnNoop::Continue, OnNoop::Continue]
+    );
+
+    assert_issue(
+        &routine(
+            "steps:
+  - id: a
+    command: [/bin/echo]
+    on_noop: stop
+",
+        ),
+        "steps[0].on_noop",
+        IssueKind::Invalid,
+    );
+    assert_eq!(
+        message(
+            &routine(
+                "steps:
+  - id: a
+    wait: { signal: go }
+    on_noop: complete
+"
+            ),
+            "steps[0].on_noop"
+        ),
+        "only agent and command steps can end noop"
+    );
+}
+
+#[test]
 fn trackers_describe_the_linear_issue_per_item() {
     let definition = valid(&routine(
         "tracker:
