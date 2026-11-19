@@ -67,6 +67,7 @@ pub use live_turns::LiveTurns;
 use prompt::{PriorStep, PromptInput};
 use takeover::Takeovers;
 pub use takeover::HUMAN_TAKEOVER;
+pub(super) use waits::is_waiting_routine;
 
 const ROUTINE_ITEM: &str = "routine";
 const NOOP_REPLY: &str = "NOOP";
