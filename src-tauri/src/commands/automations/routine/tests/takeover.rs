@@ -1,4 +1,5 @@
 use super::*;
+use crate::commands::automations::actions::cancel::{cancel_run, OWNER_CANCELED};
 use crate::commands::automations::actions::intervene::{
     self, retry_definition, ItemControl, ItemRef, RetryDefinition,
 };
@@ -340,4 +341,38 @@ fn a_run_goes_on_when_its_definition_cannot_be_kept() {
     fs::write(&taken, "not a folder").unwrap();
 
     assert_eq!(harness.run().status, RunStatus::Completed);
+}
+
+#[test]
+fn canceling_a_test_run_interrupts_its_agent_turn_and_leaves_the_automation_state_alone() {
+    let (open_gate, gate) = mpsc::channel();
+    let sessions = FakeSessions {
+        gate: Mutex::new(Some(gate)),
+        ..FakeSessions::default()
+    };
+    let harness = Harness::routine(FIX_AND_REVIEW, sessions);
+    let before = harness.automation();
+    let request = harness.claim(true, now());
+    harness.executor.execute(request.clone(), None);
+    let decision = Decision::now("Keep going".into(), Actor::User);
+    while harness.executor.live_turns().steer("demo", &decision) == 0 {
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let store = harness.scratch.store();
+    let canceled = cancel_run(&store, &harness.executor, "demo", &request.run_id).unwrap();
+    assert_eq!(canceled.items, ["routine"]);
+    assert_eq!(*harness.sessions.interrupted.lock().unwrap(), ["s1"]);
+    open_gate.send(()).unwrap();
+
+    let run = harness.settled(&request.run_id);
+    assert_eq!(run.status, RunStatus::Canceled);
+    assert_eq!(run.items[0].status, ItemStatus::Canceled);
+    assert_eq!(run.items[0].cause.as_deref(), Some(OWNER_CANCELED));
+    let fix = attempts(&run, "fix")[0];
+    assert_eq!(fix.status, StepStatus::Canceled);
+    assert_eq!(fix.process_end, Some(ProcessEnd::Killed));
+    assert!(attempts(&run, "review").is_empty());
+    assert_eq!(*harness.sessions.closed.lock().unwrap(), ["s1"]);
+    assert_eq!(harness.automation(), before);
 }

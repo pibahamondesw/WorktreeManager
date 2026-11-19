@@ -1,6 +1,8 @@
-//! What the owner does to an automation from the app or the CLI: run it now, test it, pause it
-//! and resume it. Runs are claimed here and handed to the executor the scheduler also uses.
+//! What the owner does to an automation from the app or the CLI: run it now, test it, pause it,
+//! resume it and cancel a run. Runs are claimed here and handed to the executor the scheduler
+//! also uses.
 
+pub mod cancel;
 pub mod circleci;
 pub mod events;
 pub mod fire;
