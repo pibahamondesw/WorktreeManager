@@ -117,6 +117,12 @@ it("summarizes triggers", () => {
   expect(triggerSummary({ ...definition, trigger: { manual: true, schedule, cli: true } })).toBe(
     "Schedule */15 * * * * (UTC) · manual · CLI"
   );
+  expect(
+    triggerSummary({ ...definition, trigger: { manual: true, schedule, capacity: true } })
+  ).toBe("Schedule */15 * * * * (UTC) · manual · freed slots");
+  expect(
+    triggerSummary({ ...definition, trigger: { manual: true, schedule: null, capacity: true } })
+  ).toBe("Manual · freed slots");
 });
 
 it("describes run results, start and duration", () => {

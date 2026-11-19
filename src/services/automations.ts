@@ -28,6 +28,7 @@ export interface AutomationDefinition {
     manual: boolean;
     schedule: { cron: string; tz: string; catchUp: "latest" | "skip" } | null;
     cli?: boolean;
+    capacity?: boolean;
   };
   steps: PipelineStep[];
   target?: { repos: TargetRepo[] };
@@ -567,12 +568,13 @@ export function toggleSummary(state: AutomationState | null): string | null {
 }
 
 export function triggerSummary(definition: AutomationDefinition): string {
-  const { manual, schedule, cli } = definition.trigger;
-  if (!schedule && !cli) return manual ? "Manual only" : "No trigger";
+  const { manual, schedule, cli, capacity } = definition.trigger;
+  if (!schedule && !cli && !capacity) return manual ? "Manual only" : "No trigger";
   const sources = [
     schedule && `Schedule ${schedule.cron} (${schedule.tz})`,
     manual && "manual",
     cli && "CLI",
+    capacity && "freed slots",
   ].filter(Boolean);
   const summary = sources.join(" · ");
   return summary.charAt(0).toUpperCase() + summary.slice(1);
