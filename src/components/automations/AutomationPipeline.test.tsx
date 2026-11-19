@@ -528,6 +528,24 @@ it("shows the automation a call step runs, its inputs and the run it started", a
   expect(within(detail).getByText("implement-issue run bbbbbbbb")).toBeInTheDocument();
 });
 
+it("says when a noop attempt completes the item", async () => {
+  const pick: PipelineStep = {
+    id: "pick",
+    label: "pick",
+    next: null,
+    onFail: "fail",
+    onNoop: "complete",
+    kind: { command: { command: ["scripts/pick.sh"], repo: "rails" } },
+  };
+  answer(page());
+  render(<AutomationPipeline name="babysitter" steps={[pick]} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^pick/ }));
+
+  const detail = screen.getByRole("region", { name: "Step pick" });
+  expect(within(detail).getByText("On noop")).toBeInTheDocument();
+  expect(within(detail).getByText("complete the item")).toBeInTheDocument();
+});
+
 it("says when a call step has not started its run yet", async () => {
   const call: PipelineStep = {
     id: "delegate",
