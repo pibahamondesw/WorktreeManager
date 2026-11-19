@@ -1,7 +1,9 @@
-import { memo, useMemo, useState } from "react";
+import { lazy, memo, Suspense, useMemo, useState } from "react";
 import Markdown, { Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import { remarkLatexDelimiters } from "./remarkLatexDelimiters";
 import { ChevronDownIcon, CloseIcon, SteerIcon } from "../ui/Icons";
 import { AskedQuestion, ChatItem, HistoryAction } from "../../services/chat";
 import { MarkdownLink } from "./MarkdownLink";
@@ -29,9 +31,34 @@ const STATUS_LABEL: Record<string, string> = {
   stopped: "stopped",
 };
 
-const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm];
-const REHYPE_PLUGINS: Options["rehypePlugins"] = [[rehypeHighlight, { plainText: ["mermaid"] }]];
-const MARKDOWN_COMPONENTS: Options["components"] = { a: MarkdownLink, pre: MarkdownCodeBlock };
+const LazyMath = lazy(() => import("./MarkdownMath"));
+const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm, remarkMath, remarkLatexDelimiters];
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [
+  [rehypeHighlight, { plainText: ["mermaid", "math"] }],
+];
+
+function MarkdownCode({ className, children }: React.ComponentProps<"code">) {
+  const classes = className?.split(" ") ?? [];
+  const inline = classes.includes("math-inline");
+  const display =
+    !inline && (classes.includes("language-math") || classes.includes("math-display"));
+  if (!display && !inline) return <code className={className}>{children}</code>;
+
+  const source = String(children).trim();
+  return (
+    <span className={display ? "chat-math-display" : undefined}>
+      <Suspense fallback={<span className="chat-math-source">{source}</span>}>
+        <LazyMath source={source} display={display} />
+      </Suspense>
+    </span>
+  );
+}
+
+const MARKDOWN_COMPONENTS: Options["components"] = {
+  a: MarkdownLink,
+  code: MarkdownCode,
+  pre: MarkdownCodeBlock,
+};
 
 const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
   return (

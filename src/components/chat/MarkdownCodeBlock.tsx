@@ -32,6 +32,7 @@ function codeLanguage(code: HastElement) {
 export function MarkdownCodeBlock({ node, children }: ComponentProps<"pre"> & ExtraProps) {
   const code = node?.children.find(isCode);
   const language = code ? codeLanguage(code) : null;
+  if (language === "math") return children;
   const block = (
     <figure className="chat-code-block">
       {language && <figcaption className="chat-code-language">{language}</figcaption>}

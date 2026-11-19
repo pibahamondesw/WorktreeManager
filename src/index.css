@@ -286,6 +286,18 @@ body,
   padding: 0;
   background: transparent;
 }
+.chat-math-display {
+  display: block;
+  overflow-x: auto;
+}
+.chat-math-display .katex-display {
+  width: max-content;
+  min-width: 100%;
+}
+.chat-math-source {
+  font-family: var(--font-code);
+  white-space: pre-wrap;
+}
 .chat-code-block {
   border-radius: 0.5rem;
   background: var(--color-bg-secondary);
