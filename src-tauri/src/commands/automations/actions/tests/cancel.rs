@@ -7,11 +7,15 @@ use crate::commands::automations::store::events::{ItemStatus, ProcessEnd, StepSt
 const STEPS: &str = "steps:\n  - id: fix\n    agent: {}\n";
 
 fn running_fix() -> RunEvent {
+    attempt("fix", StepStatus::Running)
+}
+
+fn attempt(step: &str, status: StepStatus) -> RunEvent {
     RunEvent::StepStatus {
         item: "routine".into(),
-        step: "fix".into(),
+        step: step.into(),
         attempt: 1,
-        status: StepStatus::Running,
+        status,
         process_end: None,
         exit_code: None,
         outcome: None,
@@ -76,7 +80,9 @@ impl Harness {
 fn canceling_an_interrupted_run_cancels_its_open_item_and_attempt_without_counting_a_failure() {
     let harness = Harness::new(&format!("{TARGET}{STEPS}"));
     let before = harness.state();
-    let run_id = harness.logged(&routine(RunEvent::Interrupted));
+    let mut events = routine(RunEvent::Interrupted);
+    events.insert(3, attempt("plan", StepStatus::Succeeded));
+    let run_id = harness.logged(&events);
 
     let canceled = harness.cancel(target(&run_id, None, Actor::User)).unwrap();
 
@@ -91,9 +97,13 @@ fn canceling_an_interrupted_run_cancels_its_open_item_and_attempt_without_counti
     let item = &run.items[0];
     assert_eq!(item.status, ItemStatus::Canceled);
     assert_eq!(item.cause.as_deref(), Some(OWNER_CANCELED));
-    assert_eq!(item.steps[0].status, StepStatus::Canceled);
-    assert_eq!(item.steps[0].process_end, Some(ProcessEnd::Killed));
-    assert_eq!(item.steps[0].cause.as_deref(), Some(OWNER_CANCELED));
+    let [plan, fix] = item.steps.as_slice() else {
+        panic!("expected the plan and fix attempts");
+    };
+    assert_eq!(plan.status, StepStatus::Succeeded);
+    assert_eq!(fix.status, StepStatus::Canceled);
+    assert_eq!(fix.process_end, Some(ProcessEnd::Killed));
+    assert_eq!(fix.cause.as_deref(), Some(OWNER_CANCELED));
     assert_eq!(harness.state(), before);
 }
 
