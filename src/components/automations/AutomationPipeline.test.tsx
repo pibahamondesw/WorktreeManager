@@ -315,6 +315,31 @@ it("defaults to the newest run with items and shows each step's latest attempt",
   expect(within(node("Implement")).getByText("not started")).toBeInTheDocument();
 });
 
+it("names the item a step of the routine defined", async () => {
+  vi.mocked(invoke).mockResolvedValue(
+    page(
+      run("1761800000002-bbbbbbbb", {
+        items: [
+          item("routine", {
+            steps: [attempt("implement")],
+            defined: { id: "unit-7", version: "3", title: "Fix unit" },
+          }),
+        ],
+      }),
+      run("1761800000001-aaaaaaaa", {
+        items: [item("routine", { defined: { id: "unit-6", version: "2" } })],
+      })
+    )
+  );
+  render(<AutomationPipeline name="queue" steps={STEPS} />);
+
+  expect(await screen.findByText("Item unit-7 · Fix unit")).toHaveAttribute("title", "Version 3");
+  fireEvent.change(screen.getByRole("combobox", { name: "Run" }), {
+    target: { value: "1761800000001-aaaaaaaa" },
+  });
+  expect(screen.getByText("Item unit-6")).toBeInTheDocument();
+});
+
 it("moves between steps with the keyboard and opens what each kind has", async () => {
   answer(
     page(
