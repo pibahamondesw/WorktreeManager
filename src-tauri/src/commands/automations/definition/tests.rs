@@ -8,6 +8,7 @@ use super::*;
 use crate::commands::agents::{permission::PermissionMode, AgentCapabilities, AgentDescriptor};
 
 mod call;
+mod defined_item;
 mod selector_agent;
 mod step_outputs;
 mod task_create;

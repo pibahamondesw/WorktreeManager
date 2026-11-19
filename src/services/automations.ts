@@ -267,6 +267,14 @@ export interface ApprovalAnswer {
   params?: Record<string, unknown>;
 }
 
+/** The item a routine's step defined with its result; the later steps work on it. */
+interface DefinedItem {
+  id: string;
+  version: string;
+  title?: string | null;
+  data?: Record<string, unknown>;
+}
+
 export interface AutomationItem {
   id: string;
   title: string | null;
@@ -280,6 +288,8 @@ export interface AutomationItem {
   counters?: Record<string, number>;
   /** The item's own task, in campaigns. */
   task_id?: string | null;
+  /** Missing until a step defines the item, and in runs recorded before it. */
+  defined?: DefinedItem | null;
 }
 
 /** An item on the board: the newest of its id, with the run that holds it. */

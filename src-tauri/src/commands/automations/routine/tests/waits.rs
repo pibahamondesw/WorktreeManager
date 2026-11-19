@@ -115,7 +115,7 @@ fn waiting_starts(event: &RunEvent) -> bool {
     )
 }
 
-fn settles(harness: &Harness, run_id: &str, status: RunStatus) {
+pub(super) fn settles(harness: &Harness, run_id: &str, status: RunStatus) {
     wait_until(|| harness.scratch.store().run("demo", run_id).unwrap().status == status);
 }
 
@@ -780,6 +780,39 @@ fn a_script_watcher_sees_the_item_as_its_commands_do_whether_driven_or_parked() 
     assert_eq!(env["WTM_TASK_ID"], "t1");
     assert_eq!(env["WTM_ITEM_ID"], "routine");
     assert!(Path::new(&env["WTM_ITEM_DATA"]).is_file());
+}
+
+#[test]
+fn a_parked_script_watcher_sees_the_item_a_step_defined() {
+    let worktree = Scratch::new();
+    let steps = r#"steps:
+  - id: select
+    command: [/bin/sh, -c, 'printf "{{\"id\":\"unit-7\"}}" > "$WTM_STEP_RESULT"']
+    defines_item: true
+  - id: deployed
+    wait: { event: { watcher: command, command: [check-deploy, "{item.id}"] } }
+"#;
+    let tasks = FakeTasks {
+        worktree: Some(worktree.0.clone()),
+        ..FakeTasks::default()
+    };
+    let mut harness = Harness::new(&format!("{TARGET}{steps}"), tasks, FakeSessions::default());
+    let scopes = Arc::new(ScriptScopes::default());
+    let watchers = Watchers::default().with("command", scopes.clone());
+    harness.executor = harness.executor.clone().with_watchers(watchers);
+
+    let run = harness.run();
+    harness.executor.wake_ready();
+    scopes.open.store(true, Ordering::SeqCst);
+    harness.executor.wake_ready();
+    settles(&harness, &run.id, RunStatus::Completed);
+
+    let seen = scopes.seen.lock().unwrap();
+    assert!(seen.len() >= 3, "{seen:?}");
+    for (_, _, variables, env) in seen.iter() {
+        assert!(variables.contains(&("item.id".into(), "unit-7".into())));
+        assert!(env.contains(&("WTM_ITEM_ID".into(), "unit-7".into())));
+    }
 }
 
 #[test]

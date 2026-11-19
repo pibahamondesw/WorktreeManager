@@ -11,6 +11,7 @@ use serde_json::{Map, Value};
 
 use super::call::{call_step, check_output, inputs, Caller};
 use super::circleci_trigger::circleci_event_trigger;
+use super::defined_item::check_defined_item;
 use super::fields::{
     boolean, choice, duration, duration_secs, each, each_entry, index, integer, is_automation_name,
     is_instant, is_step_id, join, map, mentions_task, string, string_list, template, template_list,
@@ -199,6 +200,10 @@ pub(super) fn definition(
     }
     check_instructions(report, instructions, steps.as_deref());
     check_output_references(report, frontmatter, steps.as_deref());
+    if let Some(steps) = &steps {
+        let campaign = matches!(selector, Some(Some(_)));
+        check_defined_item(report, frontmatter, steps, campaign);
+    }
     let mut target = target;
     if let (Some(target), Some(selector)) = (&mut target, &selector) {
         check_task_mode(report, target, selector.is_some());
@@ -1035,6 +1040,7 @@ fn implicit_steps(report: &mut Report, scope: &Scope) -> Option<Vec<Step>> {
             result: None,
             on_reject: None,
         }),
+        defines_item: false,
     }])
 }
 
@@ -1074,6 +1080,7 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         )
     });
     let uses = fields.or(report, "uses", Vec::new(), string_list);
+    let defines_item = fields.or(report, "defines_item", false, boolean);
     let task_field = fields.path("task");
     let task = fields.or(report, "task", scope.task, |report, value, field| {
         step_task(report, scope, value, field)
@@ -1153,6 +1160,7 @@ fn step(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Optio
         uses: uses?,
         task,
         kind,
+        defines_item: defines_item?,
     })
 }
 

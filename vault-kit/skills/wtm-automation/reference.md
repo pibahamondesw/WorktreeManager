@@ -42,7 +42,7 @@ A condensed v1 summary for authors. The contract, with every rule and default, i
 
 ## Routine or campaign
 
-- **Routine**: no `selector`; each run has one implicit item. `target.task`: `per-run` (new task, branch `wtm/{automation}/{run.short_id}`) or `existing` (with `existing_task`, or the event's task).
+- **Routine**: no `selector`; each run has one implicit item. `target.task`: `per-run` (new task, branch `wtm/{automation}/{run.short_id}`) or `existing` (with `existing_task`, or the event's task). To keep a queue in a routine, one `command` step (or `agent` step with a `result` schema) sets `defines_item: true`: its result `{"id", "version"?, "title"?, "data"?}` becomes the item, so the later steps' `{item.*}`, `WTM_ITEM_*`, prompts, tracker and branches use it. Steps up to it cannot use `{item.*}` or write the tracker issue.
 - **Campaign**: `selector.run` is an argv run in the automation folder. It reads `{free, active, busy_files, cursor, run}` on stdin and prints `{"items": [{"id", "version", "title"?, "data"?}], "cursor"?}` or `{"run": false, "reason"?}`. `target.task: per-item`; with `tracker`, each item gets a Linear issue and works on its branch. Instead of `run`, `selector.agent` (`id`/`model`/`effort`/`permission`, `skill`, `prompt`, `readonly`, `true` by default) chooses the items in one headless turn outside any task; its structured result is `{"items": [{"id", "version", "title", "data": "<JSON object text>"}], "cursor": "<text>" | null}` and it reads the same input in its prompt. Other selector fields: `timeout` (`5m`, `15m` with `agent`), `max_new_items`, `exclusive_on` (`item.data` keys that may not overlap between active items).
 
 ## Triggers
@@ -67,7 +67,7 @@ Payloads from events and the CLI are untrusted data.
 
 ## Steps
 
-Each step has an `id` (`^[a-z][a-z0-9_]{0,40}$`) and exactly one kind key. Common fields: `label` (board column), `next`, `on_fail` (default `fail`), `on_noop` (`continue` | `complete`, agent and command steps only), `timeout`, `uses` (lease pools), `capacity` (`hold` | `release`).
+Each step has an `id` (`^[a-z][a-z0-9_]{0,40}$`) and exactly one kind key. Common fields: `label` (board column), `next`, `on_fail` (default `fail`), `on_noop` (`continue` | `complete`, agent and command steps only), `timeout`, `uses` (lease pools), `capacity` (`hold` | `release`), `defines_item` (routines).
 
 Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{goto: <step>, max: <n or budget name>}`. Cycles need a `max`.
 
@@ -98,7 +98,7 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 | `github.pr_comment`     | `pr_comment`   | `repo`, `body`                                                         |
 | `github.pr_ready`       | `pr_ready`     | `repo`                                                                 |
 | `linear.upsert`         | `linear_write` | overrides of `tracker.linear` fields                                   |
-| `linear.state`          | `linear_write` | `state`                                                                |
+| `linear.state`          | `linear_write` | `state` (finds the issue by the marker of the item's last upsert)      |
 | `wtm.task_create`       | `task_create`  | `workspace`, `repos`, `branch`, `from_remote`, `linear_issue`          |
 | `wtm.task_log`          | `task_log`     | `entry`                                                                |
 | `wtm.task_delete_clean` | `task_delete`  | none                                                                   |

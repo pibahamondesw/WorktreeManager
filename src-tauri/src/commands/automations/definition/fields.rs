@@ -350,12 +350,21 @@ fn template_variables(text: &str) -> Vec<&str> {
 
 /// Whether a string anywhere in `value` uses a `{task.*}` variable.
 pub(super) fn mentions_task(value: &Value) -> bool {
+    mentions(value, "task.")
+}
+
+/// Whether a string anywhere in `value` uses an `{item.*}` variable.
+pub(super) fn mentions_item(value: &Value) -> bool {
+    mentions(value, "item.")
+}
+
+fn mentions(value: &Value, prefix: &str) -> bool {
     match value {
         Value::String(text) => template_variables(text)
             .iter()
-            .any(|variable| variable.starts_with("task.")),
-        Value::Array(values) => values.iter().any(mentions_task),
-        Value::Object(map) => map.values().any(mentions_task),
+            .any(|variable| variable.starts_with(prefix)),
+        Value::Array(values) => values.iter().any(|value| mentions(value, prefix)),
+        Value::Object(map) => map.values().any(|value| mentions(value, prefix)),
         _ => false,
     }
 }

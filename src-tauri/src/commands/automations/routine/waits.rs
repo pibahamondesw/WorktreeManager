@@ -16,6 +16,7 @@ use super::super::store::events::{
 use super::super::wait::{self, parked_on, Ended, WaitLog, Watch, WatchScripts};
 use super::calls::call_ended;
 use super::commands::{Item, ItemScope};
+use super::defined;
 use super::{
     failed, render_partially, run_variables, DrivenItem, ItemSteps, ResolvedTask, RoutineExecutor,
 };
@@ -101,7 +102,11 @@ impl RoutineExecutor {
             .ok_or("it is not in its run")?;
         let run_dir = self.store.run_dir(&request.automation, &request.run_id)?;
         let mut scope = ItemScope::new(&run_dir, run_variables(request), task, &Item::from(state));
-        scope.edit(&wait::approved_params(history, item, &definition.steps));
+        let (defined, edited) = defined::logged_item(history, item, &definition.steps);
+        if let Some(defined) = &defined {
+            scope.define(defined);
+        }
+        scope.edit(&edited);
         scope.show_outputs(&StepOutputs::from_log(history, item));
         Ok(scope)
     }

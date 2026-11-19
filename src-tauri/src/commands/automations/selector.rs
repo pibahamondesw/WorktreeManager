@@ -437,21 +437,23 @@ pub fn parse_output(stdout: &[u8]) -> Result<SelectorOutput, String> {
 }
 
 fn check_candidate(item: &Candidate) -> Result<(), String> {
-    let valid_id = !item.id.is_empty()
-        && item.id.chars().count() <= MAX_ITEM_ID_CHARS
-        && item
-            .id
+    item_problem(&item.id, &item.version, &item.data)
+        .map_or(Ok(()), |problem| Err(format!("selector {problem}")))
+}
+
+/// Why an item's id, version or data cannot be an item's, if they cannot.
+pub fn item_problem(id: &str, version: &str, data: &Map<String, Value>) -> Option<String> {
+    let valid_id = !id.is_empty()
+        && id.chars().count() <= MAX_ITEM_ID_CHARS
+        && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "._:/@-".contains(c));
     if !valid_id {
-        return Err(format!("selector item id is invalid: {:?}", item.id));
+        return Some(format!("item id is invalid: {id:?}"));
     }
-    if item.version.is_empty() {
-        return Err(format!("selector item {} has an empty version", item.id));
+    if version.is_empty() {
+        return Some(format!("item {id} has an empty version"));
     }
-    let data_bytes = serde_json::to_vec(&item.data).map_or(usize::MAX, |bytes| bytes.len());
-    if data_bytes > MAX_ITEM_DATA_BYTES {
-        return Err(format!("selector item {} data exceeds 64 KiB", item.id));
-    }
-    Ok(())
+    let data_bytes = serde_json::to_vec(data).map_or(usize::MAX, |bytes| bytes.len());
+    (data_bytes > MAX_ITEM_DATA_BYTES).then(|| format!("item {id} data exceeds 64 KiB"))
 }
