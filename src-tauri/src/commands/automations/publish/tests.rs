@@ -1054,6 +1054,65 @@ fn linear_state_finds_the_issue_by_the_tracker_marker_without_an_upsert() {
 }
 
 #[test]
+fn linear_state_finds_the_issue_by_the_marker_the_log_recalls() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let upserted = Arc::new(linear_bridge(true, false, true));
+    let run = Run::all();
+    let custom = LinearOverrides {
+        marker: Some("custom:{item.id}".into()),
+        ..LinearOverrides::default()
+    };
+
+    run.publish(
+        &mut publisher(&forge, &upserted),
+        1,
+        vec![Effect::LinearUpsert(custom)],
+    );
+    let upsert = run.recorded.borrow().clone();
+    assert_eq!(
+        upserted_marker(upsert.iter(), ITEM).as_deref(),
+        Some("custom:routine")
+    );
+    let logged = [
+        marked(ITEM, EffectStatus::Executed, "first:routine"),
+        marked(ITEM, EffectStatus::Reconciled, "custom:routine"),
+        marked(ITEM, EffectStatus::Failed, "failed:routine"),
+        marked("other", EffectStatus::Executed, "other:routine"),
+        recorded(ITEM, "linear.upsert", EffectStatus::Executed, Some("ENG-1")),
+    ];
+    let marker = upserted_marker(&logged, ITEM);
+    assert_eq!(marker.as_deref(), Some("custom:routine"));
+    assert_eq!(upserted_marker(&logged[2..], ITEM), None);
+
+    let moved = Arc::new(linear_bridge(false, false, true));
+    run.publish(
+        &mut publisher(&forge, &moved).with_marker(marker),
+        2,
+        vec![Effect::LinearState {
+            state: "started".into(),
+        }],
+    );
+    assert_eq!(
+        moved.calls()[0].1,
+        json!({ "workspaceId": "w1", "marker": "custom:routine", "state": "started" })
+    );
+}
+
+fn marked(item: &str, status: EffectStatus, marker: &str) -> RunEvent {
+    RunEvent::EffectRecorded {
+        item: item.into(),
+        step: "publish".into(),
+        attempt: 1,
+        effect: "linear.upsert".into(),
+        status,
+        detail: None,
+        reference: Some("ENG-1".into()),
+        warnings: Vec::new(),
+        output: Some(json!({ "marker": marker })),
+    }
+}
+
+#[test]
 fn linear_failures_fail_the_step_with_the_operation_message() {
     let forge = Arc::new(FakeForge::at("abc"));
     let run = Run::all();

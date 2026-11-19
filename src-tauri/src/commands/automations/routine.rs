@@ -43,7 +43,8 @@ use super::pipeline::{
     drive, Execution, ItemMachine, Pipeline, RunLog, StepExecutor, StepReport, StepRequest,
 };
 use super::publish::{
-    opened_chats, published_values, pushed_commits, CliForge, Forge, PublishScope, Publisher,
+    opened_chats, published_values, pushed_commits, upserted_marker, CliForge, Forge, PublishScope,
+    Publisher,
 };
 use super::scheduler::{is_active, record_failure, Executor, RunRequest};
 use super::selector::sources::ItemSources;
@@ -615,7 +616,9 @@ impl RoutineExecutor {
             deadline,
             grants: granted(&definition.authorization),
             commands: CommandExecutor::new(definition.folder.clone(), run_dir.clone(), context),
-            publisher: Publisher::new(self.forge.clone(), self.bridge.clone()),
+            publisher: Publisher::new(self.forge.clone(), self.bridge.clone()).with_marker(
+                upserted_marker(history.iter().map(|logged| &logged.event), &item.id),
+            ),
             bases: bases(&definition.target),
             run_dir,
             shared_session: None,

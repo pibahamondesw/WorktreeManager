@@ -187,7 +187,7 @@ pub struct Publisher {
     counts: BTreeMap<Verb, u64>,
     /// `{tracker.issue}` and `{pr.*}`, once an effect knows them.
     values: BTreeMap<&'static str, String>,
-    /// The marker of the item's issue, once an upsert renders it.
+    /// The marker of the item's issue, once an upsert renders it or the run log recalls it.
     marker: Option<String>,
     /// The task a `wtm.task_create` effect resolved, and whether it created it; the effects after
     /// it, and the item's next steps, work in it.
@@ -206,6 +206,11 @@ impl Publisher {
             task: None,
             events: Vec::new(),
         }
+    }
+
+    /// Goes on from the marker the item's last `linear.upsert` recorded, if any.
+    pub fn with_marker(self, marker: Option<String>) -> Self {
+        Self { marker, ..self }
     }
 
     /// Runs the effects in order; the first that does not go through ends the attempt.
@@ -676,6 +681,7 @@ impl Publisher {
         let identifier = text(&issue, "identifier")?;
         self.values.insert("tracker.issue", identifier.clone());
         self.marker = params["marker"].as_str().map(String::from);
+        let output = json!({ "marker": self.marker });
         let (status, detail) = match (issue["created"] == true, issue["updated"] == true) {
             (true, _) => (EffectStatus::Executed, format!("Created {identifier}")),
             (_, true) => (EffectStatus::Executed, format!("Updated {identifier}")),
@@ -686,6 +692,7 @@ impl Publisher {
         };
         Ok(Outcome {
             warnings: issue_warnings(&issue),
+            output: Some(output),
             ..Outcome::of(status, detail).referencing(identifier)
         })
     }
@@ -978,6 +985,24 @@ pub fn published_values(history: &[LoggedEvent], item: &str) -> Vec<(&'static st
     let mut published = published_pull_request(events(), item);
     published.extend(published_issue(events(), item));
     published
+}
+
+/// The marker `item`'s last `linear.upsert` that went through recorded.
+pub fn upserted_marker<'a>(
+    events: impl IntoIterator<Item = &'a RunEvent>,
+    item: &str,
+) -> Option<String> {
+    let markers = events.into_iter().filter_map(|event| match event {
+        RunEvent::EffectRecorded {
+            item: recorded,
+            effect,
+            status: EffectStatus::Executed | EffectStatus::Reconciled,
+            output: Some(output),
+            ..
+        } if recorded == item && effect == "linear.upsert" => output["marker"].as_str(),
+        _ => None,
+    });
+    markers.last().map(String::from)
 }
 
 /// `{pr.number}` and `{pr.url}` of the PR `item`'s `github.pr_*` effects referenced last.
