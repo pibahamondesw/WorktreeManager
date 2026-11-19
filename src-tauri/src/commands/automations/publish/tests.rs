@@ -208,6 +208,7 @@ fn step(effects: Vec<Effect>) -> Step {
         label: "publish".into(),
         next: None,
         on_fail: Transition::Fail,
+        on_noop: Default::default(),
         timeout_secs: Some(90),
         capacity: Capacity::Hold,
         uses: Vec::new(),

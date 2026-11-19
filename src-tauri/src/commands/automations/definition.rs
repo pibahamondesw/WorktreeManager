@@ -333,6 +333,7 @@ pub struct Step {
     /// `None` goes to the following step; the last step's success completes the item.
     pub next: Option<String>,
     pub on_fail: Transition,
+    pub on_noop: OnNoop,
     pub timeout_secs: Option<u64>,
     pub capacity: Capacity,
     /// Lease pools held for each attempt.
@@ -346,6 +347,15 @@ pub struct Step {
 pub enum Capacity {
     Hold,
     Release,
+}
+
+/// Where a `noop` attempt goes: on as a success, or to the item's completion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnNoop {
+    #[default]
+    Continue,
+    Complete,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

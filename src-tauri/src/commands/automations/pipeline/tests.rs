@@ -25,6 +25,7 @@ fn step(id: &str, kind: StepKind) -> Step {
         label: id.into(),
         next: None,
         on_fail: Transition::Fail,
+        on_noop: Default::default(),
         timeout_secs: None,
         capacity,
         uses: Vec::new(),
@@ -585,6 +586,43 @@ fn blocked_and_defer_verdicts_rest_the_item() {
             "deferred:review (step:review)"
         ]
     );
+}
+
+fn completing_on_noop(step: Step) -> Step {
+    Step {
+        on_noop: OnNoop::Complete,
+        ..step
+    }
+}
+
+#[test]
+fn a_noop_attempt_completes_the_item_when_the_step_says_so() {
+    let mut harness = Harness::new(vec![completing_on_noop(command("pick")), command("work")])
+        .script("pick", vec![finished(1_000, report(StepOutcome::Noop))]);
+
+    assert_eq!(harness.drive(), ItemStatus::Completed);
+    assert_eq!(harness.moves(), ["active:pick", "completed:pick"]);
+    assert_eq!(harness.executor.calls, ["pick#1"]);
+}
+
+#[test]
+fn a_reused_noop_attempt_completes_the_item_too() {
+    let mut harness = Harness::new(vec![completing_on_noop(command("pick")), command("work")])
+        .script(
+            "pick",
+            vec![(0, Execution::Skipped(report(StepOutcome::Noop)))],
+        );
+
+    assert_eq!(harness.drive(), ItemStatus::Completed);
+    assert_eq!(harness.attempts(), ["pick#1:skipped"]);
+}
+
+#[test]
+fn a_step_completing_on_noop_goes_on_after_a_success() {
+    let mut harness = Harness::new(vec![completing_on_noop(command("pick")), command("work")]);
+
+    assert_eq!(harness.drive(), ItemStatus::Completed);
+    assert_eq!(harness.executor.calls, ["pick#1", "work#1"]);
 }
 
 #[test]

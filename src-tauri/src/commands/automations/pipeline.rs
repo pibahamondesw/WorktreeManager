@@ -7,7 +7,7 @@ mod tests;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::definition::{Budgets, Capacity, GotoLimit, Step, StepKind, Transition};
+use super::definition::{Budgets, Capacity, GotoLimit, OnNoop, Step, StepKind, Transition};
 use super::store::events::{
     ItemStatus, LoggedEvent, ProcessEnd, RunEvent, StepOutcome, StepStatus, Verdict,
 };
@@ -92,6 +92,7 @@ struct Position {
 
 struct FinishedAttempt {
     status: StepStatus,
+    outcome: Option<StepOutcome>,
     verdict: Option<Verdict>,
     cause: Option<String>,
     head: Option<String>,
@@ -167,6 +168,7 @@ impl<'a> ItemMachine<'a> {
                 step,
                 attempt,
                 status,
+                outcome,
                 verdict,
                 cause,
                 head,
@@ -187,6 +189,7 @@ impl<'a> ItemMachine<'a> {
                 self.charge(step, head.as_deref(), elapsed_ms);
                 self.current = Some(Attempt::Finished(FinishedAttempt {
                     status: *status,
+                    outcome: *outcome,
                     verdict: *verdict,
                     cause: cause.clone(),
                     head: head.clone(),
@@ -307,6 +310,11 @@ impl<'a> ItemMachine<'a> {
         match (finished.verdict, finished.status) {
             (Some(Verdict::Blocked), _) => self.rest(position, ItemStatus::Blocked, Some(cause())),
             (Some(Verdict::Defer), _) => self.rest(position, ItemStatus::Deferred, Some(cause())),
+            (_, StepStatus::Succeeded | StepStatus::Skipped)
+                if completes_on_noop(step, finished) =>
+            {
+                self.rest(position, ItemStatus::Completed, None)
+            }
             (_, StepStatus::Succeeded | StepStatus::Skipped) => self.advance(position, step),
             (_, StepStatus::Rejected) => {
                 self.follow(position, step, reject_transition(step), cause())
@@ -554,6 +562,10 @@ fn step_event(request: &StepRequest, status: StepStatus, report: Option<StepRepo
         cause,
         head,
     }
+}
+
+fn completes_on_noop(step: &Step, finished: &FinishedAttempt) -> bool {
+    step.on_noop == OnNoop::Complete && finished.outcome == Some(StepOutcome::Noop)
 }
 
 fn reject_transition(step: &Step) -> &Transition {

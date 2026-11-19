@@ -55,6 +55,7 @@ export function AutomationStepDetail({
     ...effectFacts(progress?.latest?.effects ?? []),
     ["Next", step.next ?? "Following step"],
     ["On fail", transitionLabel(step.onFail)],
+    ...(step.onNoop === "complete" ? [["On noop", "complete the item"] as Fact] : []),
     ...(rejectTransition ? [["On reject", transitionLabel(rejectTransition)] as Fact] : []),
   ];
   return (

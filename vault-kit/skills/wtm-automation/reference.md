@@ -66,7 +66,7 @@ Payloads from events and the CLI are untrusted data.
 
 ## Steps
 
-Each step has an `id` (`^[a-z][a-z0-9_]{0,40}$`) and exactly one kind key. Common fields: `label` (board column), `next`, `on_fail` (default `fail`), `timeout`, `uses` (lease pools), `capacity` (`hold` | `release`).
+Each step has an `id` (`^[a-z][a-z0-9_]{0,40}$`) and exactly one kind key. Common fields: `label` (board column), `next`, `on_fail` (default `fail`), `on_noop` (`continue` | `complete`, agent and command steps only), `timeout`, `uses` (lease pools), `capacity` (`hold` | `release`).
 
 Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{goto: <step>, max: <n or budget name>}`. Cycles need a `max`.
 
@@ -79,7 +79,7 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 | `publish`  | one effect or a list, each `name` or `{name: {params}}`                                                                                                           | `30m`           |
 | `call`     | `automation` (a routine that declares `inputs`), `inputs` (map of templates)                                                                                      | none            |
 
-- Agent steps of an item share one session unless `fresh_session: true`. The `verdict` result is `{verdict: pass | reject | blocked | defer | noop, summary, findings}`: `reject` takes `on_reject`, `blocked`/`defer` rest the item, `noop` succeeds silently. Without `result`, a final message `NOOP` is a noop.
+- Agent steps of an item share one session unless `fresh_session: true`. The `verdict` result is `{verdict: pass | reject | blocked | defer | noop, summary, findings}`: `reject` takes `on_reject`, `blocked`/`defer` rest the item, `noop` succeeds silently. Without `result`, a final message `NOOP` is a noop. A command is a noop when it exits 0 after writing `{"verdict": "noop"}` to `WTM_STEP_RESULT`. A noop goes to `next` unless the step sets `on_noop: complete`, which completes the item as `noop` (the run ends `noop`, archived under `report.archive_noop`, not a failure): use it on a first step that finds no work.
 - Commands get `WTM_AUTOMATION`, `WTM_RUN_ID`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION`, `WTM_ITEM_DATA` (a JSON file), `WTM_STEP_OUTPUTS` (a JSON file of earlier steps' outputs), `WTM_STEP_RESULT` (where to write this step's JSON result), `WTM_TASK_ID`, `WTM_WORKTREE` and lease variables. Exit 0 succeeds.
 - Later steps reference a step's output (agent structured result, command result, wait/approval answer, publish effects) as `{steps.<id>.result}` or `{steps.<id>.result.<key>}` in templated fields and agent prompts; only earlier steps can be referenced.
 - Watchers: `pr_checks` (`required`, `ignore`, `expect`, `bot_lgtm`, `unresolved_threads`, `request_review_comment`) waits for green CI on the pushed HEAD; `pr_integrated` waits for the PR to land; `command` polls a script that prints `{"status": "pending" | "success" | "fail"}`.

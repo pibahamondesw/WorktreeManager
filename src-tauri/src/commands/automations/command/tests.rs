@@ -62,6 +62,7 @@ fn command_step(argv: &[&str], bind: Option<Bind>, after: Vec<Vec<String>>) -> S
         label: "verify".into(),
         next: None,
         on_fail: Transition::Fail,
+        on_noop: Default::default(),
         timeout_secs: Some(60),
         capacity: Capacity::Hold,
         uses: Vec::new(),

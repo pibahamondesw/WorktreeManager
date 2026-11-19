@@ -383,18 +383,17 @@ fn the_commands_read_and_save_the_configured_directory() {
     ))
     .unwrap();
     assert!(matches!(saved, StepsSave::Invalid { .. }));
+    let mut implement = source.steps[0].clone();
+    implement["on_noop"] = json!("complete");
     let saved = tauri::async_runtime::block_on(automation_steps_save(
         app.handle().clone(),
         "demo".into(),
         source.hash,
-        vec![
-            keep(1, source.steps[1].clone()),
-            keep(0, source.steps[0].clone()),
-        ],
+        vec![keep(1, source.steps[1].clone()), keep(0, implement)],
     ))
     .unwrap();
     assert!(matches!(saved, StepsSave::Saved { .. }));
-    assert!(fs::read_to_string(&file)
-        .unwrap()
-        .contains("steps:\n- id: review\n"));
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(text.contains("steps:\n- id: review\n"));
+    assert!(text.contains("on_noop: complete"));
 }
