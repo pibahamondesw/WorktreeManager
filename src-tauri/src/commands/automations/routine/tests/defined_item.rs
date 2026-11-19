@@ -167,3 +167,22 @@ fn only_a_json_object_with_a_valid_id_defines_an_item() {
         Err("the result that defines the item is not a JSON object".into())
     );
 }
+
+#[test]
+fn an_empty_queue_completes_the_run_without_defining_an_item() {
+    let worktree = Scratch::new();
+    let frontmatter = format!(
+        "{TARGET}steps:\n  - id: select\n    command: [/bin/sh, -c, 'printf \"{{{{\\\"verdict\\\":\\\"noop\\\"}}}}\" > \"$WTM_STEP_RESULT\"']\n    defines_item: true\n    on_noop: complete\n  - id: work\n    command: [/usr/bin/false]\n"
+    );
+    let harness = Harness::new(
+        &frontmatter,
+        worktree_tasks(&worktree),
+        FakeSessions::default(),
+    );
+
+    let run = harness.run();
+
+    assert_eq!(run.outcome, Some(RunOutcome::Noop));
+    assert_eq!(run.items[0].steps.len(), 1);
+    assert_eq!(run.items[0].defined, None);
+}

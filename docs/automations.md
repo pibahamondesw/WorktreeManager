@@ -254,7 +254,7 @@ Common fields:
 
 A routine's run has one implicit item: its id is `routine`, and its data are a call's inputs or empty. To keep a queue inside a routine, so that each run picks one unit and works on it (with `concurrency.max_runs` bounding how many run at once), one step sets `defines_item: true` and its result becomes the item for the rest of the run. The step must be a `command` (its `WTM_STEP_RESULT`) or an `agent` step with a `result` schema; a `verdict` result cannot name an item, and only one step may define it. Campaigns are rejected: their selector gives each item.
 
-The result is a JSON object with `id` (as a selector item's: at most 200 characters of `[A-Za-z0-9._:/@-]`) and optionally `version` (a string; default the implicit item's, the definition hash), `title` and `data` (a JSON object, or the text of one for agents whose schemas cannot hold free-form objects, at most 64 KiB). A successful or `noop` attempt with a result that is not such an object fails with `invalid_result: <why>`; one that fails, or a `noop` without a result, defines nothing.
+The result is a JSON object with `id` (as a selector item's: at most 200 characters of `[A-Za-z0-9._:/@-]`) and optionally `version` (a string; default the implicit item's, the definition hash), `title` and `data` (a JSON object, or the text of one for agents whose schemas cannot hold free-form objects, at most 64 KiB). A successful attempt with a result that is not such an object fails with `invalid_result: <why>`; one that fails or ends `noop` (a command's `{"verdict": "noop"}` when the queue is empty, with `on_noop: complete` to end the run there) defines nothing.
 
 From then on `{item.id}`, `{item.branch}`, `{item.version}`, `{item.title}`, `{item.data.*}`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION` and the file `WTM_ITEM_DATA` are the defined item's, in commands, watcher scripts, approvals, publish effects (tracker marker, title, labels and milestone, `wtm.task_create` branches) and calls, and agent prompts and session names carry its id, version, title and data. The run log records it as `item_defined` (with the step and attempt), so a wait, a restart, a retry or a hand-back goes on with it, and the run detail shows it; a step that defines it again, after a `goto` or a retry, replaces it. The item's events, its idempotency keys and `--item` keep the implicit item's key, `routine`. Since the steps up to the defining one still work on the implicit item, validation rejects `{item.*}` in their templates, and their `linear.*` effects when the tracker's marker (by default `wtm:{automation}:{item.id}`) uses the item. Agent prompts are not templated, so an agent step before it sees the implicit item.
 
@@ -851,7 +851,7 @@ The payload names the pull request: `pr.url`, `pr.headRefName`, `pr.baseRefName`
 
 ### Routine: a queue inside a routine
 
-Works through a list of units one per run, as a small campaign without a selector: a schedule fires runs, `concurrency.max_runs` lets two work at once, and the first step picks the next unit and defines the run's item. `scripts/next.sh` reads the queue file, skips units another run holds (an open pull request on their branch) and writes the next one to `WTM_STEP_RESULT`, for example `{"id": "unit-12", "title": "Fix unit 12", "data": {"files": ["a.txt"]}}`.
+Works through a list of units one per run, as a small campaign without a selector: a schedule fires runs, `concurrency.max_runs` lets two work at once, and the first step picks the next unit and defines the run's item. `scripts/next.sh` reads the queue file, skips units another run holds (an open pull request on their branch) and writes the next one to `WTM_STEP_RESULT`, for example `{"id": "unit-12", "title": "Fix unit 12", "data": {"files": ["a.txt"]}}`, or `{"verdict": "noop"}` when none is left, so the run ends `noop`.
 
 ```markdown
 ---
@@ -868,6 +868,7 @@ steps:
   - id: select
     command: [scripts/next.sh]
     defines_item: true
+    on_noop: complete
   - id: start
     publish:
       - linear.upsert

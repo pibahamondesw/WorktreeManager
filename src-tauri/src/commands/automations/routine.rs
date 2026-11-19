@@ -877,16 +877,15 @@ impl<'a> ItemSteps<'a> {
     }
 
     /// A successful attempt of a `defines_item` step defines the item from its result; a result
-    /// that cannot define one fails the attempt. A `noop` without a result defines none.
+    /// that cannot define one fails the attempt. A `noop`, such as an empty queue, defines none.
     fn define_item(&mut self, request: &StepRequest, execution: Execution) -> Execution {
         let Some(report) = execution.report().filter(|_| request.step.defines_item) else {
             return execution;
         };
-        let result = attempt_result(&self.evidence);
-        let noop = report.outcome == StepOutcome::Noop;
-        if report.outcome != StepOutcome::Success && !(noop && result.is_some()) {
+        if report.outcome != StepOutcome::Success {
             return execution;
         }
+        let result = attempt_result(&self.evidence);
         let process_end = report.process_end;
         let defined = defined::defined_item(result.as_ref(), &self.item.version)
             .map(|defined| (Item::from(&defined), defined))
