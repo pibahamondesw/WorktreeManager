@@ -127,6 +127,8 @@ pub fn run() {
                 commands::agent_alerts::agent_attention,
                 commands::agent_alerts::agent_badge,
                 commands::agent_alerts::agent_dismiss_notifications,
+                commands::agent_notifications::agent_test_notification,
+                commands::agent_notifications::agent_open_notification_settings,
                 commands::keychain::keychain_get,
                 commands::keychain::keychain_set,
                 circleci::token::circleci_token_saved,

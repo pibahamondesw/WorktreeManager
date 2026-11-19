@@ -79,6 +79,10 @@ export const DEFAULT_AGENT_ALERTS: AgentAlertSettings = {
   notifications: { done: true, waiting: true },
 };
 
+export const testAgentNotification = () => invoke<boolean>("agent_test_notification");
+
+export const openAgentNotificationSettings = () => invoke<void>("agent_open_notification_settings");
+
 export function normalizeAgentAlerts(value: unknown): AgentAlertSettings {
   const stored = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
   const sounds = (stored.sounds ?? {}) as Record<string, unknown>;

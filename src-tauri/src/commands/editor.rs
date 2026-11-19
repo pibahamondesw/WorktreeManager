@@ -6,9 +6,9 @@ use super::login_shell::{cli_available, LoginShell};
 use super::workspace::TaskWorkspaceFiles;
 
 #[cfg(not(test))]
-const GUI_LAUNCHER: &str = "open";
+pub(crate) const GUI_LAUNCHER: &str = "open";
 #[cfg(test)]
-const GUI_LAUNCHER: &str = "true";
+pub(crate) const GUI_LAUNCHER: &str = "true";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]

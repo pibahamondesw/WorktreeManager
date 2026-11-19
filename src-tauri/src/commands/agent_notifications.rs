@@ -3,7 +3,6 @@
 //! center delegate, and a task's notification is replaced by its next alert and removed once the
 //! task no longer needs attention.
 
-#[cfg(not(target_os = "macos"))]
 use tauri::{AppHandle, Runtime};
 
 use super::agent_alerts::NotificationTarget;
@@ -39,14 +38,34 @@ fn notifies_task(identifier: &str, task_ids: &[String]) -> bool {
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
 mod macos {
+    use std::ffi::CStr;
+    use std::path::Path;
+    use std::process::Command;
+    use std::sync::Mutex;
+
+    use block2::RcBlock;
     use objc2::rc::Retained;
-    use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
+    use objc2::runtime::AnyClass;
+    use objc2::runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject};
     use objc2::{define_class, msg_send, AllocAnyThread, ClassType, DefinedClass};
     use objc2_foundation::{
-        NSDictionary, NSString, NSUserNotification, NSUserNotificationCenter,
+        ns_string, NSDictionary, NSError, NSString, NSUserNotification, NSUserNotificationCenter,
         NSUserNotificationCenterDelegate,
     };
     use tauri::{AppHandle, Runtime};
+    use tokio::sync::oneshot;
+
+    use crate::commands::editor::GUI_LAUNCHER;
+
+    #[cfg(not(test))]
+    const AUTHORIZATION_CENTER: &CStr = c"UNUserNotificationCenter";
+    #[cfg(test)]
+    const AUTHORIZATION_CENTER: &CStr = super::tests::FAKE_AUTHORIZATION_CENTER;
+    const NOTIFICATION_SETTINGS_URL: &str =
+        "x-apple.systempreferences:com.apple.preference.notifications";
+
+    #[link(name = "UserNotifications", kind = "framework")]
+    extern "C" {}
 
     use super::{notification_identifier, notifies_task, NotificationTarget, TARGET_KEY};
     use crate::commands::agent_alerts::reveal_target;
@@ -100,7 +119,7 @@ mod macos {
     fn center<R: Runtime>(app: &AppHandle<R>) -> Option<Retained<NSUserNotificationCenter>> {
         #[cfg(test)]
         if let Some(center) = super::tests::fake_center() {
-            return Some(center);
+            return center;
         }
         let _ = mac_notification_sys::set_application(&app.config().identifier);
         unsafe {
@@ -182,6 +201,111 @@ mod macos {
     pub fn dismiss<R: Runtime>(app: &AppHandle<R>, task_ids: Vec<String>) {
         on_center(app, move |center| remove_for_tasks(center, &task_ids));
     }
+
+    /// UserNotifications requires an actual application bundle. The identifier borrowed by the
+    /// legacy center for development does not make the dev executable a bundle.
+    pub async fn test_notification<R: Runtime>(
+        app: &AppHandle<R>,
+        executable: &Path,
+    ) -> Result<bool, String> {
+        if !executable
+            .ancestors()
+            .any(|path| path.extension() == Some("app".as_ref()))
+        {
+            return Err("Open the WorktreeManager .app to test macOS notifications.".into());
+        }
+        if !request_permission(app).await? {
+            return Ok(false);
+        }
+        preview(app).await?;
+        Ok(true)
+    }
+
+    async fn request_permission<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+        let (send, receive) = oneshot::channel();
+        app.run_on_main_thread(move || {
+            let send = Mutex::new(Some(send));
+            let completion = RcBlock::new(move |granted: Bool, error: *mut NSError| {
+                let result = match unsafe { error.as_ref() } {
+                    Some(error) if is_not_allowed(error) => Ok(false),
+                    Some(error) => Err(error.localizedDescription().to_string()),
+                    None => Ok(granted.as_bool()),
+                };
+                if let Some(send) = send.lock().unwrap().take() {
+                    let _ = send.send(result);
+                }
+            });
+            let class = AnyClass::get(AUTHORIZATION_CENTER).expect("UserNotifications is linked");
+            let center: Retained<AnyObject> = unsafe { msg_send![class, currentNotificationCenter] };
+            const ALERT: usize = 1 << 2;
+            let _: () = unsafe {
+                msg_send![&*center, requestAuthorizationWithOptions: ALERT, completionHandler: &*completion]
+            };
+        })
+        .map_err(|error| error.to_string())?;
+        receive.await.map_err(|error| error.to_string())?
+    }
+
+    /// Unsigned or ad hoc signed builds report a denial as `UNErrorCodeNotificationsNotAllowed`.
+    fn is_not_allowed(error: &NSError) -> bool {
+        &*error.domain() == ns_string!("UNErrorDomain") && error.code() == 1
+    }
+
+    pub fn open_settings() -> Result<(), String> {
+        Command::new(GUI_LAUNCHER)
+            .arg(NOTIFICATION_SETTINGS_URL)
+            .spawn()
+            .map(drop)
+            .map_err(|error| error.to_string())
+    }
+
+    pub async fn preview<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+        let (send, receive) = oneshot::channel();
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            let result = center(&handle)
+                .ok_or_else(|| "macOS Notification Center is unavailable.".to_string())
+                .map(|center| {
+                    ensure_delegate(&handle, &center);
+                    let notification = NSUserNotification::new();
+                    notification.setIdentifier(Some(&NSString::from_str("wtm-agent-test")));
+                    notification.setTitle(Some(&NSString::from_str("WorktreeManager")));
+                    notification.setInformativeText(Some(&NSString::from_str(
+                        "This is a test of your agent alerts.",
+                    )));
+                    center.deliverNotification(&notification);
+                });
+            let _ = send.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+        receive.await.map_err(|error| error.to_string())?
+    }
+}
+
+#[tauri::command]
+pub async fn agent_test_notification<R: Runtime>(app: AppHandle<R>) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        macos::test_notification(&app, &executable).await
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Agent notifications are available on macOS.".into())
+    }
+}
+
+#[tauri::command]
+pub fn agent_open_notification_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::open_settings()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Agent notifications are available on macOS.".into())
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -208,7 +332,15 @@ pub(crate) mod tests {
     use objc2::rc::Retained;
     use objc2::runtime::{AnyObject, NSObject};
     use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
-    use objc2_foundation::{NSArray, NSUserNotification, NSUserNotificationCenter};
+    use std::ffi::CStr;
+    use std::path::Path;
+
+    use block2::Block;
+    use objc2::runtime::Bool;
+    use objc2::ClassType;
+    use objc2_foundation::{
+        NSArray, NSError, NSString, NSUserNotification, NSUserNotificationCenter,
+    };
     use serde_json::{json, Value};
     use tauri::Listener;
 
@@ -259,11 +391,12 @@ pub(crate) mod tests {
     );
 
     thread_local! {
-        static FAKE_CENTER: RefCell<Option<Retained<NSUserNotificationCenter>>> =
+        static FAKE_CENTER: RefCell<Option<Option<Retained<NSUserNotificationCenter>>>> =
             const { RefCell::new(None) };
     }
 
-    pub(crate) fn fake_center() -> Option<Retained<NSUserNotificationCenter>> {
+    /// `Some(None)` stands for a system without a notification center.
+    pub(crate) fn fake_center() -> Option<Option<Retained<NSUserNotificationCenter>>> {
         FAKE_CENTER.with(|center| center.borrow().clone())
     }
 
@@ -272,7 +405,7 @@ pub(crate) mod tests {
         let fake = FakeCenter::alloc().set_ivars(FakeCenterState::default());
         let fake: Retained<FakeCenter> = unsafe { msg_send![super(fake), init] };
         let center = unsafe { Retained::cast_unchecked::<NSUserNotificationCenter>(fake) };
-        FAKE_CENTER.with(|current| *current.borrow_mut() = Some(center.clone()));
+        FAKE_CENTER.with(|current| *current.borrow_mut() = Some(Some(center.clone())));
         center
     }
 
@@ -283,6 +416,55 @@ pub(crate) mod tests {
             .filter_map(|notification| notification.identifier())
             .map(|identifier| identifier.to_string())
             .collect()
+    }
+
+    pub(crate) const FAKE_AUTHORIZATION_CENTER: &CStr = c"WTMFakeAuthorizationCenter";
+
+    thread_local! {
+        static AUTHORIZATION: RefCell<(bool, Option<Retained<NSError>>)> =
+            const { RefCell::new((false, None)) };
+    }
+
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[name = "WTMFakeAuthorizationCenter"]
+        struct FakeAuthorizationCenter;
+
+        impl FakeAuthorizationCenter {
+            #[unsafe(method_id(currentNotificationCenter))]
+            fn current() -> Retained<Self> {
+                unsafe { msg_send![Self::class(), new] }
+            }
+
+            #[unsafe(method(requestAuthorizationWithOptions:completionHandler:))]
+            fn request_authorization(
+                &self,
+                _options: usize,
+                completion: &Block<dyn Fn(Bool, *mut NSError)>,
+            ) {
+                AUTHORIZATION.with(|answer| {
+                    let (granted, error) = &*answer.borrow();
+                    let error = error.as_ref().map_or(std::ptr::null_mut(), |error| {
+                        Retained::as_ptr(error).cast_mut()
+                    });
+                    completion.call((Bool::new(*granted), error));
+                });
+            }
+        }
+    );
+
+    fn answer_authorization(granted: bool, error: Option<Retained<NSError>>) {
+        FakeAuthorizationCenter::class();
+        AUTHORIZATION.with(|answer| *answer.borrow_mut() = (granted, error));
+    }
+
+    fn error(domain: &str, code: isize) -> Retained<NSError> {
+        unsafe { NSError::errorWithDomain_code_userInfo(&NSString::from_str(domain), code, None) }
+    }
+
+    fn test_from_bundle(app: &tauri::App<tauri::test::MockRuntime>) -> Result<bool, String> {
+        let executable = Path::new("/Applications/WorktreeManager.app/Contents/MacOS/app");
+        tauri::async_runtime::block_on(macos::test_notification(app.handle(), executable))
     }
 
     pub(crate) fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
@@ -326,6 +508,23 @@ pub(crate) mod tests {
 
         dismiss(app.handle(), vec!["t1".into(), "unknown".into()]);
         assert_eq!(delivered_identifiers(&center), [task_identifier("t2")]);
+    }
+
+    #[test]
+    fn test_notification_has_no_task_and_does_not_replace_an_alert() {
+        let center = use_fake_center();
+        let app = mock_app();
+        deliver(app.handle(), "Done".into(), "WOR-1".into(), target("t1"));
+        tauri::async_runtime::block_on(macos::preview(app.handle())).unwrap();
+        assert_eq!(
+            delivered_identifiers(&center),
+            [task_identifier("t1"), "wtm-agent-test".into()]
+        );
+        assert!(center
+            .deliveredNotifications()
+            .objectAtIndex(1)
+            .userInfo()
+            .is_none());
     }
 
     fn inbox_target(task_id: &str, entry: &str) -> NotificationTarget {
@@ -404,9 +603,66 @@ pub(crate) mod tests {
 
     #[test]
     fn without_a_notification_center_nothing_is_delivered() {
-        FAKE_CENTER.with(|current| *current.borrow_mut() = None);
+        FAKE_CENTER.with(|current| *current.borrow_mut() = Some(None));
         let app = mock_app();
         deliver(app.handle(), "Done".into(), "WOR-1".into(), target("t1"));
         dismiss(app.handle(), vec!["t1".into()]);
+        let result = tauri::async_runtime::block_on(macos::preview(app.handle()));
+        assert_eq!(
+            result.unwrap_err(),
+            "macOS Notification Center is unavailable."
+        );
+    }
+
+    #[test]
+    fn testing_outside_an_app_bundle_asks_to_open_the_app() {
+        let app = mock_app();
+        let result = tauri::async_runtime::block_on(agent_test_notification(app.handle().clone()));
+        assert_eq!(
+            result.unwrap_err(),
+            "Open the WorktreeManager .app to test macOS notifications."
+        );
+    }
+
+    #[test]
+    fn a_granted_permission_sends_the_test_notification() {
+        let center = use_fake_center();
+        let app = mock_app();
+        answer_authorization(true, None);
+        assert_eq!(test_from_bundle(&app), Ok(true));
+        assert_eq!(delivered_identifiers(&center), ["wtm-agent-test"]);
+    }
+
+    #[test]
+    fn a_denied_permission_sends_nothing() {
+        let center = use_fake_center();
+        let app = mock_app();
+        answer_authorization(false, None);
+        assert_eq!(test_from_bundle(&app), Ok(false));
+        assert!(delivered_identifiers(&center).is_empty());
+    }
+
+    #[test]
+    fn notifications_not_allowed_count_as_a_denial() {
+        let center = use_fake_center();
+        let app = mock_app();
+        answer_authorization(false, Some(error("UNErrorDomain", 1)));
+        assert_eq!(test_from_bundle(&app), Ok(false));
+        assert!(delivered_identifiers(&center).is_empty());
+    }
+
+    #[test]
+    fn other_authorization_errors_are_reported() {
+        use_fake_center();
+        let app = mock_app();
+        answer_authorization(false, Some(error("WTMTestDomain", 7)));
+        assert!(test_from_bundle(&app)
+            .unwrap_err()
+            .contains("WTMTestDomain"));
+    }
+
+    #[test]
+    fn notification_settings_open() {
+        assert_eq!(agent_open_notification_settings(), Ok(()));
     }
 }
