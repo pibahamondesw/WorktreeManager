@@ -11,7 +11,7 @@ use super::*;
 use crate::commands::agents::Agents;
 use crate::commands::automations::definition::AppEventKind;
 use crate::commands::automations::instants::parse_rfc3339;
-use crate::commands::automations::store::events::{ItemStatus, RunOutcome};
+use crate::commands::automations::store::events::{FailureReason, ItemStatus, RunOutcome};
 use crate::commands::automations::store::{Override, Pace};
 
 const TARGET: &str = "target: { workspace: Acme, repos: [api] }\nagent: { id: claude }\n";
@@ -849,4 +849,113 @@ fn a_refill_needs_a_free_slot_an_enabled_campaign_and_something_granted() {
 
     harness.resume("demo", Actor::User, None).unwrap();
     assert_eq!(harness.executed().len(), 1);
+}
+
+const QUEUE: &str = "target: { workspace: Acme, repos: [api] }\nagent: { id: claude }\ntrigger: { capacity: true }\nconcurrency: { max_runs: 2 }\npools: { active: 2 }\n";
+
+impl Harness {
+    fn end(&self, run_id: &str, event: RunEvent) -> RunState {
+        let store = self.scratch.store();
+        store
+            .writer("demo")
+            .unwrap()
+            .append(run_id, &event)
+            .unwrap();
+        store.run("demo", run_id).unwrap()
+    }
+
+    fn refill_routine(
+        &self,
+        definition: &AutomationDefinition,
+        ended: &RunState,
+    ) -> Option<String> {
+        let (store, executor) = (self.scratch.store(), self.executor.as_ref());
+        refill_routine(&store, executor, definition, ended, now()).unwrap()
+    }
+
+    fn manual_run(&self, test: bool) -> String {
+        let run_id = self.run("demo", test, None).unwrap().run_id;
+        self.executed();
+        run_id
+    }
+}
+
+fn completed(outcome: RunOutcome) -> RunEvent {
+    RunEvent::Completed { outcome }
+}
+
+#[test]
+fn an_ended_routine_run_starts_one_capacity_run_until_one_finds_nothing() {
+    let harness = Harness::enabled(QUEUE);
+    let definition = harness.campaign();
+    let first = harness.manual_run(false);
+    let ended = harness.end(&first, completed(RunOutcome::Reported));
+
+    let second = harness.refill_routine(&definition, &ended).unwrap();
+
+    let executed = harness.executed();
+    assert_eq!(
+        (
+            executed.len(),
+            executed[0].0.run_id.as_str(),
+            executed[0].0.test
+        ),
+        (1, second.as_str(), false)
+    );
+    let trigger = harness
+        .scratch
+        .store()
+        .run("demo", &second)
+        .unwrap()
+        .trigger;
+    let trigger = trigger.unwrap();
+    let ended_at = ended.ended_at_ms.unwrap();
+    assert_eq!(
+        (trigger.source, trigger.trigger_key),
+        (RunSource::Capacity, format!("capacity:{first}:{ended_at}"))
+    );
+    assert_eq!(harness.refill_routine(&definition, &ended), None);
+
+    let failed = harness.end(
+        &second,
+        RunEvent::Failed {
+            reason: FailureReason::StepFailed,
+        },
+    );
+    let third = harness.refill_routine(&definition, &failed).unwrap();
+    let found_nothing = harness.end(&third, completed(RunOutcome::Noop));
+    assert_eq!(harness.refill_routine(&definition, &found_nothing), None);
+    let noop = harness.end(&harness.manual_run(false), completed(RunOutcome::Noop));
+    assert!(harness.refill_routine(&definition, &noop).is_some());
+}
+
+#[test]
+fn a_routine_refills_only_a_free_slot_of_an_enabled_opted_in_routine() {
+    let harness = Harness::enabled(QUEUE);
+    let definition = harness.campaign();
+    let first = harness.manual_run(false);
+    let second = harness.manual_run(false);
+    let ended = harness.end(&first, completed(RunOutcome::Reported));
+    let third = harness.manual_run(false);
+    assert_eq!(harness.refill_routine(&definition, &ended), None);
+
+    let active = harness.scratch.store().run("demo", &third).unwrap();
+    assert_eq!(harness.refill_routine(&definition, &active), None);
+    let mut without_trigger = harness.end(&third, completed(RunOutcome::Reported));
+    let mut not_opted_in = harness.campaign();
+    not_opted_in.trigger.capacity = false;
+    assert_eq!(
+        harness.refill_routine(&not_opted_in, &without_trigger),
+        None
+    );
+    without_trigger.trigger = None;
+    assert_eq!(harness.refill_routine(&definition, &without_trigger), None);
+
+    harness.pause(Actor::User, None).unwrap();
+    let paused = harness.end(&second, completed(RunOutcome::Reported));
+    assert_eq!(harness.refill_routine(&definition, &paused), None);
+    harness.resume("demo", Actor::User, None).unwrap();
+    let test = harness.end(&harness.manual_run(true), completed(RunOutcome::Reported));
+    assert_eq!(harness.refill_routine(&definition, &test), None);
+    assert!(harness.executed().is_empty());
 }

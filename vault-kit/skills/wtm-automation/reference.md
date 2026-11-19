@@ -52,6 +52,7 @@ Present triggers are OR-ed; at least one must allow firing.
 - `manual` (default `true`): Run now and `wtm automation run`. Test runs are always available.
 - `schedule`: a cron string or `{cron, tz (default America/Santiago), catch_up: latest | skip}`; slots closer than 15 minutes are an error.
 - `cli: true`: `wtm automation fire <name> --key <key> [--payload <json|@file>]`, once per key.
+- `capacity: true` (routines only, not a trigger on its own): a run that ends and frees a `concurrency` slot starts another (run source `capacity`) while the routine is enabled and the slot is free. A run started this way that ends `noop` starts none. Pair it with a first step that picks one queue entry and `on_noop: complete`.
 - `event`: a list of `{source, type, where}`:
   - `app`: `task.created`, `task.deleted`, `agent.done`, `agent.waiting`, `pr.merged`, `pr.closed`, `pr.reopened`, `pr.ready`, `pr.checks_passed`, `pr.checks_failed`, `pr.approved`, `pr.changes_requested`; `where: {workspace, agent}`.
   - `linear`: `issue.created`, `issue.label_added`, `issue.state_changed`; `where: {team, label, assignee, state}`.

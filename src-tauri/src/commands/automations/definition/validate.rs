@@ -208,6 +208,9 @@ pub(super) fn definition(
             target.branch = None;
         }
     }
+    if let (Some(trigger), Some(target), Some(selector)) = (&trigger, &target, &selector) {
+        check_capacity_trigger(report, trigger, target, selector.is_some());
+    }
     if let (Some(steps), Some(pools)) = (&steps, &pools) {
         check_uses(report, steps, pools);
     }
@@ -331,6 +334,7 @@ fn manual_trigger() -> Trigger {
         github_events: Vec::new(),
         circleci_events: Vec::new(),
         cli: false,
+        capacity: false,
     }
 }
 
@@ -362,6 +366,7 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
         .map(|events| events.into_iter().flatten().collect())
     });
     let cli = fields.or(report, "cli", false, boolean);
+    let capacity = fields.or(report, "capacity", false, boolean);
     fields.finish(report);
     let trigger = Trigger {
         manual: manual?,
@@ -371,6 +376,7 @@ fn trigger(report: &mut Report, env: &Environment, value: &Value, field: &str) -
         github_events,
         circleci_events,
         cli: cli?,
+        capacity: capacity?,
     };
     let no_events = trigger.events.is_empty()
         && trigger.linear_events.is_empty()
@@ -2564,6 +2570,18 @@ fn check_task_mode(report: &mut Report, target: &Target, campaign: bool) {
         ),
         _ => {}
     }
+}
+
+/// Campaigns start a selection pass on freed capacity whatever their trigger, and a run that
+/// `trigger.capacity` starts has no event to supply its task.
+fn check_capacity_trigger(report: &mut Report, trigger: &Trigger, target: &Target, campaign: bool) {
+    let without_task = target.task == TaskMode::Existing && target.existing_task.is_none();
+    let reason = match (trigger.capacity, campaign, without_task) {
+        (true, true, _) => "campaigns refill freed capacity on their own; only routines set it",
+        (true, false, true) => "needs target.existing_task: the runs it starts have no event task",
+        _ => return,
+    };
+    report.error(IssueKind::Invalid, "trigger.capacity", reason);
 }
 
 /// A step may only use the lease pools `pools` gives the automation a limit for.

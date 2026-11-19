@@ -112,8 +112,9 @@ Every key is optional; the triggers present are OR-ed.
 | `schedule.catch_up` | `latest` \| `skip` | `latest`           | `latest`: slots missed while the Mac slept or the app was closed collapse into one run for the **latest** missed slot within 7 days, with `scheduled_for` and `fired_at`. `skip`: missed slots are only recorded as skipped. Compose collapses into the oldest slot; WTM uses the latest because a local run should act on the freshest state.                                    |
 | `event`             | list               | none               | Entries `{source: app \| linear \| github \| circleci, type: <event>.<action>, where: {…}}`; every condition must pass. See [App events](#app-events), [Linear events](#linear-events), [GitHub events](#github-events) and [CircleCI events](#circleci-events). Events caused by this automation's own runs never fire it.                                                       |
 | `cli`               | bool               | `false`            | Allows `wtm automation fire <name> --key <trigger_key> [--payload <json\|@file>]` from external callers (Compose, launchd, scheduled agent tasks, Git hooks). It prints the run id without waiting; a key that already fired prints its existing run with `deduped: true`. A paused automation records the firing as skipped with `paused`. The CLI reads `@file`, never the app. |
+| `capacity`          | bool               | `false`            | Routines only: when a run ends (completes or fails) and frees a `concurrency` slot, start another run, with run source `capacity`. See [Queue in a routine](#queue-in-a-routine). Campaigns reject it: they refill freed capacity on their own. An `existing` target needs `existing_task`, since these runs carry no event task.
 
-At least one of `manual: true`, `schedule`, `event` or `cli: true` must be present.
+At least one of `manual: true`, `schedule`, `event` or `cli: true` must be present; `capacity` alone starts nothing.
 
 #### App events
 
@@ -449,6 +450,28 @@ else
 fi
 ```
 
+#### Queue in a routine
+
+With `trigger.capacity: true`, a routine with `concurrency.max_runs: N` works its queue in up to N runs at once without waiting for its next slot: when a run ends and frees a slot, the routine starts another, with run source `capacity`, if it is enabled and the slot is still free. Each run picks one entry in its first step and may work on it for days: a run on a `wait` keeps its slot. Its other triggers start the queue; each run that ends starts the next:
+
+```yaml
+trigger:
+  schedule: "0 9 * * 1-5"
+  capacity: true
+concurrency: { max_runs: 3 }
+pools: { active: 3 }
+steps:
+  - id: pick
+    command: [scripts/pick.sh]
+    on_noop: complete
+  - id: work
+    agent: { prompt: "Work on {steps.pick.result.entry}." }
+```
+
+- A run started this way that ends `noop` found the queue empty and starts none, so an empty queue stops the chain until another trigger fires. Any other ending starts one, failures included; repeated failures auto-pause the routine.
+- Each ending starts at most one run, also across app restarts: its trigger key is `capacity:<ended run id>:<ended at, ms>`. Test runs and paused routines start none, nor does an ending whose slot another run already took.
+- Only a run whose item the engine drove to its end starts one: a run that fails before its first step (definition changed, agent unavailable, task not created), that the sweep fails for its deadline or that the app ended as interrupted does not.
+
 ### Selector
 
 Present only in campaigns. A deterministic script decides what to work on, a declarative source lists the items without one (see [Item sources](#item-sources)), or an agent chooses them (see [Agent selector](#agent-selector)): a selector sets exactly one of `run`, `github`, `linear`, `file` or `agent`. The script's argv templates get the run variables, and it also sees `WTM_AUTOMATION` and `WTM_RUN_ID`.
@@ -734,7 +757,7 @@ Recorded on skipped runs, and on selector candidates that do not become items.
 
 | Key                        | Scope                                                                                                                                 | Rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `trigger_key`              | unique per `(automation, trigger_key)`                                                                                                | Schedule: `schedule:<scheduled_for, UTC RFC 3339>`, also unique as `(automation, scheduled_at)`. Manual: `manual:<uuid>`. Capacity: `capacity:<uuid>`. CLI: `cli:<--key>`, where `--key` is ≤ 200 characters of `[A-Za-z0-9._:/@-]`; firing again returns the existing run, whatever its status, and ignores the new payload. Events: source-defined, such as `pr:<n>:<action>:<headSha>` or `issue:<id>:<event>:<updatedAt>`. Test runs: `test:<uuid>`; they never dedupe, never advance the cursor or state and never count toward failures. |
+| `trigger_key`              | unique per `(automation, trigger_key)`                                                                                                | Schedule: `schedule:<scheduled_for, UTC RFC 3339>`, also unique as `(automation, scheduled_at)`. Manual: `manual:<uuid>`. Capacity: `capacity:<uuid>` for a campaign's pass, `capacity:<ended run id>:<ended at, ms>` for a routine's run. CLI: `cli:<--key>`, where `--key` is ≤ 200 characters of `[A-Za-z0-9._:/@-]`; firing again returns the existing run, whatever its status, and ignores the new payload. Events: source-defined, such as `pr:<n>:<action>:<headSha>` or `issue:<id>:<event>:<updatedAt>`. Test runs: `test:<uuid>`; they never dedupe, never advance the cursor or state and never count toward failures. |
 | `concurrency_key`          | active runs                                                                                                                           | Rendered from `concurrency.key`; at most `max_runs` active runs share one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `item.id` + `item.version` | per automation                                                                                                                        | A candidate whose pair exists and is not `failed` is `deduped`. A new version of the same id is new work; the engine reuses its task and tracker issue.                                                                                                                                                                                                                                                                                                                                                                                        |
 | Step attempt               | `(run, item.id, step id, attempt)`                                                                                                    | Attempts are numbered; counters carry across resumes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |

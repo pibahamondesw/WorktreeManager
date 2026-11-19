@@ -553,6 +553,45 @@ fn the_cli_trigger_alone_enables_a_definition() {
 }
 
 #[test]
+fn routines_may_refill_their_freed_concurrency_slots() {
+    let definition = valid(&routine(
+        "trigger:\n  schedule: '0 * * * *'\n  capacity: true\nconcurrency: { max_runs: 3 }\n",
+    ));
+    assert!(definition.trigger.capacity);
+    assert!(!valid(&routine("")).trigger.capacity);
+    assert_eq!(
+        message(
+            &routine("trigger:\n  manual: false\n  capacity: true\n"),
+            "trigger"
+        ),
+        "must enable at least one of manual, schedule, event or cli"
+    );
+    let existing = |task: &str| {
+        routine("trigger:\n  capacity: true\n  event:\n    - { source: app, type: pr.merged }\n")
+            .replace(
+                "repos: [app]",
+                &format!("repos: [app]\n  task: existing{task}"),
+            )
+    };
+    assert_eq!(
+        message(&existing(""), "trigger.capacity"),
+        "needs target.existing_task: the runs it starts have no event task"
+    );
+    assert!(valid(&existing("\n  existing_task: t1")).trigger.capacity);
+}
+
+#[test]
+fn campaigns_reject_the_capacity_trigger() {
+    let entry = load_campaign(&campaign(
+        "selector: { run: [scripts/queue.sh] }\ntrigger: { capacity: true }\n",
+    ));
+    assert_eq!(
+        issues(&entry),
+        vec![("trigger.capacity", IssueKind::Invalid)]
+    );
+}
+
+#[test]
 fn app_event_triggers_declare_a_type_and_conditions() {
     let definition = valid(&routine(
         "trigger:\n  manual: false\n  event:\n    - { source: app, type: agent.done, where: { workspace: Acme, agent: claude } }\n    - { source: app, type: pr.merged }\n",

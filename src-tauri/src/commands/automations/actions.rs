@@ -21,7 +21,9 @@ use super::definition::{self, AutomationDefinition};
 use super::operator::pass_limits;
 use super::scheduler::{capacity_skip, is_active, reschedule, Automation, Executor, RunRequest};
 use super::selector::has_free_slot;
-use super::store::events::{RunEvent, RunSource, RunState, RunStatus, RunTrigger, SkipReason};
+use super::store::events::{
+    RunEvent, RunOutcome, RunSource, RunState, RunStatus, RunTrigger, SkipReason,
+};
 use super::store::{
     Actor, AutomationState, AutomationWriter, Claim, PauseReason, RunStore, Toggle,
 };
@@ -121,6 +123,49 @@ pub fn refill(
     let request = run_request(definition, run_id, false, now);
     let started = launch(writer, executor, request, None, None)?;
     Ok(Refill::Started(started.run_id))
+}
+
+/// Starts a run of an enabled routine that sets `trigger.capacity` when `ended` frees one of its
+/// `concurrency` slots and the slot is still free. Its trigger key names the ended run and when it
+/// ended, so each ending starts at most one run. A run started this way that ends `noop` found
+/// nothing to work on and starts none.
+pub fn refill_routine(
+    store: &RunStore,
+    executor: &dyn Executor,
+    definition: &AutomationDefinition,
+    ended: &RunState,
+    now: Timestamp,
+) -> Result<Option<String>, String> {
+    let Some(trigger) = &ended.trigger else {
+        return Ok(None);
+    };
+    let found_nothing =
+        trigger.source == RunSource::Capacity && ended.outcome == Some(RunOutcome::Noop);
+    let opted_in = definition.trigger.capacity && definition.selector.is_none();
+    if !opted_in || trigger.test || found_nothing || is_active(ended.status) {
+        return Ok(None);
+    }
+    let name = &definition.name;
+    let writer = store.writer(name)?;
+    let active = active_runs(store, name)?;
+    let skip = capacity_skip(&Automation::of(definition), &active);
+    if !store.state(name)?.enabled || skip.is_some() {
+        return Ok(None);
+    }
+    let ended_at = ended.ended_at_ms.unwrap_or_default();
+    let trigger = RunTrigger {
+        source: RunSource::Capacity,
+        trigger_key: format!("capacity:{}:{ended_at}", ended.id),
+        scheduled_for: None,
+        definition_hash: Some(definition.hash.clone()),
+        test: false,
+        task_id: None,
+    };
+    let Claim::Created(run_id) = writer.claim(trigger)? else {
+        return Ok(None);
+    };
+    let request = run_request(definition, run_id, false, now);
+    Ok(Some(launch(writer, executor, request, None, None)?.run_id))
 }
 
 fn run_request(

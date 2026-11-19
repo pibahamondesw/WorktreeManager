@@ -479,6 +479,9 @@ impl RoutineExecutor {
         }
         self.finish(drive.request, ending)?;
         let request = drive.request;
+        if drive.definition.trigger.capacity {
+            self.refill_routine(request);
+        }
         let run = self.store.run(&request.automation, &request.run_id)?;
         if ending != Ending::Waiting && run.called_by.is_some() {
             self.wake_ready();
