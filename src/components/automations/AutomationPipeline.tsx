@@ -28,6 +28,7 @@ import { useOpenConversation } from "./openConversation";
 import { AutomationStepDetail } from "./AutomationStepDetail";
 import { AutomationPermissions } from "./AutomationPermissions";
 import { AutomationItemControls } from "./AutomationItemControls";
+import { AutomationRunCancel } from "./AutomationRunCancel";
 import { JumpList, LANE_WIDTH, NODE_HEIGHT, NODE_WIDTH, PipelineJumps } from "./PipelineJumps";
 
 const LIVE_REFRESH_MS = 2000;
@@ -131,6 +132,9 @@ function PipelineRuns({ name, steps, repos, onEdit }: PipelineRunsProps) {
           </select>
         )}
         {live && <span className="text-success">Live</span>}
+        {run && live && (
+          <AutomationRunCancel key={run.id} name={name} runId={run.id} onCanceled={reload} />
+        )}
         <Button variant="secondary" className="ml-auto h-7 px-3 text-xs" onClick={onEdit}>
           Edit steps
         </Button>
