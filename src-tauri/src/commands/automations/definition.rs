@@ -139,6 +139,8 @@ pub struct Trigger {
     pub github_events: Vec<GithubEventTrigger>,
     pub circleci_events: Vec<CircleciEventTrigger>,
     pub cli: bool,
+    /// Routines only: a run that ends and frees a `concurrency` slot starts another.
+    pub capacity: bool,
 }
 
 /// An app event that fires the automation when every condition matches.
