@@ -28,6 +28,47 @@ fn a_command_records_the_json_it_writes_as_its_result() {
 }
 
 #[test]
+fn a_noop_verdict_in_the_result_ends_the_attempt_noop() {
+    let fixture = Fixture::new();
+    let worktree = TempDir::new("worktree");
+    let step =
+        writing(r#"printf '{"verdict":"noop","reason":"empty queue"}' > "$WTM_STEP_RESULT""#);
+    let mut executor = fixture.executor(&worktree.0);
+
+    let report = finished(executor.execute(&request(&step, 1)));
+
+    assert_eq!(report.outcome, StepOutcome::Noop);
+    assert_eq!(report.verdict, Some(Verdict::Noop));
+    let events = executor.drain_events();
+    assert_eq!(output(&events).unwrap()["reason"], "empty queue");
+}
+
+#[test]
+fn other_verdicts_in_the_result_are_plain_output() {
+    let fixture = Fixture::new();
+    let worktree = TempDir::new("worktree");
+    let step = writing(r#"printf '{"verdict":"blocked"}' > "$WTM_STEP_RESULT""#);
+    let mut executor = fixture.executor(&worktree.0);
+
+    let report = finished(executor.execute(&request(&step, 1)));
+
+    assert_eq!(report.outcome, StepOutcome::Success);
+    assert_eq!(report.verdict, None);
+}
+
+#[test]
+fn a_failed_command_stays_failed_whatever_its_result_says() {
+    let fixture = Fixture::new();
+    let worktree = TempDir::new("worktree");
+    let step = writing(r#"printf '{"verdict":"noop"}' > "$WTM_STEP_RESULT"; exit 1"#);
+    let mut executor = fixture.executor(&worktree.0);
+
+    let report = finished(executor.execute(&request(&step, 1)));
+
+    assert_eq!(report.outcome, StepOutcome::Failure);
+}
+
+#[test]
 fn a_command_without_a_result_or_that_fails_records_none() {
     let fixture = Fixture::new();
     let worktree = TempDir::new("worktree");

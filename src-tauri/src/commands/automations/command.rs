@@ -16,7 +16,7 @@ pub use receipt::{HygieneRun, Receipt, ReceiptStore};
 
 use super::definition::{CommandStep, StepKind};
 use super::pipeline::{Execution, StepExecutor, StepReport, StepRequest};
-use super::store::events::{ProcessEnd, RunEvent, StepOutcome};
+use super::store::events::{ProcessEnd, RunEvent, StepOutcome, Verdict};
 use crate::commands::login_shell::LoginShell;
 use crate::commands::terminal::{run_headless, HeadlessExit};
 
@@ -24,6 +24,7 @@ const SCRIPTS_DIR: &str = "scripts/";
 const HYGIENE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const HEADLESS_SESSION: &str = "automation-command";
 const STEP_RESULT_VARIABLE: &str = "WTM_STEP_RESULT";
+const NOOP_VERDICT: &str = "noop";
 
 /// What the item runner knows about the item a command runs for.
 pub trait CommandContext {
@@ -154,6 +155,15 @@ impl<C: CommandContext> CommandExecutor<C> {
         match self.receipts.result(receipt) {
             Ok(None) => report,
             Ok(Some(result)) => {
+                let report = if reports_noop(&result) {
+                    StepReport {
+                        outcome: StepOutcome::Noop,
+                        verdict: Some(Verdict::Noop),
+                        ..report
+                    }
+                } else {
+                    report
+                };
                 self.events.push(RunEvent::StepOutput {
                     item: request.item.to_string(),
                     step: request.step.id.clone(),
@@ -350,4 +360,9 @@ fn failure(cause: String) -> StepReport {
         cause: Some(cause),
         head: None,
     }
+}
+
+/// A result `{"verdict": "noop"}` ends the attempt `noop`; other verdicts stay plain output.
+fn reports_noop(result: &serde_json::Value) -> bool {
+    result.get("verdict").and_then(serde_json::Value::as_str) == Some(NOOP_VERDICT)
 }
