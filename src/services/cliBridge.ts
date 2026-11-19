@@ -379,6 +379,7 @@ export async function dispatchCliBridge(
       "automation.take-over": ["runId", "item"],
       "automation.hand-back": ["runId", "item", "note"],
       "automation.retry": ["runId", "item", "definition", "from"],
+      "automation.cancel": ["runId"],
       "linear.issue-upsert": [
         "workspaceId",
         "marker",
@@ -589,6 +590,11 @@ export async function dispatchCliBridge(
           target: itemTarget(params),
           definition: params.definition === undefined ? "current" : text(params.definition),
           from: params.from === undefined ? null : text(params.from),
+        });
+        break;
+      case "automation.cancel":
+        result = await invokeAutomations("automation_cancel", {
+          target: { name: null, runId: text(params.runId), by: "cli" },
         });
         break;
       case "linear.issue-upsert":
