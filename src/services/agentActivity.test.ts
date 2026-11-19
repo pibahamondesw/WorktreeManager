@@ -88,6 +88,13 @@ describe("taskForCwd", () => {
     expect(taskForCwd(tasks, "/wt/app/feature-2")).toBeUndefined();
     expect(taskForCwd(tasks, "/elsewhere")).toBeUndefined();
   });
+
+  it("matches Windows paths whatever their separators or case", () => {
+    const windows = [task("win", ["C:\\wt\\app/feature"])];
+    expect(taskForCwd(windows, "C:\\wt\\app\\feature\\src")?.id).toBe("win");
+    expect(taskForCwd(windows, "c:/WT/app/feature")?.id).toBe("win");
+    expect(taskForCwd(windows, "C:\\wt\\app\\feature-2")).toBeUndefined();
+  });
 });
 
 describe("activity lifecycle", () => {

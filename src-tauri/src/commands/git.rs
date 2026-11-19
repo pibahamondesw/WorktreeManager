@@ -69,6 +69,7 @@ pub(crate) const GIT_ENV_SCRUB: &[&str] = &[
 
 pub(crate) fn git_command() -> Command {
     let mut command = Command::new("git");
+    crate::platform::hide_console(&mut command);
     for variable in GIT_ENV_SCRUB {
         command.env_remove(variable);
     }

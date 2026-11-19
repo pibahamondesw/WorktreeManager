@@ -1,6 +1,7 @@
-use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
+
+use crate::platform;
 
 pub struct OwnedProcess {
     child: Child,
@@ -10,8 +11,7 @@ pub struct OwnedProcess {
 impl OwnedProcess {
     pub fn spawn(command: &mut Command) -> Result<Self, String> {
         Ok(Self {
-            child: command
-                .process_group(0)
+            child: platform::own_group(command)
                 .spawn()
                 .map_err(|error| error.to_string())?,
             terminated: false,
@@ -38,32 +38,23 @@ impl OwnedProcess {
             return;
         }
         self.terminated = true;
-        let group = -(self.child.id() as i32);
-        if !group_exists(group) {
+        let group = self.child.id();
+        if !platform::tree_alive(group) {
             let _ = self.child.wait();
             return;
         }
-        unsafe {
-            libc::kill(group, libc::SIGTERM);
-        }
+        let _ = platform::signal_tree(group, false);
         let deadline = Instant::now() + Duration::from_millis(500);
         while Instant::now() < deadline {
             let _ = self.child.try_wait();
-            if !group_exists(group) {
+            if !platform::tree_alive(group) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        unsafe {
-            libc::kill(group, libc::SIGKILL);
-        }
+        let _ = platform::signal_tree(group, true);
         let _ = self.child.wait();
     }
-}
-
-fn group_exists(group: i32) -> bool {
-    let signalled = unsafe { libc::kill(group, 0) == 0 };
-    signalled || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 impl Drop for OwnedProcess {
@@ -72,7 +63,7 @@ impl Drop for OwnedProcess {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io::{BufRead, BufReader};
@@ -123,8 +114,8 @@ mod tests {
         BufReader::new(stubborn.child_mut().stdout.take().unwrap())
             .read_line(&mut ready)
             .unwrap();
-        let group = -(stubborn.id() as i32);
+        let group = stubborn.id();
         stubborn.terminate();
-        assert!(!group_exists(group));
+        assert!(!platform::tree_alive(group));
     }
 }

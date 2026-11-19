@@ -3,7 +3,6 @@ pub mod events;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -615,8 +614,8 @@ fn lock_file(path: &Path) -> io::Result<File> {
         .truncate(false)
         .write(true)
         .open(path)?;
-    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0;
-    locked.then_some(file).ok_or_else(io::Error::last_os_error)
+    crate::platform::lock_exclusive(&file)?;
+    Ok(file)
 }
 
 #[cfg(test)]

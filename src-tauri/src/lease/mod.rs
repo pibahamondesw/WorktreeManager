@@ -363,8 +363,15 @@ impl Drop for LeaseGuard {
 }
 
 fn process_alive(pid: i32) -> bool {
-    (unsafe { libc::kill(pid, 0) } == 0)
-        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    #[cfg(unix)]
+    {
+        (unsafe { libc::kill(pid, 0) } == 0)
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(windows)]
+    {
+        crate::platform::process_alive(pid as u32)
+    }
 }
 
 fn now_ms() -> u64 {

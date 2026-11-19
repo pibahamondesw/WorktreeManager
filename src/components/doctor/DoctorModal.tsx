@@ -1,6 +1,7 @@
 import { VaultAgent, VAULT_AGENT_LABELS } from "../../services/vault";
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { IS_WINDOWS } from "../../platform";
 import { Modal } from "../ui/Modal";
 import { EditorInstallation } from "../editor/EditorInstallation";
 import { Button } from "../ui/Button";
@@ -160,9 +161,19 @@ export function DependencySettings({
 
       <div className="px-6 py-4 border-t border-border">
         <p className="text-xs text-text-muted">
-          Launched from Finder, the app starts with a minimal PATH, so tools are looked up the same
-          way its editor and Claude launchers do — through your login shell profiles. A tool
-          installed only in an interactive-shell-specific path may not be found here.
+          {IS_WINDOWS ? (
+            <>
+              Tools are looked up the same way the app launches them — through Git Bash with your
+              current PATH and ~/.bash_profile — so a tool installed with winget shows up on
+              Re-check without restarting the app.
+            </>
+          ) : (
+            <>
+              Launched from Finder, the app starts with a minimal PATH, so tools are looked up the
+              same way its editor and Claude launchers do — through your login shell profiles. A
+              tool installed only in an interactive-shell-specific path may not be found here.
+            </>
+          )}
         </p>
       </div>
     </>

@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 use std::io::{self, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
 use crate::cli_bridge::{failure, read_message, Request, VERSION};
+use crate::platform::{self, UnixStream};
 
 #[derive(Debug, PartialEq)]
 enum Operation {
@@ -211,7 +210,7 @@ fn run_holding(command: &[String], env: &Value) -> (i32, Option<Value>) {
         Ok(status) => (
             status
                 .code()
-                .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
+                .unwrap_or_else(|| 128 + platform::terminating_signal(&status)),
             None,
         ),
         Err(error) => (

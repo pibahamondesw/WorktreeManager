@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { v4 as uuid } from "uuid";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "../ui/Button";
 import { CloseIcon } from "../ui/Icons";
+import { useFileDrop } from "../../hooks/useFileDrop";
+import { joinPath } from "../../platform";
 import { WorkspaceRepo } from "../../types";
 import { RepoScriptsEditor } from "./RepoScriptsEditor";
 
@@ -20,17 +22,47 @@ function computeDefaultWorktreeBase(home: string, name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
-  const base = home.endsWith("/") ? home : `${home}/`;
-  return `${base}Documents/.worktreemanager/worktrees/${slug}`;
+  return joinPath(home, "Documents", ".worktreemanager", "worktrees", slug);
 }
 
 function normalizePath(path: string): string {
-  return path.replace(/\/+$/, "");
+  return path.replace(/[\\/]+$/, "");
 }
 
-/** Editor for a workspace's peer member repos (add via Browse, name, worktree base, default mode). */
+/** Editor for a workspace's peer member repos (add via Browse or drop, name, worktree base). */
 export function WorkspaceRepoEditor({ repos, onChange, home }: WorkspaceRepoEditorProps) {
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  /** Adds each folder not already in the workspace; whether it is a repo is checked on save. */
+  const addPaths = (selected: string[]) => {
+    setDuplicateWarning(null);
+    const added: WorkspaceRepo[] = [];
+    const duplicates: string[] = [];
+    for (const raw of selected) {
+      const path = normalizePath(raw);
+      const existing = [...repos, ...added].find((r) => normalizePath(r.localPath) === path);
+      if (existing) {
+        duplicates.push(existing.name);
+        continue;
+      }
+      const parts = path.split(/[\\/]/);
+      const folderName = parts[parts.length - 1] || parts[parts.length - 2] || "repo";
+      added.push({
+        id: uuid(),
+        name: folderName,
+        localPath: path,
+        worktreeBasePath: computeDefaultWorktreeBase(home, folderName),
+      });
+    }
+    if (duplicates.length > 0)
+      setDuplicateWarning(
+        duplicates.length === 1
+          ? `"${duplicates[0]}" is already in this workspace.`
+          : `Already in this workspace: ${duplicates.map((name) => `"${name}"`).join(", ")}.`
+      );
+    if (added.length > 0) onChange([...repos, ...added]);
+  };
 
   const addRepo = async () => {
     setDuplicateWarning(null);
@@ -40,24 +72,10 @@ export function WorkspaceRepoEditor({ repos, onChange, home }: WorkspaceRepoEdit
       title: "Select repo directory",
     });
     if (!selected) return;
-    const path = normalizePath(selected as string);
-    const existing = repos.find((r) => normalizePath(r.localPath) === path);
-    if (existing) {
-      setDuplicateWarning(`"${existing.name}" is already in this workspace.`);
-      return;
-    }
-    const parts = path.split("/");
-    const folderName = parts[parts.length - 1] || parts[parts.length - 2] || "repo";
-    onChange([
-      ...repos,
-      {
-        id: uuid(),
-        name: folderName,
-        localPath: path,
-        worktreeBasePath: computeDefaultWorktreeBase(home, folderName),
-      },
-    ]);
+    addPaths([selected as string]);
   };
+
+  const dropping = useFileDrop(dropRef, addPaths);
 
   const update = (id: string, patch: Partial<WorkspaceRepo>) =>
     onChange(repos.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -65,11 +83,17 @@ export function WorkspaceRepoEditor({ repos, onChange, home }: WorkspaceRepoEdit
   const remove = (id: string) => onChange(repos.filter((r) => r.id !== id));
 
   return (
-    <div className="flex flex-col gap-2">
+    <div
+      ref={dropRef}
+      className={`flex flex-col gap-2 rounded-lg transition-colors ${
+        dropping ? "outline-2 outline-dashed outline-offset-4 outline-accent bg-accent/5" : ""
+      }`}
+    >
       <p className="text-sm font-medium text-text-secondary">Repositories</p>
       {repos.length === 0 && (
         <p className="text-xs text-text-muted">
-          Add one or more repos — they open together as one workspace.
+          Add one or more repos — they open together as one workspace. You can also drop repo
+          folders here.
         </p>
       )}
       <div className="flex flex-col gap-3">

@@ -18,9 +18,6 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io;
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -107,12 +104,20 @@ fn lock_file(path: &Path) -> io::Result<File> {
         .truncate(false)
         .write(true)
         .open(path)?;
-    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0;
-    locked.then_some(file).ok_or_else(io::Error::last_os_error)
+    crate::platform::lock_exclusive(&file)?;
+    Ok(file)
 }
 
 /// Points `<dir>/doppler` at this executable, replacing a link to a previous build atomically.
+/// Unix only: the shim entry point lives in the Unix CLI, so on Windows a linked executable would
+/// start the app instead of Doppler. Scripts there run Doppler unserialized.
 pub(crate) fn install_shim(dir: &Path) -> io::Result<()> {
+    if cfg!(not(unix)) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the doppler shim is not available on this platform",
+        ));
+    }
     let executable = std::env::current_exe()?;
     let shim = dir.join(SHIM_NAME);
     if fs::read_link(&shim).is_ok_and(|target| target == executable) {
@@ -120,7 +125,7 @@ pub(crate) fn install_shim(dir: &Path) -> io::Result<()> {
     }
     fs::create_dir_all(dir)?;
     let staged = dir.join(format!(".{SHIM_NAME}-{}", uuid::Uuid::new_v4()));
-    std::os::unix::fs::symlink(&executable, &staged)?;
+    crate::platform::symlink(&executable, &staged)?;
     fs::rename(&staged, &shim).inspect_err(|_| drop(fs::remove_file(&staged)))
 }
 
@@ -150,7 +155,7 @@ fn run_shim(args: &[String], path: &OsStr, lock: &Path) -> i32 {
     match command.status() {
         Ok(status) => status
             .code()
-            .unwrap_or(128 + status.signal().unwrap_or_default()),
+            .unwrap_or(128 + crate::platform::terminating_signal(&status)),
         Err(error) => {
             eprintln!("doppler: {error}");
             126
@@ -179,7 +184,7 @@ fn real_doppler(path: &OsStr) -> Option<(OsString, PathBuf)> {
 }
 
 fn is_executable(path: &Path) -> bool {
-    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    fs::metadata(path).is_ok_and(|meta| crate::platform::is_executable(&meta))
 }
 
 /// Drop the scope entries of deleted worktrees from `~/.doppler/.doppler.yaml`.
@@ -237,6 +242,7 @@ fn unset_scope(path: &str) -> LoginShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
 
     fn temp_dir(name: &str) -> PathBuf {

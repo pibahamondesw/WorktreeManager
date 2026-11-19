@@ -3,6 +3,7 @@ import { homeDir } from "@tauri-apps/api/path";
 import { Modal } from "../ui/Modal";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
+import { isAbsolutePath } from "../../platform";
 import { Workspace, WorkspaceRepo } from "../../types";
 import { WorkspaceRepoEditor } from "./WorkspaceRepoEditor";
 import { SavedLinearKeySelect } from "./SavedLinearKeySelect";
@@ -72,7 +73,7 @@ export function EditWorkspaceModal({
       return;
     }
     for (const r of repos) {
-      if (!r.localPath.startsWith("/")) {
+      if (!isAbsolutePath(r.localPath)) {
         setError(`${r.name || "A repo"}: local path must be absolute`);
         return;
       }

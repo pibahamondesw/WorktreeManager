@@ -77,6 +77,25 @@ wtm --local workspace list
 
 Omit `--local` for the installed/shared profile. Bare `wtm` with this alias launches the development binary and requires its Vite server to be running.
 
+### Windows
+
+The app builds and runs from source on Windows 10 (1803+) and 11; there is no Windows installer or in-app update yet. The embedded VS Code is not available there: choosing it opens desktop VS Code instead. Requires [Git for Windows](https://git-scm.com/downloads/win) (its Git Bash runs the app's commands and tools), Rust with the MSVC toolchain and the Visual Studio C++ Build Tools, Node.js 22.13+, and the pinned pnpm. WebView2 ships with Windows 11.
+
+The package scripts use Unix shell syntax, so start development from PowerShell directly:
+
+```powershell
+pnpm install
+$env:CARGO_TARGET_DIR = "$env:USERPROFILE\.cache\worktreemanager-target"
+pnpm exec tauri dev --config src-tauri/tauri.dev.conf.json
+```
+
+To use the development CLI:
+
+```powershell
+function wtm { & "$env:USERPROFILE\.cache\worktreemanager-target\debug\worktree-manager.exe" --cli @args }
+wtm --local workspace list
+```
+
 ### Shared development signing
 
 A stable signing identity avoids changing signatures on every Rust rebuild. Create it once:
