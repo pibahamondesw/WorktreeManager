@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChatItemView, MarkdownText } from "./ChatItemView";
@@ -14,6 +14,60 @@ vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }
 
 beforeEach(() => vi.mocked(openUrl).mockReset().mockResolvedValue(undefined));
 afterEach(cleanup);
+
+it.each([
+  ["inline dollar math", "$x^2$", "x^2", false],
+  ["inline LaTeX math", String.raw`\(x_i^2\)`, "x_i^2", false],
+  ["display dollar math", "$$\n\\frac{1}{2}\n\n+ x\n$$", "\\frac{1}{2}\n\n+ x", true],
+  ["display LaTeX math", String.raw`\[\frac{x_i}{y_i}\]`, String.raw`\frac{x_i}{y_i}`, true],
+  ["multiline display LaTeX math", "\\[\nx^2 + y^2\n\\]", "x^2 + y^2", true],
+  [
+    "a LaTeX matrix with a row separator",
+    String.raw`\[\begin{matrix} a \\ b \end{matrix}\]`,
+    String.raw`\begin{matrix} a \\ b \end{matrix}`,
+    true,
+  ],
+  ["a math fence", "```math\nx^2\n```", "x^2", true],
+])("renders %s with MathML", async (_, formula, source, display) => {
+  const { container } = render(<MarkdownText text={`Before\n\n${formula}\n\nAfter`} />);
+  await waitFor(() =>
+    expect(container.querySelector("math annotation")).toHaveTextContent(source, {
+      normalizeWhitespace: false,
+    })
+  );
+  expect(container.querySelector(".katex-display") !== null).toBe(display);
+  expect(screen.getByText("After")).toBeVisible();
+});
+
+it("preserves LaTeX and dollars in code and respects escaped delimiters", () => {
+  const inline = String.raw`\(x_i\) and $x$`;
+  const escaped = String.raw`\\(x\\) and \$5`;
+  const fenced = String.raw`\[a\]`;
+  const { container } = render(
+    <MarkdownText text={"`" + inline + "`\n\n" + escaped + "\n\n```\n" + fenced + "\n```"} />
+  );
+  expect(screen.getByText(inline, { selector: "code" })).toBeVisible();
+  expect(screen.getByText(fenced, { selector: "code" })).toBeVisible();
+  expect(screen.getByText(String.raw`\(x\) and $5`)).toBeVisible();
+  expect(container.querySelector(".chat-math-source")).toBeNull();
+});
+
+it("shows invalid TeX as source and renders the corrected expression", async () => {
+  const { container, rerender } = render(<MarkdownText text={String.raw`$\frac{1{$`} />);
+  expect(screen.getByText(String.raw`\frac{1{`)).toBeVisible();
+  rerender(<MarkdownText text={String.raw`$\frac{1}{2}$`} />);
+  await waitFor(() =>
+    expect(container.querySelector("math annotation")).toHaveTextContent(String.raw`\frac{1}{2}`)
+  );
+
+  rerender(<MarkdownText text={String.raw`$\frac{1{$`} />);
+  expect(screen.getByText(String.raw`\frac{1{`)).toBeVisible();
+});
+
+it("keeps a response readable while a LaTeX delimiter is incomplete", () => {
+  render(<MarkdownText text={String.raw`Before \[x^2`} />);
+  expect(screen.getByText("Before [x^2")).toBeVisible();
+});
 
 it.each([
   [
