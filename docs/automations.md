@@ -248,6 +248,15 @@ Common fields:
 | `uses`     | list of pool names  | `[]`                                                  | Leases taken for the attempt; a valued pool's `hold` may keep them longer.                     |
 | `capacity` | `hold` \| `release` | `release` for `wait` and `approval`, `hold` otherwise | Whether an item on this step counts toward the `active` pool.                                  |
 | `task`     | `item` \| `none`    | `none` with `target.task: none` until a `wtm.task_create`, `item` otherwise | `none`: the step works in the item's scratch directory instead of its task. See below.         |
+| `defines_item` | bool           | `false`                                               | Routines only: the step's result defines the item the later steps work on. See [Steps that define the item](#steps-that-define-the-item). |
+
+#### Steps that define the item
+
+A routine's run has one implicit item: its id is `routine`, and its data are a call's inputs or empty. To keep a queue inside a routine, so that each run picks one unit and works on it (with `concurrency.max_runs` bounding how many run at once), one step sets `defines_item: true` and its result becomes the item for the rest of the run. The step must be a `command` (its `WTM_STEP_RESULT`) or an `agent` step with a `result` schema; a `verdict` result cannot name an item, and only one step may define it. Campaigns are rejected: their selector gives each item.
+
+The result is a JSON object with `id` (as a selector item's: at most 200 characters of `[A-Za-z0-9._:/@-]`) and optionally `version` (a string; default the implicit item's, the definition hash), `title` and `data` (a JSON object, or the text of one for agents whose schemas cannot hold free-form objects, at most 64 KiB). A successful or `noop` attempt with a result that is not such an object fails with `invalid_result: <why>`; one that fails, or a `noop` without a result, defines nothing.
+
+From then on `{item.id}`, `{item.branch}`, `{item.version}`, `{item.title}`, `{item.data.*}`, `WTM_ITEM_ID`, `WTM_ITEM_VERSION` and the file `WTM_ITEM_DATA` are the defined item's, in commands, watcher scripts, approvals, publish effects (tracker marker, title, labels and milestone, `wtm.task_create` branches) and calls, and agent prompts and session names carry its id, version, title and data. The run log records it as `item_defined` (with the step and attempt), so a wait, a restart, a retry or a hand-back goes on with it, and the run detail shows it; a step that defines it again, after a `goto` or a retry, replaces it. The item's events, its idempotency keys and `--item` keep the implicit item's key, `routine`. Since the steps up to the defining one still work on the implicit item, validation rejects `{item.*}` in their templates, and their `linear.*` effects when the tracker's marker (by default `wtm:{automation}:{item.id}`) uses the item. Agent prompts are not templated, so an agent step before it sees the implicit item.
 
 #### Steps without a task
 
@@ -348,7 +357,7 @@ Side effects the engine executes on the owner's behalf ("safe outputs"); the age
 | `github.pr_comment`     | `pr_comment`   | `repo`, `body` (template)                                                                                                                               | Comment marker per HEAD: `<!-- wtm:<automation>:<item>:<step>:<HEAD> -->`, appended to the body.                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `github.pr_ready`       | `pr_ready`     | `repo`                                                                                                                                                  | PR state: a PR that is not a draft is left alone.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `linear.upsert`         | `linear_write` | overrides of `tracker.linear` fields (`team`, `project`, `assignee`, `labels`, `milestone`, `title`, `marker`)                                          | Tracker marker in the description: the issue that carries it is reused, retitled when `title` differs and given the labels and milestone it lacks; otherwise an issue is created with the marker as its description.                                                                                                                                                                                                                                                                                                        |
-| `linear.state`          | `linear_write` | `state` (a `tracker.linear.states` key or a state name of the issue's team)                                                                             | Current state. Finds the issue by the marker of the run's last `linear.upsert`, or by `tracker.linear.marker`.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `linear.state`          | `linear_write` | `state` (a `tracker.linear.states` key or a state name of the issue's team)                                                                             | Current state. Finds the issue by the marker of the item's last `linear.upsert` recorded in the run log (its output's `marker`), also after a wait or a restart, or by `tracker.linear.marker`.                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `wtm.task_create`       | `task_create`  | `workspace`, `repos`, `branch`, `from_remote`, `linear_issue` (templates, see below)                                                                    | Task with the branch in the workspace: a task already on it is reused instead of creating another; its id is the reference.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `wtm.task_log`          | `task_log`     | `entry` (template)                                                                                                                                      | Entry key per step attempt (`wtm:<automation>:<run>:<item>:<step>:<attempt>`), written as `<!-- key -->` after the entry. Append-only; with the vault disabled the effect is `skipped`.                                                                                                                                                                                                                                                                                                                                     |
 | `wtm.task_delete_clean` | `task_delete`  | none                                                                                                                                                    | Deletes the task and its worktrees only when every member is clean; otherwise the item blocks with the dirty paths. Notes are archived as for any deletion. A deleted task reconciles.                                                                                                                                                                                                                                                                                                                                      |
@@ -838,6 +847,38 @@ report: { inbox: always }
 ---
 
 The payload names the pull request: `pr.url`, `pr.headRefName`, `pr.baseRefName`, `pr.author` and `pr.title`. Read its diff with `gh pr diff <pr.url>` and its description, then return `pass` with the findings worth raising, each with file and line. Do not comment on GitHub.
+```
+
+### Routine: a queue inside a routine
+
+Works through a list of units one per run, as a small campaign without a selector: a schedule fires runs, `concurrency.max_runs` lets two work at once, and the first step picks the next unit and defines the run's item. `scripts/next.sh` reads the queue file, skips units another run holds (an open pull request on their branch) and writes the next one to `WTM_STEP_RESULT`, for example `{"id": "unit-12", "title": "Fix unit 12", "data": {"files": ["a.txt"]}}`.
+
+```markdown
+---
+schema: 1
+name: unit-queue
+trigger: { schedule: "0 * * * *" }
+concurrency: { max_runs: 2 }
+target: { workspace: Acme, repos: [app], task: none }
+agent: { id: claude }
+authorization: { allow: [commit, push, pr_create, linear_write, task_create] }
+tracker:
+  linear: { team: ENG, title: "{item.title}", labels: ["unit:{item.id}"] }
+steps:
+  - id: select
+    command: [scripts/next.sh]
+    defines_item: true
+  - id: start
+    publish:
+      - linear.upsert
+      - wtm.task_create: { repos: app, branch: "queue/{item.branch}", linear_issue: "{tracker.issue}" }
+  - id: fix
+    agent: { prompt: "Fix the files listed in the item data. Commit; do not push." }
+  - id: ship
+    publish: [git.push, github.pr_create, { linear.state: { state: In Review } }]
+---
+
+Fix one unit of the queue: only the files its data lists.
 ```
 
 ### Campaign: lint sweep
