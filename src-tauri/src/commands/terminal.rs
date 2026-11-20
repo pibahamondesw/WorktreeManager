@@ -991,6 +991,40 @@ mod tests {
     }
 
     #[test]
+    fn interrupting_a_script_that_ignores_the_polite_signal_kills_it() {
+        let spec = LaunchSpec {
+            program: "/bin/sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "trap '' TERM; echo ready; while :; do sleep 1; done".to_string(),
+            ],
+            env: vec![],
+            env_remove: vec![],
+            cwd: "/tmp".to_string(),
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut session = TerminalSession::spawn(&spec, "setup:api", 80, 24, move |code| {
+            let _ = tx.send(code);
+        })
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !session
+            .scrollback
+            .lock()
+            .unwrap()
+            .replay()
+            .contains("ready")
+        {
+            assert!(Instant::now() < deadline, "script did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+        session.interrupt_after(Duration::ZERO);
+        rx.recv_timeout(Duration::from_secs(20)).unwrap();
+        assert!(matches!(session.status(), TermStatus::Exited { .. }));
+        session.terminate();
+    }
+
+    #[test]
     fn task_scripts_run_in_their_directory_with_the_task_environment() {
         use tauri::test::{mock_builder, mock_context, noop_assets};
         let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap();

@@ -108,16 +108,19 @@ fn lock_file(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+/// On Windows a linked executable would start the app instead of Doppler, so scripts there run
+/// Doppler unserialized.
+#[cfg(not(unix))]
+pub(crate) fn install_shim(_dir: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "the doppler shim is not available on this platform",
+    ))
+}
+
 /// Points `<dir>/doppler` at this executable, replacing a link to a previous build atomically.
-/// Unix only: the shim entry point lives in the Unix CLI, so on Windows a linked executable would
-/// start the app instead of Doppler. Scripts there run Doppler unserialized.
+#[cfg(unix)]
 pub(crate) fn install_shim(dir: &Path) -> io::Result<()> {
-    if cfg!(not(unix)) {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "the doppler shim is not available on this platform",
-        ));
-    }
     let executable = std::env::current_exe()?;
     let shim = dir.join(SHIM_NAME);
     if fs::read_link(&shim).is_ok_and(|target| target == executable) {

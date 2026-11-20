@@ -55,3 +55,26 @@ fn terminate(pid: i32) {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminate_stops_the_process_and_its_group() {
+        use std::os::unix::process::CommandExt;
+        let child = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let reaper = std::thread::spawn(move || {
+            let mut child = child;
+            child.wait().unwrap()
+        });
+        terminate(pid as i32);
+        let status = reaper.join().unwrap();
+        assert_ne!(crate::platform::terminating_signal(&status), 0);
+    }
+}

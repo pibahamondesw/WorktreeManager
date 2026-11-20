@@ -525,9 +525,7 @@ mod tests {
 
     #[test]
     fn signalling_another_users_process_fails() {
-        if unsafe { libc::geteuid() } == 0 {
-            return;
-        }
-        assert!(signal_process(1, false).is_err());
+        let root = unsafe { libc::geteuid() } == 0;
+        assert!(root || signal_process(1, false).is_err());
     }
 }

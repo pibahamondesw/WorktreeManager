@@ -167,11 +167,9 @@ impl LoginShell {
             .arg("-lc")
             .arg(self.shell_script(ProfileOutput::Hidden))
             .arg(SCRIPT_NAME)
-            .args(&self.arguments);
-        if let Some(path) = crate::platform::fresh_path() {
-            command.env("PATH", path);
-        }
-        command.envs(self.env.iter().map(|(key, value)| (key, value)));
+            .args(&self.arguments)
+            .envs(crate::platform::fresh_path().map(|path| ("PATH", path)))
+            .envs(self.env.iter().map(|(key, value)| (key, value)));
         if let Some(cwd) = &self.cwd {
             command.current_dir(cwd);
             // Git Bash derives a POSIX `PWD` from the working directory itself.
@@ -196,10 +194,11 @@ impl LoginShell {
             SCRIPT_NAME.to_string(),
         ];
         args.extend(self.arguments);
-        let mut env = self.env;
-        if let Some(path) = crate::platform::fresh_path() {
-            env.insert(0, ("PATH".to_string(), path.to_string_lossy().into_owned()));
-        }
+        let env = crate::platform::fresh_path()
+            .map(|path| ("PATH".to_string(), path.to_string_lossy().into_owned()))
+            .into_iter()
+            .chain(self.env)
+            .collect();
         LaunchSpec {
             program: shell(),
             args,
