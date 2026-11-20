@@ -1,7 +1,7 @@
 import { useShortcutActions, useShortcutLabels, dispatchShortcut } from "../../shortcuts/runtime";
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
-import { ChevronDownIcon, CloseIcon } from "../ui/Icons";
+import { AgentIcon, ChevronDownIcon, CloseIcon } from "../ui/Icons";
 import {
   droppedImageAttachment,
   ImageAttachment,
@@ -444,6 +444,7 @@ export function Composer({
                 shortcut={shortcutLabel("chat.agent")}
                 value={agentLabel}
                 tone={tone}
+                icon={<AgentIcon agent={agent} />}
                 onClick={() => openPicker("agent")}
               />
             )}
@@ -555,13 +556,15 @@ function Chip({
   shortcut,
   highlighted,
   tone,
+  icon,
   onClick,
 }: {
   label: string;
   value: string;
   shortcut: string;
   highlighted?: boolean;
-  tone?: { chip: string; dot: string };
+  tone?: { chip: string };
+  icon?: ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -579,7 +582,7 @@ function Chip({
             : "text-text-secondary hover:text-text-primary hover:bg-bg-hover"
       }`}
     >
-      {tone && <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />}
+      {icon}
       <span className="max-w-[160px] truncate">{value}</span>
       <ChevronDownIcon className="opacity-50" />
     </button>

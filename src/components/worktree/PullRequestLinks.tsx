@@ -2,13 +2,7 @@ import { prKey, useGithubPrStatuses } from "../../services/github";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "../ui/Badge";
 import { PullRequestInfo } from "../../types";
-import {
-  PullRequestClosedIcon,
-  PullRequestConflictIcon,
-  PullRequestDraftIcon,
-  PullRequestIcon,
-  PullRequestMergedIcon,
-} from "../ui/Icons";
+import { PullRequestDisplayState, PullRequestStateIcon } from "../ui/Icons";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 
 const prBadgeVariants: Record<string, "success" | "accent" | "danger" | "default"> = {
@@ -18,17 +12,11 @@ const prBadgeVariants: Record<string, "success" | "accent" | "danger" | "default
 
 const isInactivePr = (state: string) => state === "draft" || state === "closed";
 
-type PrDisplayState = "open" | "draft" | "merged" | "closed" | "conflicts";
-
-const prStateIcons: Record<PrDisplayState, { Icon: typeof PullRequestIcon; className: string }> = {
-  open: { Icon: PullRequestIcon, className: "text-success" },
-  draft: { Icon: PullRequestDraftIcon, className: "text-text-muted" },
-  merged: { Icon: PullRequestMergedIcon, className: "text-accent" },
-  closed: { Icon: PullRequestClosedIcon, className: "text-danger" },
-  conflicts: { Icon: PullRequestConflictIcon, className: "text-warning" },
-};
-
-function prDisplayState(state: string, draft: boolean, hasConflicts: boolean): PrDisplayState {
+function prDisplayState(
+  state: string,
+  draft: boolean,
+  hasConflicts: boolean
+): PullRequestDisplayState {
   if (state === "merged" || state === "closed") return state;
   if (hasConflicts) return "conflicts";
   return draft ? "draft" : "open";
@@ -55,7 +43,6 @@ export function PullRequestLinks({
     const draft = status ? status.isDraft : pr.state === "draft";
     const showBadges = !numbersOnly;
     const displayState = prDisplayState(state, draft, !!status?.hasConflicts);
-    const { Icon: StateIcon, className: stateIconClass } = prStateIcons[displayState];
     return (
       <span
         key={pr.url}
@@ -76,7 +63,7 @@ export function PullRequestLinks({
             isInactivePr(draft ? "draft" : state) ? "text-text-muted" : "text-accent"
           } hover:text-accent-hover`}
         >
-          <StateIcon size={12} className={`flex-shrink-0 ${stateIconClass}`} />#{pr.number}
+          <PullRequestStateIcon state={displayState} className="flex-shrink-0" />#{pr.number}
           {showBadges && state !== "open" && (
             <Badge variant={prBadgeVariants[state] ?? "default"}>{state}</Badge>
           )}

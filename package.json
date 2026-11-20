@@ -52,6 +52,7 @@
     "@xterm/xterm": "^6.0.0",
     "diff": "^9.0.0",
     "katex": "^0.16.47",
+    "lucide-react": "^1.73.0",
     "mdast-util-from-markdown": "^2.0.3",
     "mermaid": "^12.1.0",
     "micromark-util-types": "^2.0.2",
