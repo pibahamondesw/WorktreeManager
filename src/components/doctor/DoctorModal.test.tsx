@@ -100,3 +100,24 @@ describe("DoctorModal Codex setup", () => {
     expect(screen.queryByRole("button", { name: "Repair Codex setup" })).not.toBeInTheDocument();
   });
 });
+
+it("copies a missing dependency's install command and confirms it next to the button", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  render(
+    <DoctorModal
+      open
+      onClose={vi.fn()}
+      report={{
+        ...report,
+        checks: [{ ...report.checks[0], repair: undefined, install: "brew install example" }],
+      }}
+      running={false}
+      onRecheck={vi.fn()}
+      onRepairVaultAgents={vi.fn()}
+    />
+  );
+  fireEvent.click(screen.getByTitle("Copy install command"));
+  expect(await screen.findByRole("status")).toHaveTextContent("Copied");
+  expect(writeText).toHaveBeenCalledExactlyOnceWith("brew install example");
+});
