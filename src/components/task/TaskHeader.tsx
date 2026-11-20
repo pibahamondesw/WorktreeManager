@@ -101,7 +101,7 @@ export function TaskHeader({
       {issueUrl && (
         <a
           href={issueUrl}
-          title="Open issue in Linear"
+          title="Open Linear issue"
           onClick={openIssue}
           onAuxClick={(event) => {
             if (event.button === 1) openIssue(event);

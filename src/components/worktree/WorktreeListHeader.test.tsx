@@ -63,7 +63,7 @@ describe("WorktreeListHeader sidebar toggle", () => {
     renderHeader(true);
     const expandButton = screen.getByTitle("Expand sidebar ([)");
     const separator = screen.getByRole("separator");
-    const backButton = screen.getByTitle("Back (⌘←)");
+    const backButton = screen.getByTitle("Previous location (⌘←)");
 
     expect(expandButton.compareDocumentPosition(separator)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(separator.compareDocumentPosition(backButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -73,14 +73,14 @@ describe("WorktreeListHeader sidebar toggle", () => {
 describe("WorktreeListHeader history controls", () => {
   it("disables both buttons when there is nowhere to go", () => {
     renderHeader(false);
-    expect(screen.getByTitle("Back (⌘←)")).toBeDisabled();
-    expect(screen.getByTitle("Forward (⌘→)")).toBeDisabled();
+    expect(screen.getByTitle("Previous location (⌘←)")).toBeDisabled();
+    expect(screen.getByTitle("Next location (⌘→)")).toBeDisabled();
   });
 
   it("navigates when a direction is available", () => {
     const { onGoBack, onGoForward } = renderHeader(false, { canGoBack: true, canGoForward: true });
-    fireEvent.click(screen.getByTitle("Back (⌘←)"));
-    fireEvent.click(screen.getByTitle("Forward (⌘→)"));
+    fireEvent.click(screen.getByTitle("Previous location (⌘←)"));
+    fireEvent.click(screen.getByTitle("Next location (⌘→)"));
     expect(onGoBack).toHaveBeenCalledOnce();
     expect(onGoForward).toHaveBeenCalledOnce();
   });

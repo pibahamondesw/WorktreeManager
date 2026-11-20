@@ -216,7 +216,7 @@ export function NewWorktreeModal({
       onClose={() => {
         if (!creatingRef.current) onClose();
       }}
-      title="New Task"
+      title="New task"
       wide={!showManualForm}
     >
       {showManualForm ? (

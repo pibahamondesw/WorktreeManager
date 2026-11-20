@@ -120,6 +120,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const folders = task.members.map((m) => m.path);
+  const copyPathLabel = folders.length > 1 ? "Copy worktree paths" : "Copy worktree path";
   // Repo used for git-remote / PR-compare links: the first member (order = workspace repo order).
   const primaryRepo = task.members[0];
   const showRepoChips = workspace.repos.length > 1 || task.members.length > 1;
@@ -223,7 +224,7 @@ export const WorktreeCard = memo(function WorktreeCard({
                   data-task-part="identifier"
                   onClick={(event) => runActionFromClick(event, "open-linear")}
                   className="text-xs font-mono text-accent hover:text-accent-hover transition-colors cursor-pointer inline-flex items-center gap-1"
-                  title="Open on Linear"
+                  title="Open Linear issue"
                 >
                   {task.linearIssueIdentifier}
                   <ExternalLinkIcon size={10} />
@@ -300,7 +301,7 @@ export const WorktreeCard = memo(function WorktreeCard({
               <button
                 onClick={(event) => runActionFromClick(event, "copy-path")}
                 className="text-xs font-mono text-text-muted hover:text-text-primary truncate transition-colors cursor-pointer text-left"
-                title="Copy folder path(s)"
+                title={copyPathLabel}
               >
                 {task.branchName}
               </button>
@@ -461,14 +462,14 @@ export const WorktreeCard = memo(function WorktreeCard({
                   label={shortcutLabel("list.path")}
                   onClick={() => handleMenuAction("copy-path")}
                 >
-                  {folders.length > 1 ? "Copy folder paths" : "Copy worktree path"}
+                  {copyPathLabel}
                 </MenuButton>
                 {vault.enabled && (
                   <MenuButton
                     label={shortcutLabel("list.note")}
                     onClick={() => handleMenuAction("open-note")}
                   >
-                    Open notes
+                    Open task note
                   </MenuButton>
                 )}
               </div>

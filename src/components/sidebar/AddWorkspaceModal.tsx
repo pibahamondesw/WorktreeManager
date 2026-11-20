@@ -97,7 +97,7 @@ export function AddWorkspaceModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Add Workspace">
+    <Modal open={open} onClose={onClose} title="Add workspace">
       <div className="p-6 space-y-4">
         <Input
           label="Workspace name"
@@ -134,7 +134,7 @@ export function AddWorkspaceModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void handleSubmit()}>Add Workspace</Button>
+          <Button onClick={() => void handleSubmit()}>Add workspace</Button>
         </div>
       </div>
     </Modal>

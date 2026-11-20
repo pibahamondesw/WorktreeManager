@@ -80,7 +80,7 @@ export function EditableTaskTitle({
           <button
             type="button"
             aria-label="Rename task"
-            title="Rename"
+            title="Rename task"
             onClick={(event) => {
               event.stopPropagation();
               setDraft(title);

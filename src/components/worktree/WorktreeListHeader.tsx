@@ -76,14 +76,14 @@ export function WorktreeListHeader({
           )}
           <div className="flex items-center gap-0.5">
             <HistoryButton
-              title={`Back (${shortcutLabel("app.history.back")})`}
+              title={`Previous location (${shortcutLabel("app.history.back")})`}
               disabled={!canGoBack}
               onClick={onGoBack}
             >
               <ChevronLeftIcon size={14} />
             </HistoryButton>
             <HistoryButton
-              title={`Forward (${shortcutLabel("app.history.forward")})`}
+              title={`Next location (${shortcutLabel("app.history.forward")})`}
               disabled={!canGoForward}
               onClick={onGoForward}
             >
@@ -111,13 +111,13 @@ export function WorktreeListHeader({
             type="button"
             onClick={onRefresh}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-            title={`Refresh Linear info (${shortcutLabel("list.refresh")})`}
+            title={`Refresh tasks (${shortcutLabel("list.refresh")})`}
           >
             <RefreshIcon className={refreshing ? "motion-spin-steps" : ""} />
           </button>
           <Button onClick={onNewTask} className="h-8 text-xs">
             <PlusIcon />
-            New Task
+            New task
             <kbd className="ml-1 text-[0.625rem] opacity-50 font-mono">
               {shortcutLabel("list.new")}
             </kbd>

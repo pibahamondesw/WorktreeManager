@@ -240,7 +240,7 @@ it("reports clipboard failures without showing a success toast", async () => {
         repoSlugs={{}}
       />
     );
-    fireEvent.click(screen.getByTitle("Copy folder path(s)"));
+    fireEvent.click(screen.getByTitle("Copy worktree path"));
     await waitFor(() => expect(onToast).toHaveBeenCalledWith("Could not copy to clipboard"));
     expect(onToast).not.toHaveBeenCalledWith("Worktree path copied");
   } finally {
@@ -535,7 +535,7 @@ describe("WorktreeCard quick actions", () => {
   it.each([
     { item: "Copy branch name", clipboard: "feat/x", toast: "Branch name copied" },
     { item: "Copy worktree path", clipboard: "/wt", toast: "Worktree path copied" },
-    { item: "Open notes", url: "obsidian://open?path=/vault/WOR-190.md" },
+    { item: "Open task note", url: "obsidian://open?path=/vault/WOR-190.md" },
   ])("runs $item from the menu and closes it", async ({ item, clipboard, url, toast }) => {
     const { onOpen, onToast } = renderCard();
     fireEvent.click(screen.getByTitle("More actions"));
@@ -550,9 +550,9 @@ describe("WorktreeCard quick actions", () => {
   });
 
   it.each([
-    { control: "Open on Linear", url: "https://linear.app/acme/issue/WOR-190" },
+    { control: "Open Linear issue", url: "https://linear.app/acme/issue/WOR-190" },
     { control: "Copy Linear ID", clipboard: "WOR-190", toast: "Linear ID copied" },
-    { control: "Copy folder path(s)", clipboard: "/wt", toast: "Worktree path copied" },
+    { control: "Copy worktree path", clipboard: "/wt", toast: "Worktree path copied" },
     { control: "Copy branch name", clipboard: "feat/x", toast: "Branch name copied" },
   ])("runs $control without opening the task", async ({ control, clipboard, url, toast }) => {
     const { onOpen, onToast } = renderCard();
