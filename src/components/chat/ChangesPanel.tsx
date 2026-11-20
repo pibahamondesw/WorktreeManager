@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/Button";
-import { CloseIcon } from "../ui/Icons";
+import { CloseIcon, FileTypeIcon } from "../ui/Icons";
 import { byRepository, ChangeSet, ChatChanges, FileChange, totals } from "../../services/chat";
 import { AgentId } from "../../types";
 import { DiffLayout, DiffThreadsUpdate, FileDiffView } from "./FileDiffView";
@@ -91,6 +91,7 @@ function FileRow({
       <span title={file.status} className={`w-3 shrink-0 font-mono ${status.className}`}>
         {status.letter}
       </span>
+      <FileTypeIcon path={file.path} className="shrink-0 text-text-muted" />
       <span className="flex-1 min-w-0 truncate">
         <span className="text-text-primary">{file.path.slice(slash + 1)}</span>
         {slash > 0 && <span className="text-text-muted"> {file.path.slice(0, slash)}</span>}
