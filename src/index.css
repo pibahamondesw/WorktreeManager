@@ -33,7 +33,13 @@
   --syntax-property: #a5b4fc;
   --syntax-comment: #6b6b85;
   --syntax-punctuation: #8888a0;
+  --ui-zoom: 1;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-size-ui: 16px;
+  --font-chat: var(--font-ui);
+  --font-size-chat: calc(14px * var(--ui-zoom));
   --font-code: Menlo, Monaco, monospace;
+  --font-size-code: calc(12px * var(--ui-zoom));
 
   --motion-enter-fast: 180ms;
   --motion-enter: 200ms;
@@ -53,6 +59,10 @@
   --syntax-punctuation: #5c5c72;
 }
 
+html {
+  font-size: calc(var(--font-size-ui) * var(--ui-zoom));
+}
+
 html,
 body,
 #root {
@@ -61,7 +71,7 @@ body,
   padding: 0;
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   user-select: none;
@@ -271,9 +281,14 @@ body,
 .chat-markdown h3 {
   font-weight: 600;
 }
+.chat-text {
+  font-family: var(--font-chat);
+  font-size: var(--font-size-chat);
+  line-height: 1.43;
+}
 .chat-markdown code {
   font-family: var(--font-code);
-  font-size: 0.75rem;
+  font-size: var(--font-size-code);
   padding: 0.1rem 0.3rem;
   border-radius: 0.25rem;
   background: var(--color-bg-tertiary);
@@ -537,6 +552,9 @@ body,
 }
 
 .diff-code {
+  font-family: var(--font-code);
+  font-size: var(--font-size-code);
+  line-height: 1.6667;
   white-space: pre;
 }
 .diff-wrap {

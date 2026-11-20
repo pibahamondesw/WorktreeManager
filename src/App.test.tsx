@@ -237,10 +237,10 @@ describe("workspace keyboard navigation with zoom mounted", () => {
       </>
     );
     fireEvent.keyDown(window, { key: "+", code: "Equal", metaKey: true });
-    expect(document.documentElement.style.fontSize).toBe("17.6px");
+    expect(document.documentElement.style.getPropertyValue("--ui-zoom")).toBe("1.1");
     fireEvent.keyDown(window, { key: "0", code: "Digit0", metaKey: true });
     expect(mocks.selectWorkspace).toHaveBeenCalledExactlyOnceWith("first");
-    expect(document.documentElement.style.fontSize).toBe("17.6px");
+    expect(document.documentElement.style.getPropertyValue("--ui-zoom")).toBe("1.1");
   });
 
   it("uses the current sidebar order after workspaces are reordered", () => {

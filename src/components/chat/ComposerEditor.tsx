@@ -84,18 +84,19 @@ const highlightStyle = HighlightStyle.define([
   { tag: tags.heading, fontWeight: "600" },
   { tag: tags.strong, fontWeight: "600" },
   { tag: tags.emphasis, fontStyle: "italic" },
-  { tag: tags.monospace, fontFamily: "var(--font-code)", fontSize: "0.75rem" },
+  { tag: tags.monospace, fontFamily: "var(--font-code)", fontSize: "var(--font-size-code)" },
 ]);
 
 const theme = EditorView.theme({
   "&": {
     maxHeight: "13.25rem",
-    fontSize: "0.875rem",
+    fontFamily: "var(--font-chat)",
+    fontSize: "var(--font-size-chat)",
     color: "var(--color-text-primary)",
     backgroundColor: "transparent",
   },
   "&.cm-focused": { outline: "none" },
-  ".cm-scroller": { overflow: "auto", fontFamily: "inherit", lineHeight: "1.25rem" },
+  ".cm-scroller": { overflow: "auto", fontFamily: "inherit", lineHeight: "1.43" },
   ".cm-content": {
     minHeight: "3.25rem",
     padding: "0.5rem 0.75rem 0.25rem",
@@ -106,7 +107,7 @@ const theme = EditorView.theme({
   ".cm-code-line": {
     padding: "0 0.75rem",
     fontFamily: "var(--font-code)",
-    fontSize: "0.75rem",
+    fontSize: "var(--font-size-code)",
     backgroundColor: "var(--color-bg-primary)",
   },
   ".cm-code-start": {

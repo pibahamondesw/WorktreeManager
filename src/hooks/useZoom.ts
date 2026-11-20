@@ -19,15 +19,14 @@ export function useZoom() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const previous = root.style.fontSize;
-    root.style.fontSize = `${16 * (zoom / 100)}px`;
+    root.style.setProperty("--ui-zoom", String(zoom / 100));
     try {
       localStorage.setItem(STORAGE_KEY, String(zoom));
     } catch {
       // Zoom remains usable when storage is unavailable.
     }
     return () => {
-      root.style.fontSize = previous;
+      root.style.removeProperty("--ui-zoom");
     };
   }, [zoom]);
 

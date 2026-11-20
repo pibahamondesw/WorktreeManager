@@ -40,7 +40,7 @@ function SourceCode({
   }, [lines, line]);
 
   return (
-    <div className="diff-code inline-block min-w-full py-2 font-mono text-xs leading-5 select-text">
+    <div className="diff-code inline-block min-w-full py-2 select-text">
       {lines.map((sourceLine) => {
         const isTarget = sourceLine.newNumber === line;
         return (

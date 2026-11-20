@@ -17,14 +17,14 @@ function press(key: string, modifiers: KeyboardEventInit = {}) {
 describe("interface zoom", () => {
   it("handles plus with and without Shift, equals and minus", () => {
     render(<ZoomControls />);
-    expect(document.documentElement.style.fontSize).toBe("16px");
+    expect(document.documentElement.style.getPropertyValue("--ui-zoom")).toBe("1");
     expect(press("+", { shiftKey: true })).toBe(false);
     press("+");
     press("=");
     expect(screen.getByRole("status").textContent).toBe("130%");
     press("-");
     expect(screen.getByRole("status").textContent).toBe("120%");
-    expect(document.documentElement.style.fontSize).toBe("19.2px");
+    expect(document.documentElement.style.getPropertyValue("--ui-zoom")).toBe("1.2");
   });
 
   it("works in text fields without intercepting workspace navigation", () => {
@@ -74,7 +74,7 @@ describe("interface zoom", () => {
     const { unmount } = render(<ZoomControls />);
     press("+");
     unmount();
-    expect(document.documentElement.style.fontSize).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--ui-zoom")).toBe("");
     expect(press("+")).toBe(true);
     render(<ZoomControls />);
     expect(screen.getByRole("status").textContent).toBe("110%");
