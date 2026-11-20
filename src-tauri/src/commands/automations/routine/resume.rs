@@ -105,7 +105,7 @@ impl RoutineExecutor {
         let name = &request.automation;
         let run = self.store.run(name, &request.run_id)?;
         let Some(definition) = self.pinned(request, &run) else {
-            return self.adopt_current_definition(request, &run, items);
+            return self.adopt_current_definition(request, items);
         };
         let history = self.store.events(name, &request.run_id)?;
         let payload = self.store.payload(name, &request.run_id)?;
