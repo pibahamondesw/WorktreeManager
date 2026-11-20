@@ -6,7 +6,7 @@
 
 <!-- Qué, a alto nivel. Un título entendible por alguien no técnico por línea. -->
 
-- [ ]
+-
 
 ## Consideraciones
 
