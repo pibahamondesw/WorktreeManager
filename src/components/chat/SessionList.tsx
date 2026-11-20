@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Modal } from "../ui/Modal";
-import { PlusIcon, SpinnerIcon } from "../ui/Icons";
+import { AgentIcon, PlusIcon, SpinnerIcon } from "../ui/Icons";
 import {
   chatSessionArchive,
   chatSessionRename,
@@ -174,10 +174,7 @@ export function SessionList({
             <span
               className={`inline-flex items-center gap-1 rounded px-1 ${agentPresentation(session.agent).tone.chip}`}
             >
-              <span
-                aria-hidden
-                className={`h-1.5 w-1.5 rounded-full ${agentPresentation(session.agent).tone.dot}`}
-              />
+              <AgentIcon agent={session.agent} size={10} />
               {describeAgent(session.agent, catalog).label}
             </span>
             {session.current ? "Current · " : ""}
