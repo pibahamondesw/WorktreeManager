@@ -18,6 +18,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 function renderSettings() {
@@ -30,6 +31,7 @@ function renderSettings() {
   const onClose = vi.fn();
   function Harness() {
     const [section, setSection] = useState<SettingsSection | null>("theme");
+    const [alerts, setAlerts] = useState(DEFAULT_AGENT_ALERTS);
     return (
       <SettingsModal
         section={section}
@@ -49,8 +51,11 @@ function renderSettings() {
         vault={{ enabled: false, path: null }}
         onVaultChange={onVaultChange}
         onRepairVaultAgents={vi.fn()}
-        alerts={DEFAULT_AGENT_ALERTS}
-        onAlertsChange={onAlertsChange}
+        alerts={alerts}
+        onAlertsChange={(next) => {
+          setAlerts(next);
+          onAlertsChange(next);
+        }}
         keepRunningInBackground
         onKeepRunningInBackgroundChange={onKeepRunningInBackgroundChange}
         compactIdleChats
@@ -155,6 +160,41 @@ describe("SettingsModal", () => {
     expect(toggle).toBeChecked();
     fireEvent.click(toggle);
     expect(onKeepRunningInBackgroundChange).toHaveBeenCalledWith(false);
+  });
+
+  it("tests notifications when Notify is enabled and opens macOS settings when permission is denied", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Macintosh");
+    invoke
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(undefined);
+    renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Agent alerts" }));
+    const [notify] = screen.getAllByRole("checkbox", { name: "Notify" });
+    fireEvent.click(notify);
+    expect(invoke).not.toHaveBeenCalledWith("agent_test_notification", undefined);
+    fireEvent.click(notify);
+    expect(invoke).toHaveBeenCalledWith("agent_test_notification", undefined);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("agent_open_notification_settings", undefined)
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/Allow notifications for WorktreeManager/);
+  });
+
+  it("can retry a failed Mac notification test and open settings when a banner is missed", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Macintosh");
+    invoke.mockResolvedValueOnce(null).mockRejectedValueOnce("Notification Center is unavailable");
+    renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Agent alerts" }));
+    const testNotification = screen.getByRole("button", { name: "Send test notification" });
+    fireEvent.click(testNotification);
+    expect(await screen.findByText("Notification Center is unavailable")).toBeVisible();
+    invoke.mockResolvedValueOnce(true);
+    fireEvent.click(testNotification);
+    expect(await screen.findByText(/Test notification sent/)).toBeVisible();
+    expect(invoke).not.toHaveBeenCalledWith("agent_open_notification_settings", undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Open notification settings" }));
+    expect(invoke).toHaveBeenCalledWith("agent_open_notification_settings", undefined);
   });
 
   it("turns off compacting idle Claude chats", () => {

@@ -6620,6 +6620,7 @@ name = "worktree-manager"
 version = "0.35.0"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "croner",
  "jiff",
  "jsonc-parser",

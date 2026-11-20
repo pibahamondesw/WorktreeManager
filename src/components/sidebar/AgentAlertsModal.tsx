@@ -11,8 +11,10 @@ import {
   SYSTEM_SOUNDS,
   agentHooksStatus,
   installAgentHooks,
+  openAgentNotificationSettings,
   previewSound,
   removeAgentHooks,
+  testAgentNotification,
 } from "../../services/agentActivity";
 
 interface AgentAlertSettingsPanelProps {
@@ -42,6 +44,9 @@ export function AgentAlertSettingsPanel({
   const [busy, setBusy] = useState<AgentId | null>(null);
   const [confirming, setConfirming] = useState<AgentId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [testingNotification, setTestingNotification] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
+  const isMac = /Macintosh/.test(navigator.userAgent);
   const catalog = useAgentCatalog();
 
   useEffect(() => {
@@ -79,11 +84,43 @@ export function AgentAlertSettingsPanel({
     if (sound) void previewSound(sound).catch(() => undefined);
   };
 
-  const setNotification = (category: AlertCategory, enabled: boolean) =>
+  const openNotificationSettings = async () => {
+    try {
+      await openAgentNotificationSettings();
+    } catch (e) {
+      setNotificationMessage(`Could not open notification settings. ${String(e)}`);
+    }
+  };
+
+  const sendTestNotification = async () => {
+    if (testingNotification) return;
+    setTestingNotification(true);
+    setNotificationMessage(null);
+    try {
+      if (await testAgentNotification()) {
+        setNotificationMessage(
+          "Test notification sent. If you didn't see it, check the banner style for WorktreeManager in notification settings."
+        );
+      } else {
+        setNotificationMessage(
+          "Allow notifications for WorktreeManager in notification settings, then try again."
+        );
+        await openNotificationSettings();
+      }
+    } catch (e) {
+      setNotificationMessage(String(e));
+    } finally {
+      setTestingNotification(false);
+    }
+  };
+
+  const setNotification = (category: AlertCategory, enabled: boolean) => {
     onAlertsChange({
       ...alerts,
       notifications: { ...alerts.notifications, [category]: enabled },
     });
+    if (enabled && isMac) void sendTestNotification();
+  };
 
   return (
     <div className="p-6 space-y-5">
@@ -166,6 +203,28 @@ export function AgentAlertSettingsPanel({
           Notifications appear only while WorktreeManager is in the background; clicking one opens
           its task.
         </p>
+        {isMac && (
+          <>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                loading={testingNotification}
+                disabled={testingNotification}
+                onClick={() => void sendTestNotification()}
+              >
+                Send test notification
+              </Button>
+              <Button variant="ghost" onClick={() => void openNotificationSettings()}>
+                Open notification settings
+              </Button>
+            </div>
+            {notificationMessage && (
+              <p role="status" className="text-xs text-text-secondary select-text">
+                {notificationMessage}
+              </p>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
