@@ -10,6 +10,8 @@ import {
   loadAgentViews,
   loadThemeId,
   loadCustomColors,
+  loadTypography,
+  loadContrast,
   loadSidebarCollapsed,
   loadKeepRunningInBackground,
   loadCompactIdleChats,
@@ -25,7 +27,14 @@ import {
   Workspace,
 } from "../types";
 import { Operations, CreateTaskInput, DeleteOptions, TaskReady } from "../services/operations";
-import { applyTheme, presetFor, CUSTOM_THEME_ID, SYSTEM_THEME_ID } from "../themes";
+import {
+  applyTheme,
+  presetFor,
+  CUSTOM_THEME_ID,
+  SYSTEM_THEME_ID,
+  THEME_CHANGE_EVENT,
+} from "../themes";
+import { adjustThemeContrast, applyTypography, setContrast, Typography } from "../appearance";
 
 import { defaultInterfacePreferences, PreferenceSession } from "../services/preferences";
 
@@ -38,6 +47,8 @@ export function useStore() {
     agentViews,
     themeId,
     customTheme: customColors,
+    typography,
+    contrast,
     sidebarCollapsed,
     keepRunningInBackground,
     compactIdleChats,
@@ -57,6 +68,8 @@ export function useStore() {
       new PreferenceSession(
         (next) => {
           setPreferences(next);
+          applyTypography(next.typography);
+          setContrast(next.contrast);
           applyTheme(
             next.themeId,
             next.themeId === CUSTOM_THEME_ID ? (next.customTheme ?? undefined) : undefined
@@ -91,6 +104,11 @@ export function useStore() {
   }, []);
 
   useEffect(() => {
+    window.addEventListener(THEME_CHANGE_EVENT, adjustThemeContrast);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, adjustThemeContrast);
+  }, []);
+
+  useEffect(() => {
     Promise.all([
       loadState(setKeychainError),
       loadEditorApp(),
@@ -100,33 +118,50 @@ export function useStore() {
       loadAgentViews(),
       loadKeepRunningInBackground(),
       loadCompactIdleChats(),
+      loadTypography(),
+      loadContrast(),
     ])
-      .then(async ([s, editor, theme, custom, collapsed, views, keepRunning, compactIdle]) => {
-        await syncNativeShortcuts(s.shortcutOverrides ?? {});
-        setShortcutOverrides(s.shortcutOverrides ?? {});
-        commit(s);
-        preferenceSession.replace({
-          editorApp: editor,
-          agentViews: views,
-          themeId: theme,
-          customTheme: custom,
-          sidebarCollapsed: collapsed,
-          keepRunningInBackground: keepRunning,
-          compactIdleChats: compactIdle,
-        });
-        setLoading(false);
+      .then(
+        async ([
+          s,
+          editor,
+          theme,
+          custom,
+          collapsed,
+          views,
+          keepRunning,
+          compactIdle,
+          fonts,
+          contrastLevel,
+        ]) => {
+          await syncNativeShortcuts(s.shortcutOverrides ?? {});
+          setShortcutOverrides(s.shortcutOverrides ?? {});
+          commit(s);
+          preferenceSession.replace({
+            editorApp: editor,
+            agentViews: views,
+            themeId: theme,
+            customTheme: custom,
+            typography: fonts,
+            contrast: contrastLevel,
+            sidebarCollapsed: collapsed,
+            keepRunningInBackground: keepRunning,
+            compactIdleChats: compactIdle,
+          });
+          setLoading(false);
 
-        const basePaths = [
-          ...new Set(s.workspaces.flatMap((w) => w.repos.map((r) => r.worktreeBasePath))),
-        ];
-        void invoke("cleanup_claude_json_stale", { basePaths }).catch(() => {});
+          const basePaths = [
+            ...new Set(s.workspaces.flatMap((w) => w.repos.map((r) => r.worktreeBasePath))),
+          ];
+          void invoke("cleanup_claude_json_stale", { basePaths }).catch(() => {});
 
-        // Self-heal an enabled vault: recreate it if the folder went missing and
-        // keep it registered in Obsidian. Best-effort, never blocks startup.
-        if (s.vault.enabled && s.vault.path) {
-          void invoke("ensure_vault", { vaultPath: s.vault.path }).catch(() => {});
+          // Self-heal an enabled vault: recreate it if the folder went missing and
+          // keep it registered in Obsidian. Best-effort, never blocks startup.
+          if (s.vault.enabled && s.vault.path) {
+            void invoke("ensure_vault", { vaultPath: s.vault.path }).catch(() => {});
+          }
         }
-      })
+      )
       .catch((e: unknown) => {
         setLoadError(e instanceof Error ? e : new Error(String(e)));
       });
@@ -305,6 +340,18 @@ export function useStore() {
     [preferenceSession]
   );
 
+  const updateTypography = useCallback(
+    (next: Typography) =>
+      preferenceSession.update({ typography: next }, "Failed to save the typography preference"),
+    [preferenceSession]
+  );
+
+  const updateContrast = useCallback(
+    (level: number) =>
+      preferenceSession.update({ contrast: level }, "Failed to save the contrast preference"),
+    [preferenceSession]
+  );
+
   const selectedWorkspace = useMemo(
     () => state.workspaces.find((w) => w.id === state.selectedWorkspaceId),
     [state.workspaces, state.selectedWorkspaceId]
@@ -354,5 +401,9 @@ export function useStore() {
     updateCompactIdleChats,
     updateThemeId,
     updateCustomColors,
+    typography,
+    updateTypography,
+    contrast,
+    updateContrast,
   };
 }
