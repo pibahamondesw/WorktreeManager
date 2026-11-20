@@ -1,5 +1,6 @@
 import { themes, THEME_COLOR_TOKENS } from "../../themes";
 import { ThemeGenerator } from "./ThemeGenerator";
+import { VscodeThemeImport } from "./VscodeThemeImport";
 
 interface CustomThemeEditorProps {
   colors: Record<string, string>;
@@ -52,6 +53,10 @@ export function CustomThemeEditor({ colors, onChange }: CustomThemeEditorProps) 
             colors={colors}
             onGenerate={onChange}
           />
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-text-secondary mb-2">Import a VS Code theme</p>
+          <VscodeThemeImport onImport={onChange} />
         </div>
         {GROUPS.map((group) => (
           <div key={group}>
