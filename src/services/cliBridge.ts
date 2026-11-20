@@ -228,6 +228,7 @@ async function taskChatInput(params: Record<string, unknown>): Promise<TaskChatI
     name: optionalText(params.name),
     schema,
     wait: params.wait === true,
+    tab: optionalText(params.tab),
   };
 }
 
@@ -353,7 +354,9 @@ export async function dispatchCliBridge(
       "task.get": ["id", "git"],
       "task.create": ["input"],
       "task.link-issue": ["id", "issue"],
-      "task.chat": ["id", "agent", "model", "effort", "name", "message", "schema", "wait"],
+      "task.chat": ["id", "agent", "model", "effort", "name", "message", "schema", "wait", "tab"],
+      "task.tabs": ["id"],
+      "task.tab-close": ["id", "tab"],
       "task.delete": ["id", "deleteWorktrees", "force", "skipTeardown"],
       "agent.event": [
         "state",
@@ -467,6 +470,12 @@ export async function dispatchCliBridge(
         break;
       case "task.chat":
         result = await operations.openTaskChat(text(params.id), await taskChatInput(params));
+        break;
+      case "task.tabs":
+        result = await operations.listTaskChatTabs(text(params.id));
+        break;
+      case "task.tab-close":
+        result = await operations.closeTaskChatTab(text(params.id), text(params.tab));
         break;
       case "task.create":
         return { ok: true, ...(await operations.createTask(taskInput(params.input), progress)) };

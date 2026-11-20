@@ -31,16 +31,21 @@ task get <id> [--git]
 task create --input <file|->
 task link-issue <id> --issue <identifier>
 task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
-          [--name <name>] [--schema <file> --wait] [--wait]
+          [--name <name>] [--tab <tab>] [--schema <file> --wait] [--wait]
                                      Sends the message to the task's chat as you would
-                                     type it: a new conversation, named with --name
-                                     (agents that cannot name one leave it unnamed),
-                                     or the agent's chat still running in the task.
-                                     Opening the task resumes it. Prints the session
-                                     and conversation ids once the turn starts; --wait
-                                     also waits for the reply, which --schema holds to
-                                     a JSON schema (the chat then closes, so opening
-                                     the task resumes it without the schema).
+                                     type it: in a new chat tab with a new conversation,
+                                     named with --name (agents that cannot name one
+                                     leave it unnamed), or in the tab --tab names,
+                                     continuing its chat if it is still running.
+                                     Prints the tab, session and conversation ids once
+                                     the turn starts; --wait also waits for the reply,
+                                     which --schema holds to a JSON schema (the chat
+                                     then closes, so opening the tab resumes it
+                                     without the schema).
+task tabs <id>                       The task's open chat tabs, in order: id, agent
+                                     and conversation.
+task tab-close <id> <tab>            Closes the chat tab and stops its agent; the
+                                     conversation stays in the task's Conversations.
 task delete <id> <--keep-worktrees|--delete-worktrees> [--force] [--skip-teardown]
 automation list
 automation get <name>
@@ -247,6 +252,12 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                     json!(args.next().ok_or("--text requires a text")?),
                 );
             }
+            "--tab" if !params.contains_key("tab") => {
+                params.insert(
+                    "tab".into(),
+                    json!(args.next().ok_or("--tab requires a tab ID")?),
+                );
+            }
             "--item" if !params.contains_key("item") => {
                 params.insert(
                     "item".into(),
@@ -297,9 +308,11 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
             &["id"],
             false,
             &[
-                "agent", "model", "effort", "name", "message", "schema", "wait",
+                "agent", "model", "effort", "name", "message", "schema", "wait", "tab",
             ],
         ),
+        "task.tabs" => (&["id"], false, &[]),
+        "task.tab-close" => (&["id", "tab"], false, &[]),
         "agent.event" => (&["state"], false, &["agent"]),
         "automation.get" => (&["name"], false, &[]),
         "automation.runs" => (&["name"], false, &["before", "limit"]),
@@ -1451,6 +1464,10 @@ mod tests {
             Value::Object(parsed.params),
             json!({ "id": "t1", "agent": "claude", "message": "Look at this", "name": "Review #12" })
         );
+        assert_eq!(
+            Value::Object(chat(&["--message", "Go on", "--tab", "a1"]).unwrap().params),
+            json!({ "id": "t1", "agent": "claude", "message": "Go on", "tab": "a1" })
+        );
         let (at_prompt, at_schema) = (
             format!("@{}", prompt.display()),
             schema.display().to_string(),
@@ -1477,6 +1494,7 @@ mod tests {
             (vec!["--message"], "--message requires a text or @file"),
             (vec!["--message", " "], "--message requires a text or @file"),
             (vec!["--name"], "--name requires a value"),
+            (vec!["--message", "hi", "--tab"], "--tab requires a tab ID"),
             (
                 vec!["--message", "hi", "--schema"],
                 "--schema requires a JSON schema file",
@@ -1504,5 +1522,20 @@ mod tests {
         );
         assert!(parse(&args("task get t1 --message hi")).is_err());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parses_task_tab_listing_and_closing() {
+        let tabs = parse(&args("task tabs t1")).unwrap();
+        assert_eq!(tabs.method, "task.tabs");
+        assert_eq!(Value::Object(tabs.params), json!({ "id": "t1" }));
+        let close = parse(&args("task tab-close t1 a1")).unwrap();
+        assert_eq!(close.method, "task.tab-close");
+        assert_eq!(
+            Value::Object(close.params),
+            json!({ "id": "t1", "tab": "a1" })
+        );
+        assert!(parse(&args("task tab-close t1")).is_err());
+        assert!(parse(&args("task tabs t1 --tab a1")).is_err());
     }
 }
