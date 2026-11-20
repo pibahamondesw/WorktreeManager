@@ -614,4 +614,17 @@ fn a_test_run_shows_a_placeholder_for_the_issue_branch() {
         Some("Create or reuse the task on <issue branch> with api, linked to ENG-7")
     );
     assert!(bridge.calls().is_empty());
+
+    let (report, _) = run.publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![Effect::TaskCreate(TaskCreateEffect {
+            linear_issue: None,
+            ..issue_task()
+        })],
+    );
+    assert_eq!(
+        report.cause.as_deref(),
+        Some("linear_issue rendered no issue, and there is no branch to create the task on")
+    );
 }
