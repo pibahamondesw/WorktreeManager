@@ -529,6 +529,7 @@ function TextDiffBody({
 export function FileDiffView({
   taskId,
   agent,
+  tab,
   changes,
   file,
   layout,
@@ -538,6 +539,7 @@ export function FileDiffView({
 }: {
   taskId: string;
   agent: AgentId;
+  tab?: string;
   changes: ChangeSet;
   file: FileChange;
   layout: DiffLayout;
@@ -550,14 +552,14 @@ export function FileDiffView({
 
   useEffect(() => {
     let cancelled = false;
-    chatFileDiff(taskId, agent, changes, file)
+    chatFileDiff(taskId, agent, changes, file, tab)
       .then((diff) => loadDiff(file, diff))
       .then((loaded) => !cancelled && setState({ key, loaded }))
       .catch((e) => !cancelled && setState({ key, error: String(e) }));
     return () => {
       cancelled = true;
     };
-  }, [taskId, agent, changes, file, key]);
+  }, [taskId, agent, tab, changes, file, key]);
 
   if (state?.key !== key) {
     return (

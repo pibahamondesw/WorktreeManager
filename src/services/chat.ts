@@ -220,6 +220,8 @@ export interface ChatInfo {
   sessionId: string;
   taskId: string;
   agent: AgentId;
+  /** The chat tab a user session runs in; absent for the main tab. */
+  tab?: string;
   origin: ChatOrigin;
   status: ChatStatus;
   /** An approval or question is waiting for an answer. */
@@ -295,6 +297,7 @@ interface ChatOpenArgs {
   mode: ChatOpenMode;
   conversation?: string;
   handoffFrom?: AgentId;
+  tab?: string;
   onEvents: (generation: number, events: ChatEvent[]) => void;
 }
 
@@ -327,14 +330,20 @@ export const chatSessionRename = (
   agent: AgentId,
   folders: string[],
   id: string,
-  title: string
-) => invoke<void>("chat_session_rename", { taskId, agent, folders, id, title });
+  title: string,
+  tab?: string
+) => invoke<void>("chat_session_rename", { taskId, agent, folders, id, title, tab });
 
 export const chatSessionArchive = (taskId: string, agent: AgentId, folders: string[], id: string) =>
   invoke<void>("chat_session_archive", { taskId, agent, folders, id });
 
-export const chatSend = (taskId: string, agent: AgentId, text: string, images: ChatImage[] = []) =>
-  invoke<void>("chat_send", { taskId, agent, text, images });
+export const chatSend = (
+  taskId: string,
+  agent: AgentId,
+  text: string,
+  images: ChatImage[] = [],
+  tab?: string
+) => invoke<void>("chat_send", { taskId, agent, text, images, tab });
 
 export type HistoryAction = "code" | "conversation" | "both";
 
@@ -347,8 +356,9 @@ export const chatRewindPreview = (
   taskId: string,
   agent: AgentId,
   generation: number,
-  itemId: string
-) => invoke<RewindPreview>("chat_rewind_preview", { taskId, agent, generation, itemId });
+  itemId: string,
+  tab?: string
+) => invoke<RewindPreview>("chat_rewind_preview", { taskId, agent, generation, itemId, tab });
 
 export const chatHistory = (
   taskId: string,
@@ -356,8 +366,9 @@ export const chatHistory = (
   generation: number,
   itemId: string,
   action: HistoryAction,
-  confirmation?: string
-) => invoke<void>("chat_history", { taskId, agent, generation, itemId, action, confirmation });
+  confirmation?: string,
+  tab?: string
+) => invoke<void>("chat_history", { taskId, agent, generation, itemId, action, confirmation, tab });
 
 export interface FileChange {
   folder: string;
@@ -412,18 +423,20 @@ export function byRepository(files: FileChange[]) {
   }));
 }
 
-export const chatChanges = (taskId: string, agent: AgentId) =>
-  invoke<ChatChanges>("chat_changes", { taskId, agent });
+export const chatChanges = (taskId: string, agent: AgentId, tab?: string) =>
+  invoke<ChatChanges>("chat_changes", { taskId, agent, tab });
 
 export const chatFileDiff = (
   taskId: string,
   agent: AgentId,
   changes: ChangeSet,
-  file: FileChange
+  file: FileChange,
+  tab?: string
 ) =>
   invoke<FileDiff>("chat_file_diff", {
     taskId,
     agent,
+    tab,
     before: changes.before,
     after: changes.after,
     folder: file.folder,
@@ -431,11 +444,11 @@ export const chatFileDiff = (
     previousPath: file.previousPath ?? null,
   });
 
-export const chatConfigure = (taskId: string, agent: AgentId, setting: ChatSetting) =>
-  invoke<void>("chat_configure", { taskId, agent, setting });
+export const chatConfigure = (taskId: string, agent: AgentId, setting: ChatSetting, tab?: string) =>
+  invoke<void>("chat_configure", { taskId, agent, setting, tab });
 
-export const chatCompact = (taskId: string, agent: AgentId) =>
-  invoke<void>("chat_compact", { taskId, agent });
+export const chatCompact = (taskId: string, agent: AgentId, tab?: string) =>
+  invoke<void>("chat_compact", { taskId, agent, tab });
 
 export type ReviewTarget =
   | { type: "uncommittedChanges" }
@@ -443,11 +456,11 @@ export type ReviewTarget =
   | { type: "commit"; sha: string; title: null }
   | { type: "custom"; instructions: string };
 
-export const chatReview = (taskId: string, agent: AgentId, target: ReviewTarget) =>
-  invoke<void>("chat_review", { taskId, agent, target });
+export const chatReview = (taskId: string, agent: AgentId, target: ReviewTarget, tab?: string) =>
+  invoke<void>("chat_review", { taskId, agent, target, tab });
 
-export const chatRefreshUsage = (taskId: string, agent: AgentId) =>
-  invoke<void>("chat_refresh_usage", { taskId, agent });
+export const chatRefreshUsage = (taskId: string, agent: AgentId, tab?: string) =>
+  invoke<void>("chat_refresh_usage", { taskId, agent, tab });
 
 export const chatFileSearch = (folders: string[], query: string) =>
   invoke<FileMatch[]>("chat_file_search", { folders, query });
@@ -476,29 +489,36 @@ export const chatReadFile = (folders: string[], base: string | null, path: strin
 export const chatReadMarkdown = (folders: string[], path: string) =>
   invoke<MarkdownDocument>("chat_read_markdown", { folders, path });
 
-export const chatInterrupt = (taskId: string, agent: AgentId) =>
-  invoke<void>("chat_interrupt", { taskId, agent });
+export const chatInterrupt = (taskId: string, agent: AgentId, tab?: string) =>
+  invoke<void>("chat_interrupt", { taskId, agent, tab });
 
 /** Redirects the turn in progress with a message queued during it. */
-export const chatSteerQueued = (taskId: string, agent: AgentId, itemId: string) =>
-  invoke<void>("chat_steer_queued", { taskId, agent, itemId });
+export const chatSteerQueued = (taskId: string, agent: AgentId, itemId: string, tab?: string) =>
+  invoke<void>("chat_steer_queued", { taskId, agent, itemId, tab });
 
-export const chatUnqueue = (taskId: string, agent: AgentId, itemId: string) =>
-  invoke<void>("chat_unqueue", { taskId, agent, itemId });
+export const chatUnqueue = (taskId: string, agent: AgentId, itemId: string, tab?: string) =>
+  invoke<void>("chat_unqueue", { taskId, agent, itemId, tab });
 
 export const chatRespond = (
   taskId: string,
   agent: AgentId,
   requestId: string,
   response: ChatResponse,
-  generation: number
-) => invoke<void>("chat_respond", { taskId, agent, requestId, response, generation });
+  generation: number,
+  tab?: string
+) => invoke<void>("chat_respond", { taskId, agent, requestId, response, generation, tab });
 
-export const chatDetach = (taskId: string, agent: AgentId, generation: number, sessionId: string) =>
-  invoke<void>("chat_detach", { taskId, agent, generation, sessionId }).catch(() => undefined);
+export const chatDetach = (
+  taskId: string,
+  agent: AgentId,
+  generation: number,
+  sessionId: string,
+  tab?: string
+) =>
+  invoke<void>("chat_detach", { taskId, agent, generation, sessionId, tab }).catch(() => undefined);
 
-export const chatStop = (taskId: string, agent: AgentId) =>
-  invoke<void>("chat_stop", { taskId, agent });
+export const chatStop = (taskId: string, agent: AgentId, tab?: string) =>
+  invoke<void>("chat_stop", { taskId, agent, tab });
 
 export const chatClose = (taskId: string) => invoke<void>("chat_close", { taskId });
 
@@ -506,3 +526,29 @@ export const chatList = () => invoke<ChatInfo[]>("chat_list");
 
 export const onChatStatus = (callback: (info: ChatInfo) => void): Promise<UnlistenFn> =>
   listen<ChatInfo>("chat-status", (e) => callback(e.payload));
+
+/** The tab every task has until tabs are recorded; it keeps the chat of the task before tabs. */
+export const MAIN_TAB = "main";
+
+export interface ChatTab {
+  id: string;
+  agent: AgentId;
+  conversationId: string | null;
+}
+
+/** A task's open chat tabs, in order; `mainAgent` runs its main tab until tabs are recorded. */
+/** Without a main agent, a task whose tabs were never shown has none. */
+export const chatTabs = (taskId: string, mainAgent: AgentId | null, folders: string[]) =>
+  invoke<ChatTab[]>("chat_tabs", { taskId, mainAgent, folders });
+
+export const chatTabOpen = (taskId: string, mainAgent: AgentId, agent: AgentId) =>
+  invoke<Omit<ChatTab, "conversationId">>("chat_tab_open", { taskId, mainAgent, agent });
+
+export const chatTabSetAgent = (taskId: string, mainAgent: AgentId, tab: string, agent: AgentId) =>
+  invoke<void>("chat_tab_set_agent", { taskId, mainAgent, tab, agent });
+
+export const chatTabClose = (taskId: string, mainAgent: AgentId, tab: string) =>
+  invoke<void>("chat_tab_close", { taskId, mainAgent, tab });
+
+export const onChatTabs = (callback: (taskId: string) => void): Promise<UnlistenFn> =>
+  listen<{ taskId: string }>("chat-tabs", (e) => callback(e.payload.taskId));

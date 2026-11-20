@@ -39,12 +39,16 @@ describe("planTaskOpen", () => {
   });
 
   it("asks before a different surface replaces the live ones", () => {
-    expect(planTaskOpen([vsCode, codexChat], claudeChat)).toEqual({
+    expect(planTaskOpen([vsCode, codexChat], claudeTerminal)).toEqual({
       kind: "confirm",
       current: vsCode,
-      requested: claudeChat,
+      requested: claudeTerminal,
       closing: [vsCode, codexChat],
     });
+  });
+
+  it("opens a chat of another agent over the live chat: it becomes a tab of it", () => {
+    expect(planTaskOpen([codexChat], claudeChat)).toEqual({ kind: "open", surface: claudeChat });
   });
 
   it("tells the chat and terminal of an agent apart", () => {

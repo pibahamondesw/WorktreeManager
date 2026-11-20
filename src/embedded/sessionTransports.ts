@@ -43,6 +43,13 @@ const chatStatus = ({ status, hasError }: ChatInfo): TerminalStatus => ({
 
 const isPrimaryChat = (chat: ChatInfo) => chat.origin !== "automation";
 
+/** The chat surface is every tab of the task, whatever agent each runs. */
+async function stopChatTabs(taskId: string) {
+  const chats = await chatList();
+  const tabs = chats.filter((chat) => chat.taskId === taskId && isPrimaryChat(chat));
+  await Promise.all(tabs.map((chat) => chatStop(taskId, chat.agent, chat.tab)));
+}
+
 const TRANSPORTS: SessionTransports<TaskSessions> = {
   editor: {
     list: editorList,
@@ -75,9 +82,10 @@ const TRANSPORTS: SessionTransports<TaskSessions> = {
     describe: (chat) => ({
       taskId: chat.taskId,
       surface: { kind: "chat", agent: chat.agent },
+      instance: chat.tab,
       status: chatStatus(chat),
     }),
-    stop: (taskId, { agent }) => chatStop(taskId, agent),
+    stop: (taskId) => stopChatTabs(taskId),
     close: chatClose,
   },
   terminal: {

@@ -996,9 +996,9 @@ async function configured(tasks = [task]) {
 }
 
 describe("openTaskChat", () => {
-  const started = { sessionId: "s1", conversationId: "c1", continued: false };
+  const started = { sessionId: "s1", conversationId: "c1", tab: "a1", continued: false };
 
-  it("records the conversation as the task's chat for its agent", async () => {
+  it("opens a new tab for the conversation and records the task's chat agent", async () => {
     const { operations, save } = fixture([task]);
     vi.mocked(invoke).mockResolvedValueOnce(started);
     const chat = await operations.openTaskChat("t1", {
@@ -1017,10 +1017,21 @@ describe("openTaskChat", () => {
         name: "Review #12",
         message: "Review the PR",
         schema: null,
+        tab: null,
+        mainAgent: "claude",
       },
     });
     expect(operations.task("t1").agent).toBe("claude");
     expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("continues a named tab, its main tab running the task's chat agent", async () => {
+    const { operations } = fixture([{ ...task, agent: "codex" }]);
+    vi.mocked(invoke).mockResolvedValueOnce({ ...started, continued: true });
+    await operations.openTaskChat("t1", { agent: "claude", message: "Go on", tab: "a1" });
+    expect(vi.mocked(invoke).mock.calls[0][1]).toMatchObject({
+      request: { agent: "claude", tab: "a1", mainAgent: "codex" },
+    });
   });
 
   it("waits for the reply, structured when held to a schema", async () => {
@@ -1066,6 +1077,50 @@ describe("openTaskChat", () => {
     await expect(
       operations.openTaskChat("missing", { agent: "claude", message: "Hi" })
     ).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+describe("chat tabs", () => {
+  const tabs = [
+    { id: "main", agent: "claude", conversationId: "c1" },
+    { id: "a1", agent: "codex", conversationId: null },
+  ];
+
+  it("lists a task's tabs, with its chat agent when it chose one", async () => {
+    const { operations } = fixture([task, { ...task, id: "t2", agent: "claude" }]);
+    vi.mocked(invoke).mockResolvedValueOnce([]);
+    expect(await operations.listTaskChatTabs("t1")).toEqual([]);
+    expect(invoke).toHaveBeenCalledWith("chat_tabs", expect.objectContaining({ mainAgent: null }));
+    vi.mocked(invoke).mockResolvedValueOnce(tabs);
+    expect(await operations.listTaskChatTabs("t2")).toEqual(tabs);
+    expect(invoke).toHaveBeenCalledWith("chat_tabs", {
+      taskId: "t2",
+      mainAgent: "claude",
+      folders: ["/wt/api/feature", "/wt/web/feature"],
+    });
+  });
+
+  it("closes an open tab and refuses one that is not open", async () => {
+    const { operations } = fixture([task, { ...task, id: "t2", agent: "claude" }]);
+    vi.mocked(invoke).mockResolvedValueOnce(tabs).mockResolvedValueOnce(undefined);
+    expect(await operations.closeTaskChatTab("t2", "a1")).toEqual({
+      taskId: "t2",
+      tab: "a1",
+      closed: true,
+    });
+    expect(invoke).toHaveBeenLastCalledWith("chat_tab_close", {
+      taskId: "t2",
+      mainAgent: "codex",
+      tab: "a1",
+    });
+    vi.mocked(invoke).mockResolvedValueOnce(tabs);
+    await expect(operations.closeTaskChatTab("t2", "b2")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    vi.mocked(invoke).mockResolvedValueOnce([]);
+    await expect(operations.closeTaskChatTab("t1", "main")).rejects.toMatchObject({
+      code: "not_found",
+    });
   });
 });
 

@@ -212,6 +212,23 @@ describe("session events", () => {
       [chat("t1", exited), chat("t1", running)],
     ]);
   });
+
+  it("follows each chat tab of an agent on its own", async () => {
+    const { fakes, registry } = setup();
+    const listener = vi.fn();
+    registry.onSessionEvent("chat", listener);
+    await flush();
+    const tab = { ...chat("t1", running), instance: "a1" };
+    fakes.chat.emit(chat("t1", running));
+    fakes.chat.emit(tab);
+    fakes.chat.emit({ ...tab, status: exited });
+    expect(listener.mock.calls).toEqual([
+      [chat("t1", running), undefined],
+      [tab, undefined],
+      [{ ...tab, status: exited }, tab],
+    ]);
+    expect(registry.taskStatuses().t1).toEqual(running);
+  });
 });
 
 describe("stopping and closing", () => {

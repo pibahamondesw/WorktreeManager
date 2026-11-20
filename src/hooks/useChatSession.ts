@@ -35,7 +35,7 @@ const CONNECTING: ChatSnapshot = {
 };
 
 /**
- * Attaches to the task agent's primary chat session. The session outlives this hook: unmounting
+ * Attaches to the chat session of a task's tab, the main one when `tab` is omitted. The session outlives this hook: unmounting
  * only detaches the sink of the session it opened. Each batch of events applies as one update.
  * Batches from an older generation (a session replaced by a restart) are dropped, and batches
  * that race the snapshot are queued and replayed on top of it. The first open follows
@@ -45,7 +45,8 @@ export function useChatSession(
   taskId: string,
   agent: AgentId,
   folders: string[],
-  takeIntent?: () => ChatOpenIntent | null
+  takeIntent?: () => ChatOpenIntent | null,
+  tab?: string
 ) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>(CONNECTING);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +76,7 @@ export function useChatSession(
           mode,
           conversation,
           handoffFrom,
+          tab,
           onEvents: (eventGeneration, events) => {
             if (disposed || version !== opening) return;
             const apply = (s: ChatSnapshot) =>
@@ -110,60 +112,59 @@ export function useChatSession(
 
     return () => {
       disposed = true;
-      if (generation) void chatDetach(taskId, agent, generation, sessionId);
+      if (generation) void chatDetach(taskId, agent, generation, sessionId, tab);
     };
-  }, [taskId, agent, foldersKey, takeIntent]);
+  }, [taskId, agent, tab, foldersKey, takeIntent]);
 
   const restart = useCallback(() => openRef.current("restart").catch(() => undefined), []);
   const startFresh = useCallback(() => openRef.current("fresh").catch(() => undefined), []);
   const implementPlan = useCallback(
     async (plan: string) => {
       await openRef.current("fresh");
-      await chatSend(taskId, agent, `Implement the following approved plan:\n\n${plan}`, []);
+      await chatSend(taskId, agent, `Implement the following approved plan:\n\n${plan}`, [], tab);
     },
-    [taskId, agent]
-  );
-  const resume = useCallback(
-    (conversation: string) => openRef.current("restart", conversation).catch(() => undefined),
-    []
+    [taskId, agent, tab]
   );
   const configure = useCallback(
-    (setting: ChatSetting) => chatConfigure(taskId, agent, setting),
-    [taskId, agent]
+    (setting: ChatSetting) => chatConfigure(taskId, agent, setting, tab),
+    [taskId, agent, tab]
   );
-  const compact = useCallback(() => chatCompact(taskId, agent), [taskId, agent]);
+  const compact = useCallback(() => chatCompact(taskId, agent, tab), [taskId, agent, tab]);
   const review = useCallback(
-    (target: ReviewTarget) => chatReview(taskId, agent, target),
-    [taskId, agent]
+    (target: ReviewTarget) => chatReview(taskId, agent, target, tab),
+    [taskId, agent, tab]
   );
   const send = useCallback(
-    (text: string, images: ChatImage[]) => chatSend(taskId, agent, text, images),
-    [taskId, agent]
+    (text: string, images: ChatImage[]) => chatSend(taskId, agent, text, images, tab),
+    [taskId, agent, tab]
   );
-  const refreshUsage = useCallback(() => chatRefreshUsage(taskId, agent), [taskId, agent]);
-  const interrupt = useCallback(() => chatInterrupt(taskId, agent), [taskId, agent]);
+  const refreshUsage = useCallback(
+    () => chatRefreshUsage(taskId, agent, tab),
+    [taskId, agent, tab]
+  );
+  const interrupt = useCallback(() => chatInterrupt(taskId, agent, tab), [taskId, agent, tab]);
   const steerQueued = useCallback(
-    (itemId: string) => chatSteerQueued(taskId, agent, itemId),
-    [taskId, agent]
+    (itemId: string) => chatSteerQueued(taskId, agent, itemId, tab),
+    [taskId, agent, tab]
   );
   const unqueue = useCallback(
-    (itemId: string) => chatUnqueue(taskId, agent, itemId),
-    [taskId, agent]
+    (itemId: string) => chatUnqueue(taskId, agent, itemId, tab),
+    [taskId, agent, tab]
   );
   const respond = useCallback(
     (requestId: string, response: ChatResponse) =>
-      chatRespond(taskId, agent, requestId, response, snapshot.generation),
-    [taskId, agent, snapshot.generation]
+      chatRespond(taskId, agent, requestId, response, snapshot.generation, tab),
+    [taskId, agent, tab, snapshot.generation]
   );
   const previewRewind = (itemId: string) =>
-    chatRewindPreview(taskId, agent, snapshot.generation, itemId);
+    chatRewindPreview(taskId, agent, snapshot.generation, itemId, tab);
   const changeHistory = useCallback(
     async (itemId: string, action: HistoryAction, confirmation?: string) => {
       const open = openRef.current;
-      await chatHistory(taskId, agent, snapshot.generation, itemId, action, confirmation);
+      await chatHistory(taskId, agent, snapshot.generation, itemId, action, confirmation, tab);
       if (action !== "code") await open("attach");
     },
-    [taskId, agent, snapshot.generation]
+    [taskId, agent, tab, snapshot.generation]
   );
 
   return {
@@ -172,7 +173,6 @@ export function useChatSession(
     restart,
     startFresh,
     implementPlan,
-    resume,
     send,
     interrupt,
     steerQueued,

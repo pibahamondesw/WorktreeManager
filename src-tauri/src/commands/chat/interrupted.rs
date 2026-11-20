@@ -1,5 +1,5 @@
 //! Chat sessions that were still live when the app quit, kept in app data so they can be resumed
-//! on their conversation. One entry per task agent; a later quit replaces it.
+//! on their conversation. One entry per task agent and chat tab; a later quit replaces it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,12 +15,14 @@ use super::ChatRegistry;
 pub struct InterruptedSession {
     pub task_id: String,
     pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
     pub conversation_id: String,
 }
 
 impl InterruptedSession {
-    fn same_agent(&self, other: &Self) -> bool {
-        self.task_id == other.task_id && self.agent == other.agent
+    fn same_slot(&self, other: &Self) -> bool {
+        self.task_id == other.task_id && self.agent == other.agent && self.tab == other.tab
     }
 }
 
@@ -50,7 +52,7 @@ impl InterruptedStore {
         }
         let _guard = STORE_LOCK.lock().unwrap();
         let mut entries = self.read();
-        entries.retain(|entry| !sessions.iter().any(|session| session.same_agent(entry)));
+        entries.retain(|entry| !sessions.iter().any(|session| session.same_slot(entry)));
         entries.extend(sessions);
         self.write(&entries)
     }
@@ -144,6 +146,7 @@ mod tests {
         InterruptedSession {
             task_id: task_id.into(),
             agent: agent.into(),
+            tab: None,
             conversation_id: conversation_id.into(),
         }
     }

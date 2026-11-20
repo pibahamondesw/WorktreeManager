@@ -257,7 +257,7 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
   invokeCommand.mockImplementation((command) =>
     Promise.resolve(
       command === "chat_hand_over"
-        ? { sessionId: "s1", conversationId: "c1", continued: false }
+        ? { sessionId: "s1", conversationId: "c1", tab: "a1", continued: false }
         : { approved: true }
     )
   );
@@ -269,6 +269,7 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
       agent: "claude",
       sessionId: "s1",
       conversationId: "c1",
+      tab: "a1",
       continued: false,
     },
     warnings: [],
@@ -283,6 +284,8 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
       name: null,
       message,
       schema: null,
+      tab: null,
+      mainAgent: "claude",
     },
   });
   const schema = { type: "object" };
@@ -299,6 +302,24 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
     })
   ).toMatchObject({ ok: true, data: { agent: "codex", reply: { approved: true } } });
   expect(state.tasks[0].agent).toBe("codex");
+  await call("task.chat", { id: "t1", agent: "codex", message: "Go on", tab: "a1" });
+  expect(invokeCommand.mock.lastCall).toMatchObject([
+    "chat_hand_over",
+    { request: { tab: "a1", mainAgent: "codex" } },
+  ]);
+  invokeCommand.mockResolvedValueOnce([{ id: "a1", agent: "codex", conversationId: "c1" }]);
+  expect(await call("task.tabs", { id: "t1" })).toMatchObject({
+    ok: true,
+    data: [{ id: "a1", agent: "codex" }],
+  });
+  invokeCommand
+    .mockResolvedValueOnce([{ id: "a1", agent: "codex", conversationId: "c1" }])
+    .mockResolvedValueOnce(undefined);
+  expect(await call("task.tab-close", { id: "t1", tab: "a1" })).toMatchObject({
+    ok: true,
+    data: { tab: "a1", closed: true },
+  });
+  expect(await call("task.tabs", { id: "t1", tab: "a1" })).toMatchObject({ ok: false });
   for (const params of [
     { id: "t1", agent: "cursor", message: "Hi" },
     { id: "t1", agent: "claude" },

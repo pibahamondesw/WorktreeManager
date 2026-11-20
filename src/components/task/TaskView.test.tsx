@@ -254,7 +254,15 @@ describe("TaskView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Agent: Claude Code" }));
     fireEvent.mouseDown(within(screen.getByRole("listbox", { name: "Agent" })).getByText("Codex"));
     fireEvent.click(screen.getByRole("button", { name: "Continue in Codex" }));
-    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", { taskId: "t1", agent: "claude" });
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", { taskId: "t1", agent: "claude" })
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_tab_set_agent", {
+      taskId: "t1",
+      mainAgent: "claude",
+      tab: "main",
+      agent: "codex",
+    });
     await waitFor(() =>
       expect(onSwitchSurface).toHaveBeenCalledWith({ kind: "chat", agent: "codex" })
     );
@@ -267,10 +275,14 @@ describe("TaskView", () => {
     );
   });
 
-  it("reopens its chat on a conversation another view asked for, for the matching agent", async () => {
-    mocks.invoke.mockImplementation((command: string) =>
-      command === "chat_open" ? Promise.resolve(IDLE_CHAT) : Promise.resolve(undefined)
-    );
+  it("opens a conversation another view asked for in a tab, once", async () => {
+    let opened = 0;
+    mocks.invoke.mockImplementation((command: string, args?: InvokeArgs) => {
+      if (command === "chat_open") return Promise.resolve(IDLE_CHAT);
+      if (command === "chat_tab_open")
+        return Promise.resolve({ id: `tab${++opened}`, agent: (args as { agent: string }).agent });
+      return Promise.resolve(undefined);
+    });
     const props = {
       task,
       sidebarCollapsed: false,
@@ -279,27 +291,35 @@ describe("TaskView", () => {
       onSwitchSurface: vi.fn(),
     };
     const chatOpens = () => mocks.invoke.mock.calls.filter(([command]) => command === "chat_open");
-    const { rerender } = render(
-      <TaskView {...props} surface={{ kind: "chat", agent: "claude" }} />
-    );
+    render(<TaskView {...props} surface={{ kind: "chat", agent: "claude" }} />);
     await waitFor(() => expect(chatOpens()).toHaveLength(1));
 
     requestChatIntent("t1", { agent: "codex", mode: "restart", conversation: "c-codex" });
-    requestChatIntent("t1", { agent: "claude", mode: "restart", conversation: "c-claude" });
     await waitFor(() =>
       expect(chatOpens().at(-1)?.[1]).toEqual(
-        expect.objectContaining({ agent: "claude", mode: "restart", conversation: "c-claude" })
+        expect.objectContaining({
+          agent: "codex",
+          tab: "tab1",
+          mode: "restart",
+          conversation: "c-codex",
+        })
       )
     );
-    expect(chatOpens()).toHaveLength(2);
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_tab_open", {
+      taskId: "t1",
+      mainAgent: "claude",
+      agent: "codex",
+    });
+    await waitFor(() =>
+      expect(props.onSwitchSurface).toHaveBeenCalledWith({ kind: "chat", agent: "codex" })
+    );
 
+    fireEvent.click(screen.getByRole("tab", { name: "New conversation" }));
     requestChatIntent("t1", { agent: "codex", mode: "restart", conversation: "c-codex" });
-    rerender(<TaskView {...props} surface={{ kind: "chat", agent: "codex" }} />);
     await waitFor(() =>
-      expect(chatOpens().at(-1)?.[1]).toEqual(
-        expect.objectContaining({ agent: "codex", mode: "restart", conversation: "c-codex" })
-      )
+      expect(screen.getByRole("tab", { selected: true })).toHaveAttribute("data-tab", "tab1")
     );
+    expect(opened).toBe(1);
   });
 
   it("ends the agent's chat process before returning to the task list", async () => {
@@ -321,7 +341,19 @@ describe("TaskView", () => {
               context: null,
             },
           })
-        : Promise.resolve()
+        : Promise.resolve(
+            command === "chat_list"
+              ? [
+                  {
+                    taskId: "t1",
+                    agent: "codex",
+                    tab: "a1",
+                    origin: "user",
+                    status: { kind: "idle" },
+                  },
+                ]
+              : undefined
+          )
     );
     const onBack = vi.fn();
     render(
@@ -335,8 +367,12 @@ describe("TaskView", () => {
       />
     );
     fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
-    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", { taskId: "t1", agent: "codex" });
     await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", {
+      taskId: "t1",
+      agent: "codex",
+      tab: "a1",
+    });
     expect(mocks.invoke.mock.calls.some(([command]) => command === "chat_close")).toBe(false);
   });
 

@@ -30,6 +30,7 @@ import { persist } from "./store";
 import { persistedEntries } from "./preferences";
 import { appendTaskNoteEntry, archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
 import { closeTaskSessions } from "./taskSessions";
+import { ChatTab, chatTabClose, chatTabs } from "./chat";
 import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
 import {
   SETUP_STAGES,
@@ -117,14 +118,17 @@ export interface TaskChatInput {
   schema?: Record<string, unknown>;
   /** Waits for the turn to end and returns its reply. */
   wait?: boolean;
+  /** Continues this chat tab instead of opening a new one. */
+  tab?: string;
 }
 
 export interface TaskChat {
   taskId: string;
   agent: AgentId;
+  tab: string;
   sessionId: string;
   conversationId: string;
-  /** The message went to the agent's chat still running in the task. */
+  /** The message went to the tab's chat still running. */
   continued: boolean;
   reply?: unknown;
 }
@@ -1077,6 +1081,8 @@ export class Operations {
         name: input.name ?? null,
         message: input.message,
         schema: input.schema ?? null,
+        tab: input.tab ?? null,
+        mainAgent: task.agent ?? input.agent,
       },
     }).catch(chatFailure);
     await this.setTaskAgent(id, input.agent);
@@ -1087,6 +1093,25 @@ export class Operations {
       structured: input.schema !== undefined,
     }).catch(chatFailure);
     return { ...chat, reply };
+  }
+
+  /** The task's open chat tabs; one whose chat was never shown nor chose an agent has none. */
+  async listTaskChatTabs(id: string): Promise<ChatTab[]> {
+    const task = this.liveTask(id);
+    return chatTabs(
+      id,
+      task.agent ?? null,
+      task.members.map((member) => member.path)
+    );
+  }
+
+  /** Closes a chat tab and stops its agent; the conversation stays in the agent's history. */
+  async closeTaskChatTab(id: string, tab: string) {
+    const open = await this.listTaskChatTabs(id);
+    const closing = open.find((entry) => entry.id === tab);
+    if (!closing) throw new OperationError("not_found", `No chat tab ${tab} is open in this task.`);
+    await chatTabClose(id, closing.agent, tab);
+    return { taskId: id, tab, closed: true };
   }
 
   /** Appends an automation's entry to the task log once per key. */

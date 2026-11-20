@@ -162,6 +162,7 @@ function scopeLabel(index: number, prompt: string | undefined) {
 export function ChangesPanel({
   taskId,
   agent,
+  tab,
   changes,
   prompts,
   scope: initialScope,
@@ -172,6 +173,7 @@ export function ChangesPanel({
 }: {
   taskId: string;
   agent: AgentId;
+  tab?: string;
   changes: ChatChanges;
   prompts: Record<string, string>;
   scope: ChangesScope;
@@ -355,6 +357,7 @@ export function ChangesPanel({
                 <FileDiffView
                   taskId={taskId}
                   agent={agent}
+                  tab={tab}
                   changes={changeSet}
                   file={selected}
                   layout={layout}

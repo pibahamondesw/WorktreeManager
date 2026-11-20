@@ -1,6 +1,6 @@
 //! A chat started on the owner's behalf by `wtm task chat` or an automation's `wtm.chat_open`. It
-//! is the task agent's primary session, sent the message as the owner would type it, so opening
-//! the task resumes it. A live primary is continued rather than replaced.
+//! opens in a new chat tab of the task, or continues the tab it names, and is sent the message as
+//! the owner would type it, so opening the task shows it. A live tab is continued, not replaced.
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,8 @@ use tauri::{AppHandle, Manager, Runtime, State};
 
 use super::headless::HeadlessRequest;
 use super::model::ChatStatus;
-use super::{ChatOrigin, ChatOwner, ChatRegistry, ChatSession, TurnEnd};
+use super::tabs::{self, announce, tab_store};
+use super::{ChatOwner, ChatRegistry, ChatSession, TurnEnd};
 use crate::commands::agents::permission::PermissionPolicy;
 use crate::commands::agents::{AgentDescriptor, Agents};
 
@@ -30,6 +31,12 @@ pub struct HandOver {
     pub message: String,
     /// Holds the replies of a new conversation to this JSON schema.
     pub schema: Option<Value>,
+    /// Continues this chat tab instead of opening a new one.
+    #[serde(default)]
+    pub tab: Option<String>,
+    /// The agent of the task's main tab, when the task has no tabs recorded yet.
+    #[serde(default)]
+    pub main_agent: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -37,7 +44,8 @@ pub struct HandOver {
 pub struct HandedOver {
     pub session_id: String,
     pub conversation_id: String,
-    /// The message went to the live chat instead of a new conversation.
+    pub tab: String,
+    /// The message went to the tab's live chat instead of a new conversation.
     pub continued: bool,
 }
 
@@ -73,11 +81,12 @@ fn model(request: &HandOver) -> Option<&str> {
 }
 
 impl ChatRegistry {
-    /// Continues the task agent's live primary chat or starts a new one, and sends the message.
+    /// Continues the tab's live chat or starts a new one in it, and sends the message.
     fn hand_over<R: Runtime>(
         &self,
         app: &AppHandle<R>,
         request: &HandOver,
+        tab: &str,
         deadline: Instant,
     ) -> Result<(String, bool), String> {
         check(&Agents::of(app).get(&request.agent)?.descriptor(), request)?;
@@ -85,24 +94,20 @@ impl ChatRegistry {
             .sessions
             .lock()
             .unwrap()
-            .primary(&request.task_id, &request.agent)
+            .primary(&request.task_id, &tabs::slot(&request.agent, Some(tab)))
             .map(|(id, session)| (id.clone(), session.status()))
             .filter(|(_, status)| status.is_live());
         let effort = request.effort.as_deref();
         let (session_id, continued) = match live {
             Some((_, ChatStatus::Busy)) => {
-                return Err("The task's chat has a turn in progress; send to it there".into())
+                return Err("The chat tab has a turn in progress; send to it there".into())
             }
             Some(_) if request.schema.is_some() => {
-                return Err("A schema needs a new conversation; close the task's chat first".into())
+                return Err("A schema needs a new conversation; leave out the tab".into())
             }
             Some((session_id, _)) => (session_id, true),
             None => {
-                let owner = ChatOwner {
-                    task_id: request.task_id.clone(),
-                    agent: request.agent.clone(),
-                    origin: ChatOrigin::User,
-                };
+                let owner = ChatOwner::user(&request.task_id, &request.agent, Some(tab));
                 let session = HeadlessRequest {
                     folders: request.folders.clone(),
                     resume: None,
@@ -150,22 +155,63 @@ pub async fn chat_hand_over<R: Runtime>(
     registry: State<'_, ChatRegistry>,
     request: HandOver,
 ) -> Result<HandedOver, String> {
-    let open_lock = registry.open_lock(&(request.task_id.clone(), request.agent.clone()));
+    let main_agent = request
+        .main_agent
+        .clone()
+        .unwrap_or_else(|| request.agent.clone());
+    let store = tab_store(&app)?;
+    let (tab, opened) = match &request.tab {
+        Some(tab) => {
+            existing_tab(
+                &store.list(&request.task_id, Some(&main_agent))?,
+                tab,
+                &request.agent,
+            )?;
+            (tab.clone(), false)
+        }
+        None => {
+            let tab = store.open(&request.task_id, &main_agent, &request.agent)?;
+            announce(&app, &request.task_id);
+            (tab.id, true)
+        }
+    };
+    let slot = tabs::slot(&request.agent, Some(&tab));
+    let open_lock = registry.open_lock(&(request.task_id.clone(), slot));
     let _opening = open_lock.lock().await;
-    tauri::async_runtime::spawn_blocking(move || {
-        let registry = app.state::<ChatRegistry>();
-        let deadline = Instant::now() + START_WAIT;
-        let (session_id, continued) = registry.hand_over(&app, &request, deadline)?;
-        let conversation_id =
-            registry.wait_for(&session_id, deadline, ChatSession::conversation)?;
-        Ok(HandedOver {
-            session_id,
-            conversation_id,
-            continued,
+    let task_id = request.task_id.clone();
+    let handed = {
+        let (app, tab) = (app.clone(), tab.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            let registry = app.state::<ChatRegistry>();
+            let deadline = Instant::now() + START_WAIT;
+            let (session_id, continued) = registry.hand_over(&app, &request, &tab, deadline)?;
+            let conversation_id =
+                registry.wait_for(&session_id, deadline, ChatSession::conversation)?;
+            Ok(HandedOver {
+                session_id,
+                conversation_id,
+                tab,
+                continued,
+            })
         })
-    })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))?
+        .await
+        .map_err(|e| format!("Task failed: {e}"))?
+    };
+    if handed.is_err() && opened {
+        let _ = tabs::close_tab(&app, &registry, &task_id, &main_agent, &tab).await;
+    }
+    handed
+}
+
+/// The tab to continue must be open in the task and run the requested agent.
+fn existing_tab(open: &[tabs::ChatTab], tab: &str, agent: &str) -> Result<(), String> {
+    match open.iter().find(|entry| entry.id == tab) {
+        None => Err(format!("No chat tab {tab} is open in this task")),
+        Some(entry) if entry.agent != agent => {
+            Err(format!("Chat tab {tab} runs {}, not {agent}", entry.agent))
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 /// Waits for the turn a hand-over started. A session held to a schema then closes, so opening the
@@ -203,6 +249,8 @@ mod tests {
             name: None,
             message: "Review the PR".into(),
             schema: None,
+            tab: None,
+            main_agent: None,
         }
     }
 
@@ -262,6 +310,23 @@ mod tests {
         assert_eq!(
             check(&missing, &request()),
             Err("Codex is not installed".into())
+        );
+    }
+
+    #[test]
+    fn a_continued_tab_must_be_open_and_run_the_agent() {
+        let open = [tabs::ChatTab {
+            id: "a1".into(),
+            agent: "claude".into(),
+        }];
+        assert_eq!(existing_tab(&open, "a1", "claude"), Ok(()));
+        assert_eq!(
+            existing_tab(&open, "b2", "claude"),
+            Err("No chat tab b2 is open in this task".into())
+        );
+        assert_eq!(
+            existing_tab(&open, "a1", "codex"),
+            Err("Chat tab a1 runs claude, not codex".into())
         );
     }
 
