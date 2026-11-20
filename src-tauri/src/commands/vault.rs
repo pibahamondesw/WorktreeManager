@@ -1,5 +1,4 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use super::user_file::UserFile;
@@ -212,7 +211,7 @@ fn ensure_task_note_support(root: &Path) -> Result<(), String> {
             .unchanged_from("")
             .replace(file.contents)?;
         if file.executable {
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            crate::platform::set_mode(&path, 0o755)
                 .map_err(|e| format!("chmod {}: {e}", path.display()))?;
         }
     }
@@ -251,7 +250,7 @@ pub(crate) fn scaffold_vault_at(root: &Path) -> Result<(), String> {
             .unchanged_from("")
             .replace(file.contents)?;
         if file.executable {
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            crate::platform::set_mode(&path, 0o755)
                 .map_err(|e| format!("chmod {}: {e}", path.display()))?;
         }
     }
@@ -261,9 +260,17 @@ pub(crate) fn scaffold_vault_at(root: &Path) -> Result<(), String> {
 /// Obsidian's registry of known vaults. Registering here is what makes
 /// `obsidian://open?path=…` resolve without the user manually doing
 /// "Open folder as vault" first.
+#[cfg(not(windows))]
 fn obsidian_config_path() -> Result<std::path::PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
     Ok(Path::new(&home).join("Library/Application Support/obsidian/obsidian.json"))
+}
+
+/// On Windows Obsidian keeps its registry under the roaming application data folder.
+#[cfg(windows)]
+fn obsidian_config_path() -> Result<std::path::PathBuf, String> {
+    let appdata = std::env::var("APPDATA").map_err(|_| "APPDATA not set".to_string())?;
+    Ok(Path::new(&appdata).join("obsidian").join("obsidian.json"))
 }
 
 /// Add `vault_path` to Obsidian's vault registry if it isn't there yet.
@@ -346,6 +353,7 @@ fn is_registered_at(config_path: &Path, vault_path: &str) -> bool {
         })
 }
 
+#[cfg(not(windows))]
 fn obsidian_running() -> bool {
     std::process::Command::new("pgrep")
         .args(["-x", "Obsidian"])
@@ -354,9 +362,25 @@ fn obsidian_running() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(windows)]
+fn obsidian_running() -> bool {
+    let mut command = std::process::Command::new("tasklist");
+    crate::platform::hide_console(&mut command)
+        .args(["/FI", "IMAGENAME eq Obsidian.exe", "/NH"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("Obsidian.exe"))
+        .unwrap_or(false)
+}
+
 /// Gracefully quit Obsidian and wait for it to exit (it flushes its registry
 /// on quit). Returns whether it is actually gone.
 fn quit_obsidian_and_wait() -> bool {
+    // On Windows `taskkill` without `/F` asks the windows to close, like quitting from the menu.
+    #[cfg(windows)]
+    let _ = crate::platform::hide_console(&mut std::process::Command::new("taskkill"))
+        .args(["/IM", "Obsidian.exe"])
+        .output();
+    #[cfg(not(windows))]
     let _ = std::process::Command::new("osascript")
         .args(["-e", "tell application \"Obsidian\" to quit"])
         .output();
@@ -429,6 +453,7 @@ pub fn ensure_vault(vault_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(name: &str) -> std::path::PathBuf {

@@ -5,8 +5,22 @@ import "@testing-library/jest-dom/vitest";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { AddWorkspaceModal } from "./AddWorkspaceModal";
 
+type DropPayload = { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number } };
+
+const drops = vi.hoisted(() => ({
+  handlers: new Set<(event: { payload: DropPayload }) => void>(),
+}));
+
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("@tauri-apps/api/path", () => ({ homeDir: () => Promise.resolve("/Users/me/") }));
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: (handler: (event: { payload: DropPayload }) => void) => {
+      drops.handlers.add(handler);
+      return Promise.resolve(() => drops.handlers.delete(handler));
+    },
+  }),
+}));
 
 const openMock = vi.mocked(openDialog);
 
@@ -112,5 +126,60 @@ describe("AddWorkspaceModal duplicate repos", () => {
 
     await addRepo("/Users/me/code/payments-web");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("AddWorkspaceModal dropped folders", () => {
+  async function dropFolders(paths: string[]) {
+    const target = screen.getByText("Repositories");
+    document.elementFromPoint = () => target;
+    const position = { x: 20, y: 20 };
+    await act(async () => {
+      drops.handlers.forEach((handler) => handler({ payload: { type: "enter", paths, position } }));
+      drops.handlers.forEach((handler) => handler({ payload: { type: "drop", paths, position } }));
+    });
+  }
+
+  it("adds each dropped folder as a repo and skips ones already added", async () => {
+    const onAdd = await renderModal();
+
+    await addRepo("/Users/me/code/payments-api");
+    await dropFolders(["/Users/me/code/payments-api", "/Users/me/code/payments-web"]);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      '"payments-api" is already in this workspace.'
+    );
+    fireEvent.change(nameField(), { target: { value: "Payments" } });
+    submit();
+
+    expect(onAdd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repos: [
+          expect.objectContaining({ localPath: "/Users/me/code/payments-api" }),
+          expect.objectContaining({
+            name: "payments-web",
+            localPath: "/Users/me/code/payments-web",
+          }),
+        ],
+      })
+    );
+  });
+
+  it("accepts Windows paths", async () => {
+    const onAdd = await renderModal();
+
+    await dropFolders(["C:\\Users\\me\\code\\payments-api"]);
+    submit();
+
+    expect(onAdd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repos: [
+          expect.objectContaining({
+            name: "payments-api",
+            localPath: "C:\\Users\\me\\code\\payments-api",
+          }),
+        ],
+      })
+    );
   });
 });

@@ -6650,7 +6650,10 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
+ "uds_windows",
  "uuid",
+ "windows",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

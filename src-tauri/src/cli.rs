@@ -3,11 +3,11 @@ use crate::commands::agent_alerts;
 use crate::commands::agents::Agents;
 use crate::commands::doppler;
 use crate::lease;
+use crate::platform::UnixStream;
 use serde_json::{json, Map, Value};
 use std::{
     fs,
-    io::{self, BufReader, Read, Write},
-    os::unix::net::UnixStream,
+    io::{self, BufReader, IsTerminal, Read, Write},
     path::Path,
     time::Duration,
 };
@@ -575,8 +575,9 @@ fn run_cli(
     if let shim @ Some(_) = doppler::run_shim_if_invoked(executable, &args) {
         return shim;
     }
+    // `file_stem` so `wtm.exe` counts on Windows.
     let cli = Path::new(executable)
-        .file_name()
+        .file_stem()
         .is_some_and(|name| name == "wtm");
     if args.first().is_some_and(|arg| arg == "--cli") {
         args.remove(0);
@@ -634,7 +635,7 @@ fn run_cli(
 }
 
 fn read_hook_payload() -> Value {
-    if unsafe { libc::isatty(libc::STDIN_FILENO) } == 1 {
+    if io::stdin().is_terminal() {
         return Value::Null;
     }
     let mut bytes = Vec::new();

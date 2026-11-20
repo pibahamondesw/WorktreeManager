@@ -45,14 +45,36 @@ fn orphan_running(pid: i32, profile: &Path) -> bool {
 }
 
 fn terminate(pid: i32) {
-    for signal in [libc::SIGTERM, libc::SIGKILL] {
-        unsafe {
-            libc::kill(-pid, signal);
-            libc::kill(pid, signal);
-        }
+    let pid = pid as u32;
+    for force in [false, true] {
+        let _ = crate::platform::signal_tree(pid, force);
+        let _ = crate::platform::signal_process(pid, force);
         let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline && unsafe { libc::kill(pid, 0) == 0 } {
+        while Instant::now() < deadline && crate::platform::process_alive(pid) {
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminate_stops_the_process_and_its_group() {
+        use std::os::unix::process::CommandExt;
+        let child = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let reaper = std::thread::spawn(move || {
+            let mut child = child;
+            child.wait().unwrap()
+        });
+        terminate(pid as i32);
+        let status = reaper.join().unwrap();
+        assert_ne!(crate::platform::terminating_signal(&status), 0);
     }
 }

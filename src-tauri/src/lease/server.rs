@@ -1,11 +1,10 @@
 use std::io::Read;
-use std::os::fd::AsRawFd;
-use std::os::unix::net::UnixStream;
 
 use serde_json::{json, Value};
 
 use super::{HeldUntil, LeaseRequest, Leases};
 use crate::cli_bridge::{failure, VERSION};
+use crate::platform::{self, UnixStream};
 
 const PROGRESS_EVERY_TICKS: u32 = 25;
 
@@ -40,18 +39,7 @@ impl Client for StreamClient {
     }
 
     fn closed(&self) -> bool {
-        let mut byte = 0u8;
-        let read = unsafe {
-            libc::recv(
-                self.stream.as_raw_fd(),
-                (&raw mut byte).cast(),
-                1,
-                libc::MSG_PEEK | libc::MSG_DONTWAIT,
-            )
-        };
-        read == 0
-            || (read < 0
-                && std::io::Error::last_os_error().kind() != std::io::ErrorKind::WouldBlock)
+        platform::peer_closed(&self.stream)
     }
 
     fn wait_closed(&mut self) {

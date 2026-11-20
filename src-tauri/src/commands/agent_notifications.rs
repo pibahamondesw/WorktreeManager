@@ -311,7 +311,147 @@ pub fn agent_open_notification_settings() -> Result<(), String> {
 #[cfg(target_os = "macos")]
 pub use macos::{deliver, dismiss};
 
-#[cfg(not(target_os = "macos"))]
+/// Windows toast notifications. A task's toast carries a tag derived from its id in the "task"
+/// group, so the next alert replaces it and `dismiss` removes it from the Action Center; Inbox
+/// entries use their own group. Clicks reach the app through each toast's `Activated` handler.
+#[cfg(windows)]
+mod windows_toast {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock, PoisonError};
+
+    use tauri::{AppHandle, Runtime};
+    use windows::core::HSTRING;
+    use windows::Data::Xml::Dom::XmlDocument;
+    use windows::Foundation::TypedEventHandler;
+    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+
+    use super::NotificationTarget;
+    use crate::commands::agent_alerts::reveal_target;
+
+    const TASK_GROUP: &str = "task";
+    const INBOX_GROUP: &str = "inbox";
+
+    /// Shown toasts, kept alive so their click handlers stay registered until replaced or
+    /// dismissed.
+    static SHOWN: Mutex<Option<HashMap<String, ToastNotification>>> = Mutex::new(None);
+
+    /// Toast tags are limited to 64 characters; a digest keeps any id within that.
+    fn tag(id: &str) -> String {
+        format!("{:x}", md5::compute(id))
+    }
+
+    fn tag_and_group(target: &NotificationTarget) -> (String, &'static str) {
+        match &target.inbox_entry {
+            Some(entry) => (tag(entry), INBOX_GROUP),
+            None => (tag(&target.task_id), TASK_GROUP),
+        }
+    }
+
+    /// The AppUserModelID toasts are sent under. Unpackaged apps register one per user under
+    /// `HKCU\Software\Classes\AppUserModelId` so Windows shows the app's name on its toasts.
+    fn app_id<R: Runtime>(app: &AppHandle<R>) -> HSTRING {
+        static REGISTERED: OnceLock<String> = OnceLock::new();
+        let id = REGISTERED.get_or_init(|| {
+            let id = app.config().identifier.clone();
+            let key = format!(r"HKCU\Software\Classes\AppUserModelId\{id}");
+            let name = app.package_info().name.clone();
+            let mut command = std::process::Command::new("reg");
+            let registered = crate::platform::hide_console(&mut command)
+                .args([
+                    "add",
+                    &key,
+                    "/v",
+                    "DisplayName",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &name,
+                    "/f",
+                ])
+                .output()
+                .is_ok_and(|output| output.status.success());
+            if !registered {
+                log::warn!("Could not register the notification app id {id}");
+            }
+            id
+        });
+        HSTRING::from(id.as_str())
+    }
+
+    fn escape(text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    }
+
+    fn show<R: Runtime>(
+        app: &AppHandle<R>,
+        title: &str,
+        body: &str,
+        target: NotificationTarget,
+    ) -> windows::core::Result<()> {
+        let (tag, group) = tag_and_group(&target);
+        let xml = XmlDocument::new()?;
+        // The app plays its own alert sound, so the toast stays silent.
+        xml.LoadXml(&HSTRING::from(format!(
+            r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual><audio silent="true"/></toast>"#,
+            escape(title),
+            escape(body)
+        )))?;
+        let toast = ToastNotification::CreateToastNotification(&xml)?;
+        toast.SetTag(&HSTRING::from(&tag))?;
+        toast.SetGroup(&HSTRING::from(group))?;
+        let handle = app.clone();
+        toast.Activated(&TypedEventHandler::new(move |_, _| {
+            reveal_target(&handle, &target);
+            Ok(())
+        }))?;
+        ToastNotificationManager::CreateToastNotifierWithId(&app_id(app))?.Show(&toast)?;
+        SHOWN
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(HashMap::new)
+            .insert(format!("{group}:{tag}"), toast);
+        Ok(())
+    }
+
+    pub fn deliver<R: Runtime>(
+        app: &AppHandle<R>,
+        title: String,
+        body: String,
+        target: NotificationTarget,
+    ) {
+        if let Err(error) = show(app, &title, &body, target) {
+            log::warn!("Could not show a notification: {error}");
+        }
+    }
+
+    pub fn dismiss<R: Runtime>(app: &AppHandle<R>, task_ids: Vec<String>) {
+        let id = app_id(app);
+        let history = ToastNotificationManager::History();
+        let mut shown = SHOWN.lock().unwrap_or_else(PoisonError::into_inner);
+        for task_id in task_ids {
+            let tag = tag(&task_id);
+            if let Ok(history) = &history {
+                let _ = history.RemoveGroupedTagWithId(
+                    &HSTRING::from(&tag),
+                    &HSTRING::from(TASK_GROUP),
+                    &id,
+                );
+            }
+            if let Some(shown) = shown.as_mut() {
+                shown.remove(&format!("{TASK_GROUP}:{tag}"));
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+pub use windows_toast::{deliver, dismiss};
+
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn deliver<R: Runtime>(
     _app: &AppHandle<R>,
     _title: String,
@@ -320,7 +460,7 @@ pub fn deliver<R: Runtime>(
 ) {
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn dismiss<R: Runtime>(_app: &AppHandle<R>, _task_ids: Vec<String>) {}
 
 #[cfg(all(test, target_os = "macos"))]

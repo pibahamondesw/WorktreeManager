@@ -3,6 +3,7 @@ import { AgentId, Task, TaskSurface } from "../types";
 import { sessionHasError, TerminalStatus } from "./terminal";
 import { ChatInfo, isLive } from "./chat";
 import { describeAgent } from "./agents";
+import { isWithinPath } from "../platform";
 
 export type AgentActivityState = "working" | "waiting" | "done";
 
@@ -104,17 +105,12 @@ export function normalizeAgentAlerts(value: unknown): AgentAlertSettings {
   };
 }
 
-const isWithin = (path: string, root: string) => {
-  const base = root.replace(/\/+$/, "");
-  return base !== "" && (path === base || path.startsWith(`${base}/`));
-};
-
 /** The task whose worktree contains `cwd`; the deepest worktree wins for nested paths. */
 export function taskForCwd(tasks: Task[], cwd: string): Task | undefined {
   let best: { task: Task; depth: number } | undefined;
   for (const task of tasks) {
     for (const member of task.members) {
-      if (!isWithin(cwd, member.path)) continue;
+      if (!isWithinPath(cwd, member.path)) continue;
       if (!best || member.path.length > best.depth) best = { task, depth: member.path.length };
     }
   }

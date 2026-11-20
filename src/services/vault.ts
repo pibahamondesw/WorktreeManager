@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
+import { joinPath } from "../platform";
 import { VaultConfig } from "../types";
 
 export type VaultAgent = "codex" | "claude";
@@ -15,14 +16,14 @@ export const VAULT_AGENT_LABELS: Record<VaultAgent, string> = {
  */
 
 export function defaultVaultPath(home: string): string {
-  return `${home.replace(/\/+$/, "")}/Documents/worktreemanager-vault`;
+  return joinPath(home, "Documents", "worktreemanager-vault");
 }
 
 /** Folder task notes live in, or null when the vault is disabled/unset. */
 export function taskLogsPath(vault: VaultConfig): string | null {
   const path = vault.path?.trim();
   if (!vault.enabled || !path) return null;
-  return `${path.replace(/\/+$/, "")}/task-logs`;
+  return joinPath(path, "task-logs");
 }
 
 /** Deep link that opens the vault folder in Obsidian. */

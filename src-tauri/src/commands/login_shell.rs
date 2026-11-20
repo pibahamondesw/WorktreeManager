@@ -12,13 +12,65 @@ use std::sync::{Mutex, PoisonError};
 
 use super::git::GIT_ENV_SCRUB;
 
-const SHELL: &str = "/bin/zsh";
+#[cfg(unix)]
 const SCRIPT_NAME: &str = "zsh";
+#[cfg(windows)]
+const SCRIPT_NAME: &str = "bash";
 
 /// Bash-oriented profiles sourced under zsh routinely write noise (e.g. a stale `. <cargo/env>`
 /// line), so their stderr is always discarded.
+#[cfg(unix)]
 const PROFILES: &str = r#"export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 { [ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile"; [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"; [ -f "$HOME/.profile" ] && source "$HOME/.profile"; [ -f "$HOME/.bash_profile" ] && source "$HOME/.bash_profile"; }"#;
+
+/// Git Bash already reads `~/.bash_profile` (and through it usually `~/.bashrc`) as a login
+/// shell; `~/.local/bin` is where several CLIs install themselves on Windows too.
+#[cfg(windows)]
+const PROFILES: &str = r#"export PATH="$HOME/.local/bin:$PATH"
+{ [ -f "$HOME/.profile" ] && source "$HOME/.profile"; }"#;
+
+/// The shell every launch goes through: zsh on macOS and Linux, Git Bash on Windows.
+#[cfg(unix)]
+fn shell() -> String {
+    "/bin/zsh".to_string()
+}
+
+/// Git for Windows ships the bash that runs the app's POSIX scripts. `WTM_BASH` overrides the
+/// lookup; otherwise `bin/bash.exe` next to the `git` on `PATH`, then the default install.
+#[cfg(windows)]
+fn shell() -> String {
+    use std::sync::OnceLock;
+    static SHELL: OnceLock<String> = OnceLock::new();
+    SHELL
+        .get_or_init(|| {
+            if let Some(path) = std::env::var_os("WTM_BASH").filter(|path| !path.is_empty()) {
+                return path.to_string_lossy().into_owned();
+            }
+            let beside_git = std::env::var_os("PATH").and_then(|path| {
+                std::env::split_paths(&path)
+                    .filter(|dir| dir.join("git.exe").is_file())
+                    .filter_map(|dir| dir.parent().map(|root| root.join("bin").join("bash.exe")))
+                    .find(|bash| bash.is_file())
+            });
+            beside_git
+                .unwrap_or_else(|| PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"))
+                .to_string_lossy()
+                .into_owned()
+        })
+        .clone()
+}
+
+/// Where an interactive terminal starts when the launch names no directory.
+fn default_terminal_dir() -> String {
+    #[cfg(unix)]
+    {
+        "/".to_string()
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("USERPROFILE").unwrap_or_else(|_| r"C:\".to_string())
+    }
+}
 
 /// The profiles the launcher sources run in the script's own scope, where they may reset its
 /// positional arguments or change directory.
@@ -110,15 +162,19 @@ impl LoginShell {
     /// discarded so it never mixes with the program's (zsh's own login files still print), and
     /// Git variables inherited by the app never redirect it to another repository.
     pub fn command(&self) -> Command {
-        let mut command = Command::new(SHELL);
-        command
+        let mut command = Command::new(shell());
+        crate::platform::hide_console(&mut command)
             .arg("-lc")
             .arg(self.shell_script(ProfileOutput::Hidden))
             .arg(SCRIPT_NAME)
             .args(&self.arguments)
+            .envs(crate::platform::fresh_path().map(|path| ("PATH", path)))
             .envs(self.env.iter().map(|(key, value)| (key, value)));
         if let Some(cwd) = &self.cwd {
-            command.current_dir(cwd).env("PWD", cwd);
+            command.current_dir(cwd);
+            // Git Bash derives a POSIX `PWD` from the working directory itself.
+            #[cfg(unix)]
+            command.env("PWD", cwd);
         }
         for variable in GIT_ENV_SCRUB {
             command.env_remove(variable);
@@ -138,14 +194,19 @@ impl LoginShell {
             SCRIPT_NAME.to_string(),
         ];
         args.extend(self.arguments);
+        let env = crate::platform::fresh_path()
+            .map(|path| ("PATH".to_string(), path.to_string_lossy().into_owned()))
+            .into_iter()
+            .chain(self.env)
+            .collect();
         LaunchSpec {
-            program: SHELL.to_string(),
+            program: shell(),
             args,
-            env: self.env,
+            env,
             env_remove: GIT_ENV_SCRUB.iter().map(|name| name.to_string()).collect(),
-            cwd: self
-                .cwd
-                .map_or_else(|| "/".to_string(), |dir| dir.to_string_lossy().into_owned()),
+            cwd: self.cwd.map_or_else(default_terminal_dir, |dir| {
+                dir.to_string_lossy().into_owned()
+            }),
         }
     }
 
@@ -196,9 +257,8 @@ pub(crate) fn remember_availability(program: &str, found: bool) {
 }
 
 fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
     path.metadata()
-        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .is_ok_and(|metadata| crate::platform::is_executable(&metadata))
 }
 
 fn availability_probe(program: &str) -> LoginShell {
@@ -349,7 +409,7 @@ mod tests {
             .current_dir(home.work_dir())
             .env("SESSION", "s1")
             .terminal();
-        assert_eq!(spec.program, SHELL);
+        assert_eq!(spec.program, shell());
         assert_eq!(spec.cwd, home.work_dir().to_string_lossy());
         assert_eq!(spec.env, vec![("SESSION".to_string(), "s1".to_string())]);
         assert_eq!(spec.env_remove.len(), GIT_ENV_SCRUB.len());

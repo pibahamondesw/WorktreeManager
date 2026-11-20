@@ -21,6 +21,7 @@ import {
   ALWAYS_COPIED_CONFIG_PATHS,
   VaultConfig,
 } from "../types";
+import { isAbsolutePath, joinPath } from "../platform";
 import { compareTaskPins } from "../utils";
 import { LinearService, MarkedIssueInput } from "./linear";
 import { taskLinearStore } from "./taskLinear";
@@ -326,7 +327,7 @@ export class Operations {
 
   updateVault(vault: VaultConfig) {
     return this.enqueue(async () => {
-      if (vault.enabled && !vault.path?.startsWith("/")) {
+      if (vault.enabled && !isAbsolutePath(vault.path ?? "")) {
         throw new OperationError("invalid_input", "An enabled vault needs an absolute path.");
       }
       // Save first: global agent setup is optional and must not undo a usable vault.
@@ -346,7 +347,7 @@ export class Operations {
     repair: boolean,
     agents: VaultAgent[] = ["codex", "claude"]
   ) {
-    if (vault.enabled && !vault.path?.startsWith("/")) {
+    if (vault.enabled && !isAbsolutePath(vault.path ?? "")) {
       throw new OperationError(
         "invalid_input",
         "Configure an absolute vault path in settings before repairing agent setup."
@@ -526,7 +527,7 @@ export class Operations {
             input.linearIssue || input.exactBranch
               ? {
                   branchName: input.branchName.trim(),
-                  path: `${repo.worktreeBasePath}/${input.branchName.trim()}`,
+                  path: joinPath(repo.worktreeBasePath, ...input.branchName.trim().split("/")),
                 }
               : await this.lifecycle.resolveManualWorktree(repo, input.branchName, ownedPaths);
           return {

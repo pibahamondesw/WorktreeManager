@@ -151,12 +151,11 @@ pub fn random_id() -> Result<String, String> {
 }
 
 pub fn write_new(path: &Path, content: &[u8], private: bool) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let result = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(if private { 0o600 } else { 0o644 })
-        .open(path);
+    let result = crate::platform::create_mode(
+        OpenOptions::new().write(true).create_new(true),
+        if private { 0o600 } else { 0o644 },
+    )
+    .open(path);
     match result {
         Ok(mut file) => file.write_all(content).map_err(|error| error.to_string()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),

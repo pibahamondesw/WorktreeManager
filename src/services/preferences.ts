@@ -1,3 +1,4 @@
+import { isAbsolutePath } from "../platform";
 import { load, Store } from "@tauri-apps/plugin-store";
 import {
   AppState,
@@ -122,7 +123,7 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
     ),
   agentAlerts: normalizeAgentAlerts,
   navigationHistory: (raw) => (Array.isArray(raw) ? raw.filter(isNavigationEntry) : []),
-  automationsDir: (raw) => (typeof raw === "string" && raw.startsWith("/") ? raw : null),
+  automationsDir: (raw) => (typeof raw === "string" && isAbsolutePath(raw) ? raw : null),
   automationInbox: (raw) => {
     const value = record(raw);
     const keys = (list: unknown) =>

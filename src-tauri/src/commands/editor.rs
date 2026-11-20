@@ -1,11 +1,12 @@
 use std::path::Path;
+#[cfg(not(windows))]
 use std::process::Command;
 
 use super::agents::Agents;
 use super::login_shell::{cli_available, LoginShell};
 use super::workspace::TaskWorkspaceFiles;
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(windows)))]
 pub(crate) const GUI_LAUNCHER: &str = "open";
 #[cfg(test)]
 pub(crate) const GUI_LAUNCHER: &str = "true";
@@ -63,22 +64,28 @@ fn open_editor_blocking(
     let primary = folders[0].as_str();
     let multi = folders.len() > 1;
 
-    match editor.as_str() {
-        "cursor" => {
-            let app = "Cursor";
-            if multi {
-                let ws = workspace_files.ensure(task_id, &folders, legacy_workspace_file_path)?;
-                open_gui_editor(app, &ws)?;
-                Ok(OpenEditorResult {
-                    message: format!("{app} opened workspace: {ws}"),
-                    workspace_file: Some(ws),
-                })
-            } else {
-                Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
-            }
+    let open_workspace_editor = |app: &str| {
+        if multi {
+            let ws = workspace_files.ensure(task_id, &folders, legacy_workspace_file_path)?;
+            open_gui_editor(app, &ws)?;
+            Ok(OpenEditorResult {
+                message: format!("{app} opened workspace: {ws}"),
+                workspace_file: Some(ws),
+            })
+        } else {
+            Ok(OpenEditorResult::message(open_gui_editor(app, primary)?))
         }
+    };
+
+    match editor.as_str() {
+        "cursor" => open_workspace_editor("Cursor"),
         "claude-code" => Err("Claude Code runs embedded; use terminal_open".to_string()),
         "codex" => Err("Codex runs embedded; use terminal_open".to_string()),
+        // The embedded editor (code-server) has no Windows build; open desktop VS Code instead.
+        // TODO(windows): embed VS Code on Windows, e.g. on Microsoft's VS Code web server build.
+        #[cfg(windows)]
+        "vscode-web" => open_workspace_editor(VSCODE_APP),
+        #[cfg(not(windows))]
         "vscode-web" => Err("VS Code runs embedded; use vscode_open".to_string()),
         "opencode-web" => Err("OpenCode runs embedded; use opencode_open".to_string()),
         "zed" => Ok(OpenEditorResult::message(open_zed(&folders)?)),
@@ -137,6 +144,9 @@ fn open_zed(folders: &[String]) -> Result<String, String> {
 pub fn check_app_installed(editor: String) -> Result<bool, String> {
     match editor.as_str() {
         "cursor" => Ok(gui_app_exists("Cursor")),
+        #[cfg(windows)]
+        "vscode-web" => Ok(cli_available(windows_cli(VSCODE_APP))),
+        #[cfg(not(windows))]
         "vscode-web" => Ok(true),
         "opencode-web" => Ok(cli_available("opencode")),
         "claude-code" => Ok(Agents::default().get("claude")?.installed()),
@@ -146,7 +156,47 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
     }
 }
 
+#[cfg(windows)]
+const VSCODE_APP: &str = "Visual Studio Code";
+
+/// The command-line launcher a Windows GUI editor installs on `PATH`.
+#[cfg(windows)]
+fn windows_cli(app_name: &str) -> &str {
+    match app_name {
+        VSCODE_APP => "code",
+        "Cursor" => "cursor",
+        "Zed" => "zed",
+        "Obsidian" => "obsidian",
+        other => other,
+    }
+}
+
+/// True when the app is installed in one of the usual Windows locations (per-user under
+/// `%LOCALAPPDATA%\Programs`, or machine-wide under Program Files), or its CLI is on `PATH`.
+#[cfg(windows)]
+pub(crate) fn gui_app_exists(app_name: &str) -> bool {
+    let roots = [
+        std::env::var_os("LOCALAPPDATA").map(|dir| Path::new(&dir).join("Programs")),
+        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from),
+        std::env::var_os("ProgramFiles").map(std::path::PathBuf::from),
+    ];
+    let folders: &[&str] = match app_name {
+        VSCODE_APP => &["Microsoft VS Code"],
+        other => &[other],
+    };
+    let exe = match app_name {
+        VSCODE_APP => "Code.exe".to_string(),
+        other => format!("{other}.exe"),
+    };
+    roots.iter().flatten().any(|root| {
+        folders
+            .iter()
+            .any(|folder| root.join(folder).join(&exe).is_file())
+    }) || cli_available(windows_cli(app_name))
+}
+
 /// True when macOS LaunchServices knows an app bundle by this name.
+#[cfg(not(windows))]
 pub(crate) fn gui_app_exists(app_name: &str) -> bool {
     Command::new("osascript")
         .args([
@@ -161,6 +211,24 @@ pub(crate) fn gui_app_exists(app_name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Windows has no `open -a`; GUI editors install a CLI named after them (`cursor`, `zed`).
+#[cfg(all(windows, not(test)))]
+fn open_gui_editor(app_name: &str, path: &str) -> Result<String, String> {
+    let cli = windows_cli(app_name);
+    let output = LoginShell::program(cli, [path])
+        .output()
+        .map_err(|e| format!("Failed to open {app_name}: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Failed to open {app_name}: {}\n\nMake sure {app_name} is installed and `{cli}` is on your PATH.",
+            stderr.trim()
+        ));
+    }
+    Ok(format!("{app_name} opened for path: {path}"))
+}
+
+#[cfg(any(not(windows), test))]
 fn open_gui_editor(app_name: &str, path: &str) -> Result<String, String> {
     let output = Command::new(GUI_LAUNCHER)
         .args(["-a", app_name, path])
@@ -186,6 +254,7 @@ fn open_gui_editor(app_name: &str, path: &str) -> Result<String, String> {
 }
 
 /// Escape for use inside AppleScript double-quoted string literals.
+#[cfg(not(windows))]
 fn escape_applescript_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {

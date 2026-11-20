@@ -1,7 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -38,13 +36,33 @@ struct FileStamp {
 }
 
 impl FileStamp {
+    #[cfg(unix)]
     fn of(metadata: &fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
         Self {
             size: metadata.size(),
             mtime: metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec(),
             ctime: metadata.ctime() * 1_000_000_000 + metadata.ctime_nsec(),
             inode: metadata.ino(),
             mode: metadata.mode(),
+        }
+    }
+
+    /// Windows has no inode or status-change time: the stamp relies on size, the last write
+    /// time (standing in for both times) and the synthesized mode.
+    #[cfg(not(unix))]
+    fn of(metadata: &fs::Metadata) -> Self {
+        let mtime = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |since| since.as_nanos() as i64);
+        Self {
+            size: metadata.len(),
+            mtime,
+            ctime: mtime,
+            inode: 0,
+            mode: crate::platform::mode(metadata),
         }
     }
 }
@@ -455,11 +473,9 @@ impl Checkpoints {
                     Some(blob) => blob.to_string(),
                     None => {
                         let bytes = if link {
-                            fs::read_link(&path)
-                                .map_err(|e| e.to_string())?
-                                .as_os_str()
-                                .as_bytes()
-                                .to_vec()
+                            crate::platform::os_bytes(
+                                fs::read_link(&path).map_err(|e| e.to_string())?.as_os_str(),
+                            )
                         } else {
                             fs::read(&path).map_err(|e| e.to_string())?
                         };
@@ -478,7 +494,7 @@ impl Checkpoints {
                     relative.to_string(),
                     FileState {
                         blob,
-                        mode: metadata.permissions().mode(),
+                        mode: crate::platform::mode(&metadata),
                         link,
                         git_blob,
                     },
@@ -878,10 +894,11 @@ impl Checkpoints {
                     let tmp = path.with_file_name(format!(".wtm-{}", uuid::Uuid::new_v4()));
                     let bytes = bytes.unwrap();
                     if file.link {
-                        symlink(std::ffi::OsStr::from_bytes(&bytes), &tmp)?;
+                        let target = crate::platform::os_from_bytes(&bytes);
+                        crate::platform::symlink(Path::new(&target), &tmp)?;
                     } else {
                         fs::write(&tmp, bytes)?;
-                        fs::set_permissions(&tmp, fs::Permissions::from_mode(file.mode))?;
+                        crate::platform::set_mode(&tmp, file.mode)?;
                     }
                     fs::rename(tmp, path)?;
                 } else if path.exists() || fs::symlink_metadata(&path).is_ok() {
@@ -945,6 +962,8 @@ fn changes(target: &Checkpoint, current: &Checkpoint) -> Result<Vec<String>, Str
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::{symlink, PermissionsExt};
 
     pub(crate) struct Fixture {
         pub(crate) dir: PathBuf,

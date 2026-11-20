@@ -9,6 +9,11 @@ mod menu;
 mod commands;
 
 #[cfg(target_os = "macos")]
+#[path = "../src/platform.rs"]
+#[allow(dead_code, unused_imports)]
+mod platform;
+
+#[cfg(target_os = "macos")]
 use tauri::{
     menu::{Menu, MenuItemKind, PredefinedMenuItem},
     Manager,

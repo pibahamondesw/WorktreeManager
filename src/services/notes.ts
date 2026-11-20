@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { joinPath } from "../platform";
 import { Task, VaultConfig, Workspace } from "../types";
 import { taskLogsPath } from "./vault";
 
@@ -98,7 +99,7 @@ export function taskNoteUri(notePath: string): string {
 export function taskNotePath(vault: VaultConfig, task: Task): string | null {
   const dir = taskLogsPath(vault);
   if (!dir) return null;
-  return `${dir}/${task.noteFolder ? `${task.noteFolder}/` : ""}${taskNoteFileName(task)}`;
+  return joinPath(dir, ...(task.noteFolder ? [task.noteFolder] : []), taskNoteFileName(task));
 }
 
 /**

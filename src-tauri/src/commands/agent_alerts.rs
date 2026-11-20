@@ -4,11 +4,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 use tauri::Emitter;
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -18,7 +19,7 @@ use super::user_file::UserFile;
 
 const LOCAL_PROFILE: &str = "com.worktreemanager.dev.local";
 const OWNED_COMMAND_MARKER: &str = " agent event ";
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub const NOTIFICATION_OPEN_EVENT: &str = "agent-notification-open";
 /// Set on every embedded agent process so its hooks report the task and surface directly.
 pub const TASK_ENV: &str = "WTM_TASK_ID";
@@ -39,8 +40,25 @@ pub(crate) struct AlertHooks {
     pub async_handlers: bool,
 }
 
+#[cfg(not(windows))]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Hooks run under whatever shell the agent picks on Windows (Git Bash, cmd or PowerShell).
+/// Forward slashes read the same in all three, and a path without spaces needs no quoting; one
+/// with spaces gets double quotes, which bash and cmd accept.
+#[cfg(windows)]
+fn shell_quote(value: &str) -> String {
+    let path = value
+        .strip_prefix(r"\\?\")
+        .unwrap_or(value)
+        .replace('\\', "/");
+    if path.contains(' ') {
+        format!("\"{path}\"")
+    } else {
+        path
+    }
 }
 
 /// The app a hook reports to: the executable it runs and the profile whose socket it reaches.
@@ -311,6 +329,57 @@ const SYSTEM_SOUNDS: &[&str] = &[
     "Tink",
 ];
 
+/// The Windows sound standing in for each macOS system sound, from `%WINDIR%\Media`.
+#[cfg(windows)]
+fn windows_sound(sound: &str) -> Option<&'static str> {
+    Some(match sound {
+        "Basso" => "Windows Critical Stop.wav",
+        "Blow" => "Windows Notify System Generic.wav",
+        "Bottle" => "Windows Ding.wav",
+        "Frog" => "Windows Message Nudge.wav",
+        "Funk" => "Windows Exclamation.wav",
+        "Glass" => "Windows Notify Calendar.wav",
+        "Hero" => "tada.wav",
+        "Morse" => "Windows Notify Messaging.wav",
+        "Ping" => "Windows Notify Email.wav",
+        "Pop" => "Windows Pop-up Blocked.wav",
+        "Purr" => "Windows Proximity Notification.wav",
+        "Sosumi" => "chord.wav",
+        "Submarine" => "Windows Information Bar.wav",
+        "Tink" => "ding.wav",
+        _ => return None,
+    })
+}
+
+#[cfg(windows)]
+pub fn play_sound(sound: &str) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_FILENAME, SND_NODEFAULT, SND_SYNC};
+    if !SYSTEM_SOUNDS.contains(&sound) {
+        return;
+    }
+    let Some(file) = windows_sound(sound) else {
+        return;
+    };
+    let windir = std::env::var_os("WINDIR").unwrap_or_else(|| r"C:\Windows".into());
+    let path: Vec<u16> = Path::new(&windir)
+        .join("Media")
+        .join(file)
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // Played on its own thread so the path outlives the call and the caller never waits.
+    std::thread::spawn(move || unsafe {
+        PlaySoundW(
+            path.as_ptr(),
+            std::ptr::null_mut(),
+            SND_FILENAME | SND_NODEFAULT | SND_SYNC,
+        );
+    });
+}
+
+#[cfg(not(windows))]
 pub fn play_sound(sound: &str) {
     if !SYSTEM_SOUNDS.contains(&sound) {
         return;
@@ -353,7 +422,7 @@ fn app_in_foreground<R: Runtime>(app: &AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn reveal_target<R: Runtime>(app: &AppHandle<R>, target: &NotificationTarget) {
     if let Some(window) = app.get_window("main") {
         let _ = window.unminimize();

@@ -1,7 +1,6 @@
 //! Atomic replacement of files the user may own, edit or symlink.
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 pub(crate) struct UserFile<'a> {
@@ -37,12 +36,12 @@ impl<'a> UserFile<'a> {
     pub(crate) fn replace(self, contents: impl AsRef<[u8]>) -> Result<(), String> {
         let target = resolve_target(self.path)?;
         let temporary = temporary_sibling(&target)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(if self.private { 0o600 } else { 0o666 })
-            .open(&temporary)
-            .map_err(|e| format!("Cannot write {}: {e}", self.path.display()))?;
+        let mut file = crate::platform::create_mode(
+            OpenOptions::new().write(true).create_new(true),
+            if self.private { 0o600 } else { 0o666 },
+        )
+        .open(&temporary)
+        .map_err(|e| format!("Cannot write {}: {e}", self.path.display()))?;
         let result = self.finish(&mut file, &temporary, &target, contents.as_ref());
         if result.is_err() {
             let _ = fs::remove_file(&temporary);
