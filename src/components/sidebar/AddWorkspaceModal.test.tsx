@@ -28,7 +28,7 @@ async function addRepo(path: string) {
 }
 
 const nameField = () => screen.getByPlaceholderText(NAME_PLACEHOLDER);
-const submit = () => fireEvent.click(screen.getByText("Add Workspace", { selector: "button" }));
+const submit = () => fireEvent.click(screen.getByText("Add workspace", { selector: "button" }));
 
 beforeEach(() => openMock.mockReset());
 afterEach(cleanup);

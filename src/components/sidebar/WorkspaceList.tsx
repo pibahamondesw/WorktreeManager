@@ -159,7 +159,7 @@ export function WorkspaceList({
         <button
           onClick={() => setShowAdd(true)}
           className="w-6 h-6 flex items-center justify-center rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors cursor-pointer"
-          title="Add workspace (P)"
+          title={`Add workspace (${shortcutLabel("app.workspace.add")})`}
         >
           <PlusIcon size={14} />
         </button>
@@ -260,7 +260,7 @@ export function WorkspaceList({
                     setEditWorkspace(workspace);
                   }}
                   className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary transition-colors cursor-pointer"
-                  title="Workspace settings"
+                  title="Edit workspace"
                 >
                   <GearIcon size={12} />
                 </button>

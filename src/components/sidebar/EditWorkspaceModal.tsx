@@ -154,13 +154,13 @@ export function EditWorkspaceModal({
 
         <div className="flex items-center justify-between gap-4 pt-4 border-t border-border">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-text-primary">Delete workspace</p>
+            <p className="text-sm font-medium text-text-primary">Remove workspace</p>
             <p className="text-xs text-text-muted">
               Removes it from the app. You choose what happens to its worktrees.
             </p>
           </div>
           <Button variant="danger" onClick={onRequestDelete} className="flex-shrink-0">
-            Delete
+            Remove
           </Button>
         </div>
       </div>
