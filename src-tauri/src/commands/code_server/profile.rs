@@ -51,7 +51,7 @@ pub fn prepare(root: &Path, workspace_id: &str) -> Result<Profile, String> {
         write_new(&source, content.as_bytes(), false)?;
         let target = user.join(name);
         if !target.try_exists().map_err(|error| error.to_string())? {
-            std::os::unix::fs::symlink(&source, &target).map_err(|error| error.to_string())?;
+            crate::platform::symlink(&source, &target).map_err(|error| error.to_string())?;
         }
         if fs::canonicalize(&target).ok() != fs::canonicalize(&source).ok() {
             return Err(format!(

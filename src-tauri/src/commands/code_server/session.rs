@@ -125,18 +125,18 @@ impl Session {
             .collect::<Result<_, _>>()?;
         drop(lock);
         for group in &groups {
-            signal(*group, libc::SIGTERM)?;
+            signal(*group, false)?;
         }
         if !groups.is_empty() {
             std::thread::sleep(Duration::from_millis(500));
         }
         for group in &groups {
-            signal(*group, libc::SIGKILL)?;
+            signal(*group, true)?;
         }
         let deadline = Instant::now() + Duration::from_secs(3);
         while groups
             .iter()
-            .any(|group| unsafe { libc::kill(-*group, 0) == 0 })
+            .any(|group| crate::platform::tree_alive(*group as u32))
         {
             if Instant::now() >= deadline {
                 return Err("Editor processes are still stopping. Retry closing the task.".into());
@@ -149,16 +149,8 @@ impl Session {
     }
 }
 
-fn signal(group: i32, signal: i32) -> Result<(), String> {
-    if unsafe { libc::kill(-group, signal) } == 0 {
-        return Ok(());
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        Ok(())
-    } else {
-        Err(error.to_string())
-    }
+fn signal(group: i32, force: bool) -> Result<(), String> {
+    crate::platform::signal_tree(group as u32, force).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

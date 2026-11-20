@@ -8,6 +8,10 @@ pub mod editor;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    windows,
+    allow(dead_code, reason = "Windows has no native menu to apply")
+)]
 pub struct ShortcutBinding {
     id: String,
     action: String,
@@ -62,6 +66,20 @@ fn accelerator(binding: &ShortcutBinding) -> Result<String, String> {
     Ok(parts.join("+"))
 }
 
+/// On Windows a native menu would become a menu bar inside the window, and the shortcuts it
+/// carries are already handled by the web UI, so no menu is installed there.
+#[cfg(windows)]
+fn apply_menu(
+    _app: &tauri::AppHandle,
+    _bindings: &[ShortcutBinding],
+    _capturing: bool,
+    _context: &str,
+    _editing: bool,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
 fn apply_menu(
     app: &tauri::AppHandle,
     bindings: &[ShortcutBinding],

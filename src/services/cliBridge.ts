@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { v4 as uuid } from "uuid";
+import { joinPath } from "../platform";
 import { Workspace, WorkspaceRepo, GitStatus } from "../types";
 import { normalizeRepoScripts } from "../utils";
 import { isCatalogAgent } from "./agents";
@@ -79,11 +80,11 @@ async function workspaceInput(value: unknown, existing?: Workspace): Promise<Wor
   if (input.repos !== undefined) {
     if (!Array.isArray(input.repos))
       throw new OperationError("invalid_params", "repos must be an array.");
-    const home = (await homeDir()).replace(/\/$/, "");
+    const home = await homeDir();
     repos = input.repos.map((value): WorkspaceRepo => {
       const repo = object(value, ["id", "name", "localPath", "worktreeBasePath", "scripts"]);
-      const localPath = text(repo.localPath).replace(/\/+$/, "");
-      const name = repo.name === undefined ? localPath.split("/").pop()! : text(repo.name);
+      const localPath = text(repo.localPath).replace(/[\\/]+$/, "");
+      const name = repo.name === undefined ? localPath.split(/[\\/]/).pop()! : text(repo.name);
       const previous = existing?.repos.find((item) => item.localPath === localPath);
       const id = repo.id === undefined ? (previous?.id ?? uuid()) : text(repo.id);
       if (repo.id !== undefined && !existing?.repos.some((item) => item.id === id))
@@ -101,10 +102,16 @@ async function workspaceInput(value: unknown, existing?: Workspace): Promise<Wor
         worktreeBasePath:
           repo.worktreeBasePath === undefined
             ? (previous?.worktreeBasePath ??
-              `${home}/Documents/.worktreemanager/worktrees/${name
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/^-|-$/g, "")}`)
+              joinPath(
+                home,
+                "Documents",
+                ".worktreemanager",
+                "worktrees",
+                name
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "-")
+                  .replace(/^-|-$/g, "")
+              ))
             : text(repo.worktreeBasePath),
       };
     });

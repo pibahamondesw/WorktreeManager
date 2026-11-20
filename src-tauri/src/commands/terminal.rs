@@ -296,7 +296,7 @@ impl TerminalSession {
     /// Signal the whole process group (the PTY child leads its own session) after `delay`, so
     /// commands a script started stop too, while the scrollback stays available for review.
     fn interrupt_after(&self, delay: Duration) {
-        let Some(pid) = self.pid.and_then(|pid| libc::pid_t::try_from(pid).ok()) else {
+        let Some(pid) = self.pid else {
             return;
         };
         let status = self.status.clone();
@@ -306,10 +306,10 @@ impl TerminalSession {
             if !running() {
                 return;
             }
-            unsafe { libc::killpg(pid, libc::SIGTERM) };
+            let _ = crate::platform::signal_tree(pid, false);
             thread::sleep(KILL_GRACE * 4);
             if running() {
-                unsafe { libc::killpg(pid, libc::SIGKILL) };
+                let _ = crate::platform::signal_tree(pid, true);
             }
         });
     }
@@ -986,6 +986,40 @@ mod tests {
         .unwrap();
         session.interrupt_after(Duration::ZERO);
         rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(matches!(session.status(), TermStatus::Exited { .. }));
+        session.terminate();
+    }
+
+    #[test]
+    fn interrupting_a_script_that_ignores_the_polite_signal_kills_it() {
+        let spec = LaunchSpec {
+            program: "/bin/sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "trap '' TERM; echo ready; while :; do sleep 1; done".to_string(),
+            ],
+            env: vec![],
+            env_remove: vec![],
+            cwd: "/tmp".to_string(),
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut session = TerminalSession::spawn(&spec, "setup:api", 80, 24, move |code| {
+            let _ = tx.send(code);
+        })
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !session
+            .scrollback
+            .lock()
+            .unwrap()
+            .replay()
+            .contains("ready")
+        {
+            assert!(Instant::now() < deadline, "script did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+        session.interrupt_after(Duration::ZERO);
+        rx.recv_timeout(Duration::from_secs(20)).unwrap();
         assert!(matches!(session.status(), TermStatus::Exited { .. }));
         session.terminate();
     }

@@ -9,6 +9,12 @@ describe("defaultVaultPath", () => {
   it("tolerates a trailing slash on home", () => {
     expect(defaultVaultPath("/Users/pedro/")).toBe("/Users/pedro/Documents/worktreemanager-vault");
   });
+
+  it("keeps Windows separators", () => {
+    expect(defaultVaultPath("C:\\Users\\pedro")).toBe(
+      "C:\\Users\\pedro\\Documents\\worktreemanager-vault"
+    );
+  });
 });
 
 describe("taskLogsPath", () => {
@@ -18,6 +24,10 @@ describe("taskLogsPath", () => {
 
   it("strips trailing slashes", () => {
     expect(taskLogsPath({ enabled: true, path: "/v/vault/" })).toBe("/v/vault/task-logs");
+  });
+
+  it("keeps Windows separators", () => {
+    expect(taskLogsPath({ enabled: true, path: "C:\\vault\\" })).toBe("C:\\vault\\task-logs");
   });
 
   it("returns null when disabled", () => {

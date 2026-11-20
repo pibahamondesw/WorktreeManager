@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CheckIcon, ChevronDownIcon } from "./Icons";
+import { IS_WINDOWS } from "../../platform";
 import { EditorApp, EDITOR_APPS } from "../../types";
 
 interface EditorPickerProps {
@@ -49,7 +50,7 @@ export function EditorPicker({ value, onChange }: EditorPickerProps) {
       {open && (
         <div className="absolute right-0 top-9 z-50 w-60 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
           {EDITOR_APPS.map((app) => {
-            const installed = app.id === "vscode-web" ? true : installedMap[app.id];
+            const installed = app.id === "vscode-web" && !IS_WINDOWS ? true : installedMap[app.id];
             const isSelected = app.id === value;
             return (
               <button

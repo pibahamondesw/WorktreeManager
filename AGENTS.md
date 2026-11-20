@@ -1,6 +1,6 @@
 # Working on WorktreeManager
 
-WorktreeManager is a macOS app for managing Git worktrees and Linear issues. It groups repositories into workspaces, creates tasks spanning one or more repositories, and opens them in external editors or embedded editor and AI agent sessions. Built with Tauri 2, Rust, React and TypeScript.
+WorktreeManager is a desktop app for macOS and Windows for managing Git worktrees and Linear issues. It groups repositories into workspaces, creates tasks spanning one or more repositories, and opens them in external editors or embedded editor and AI agent sessions. Built with Tauri 2, Rust, React and TypeScript.
 
 Keep changes small and follow nearby patterns. Prioritize user data, consistent task lifecycles, then UI convenience.
 
@@ -28,6 +28,7 @@ Keep changes small and follow nearby patterns. Prioritize user data, consistent 
 
 ## Platform and UI conventions
 
+- Operating-system differences live in [platform.rs](src-tauri/src/platform.rs) and [platform.ts](src/platform.ts); other code calls their helpers instead of `libc` or `std::os::unix`. Windows runs the login-shell scripts with Git Bash, and its CI job only checks that the app builds and boots, so keep Unix-only code behind `cfg(unix)`.
 - GUI launches have a minimal environment. Use macOS `open -a` for GUI editors and the shared [login-shell launcher](src-tauri/src/commands/login_shell.rs) for CLI launches and probes. Pass dynamic values as launcher arguments, never as script text.
 - Use nested raw GraphQL queries for bulk Linear reads; SDK relation traversal creates N+1 requests.
 - Reuse UI primitives and theme tokens; keep chrome minimal and keyboard navigation usable. Errors, paths and branch names must remain selectable. Use `data-drag-region` with [useWindowDrag](src/hooks/useWindowDrag.ts), not Tauri's built-in drag handler or CSS app regions: native drags lose mouseup events and break subsequent clicks. Keep interactive controls out of drag handling and app shortcuts out of text/terminal input.

@@ -1,3 +1,4 @@
+import { IS_WINDOWS } from "./platform";
 import type { ShortcutOverrides } from "./shortcuts/catalog";
 /** A peer repo that belongs to a Workspace. No member is privileged. */
 export interface WorkspaceRepo {
@@ -184,7 +185,7 @@ export const EDITOR_REQUIREMENTS: Record<
   { apps: string[]; clis: string[]; optionalClis: string[] }
 > = {
   cursor: { apps: ["Cursor"], clis: [], optionalClis: [] },
-  "vscode-web": { apps: [], clis: [], optionalClis: [] },
+  "vscode-web": { apps: [], clis: IS_WINDOWS ? ["code"] : [], optionalClis: [] },
   "claude-code": { apps: [], clis: ["claude"], optionalClis: [] },
   codex: { apps: [], clis: ["codex"], optionalClis: [] },
   "opencode-web": { apps: [], clis: ["opencode"], optionalClis: [] },

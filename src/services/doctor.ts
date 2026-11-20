@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { IS_WINDOWS } from "../platform";
 import { EditorApp, EDITOR_REQUIREMENTS } from "../types";
 import { validateLinearToken } from "./linear";
 import { editorProbe, EditorRuntime } from "./codeEditor";
@@ -101,9 +102,48 @@ interface ToolMeta {
 const BASE_CLIS = ["git", "gh", "node", "npm", "pnpm", "yarn", "bun", "doppler"];
 
 /** Display order; anything unlisted sorts last. */
-const CLI_ORDER = ["git", "gh", "node", "npm", "pnpm", "yarn", "bun", "doppler", "claude", "zed"];
+const CLI_ORDER = [
+  "git",
+  "gh",
+  "node",
+  "npm",
+  "pnpm",
+  "yarn",
+  "bun",
+  "doppler",
+  "code",
+  "claude",
+  "zed",
+];
 
-const CLI_TOOLS: Record<string, ToolMeta> = {
+/** Windows has no Homebrew: winget packages, or the tool's own Windows installer. */
+const WINDOWS_TOOLS: Record<string, Partial<ToolMeta>> = {
+  git: { install: "winget install --id Git.Git -e", url: "https://git-scm.com/downloads/win" },
+  gh: { install: "winget install --id GitHub.cli -e" },
+  node: { install: "winget install --id OpenJS.NodeJS.LTS -e" },
+  npm: { install: "winget install --id OpenJS.NodeJS.LTS -e" },
+  pnpm: { install: "winget install --id pnpm.pnpm -e" },
+  yarn: { install: "npm install -g yarn" },
+  bun: { install: "winget install --id Oven-sh.Bun -e" },
+  doppler: { install: "winget install --id Doppler.doppler -e" },
+  code: { install: "winget install --id Microsoft.VisualStudioCode -e" },
+  claude: { install: "irm https://claude.ai/install.ps1 | iex" },
+  codex: { install: "npm install -g @openai/codex" },
+  opencode: { install: "npm install -g opencode-ai" },
+  zed: { install: "winget install --id ZedIndustries.Zed -e" },
+  Cursor: { install: "winget install --id Anysphere.Cursor -e" },
+  Zed: { install: "winget install --id ZedIndustries.Zed -e" },
+  Obsidian: { install: "winget install --id Obsidian.Obsidian -e" },
+};
+
+function forPlatform(tools: Record<string, ToolMeta>): Record<string, ToolMeta> {
+  if (!IS_WINDOWS) return tools;
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, meta]) => [name, { ...meta, ...WINDOWS_TOOLS[name] }])
+  );
+}
+
+const CLI_TOOLS: Record<string, ToolMeta> = forPlatform({
   git: {
     label: "git",
     reason: "Every worktree operation: add, remove, list, status, fetch.",
@@ -175,9 +215,14 @@ const CLI_TOOLS: Record<string, ToolMeta> = {
     install: "brew install --cask zed",
     url: "https://zed.dev/docs/getting-started",
   },
-};
+  code: {
+    label: "VS Code (code)",
+    reason: "Opens each task in desktop VS Code; the embedded editor is not available on Windows.",
+    url: "https://code.visualstudio.com/docs/setup/windows",
+  },
+});
 
-const APP_TOOLS: Record<string, ToolMeta> = {
+const APP_TOOLS: Record<string, ToolMeta> = forPlatform({
   Cursor: {
     label: "Cursor",
     reason: "Your selected editor.",
@@ -195,7 +240,7 @@ const APP_TOOLS: Record<string, ToolMeta> = {
     install: "brew install --cask obsidian",
     url: "https://obsidian.md",
   },
-};
+});
 
 const LINEAR_CHECK_ID = "linear-api-key";
 const LINEAR_REASON =
@@ -254,7 +299,9 @@ export async function runDoctor(
           detail: config.keychainError,
         })
       : checkLinearKeys(config.linearKeys, deps),
-    config.editor === "vscode-web" ? checkEmbeddedEditor(deps.editorProbe) : Promise.resolve(null),
+    config.editor === "vscode-web" && !IS_WINDOWS
+      ? checkEmbeddedEditor(deps.editorProbe)
+      : Promise.resolve(null),
     config.vaultEnabled
       ? Promise.all(
           (["codex", "claude"] as const).map((agent) =>

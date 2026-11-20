@@ -1,19 +1,16 @@
 use tauri::Manager;
 
-#[cfg(unix)]
 use std::sync::Arc;
 
 use commands::automations::actions::circleci;
 
-#[cfg(unix)]
 pub mod cli;
-#[cfg(unix)]
 mod cli_bridge;
 mod commands;
-#[cfg(unix)]
 mod lease;
 mod lifecycle;
 mod menu;
+mod platform;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -42,12 +39,10 @@ pub fn run() {
                 service: app.config().identifier.clone(),
                 account: CIRCLECI_TOKEN_ACCOUNT,
             })));
-            #[cfg(unix)]
             app.manage(
                 cli_bridge::CliBridge::start(cli_bridge::socket_path(&app.config().identifier))
                     .map_err(std::io::Error::other)?,
             );
-            #[cfg(unix)]
             if let Err(error) = start_automations(app.handle()) {
                 log::warn!("Automations are off for this session: {error}");
             }
@@ -207,7 +202,6 @@ pub fn run() {
 }
 
 /// Runs started by the scheduler and by the owner share one executor.
-#[cfg(unix)]
 fn start_automations(app: &tauri::AppHandle) -> Result<(), String> {
     use commands::automations::{actions, routine, scheduler, selector};
     let operations = Arc::new(cli_bridge::AppOperations(app.clone()));
@@ -228,7 +222,6 @@ fn start_automations(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 /// Polls GitHub once a minute for the automations with GitHub event triggers.
-#[cfg(unix)]
 fn start_github_triggers(
     app: &tauri::AppHandle,
     executor: Arc<dyn commands::automations::scheduler::Executor>,
@@ -258,7 +251,6 @@ fn start_github_triggers(
 }
 
 /// Polls Linear once a minute for the automations with Linear event triggers.
-#[cfg(unix)]
 fn start_linear_triggers(
     app: &tauri::AppHandle,
     executor: Arc<dyn commands::automations::scheduler::Executor>,
@@ -324,7 +316,6 @@ impl circleci::SecretItem for KeychainItem {
 }
 
 /// Polls CircleCI once a minute for the automations with CircleCI event triggers.
-#[cfg(unix)]
 fn start_circleci_triggers(
     app: &tauri::AppHandle,
     executor: Arc<dyn commands::automations::scheduler::Executor>,

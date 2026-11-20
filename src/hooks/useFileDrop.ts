@@ -1,5 +1,6 @@
 import { RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { IS_WINDOWS } from "../platform";
 
 interface DropPoint {
   x: number;
@@ -7,11 +8,13 @@ interface DropPoint {
 }
 
 /**
- * On macOS the native drop handler reports positions in view points, which are CSS pixels.
+ * On macOS the native drop handler reports positions in view points, which are CSS pixels; on
+ * Windows they are physical pixels, so they are scaled back by the display scale factor.
  * Hit-testing the topmost element keeps overlays such as modals from passing drops through.
  */
 function contains(element: HTMLElement | null, { x, y }: DropPoint) {
-  const hit = element ? document.elementFromPoint(x, y) : null;
+  const scale = IS_WINDOWS ? window.devicePixelRatio || 1 : 1;
+  const hit = element ? document.elementFromPoint(x / scale, y / scale) : null;
   return !!hit && element!.contains(hit);
 }
 

@@ -1,15 +1,8 @@
 use std::{
     collections::HashMap,
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{BufRead, BufReader, Write},
-    os::{
-        fd::AsRawFd,
-        unix::{
-            fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-            net::{UnixListener, UnixStream},
-        },
-    },
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
@@ -24,6 +17,7 @@ use tauri::{ipc::Channel, AppHandle, Manager, Runtime, State};
 use crate::commands::automations::routine::OperationsBridge;
 
 use crate::lease::{self, Leases};
+use crate::platform::{self, UnixListener, UnixStream};
 
 pub const VERSION: u32 = 1;
 pub const MAX_MESSAGE: u64 = 1024 * 1024;
@@ -73,8 +67,7 @@ pub struct CliBridge {
 }
 
 pub fn socket_path(identifier: &str) -> PathBuf {
-    PathBuf::from(format!("/tmp/wtm-{}", unsafe { libc::geteuid() }))
-        .join(format!("{identifier}.sock"))
+    platform::socket_dir().join(format!("{identifier}.sock"))
 }
 
 pub fn failure(code: &str, message: &str) -> Value {
@@ -100,35 +93,12 @@ fn send(stream: &mut UnixStream, value: &Value) -> std::io::Result<()> {
     stream.flush()
 }
 
-fn prepare_directory(path: &Path) -> Result<(), String> {
-    match fs::DirBuilder::new().mode(0o700).create(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(_) => return Err("Cannot create socket directory".into()),
-    }
-    let metadata = fs::symlink_metadata(path).map_err(|_| "Cannot inspect socket directory")?;
-    if !metadata.is_dir()
-        || metadata.uid() != unsafe { libc::geteuid() }
-        || metadata.mode() & 0o077 != 0
-    {
-        return Err("Socket directory must be private and owned by the current user".into());
-    }
-    Ok(())
-}
-
 impl CliBridge {
     pub fn start(socket: PathBuf) -> Result<Self, String> {
-        prepare_directory(socket.parent().ok_or("Invalid socket directory")?)?;
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(socket.with_extension("lock"))
+        platform::prepare_private_dir(socket.parent().ok_or("Invalid socket directory")?)?;
+        let lock = platform::open_lock_file(&socket.with_extension("lock"))
             .map_err(|_| "Cannot open instance lock")?;
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if !platform::try_lock_exclusive(&lock) {
             return Err("WorktreeManager is already running for this profile".into());
         }
         match fs::remove_file(&socket) {
@@ -137,8 +107,7 @@ impl CliBridge {
             Err(_) => return Err("Cannot remove stale socket".into()),
         }
         let listener = UnixListener::bind(&socket).map_err(|_| "Cannot bind local socket")?;
-        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))
-            .map_err(|_| "Cannot protect socket")?;
+        platform::set_mode(&socket, 0o600).map_err(|_| "Cannot protect socket")?;
         listener
             .set_nonblocking(true)
             .map_err(|_| "Cannot configure socket")?;
@@ -480,6 +449,8 @@ pub fn cli_bridge_complete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::prepare_private_dir as prepare_directory;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     static NEXT_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 

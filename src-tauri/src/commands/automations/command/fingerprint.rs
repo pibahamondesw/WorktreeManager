@@ -1,6 +1,4 @@
-use std::ffi::OsStr;
 use std::fs;
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -32,7 +30,9 @@ impl GitFingerprint {
         changes.update(&unstaged);
         for path in untracked.split(|&byte| byte == 0).filter(|p| !p.is_empty()) {
             changes.update(path);
-            changes.update(content_digest(&worktree.join(OsStr::from_bytes(path))));
+            changes.update(content_digest(
+                &worktree.join(crate::platform::os_from_bytes(path)),
+            ));
         }
         Ok(Self {
             head: git_line(worktree, &["rev-parse", "--verify", "--quiet", "HEAD"]),
