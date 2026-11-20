@@ -1074,53 +1074,6 @@ describe("ChatPane", () => {
     );
   });
 
-  it("lists the worktree's conversations, resumes one and renames another", async () => {
-    mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
-      if (command === "chat_open") return Promise.resolve(snapshot());
-      if (command === "chat_sessions" && args?.agent === "codex")
-        return Promise.reject("codex app-server crashed");
-      if (command === "chat_sessions")
-        return Promise.resolve({
-          sessions: [
-            { id: "c1", title: "Current work", updatedAt: 20, current: true },
-            { id: "c0", title: "Older work", updatedAt: 10, current: false },
-          ],
-          canRename: true,
-          canArchive: false,
-        });
-      return Promise.resolve(undefined);
-    });
-    render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
-    await screen.findByText("Fix the bug");
-    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
-    const list = await screen.findByRole("list", { name: "Conversations" });
-    expect(within(list).queryByRole("button", { name: "Archive" })).toBeNull();
-    expect(within(list).getByRole("button", { name: /Current work/ })).toBeDisabled();
-    expect(screen.getByText("Codex: codex app-server crashed")).toBeInTheDocument();
-
-    fireEvent.click(within(list).getAllByRole("button", { name: "Rename" })[1]);
-    const name = screen.getByLabelText("Conversation name");
-    fireEvent.change(name, { target: { value: "Renamed" } });
-    fireEvent.submit(name.closest("form")!);
-    await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith("chat_session_rename", {
-        taskId: "t1",
-        agent: "claude",
-        folders: ["/wt/a"],
-        id: "c0",
-        title: "Renamed",
-      })
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: /Older work/ }));
-    await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith(
-        "chat_open",
-        expect.objectContaining({ mode: "restart", conversation: "c0" })
-      )
-    );
-  });
-
   it("summarizes each turn per repository and reviews the conversation's changes", async () => {
     const file = (folder: string, path: string, additions: number, deletions: number) => ({
       folder,
@@ -1691,16 +1644,8 @@ it.each(["claude", "codex"] as const)(
 );
 
 describe("switching agents", () => {
-  it("offers only installed agents and lists only their conversations", async () => {
+  it("offers only installed agents", async () => {
     mocks.catalog = AGENT_CATALOG.map((agent) => ({ ...agent, installed: agent.id === "claude" }));
-    mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
-      if (command === "chat_open") return Promise.resolve(snapshot());
-      if (command === "chat_sessions")
-        return args?.agent === "claude"
-          ? Promise.resolve({ sessions: [], canRename: false, canArchive: false })
-          : Promise.reject("codex CLI not found");
-      return Promise.resolve(undefined);
-    });
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} onSwitchAgent={vi.fn()} />);
     await screen.findByText("Fix the bug");
     fireEvent.click(screen.getByRole("button", { name: "Agent: Claude Code" }));
@@ -1708,12 +1653,6 @@ describe("switching agents", () => {
       expect(
         within(screen.getByRole("listbox", { name: "Agent" })).getAllByRole("option")
       ).toHaveLength(1)
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
-    expect(await screen.findByText("No conversations in this worktree yet.")).toBeInTheDocument();
-    expect(mocks.invoke).not.toHaveBeenCalledWith(
-      "chat_sessions",
-      expect.objectContaining({ agent: "codex" })
     );
   });
 
@@ -1828,41 +1767,5 @@ describe("switching agents", () => {
       "Earlier messages are from Claude Code."
     );
     expect(screen.getAllByRole("button", { name: "Rewind or fork" })).toHaveLength(1);
-  });
-
-  it("resumes another agent's conversation from the shared list", async () => {
-    const onSwitchAgent = vi.fn();
-    mocks.invoke.mockImplementation((command: string, args?: { agent?: string }) => {
-      if (command === "chat_open") return Promise.resolve(snapshot());
-      if (command === "chat_sessions")
-        return Promise.resolve({
-          sessions:
-            args?.agent === "codex"
-              ? [{ id: "th1", title: "Codex thread", updatedAt: 30, current: true }]
-              : [{ id: "c1", title: "Claude session", updatedAt: 20, current: true }],
-          canRename: false,
-          canArchive: false,
-        });
-      return Promise.resolve(undefined);
-    });
-    render(
-      <ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} onSwitchAgent={onSwitchAgent} />
-    );
-    await screen.findByText("Fix the bug");
-    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
-    const list = await screen.findByRole("list", { name: "Conversations" });
-    const rows = within(list).getAllByRole("button");
-    expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringContaining("Codex thread"),
-      expect.stringContaining("Claude session"),
-    ]);
-    expect(rows[0]).toBeEnabled();
-    expect(rows[1]).toBeDisabled();
-    fireEvent.click(rows[0]);
-    expect(onSwitchAgent).toHaveBeenCalledWith({
-      agent: "codex",
-      mode: "restart",
-      conversation: "th1",
-    });
   });
 });

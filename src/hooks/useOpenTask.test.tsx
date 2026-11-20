@@ -271,11 +271,18 @@ describe("useOpenTask", () => {
       );
     });
 
-    it("asks when another agent is requested explicitly", async () => {
+    it("opens another agent's chat over the live chat without asking: it becomes a tab", async () => {
       live({ kind: "chat", agent: "claude" });
       const { result } = setup("cursor");
-      await pendingOpen(result, { agent: "codex" });
-      expect(result.current.surfaceSwitch?.requested).toEqual({ kind: "chat", agent: "codex" });
+      act(() => void result.current.openTask(task, { agent: "codex" }));
+      await waitFor(() =>
+        expect(result.current.openedTask).toEqual({
+          taskId: "t1",
+          surface: { kind: "chat", agent: "codex" },
+        })
+      );
+      expect(result.current.surfaceSwitch).toBeNull();
+      expect(surfaces.stop).not.toHaveBeenCalled();
     });
 
     it("cancels the question when its task is deleted", async () => {

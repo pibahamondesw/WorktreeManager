@@ -22,9 +22,11 @@ import { AgentId } from "../../types";
 interface SessionListProps {
   open: boolean;
   taskId: string;
-  /** The agent the chat runs now; only its conversation is current. */
+  /** The agent new conversations start with. */
   agent: AgentId;
   folders: string[];
+  /** `agent:conversation` keys of the conversations open in tabs, which are not listed. */
+  openInTabs: string[];
   onClose: () => void;
   onPick: (agent: AgentId, id: string) => void;
   onNew: () => void;
@@ -83,6 +85,7 @@ export function SessionList({
   taskId,
   agent,
   folders,
+  openInTabs,
   onClose,
   onPick,
   onNew,
@@ -134,6 +137,10 @@ export function SessionList({
     void act(() => chatSessionRename(taskId, owner, folders, id, title));
   };
 
+  const closed = list?.sessions.filter(
+    (session) => !openInTabs.includes(`${session.agent}:${session.id}`)
+  );
+
   const isRenaming = (session: AgentSession) =>
     renaming?.agent === session.agent && renaming.id === session.id;
 
@@ -163,7 +170,7 @@ export function SessionList({
       ) : (
         <button
           type="button"
-          disabled={busy || session.current}
+          disabled={busy}
           onClick={() => onPick(session.agent, session.id)}
           className="flex-1 min-w-0 text-left cursor-pointer disabled:cursor-default"
         >
@@ -177,7 +184,6 @@ export function SessionList({
               <AgentIcon agent={session.agent} size={10} />
               {describeAgent(session.agent, catalog).label}
             </span>
-            {session.current ? "Current · " : ""}
             {formatUpdated(session.updatedAt)}
           </span>
         </button>
@@ -232,12 +238,16 @@ export function SessionList({
           <SpinnerIcon size={12} /> Loading conversations…
         </p>
       )}
-      {list && list.sessions.length === 0 && (
-        <p className="px-6 py-4 text-xs text-text-muted">No conversations in this worktree yet.</p>
+      {closed && closed.length === 0 && (
+        <p className="px-6 py-4 text-xs text-text-muted">
+          {list?.sessions.length
+            ? "Every conversation in this worktree is open in a tab."
+            : "No conversations in this worktree yet."}
+        </p>
       )}
-      {list && list.sessions.length > 0 && (
+      {closed && closed.length > 0 && (
         <ul aria-label="Conversations" className="py-1">
-          {list.sessions.map(row)}
+          {closed.map(row)}
         </ul>
       )}
     </Modal>

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Asterisk, SquareTerminal, type LucideIcon } from "lucide-react";
 import { AgentId } from "../types";
+import { AgentGlyph, ClaudeLogo, OpenAILogo } from "../components/ui/agentLogos";
 
 type ForkMethod = "inSession" | "relaunch";
 
@@ -43,35 +43,38 @@ interface AgentPresentation {
   primaryUsageWindows?: string[];
   alertHooksConfig?: string;
   alertHooksTrust?: string;
-  icon?: LucideIcon;
+  icon?: AgentGlyph;
   /** Static Tailwind classes in the agent's color, so the active agent is obvious at a glance. */
-  tone: { chip: string; focus: string };
+  tone: { chip: string; focus: string; text: string };
 }
 
 const NEUTRAL_TONE: AgentPresentation["tone"] = {
   chip: "bg-bg-tertiary text-text-secondary hover:bg-bg-hover",
   focus: "focus-within:border-accent",
+  text: "text-text-secondary",
 };
 
 const PRESENTATION: Record<AgentId, AgentPresentation> = {
   claude: {
     primaryUsageWindows: ["five_hour", "seven_day"],
     alertHooksConfig: "~/.claude/settings.json",
-    icon: Asterisk,
+    icon: ClaudeLogo,
     tone: {
       chip: "bg-agent-claude/15 text-agent-claude hover:bg-agent-claude/25",
       focus: "focus-within:border-agent-claude",
+      text: "text-agent-claude",
     },
   },
   codex: {
     planUrl: "https://learn.chatgpt.com/docs/pricing",
     alertHooksConfig: "~/.codex/hooks.json",
-    icon: SquareTerminal,
+    icon: OpenAILogo,
     alertHooksTrust:
       "Run /hooks in the Codex chat or CLI to review and trust new or changed hooks.",
     tone: {
       chip: "bg-agent-codex/15 text-agent-codex hover:bg-agent-codex/25",
       focus: "focus-within:border-agent-codex",
+      text: "text-agent-codex",
     },
   },
 };

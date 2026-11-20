@@ -432,7 +432,7 @@ describe("automations overlay", () => {
 
     expect(view.queryByRole("dialog", { name: "Automations" })).toBeNull();
     expect(await view.findByText("Task surface")).toBeTruthy();
-    expect(takeRequestedChatIntent("task", "claude")).toEqual({
+    expect(takeRequestedChatIntent("task")).toEqual({
       agent: "claude",
       mode: "restart",
       conversation: "c1",

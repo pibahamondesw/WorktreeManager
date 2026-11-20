@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
@@ -14,7 +15,6 @@ import { Composer } from "./Composer";
 import { ApprovalActions } from "./ApprovalActions";
 import { ApprovalDraft } from "./approval";
 import { PendingRequestCard } from "./PendingRequestCard";
-import { SessionList } from "./SessionList";
 import { TodoPanel } from "./TodoPanel";
 import { UsageDialog } from "./UsageDialog";
 import { HooksDialog } from "./HooksDialog";
@@ -53,7 +53,11 @@ const STICK_TO_BOTTOM_THRESHOLD_PX = 40;
 interface ChatPaneProps {
   taskId: string;
   agent: AgentId;
+  /** The chat tab the pane shows; the main one when omitted. */
+  tab?: string;
   folders: string[];
+  /** Where the pane's controls go, such as the tab bar; above the chat when omitted. */
+  toolbar?: HTMLElement | null;
   onStatusChange?: (status: SessionStatus) => void;
   /** Hands the chat to another agent; the pane remounts for it. */
   onSwitchAgent?: (intent: ChatOpenIntent) => void;
@@ -87,12 +91,15 @@ function turnEnds(items: ChatItem[], changes: ChatChanges | null) {
 export function ChatPane({
   taskId,
   agent,
+  tab,
   folders,
+  toolbar,
   onStatusChange,
   onSwitchAgent,
   takeOpenIntent,
 }: ChatPaneProps) {
-  const session = useChatSession(taskId, agent, folders, takeOpenIntent);
+  const session = useChatSession(taskId, agent, folders, takeOpenIntent, tab);
+  const chatKey = `${taskId}:${agent}${tab ? `@${tab}` : ""}`;
   const catalog = useAgentCatalog();
   const descriptor = describeAgent(agent, catalog);
   const agentLabel = descriptor.label;
@@ -101,11 +108,10 @@ export function ChatPane({
   const [responding, setResponding] = useState<string | null>(null);
   const respondingRef = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [hooksSession, setHooksSession] = useState<string | null>(null);
   const [handoffTarget, setHandoffTarget] = useState<AgentId | null>(null);
-  const sessionKey = `${taskId}:${agent}:${snapshot.generation}`;
+  const sessionKey = `${chatKey}:${snapshot.generation}`;
   const [historyPending, setHistoryPending] = useState<string | null>(null);
   const [historyItem, setHistoryItem] = useState<{
     item: ChatItem;
@@ -113,9 +119,9 @@ export function ChatPane({
     sessionKey: string;
     action: Exclude<HistoryAction, "conversation">;
   } | null>(null);
-  const changes = useChatChanges(taskId, agent, snapshot);
+  const changes = useChatChanges(taskId, agent, snapshot, tab);
   const [changesScope, setChangesScope] = useState<ChangesScope | null>(null);
-  const [diffThreads, setDiffThreads] = useDiffThreads(`${taskId}:${agent}`);
+  const [diffThreads, setDiffThreads] = useDiffThreads(chatKey);
   const [preview, setPreview] = useState<(MarkdownPreviewRequest & { generation: number }) | null>(
     null
   );
@@ -160,7 +166,7 @@ export function ChatPane({
     )
   );
   const historyDisabled =
-    status.kind !== "idle" || pending.length > 0 || historyPending === `${taskId}:${agent}`;
+    status.kind !== "idle" || pending.length > 0 || historyPending === chatKey;
   const approvalKey = (id: string) => `${snapshot.generation}:${id}`;
   const approvalDraft = (id: string) => approvalDrafts[approvalKey(id)] ?? {};
   const changeApprovalDraft = (id: string, draft: ApprovalDraft) =>
@@ -301,57 +307,43 @@ export function ChatPane({
 
   const pickHistory = useCallback(
     (item: ChatItem, action: HistoryAction) => {
-      const sessionKey = `${taskId}:${agent}`;
       if (action === "conversation") {
-        setHistoryPending(sessionKey);
+        setHistoryPending(chatKey);
         void run(() => changeHistory(item.id, action)).finally(() => {
-          setHistoryPending((current) => (current === sessionKey ? null : current));
+          setHistoryPending((current) => (current === chatKey ? null : current));
         });
       } else {
-        setHistoryItem({ item, action, generation: snapshot.generation, sessionKey });
+        setHistoryItem({ item, action, generation: snapshot.generation, sessionKey: chatKey });
       }
     },
-    [taskId, agent, run, changeHistory, snapshot.generation]
+    [chatKey, run, changeHistory, snapshot.generation]
+  );
+
+  const paneControls = (
+    <>
+      {conversationFiles.length > 0 && (
+        <Button
+          variant="ghost"
+          onClick={() => setChangesScope("conversation")}
+          className="h-7 px-2 text-xs"
+        >
+          Changes <LineCounts {...totals(conversationFiles)} />
+        </Button>
+      )}
+      <AgentUsageIndicator agent={agent} />
+    </>
   );
 
   return (
     <MarkdownPreviewContext.Provider value={previewContext}>
       <div className="relative flex-1 min-h-0 flex flex-col bg-bg-primary">
-        <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 px-3 py-1">
-          {conversationFiles.length > 0 && (
-            <Button
-              variant="ghost"
-              onClick={() => setChangesScope("conversation")}
-              className="h-7 px-2 text-xs"
-            >
-              Changes <LineCounts {...totals(conversationFiles)} />
-            </Button>
-          )}
-          <AgentUsageIndicator agent={agent} />
-          <Button
-            variant="ghost"
-            onClick={() => setSessionsOpen(true)}
-            className="h-7 px-2 text-xs"
-          >
-            Conversations
-          </Button>
-        </div>
-        <SessionList
-          open={sessionsOpen}
-          taskId={taskId}
-          agent={agent}
-          folders={folders}
-          onClose={() => setSessionsOpen(false)}
-          onPick={(owner, id) => {
-            setSessionsOpen(false);
-            if (owner === agent) void session.resume(id);
-            else switchTo({ agent: owner, mode: "restart", conversation: id });
-          }}
-          onNew={() => {
-            setSessionsOpen(false);
-            void session.startFresh();
-          }}
-        />
+        {toolbar ? (
+          createPortal(paneControls, toolbar)
+        ) : (
+          <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 px-3 py-1">
+            {paneControls}
+          </div>
+        )}
         <div
           ref={scrollRef}
           onScroll={(e) => onScroll(e.currentTarget)}
@@ -486,6 +478,7 @@ export function ChatPane({
           <ChangesPanel
             taskId={taskId}
             agent={agent}
+            tab={tab}
             changes={changes}
             prompts={Object.fromEntries(
               items.filter((item) => item.kind === "user").map((item) => [item.id, item.text])
@@ -558,7 +551,7 @@ export function ChatPane({
         />
         {historyItem &&
           historyItem.generation === snapshot.generation &&
-          historyItem.sessionKey === `${taskId}:${agent}` && (
+          historyItem.sessionKey === chatKey && (
             <HistoryDialog
               key={`${historyItem.generation}:${historyItem.item.id}:${historyItem.action}`}
               item={historyItem.item}

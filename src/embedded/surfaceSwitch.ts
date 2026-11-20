@@ -10,8 +10,9 @@ export type SurfaceSwitchChoice = "keep" | "replace" | "cancel";
 
 const agentOf = (surface: TaskSurface) => ("agent" in surface ? surface.agent : null);
 
+/** Chats are one surface whatever their agent: each conversation is a tab of it. */
 const sameSurface = (a: TaskSurface, b: TaskSurface) =>
-  a.kind === b.kind && agentOf(a) === agentOf(b);
+  a.kind === b.kind && (a.kind === "chat" || agentOf(a) === agentOf(b));
 
 /**
  * A task keeps one live embedded surface. Opening a different embedded surface over a live one

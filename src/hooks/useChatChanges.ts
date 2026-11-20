@@ -3,7 +3,12 @@ import { ChatChanges, chatChanges, ChatSnapshot } from "../services/chat";
 import { AgentId } from "../types";
 
 /** Turn and conversation changes, refreshed whenever the agent settles. */
-export function useChatChanges(taskId: string, agent: AgentId, snapshot: ChatSnapshot) {
+export function useChatChanges(
+  taskId: string,
+  agent: AgentId,
+  snapshot: ChatSnapshot,
+  tab?: string
+) {
   const [changes, setChanges] = useState<ChatChanges | null>(null);
   const settled = snapshot.status.kind !== "busy" && snapshot.status.kind !== "starting";
   const userItems = snapshot.items.filter((item) => item.kind === "user").length;
@@ -11,13 +16,13 @@ export function useChatChanges(taskId: string, agent: AgentId, snapshot: ChatSna
   useEffect(() => {
     if (!settled) return;
     let cancelled = false;
-    chatChanges(taskId, agent)
+    chatChanges(taskId, agent, tab)
       .then((result) => !cancelled && setChanges(result))
       .catch(() => !cancelled && setChanges(null));
     return () => {
       cancelled = true;
     };
-  }, [taskId, agent, snapshot.generation, settled, userItems]);
+  }, [taskId, agent, tab, snapshot.generation, settled, userItems]);
 
   return changes;
 }

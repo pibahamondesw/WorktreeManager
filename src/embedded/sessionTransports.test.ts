@@ -111,11 +111,38 @@ describe("sessionRegistry.stop", () => {
   it.each([
     [{ kind: "editor" }, "vscode_close", { taskId: "t1" }],
     [{ kind: "opencode" }, "opencode_close", { taskId: "t1" }],
-    [{ kind: "chat", agent: "claude" }, "chat_stop", { taskId: "t1", agent: "claude" }],
     [{ kind: "terminal", agent: "codex" }, "terminal_stop", { taskId: "t1", agent: "codex" }],
   ] as const)("closes %o through its own close command", async (surface, command, args) => {
     await sessionRegistry.stop("t1", surface);
     expect(invoke).toHaveBeenCalledWith(command, args);
+  });
+
+  it("stops every chat tab of the task, whatever agent the surface names", async () => {
+    const chat = (taskId: string, agent: string, tab?: string, origin = "user") => ({
+      sessionId: `${taskId}-${agent}-${tab}`,
+      taskId,
+      agent,
+      tab,
+      origin,
+      status: { kind: "idle" },
+    });
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_list"
+          ? [
+              chat("t1", "codex"),
+              chat("t1", "claude", "a1"),
+              chat("t1", "claude", undefined, "automation"),
+              chat("t2", "claude"),
+            ]
+          : undefined
+      )
+    );
+    await sessionRegistry.stop("t1", { kind: "chat", agent: "claude" });
+    expect(invoke.mock.calls.filter(([command]) => command === "chat_stop")).toEqual([
+      ["chat_stop", { taskId: "t1", agent: "codex", tab: undefined }],
+      ["chat_stop", { taskId: "t1", agent: "claude", tab: "a1" }],
+    ]);
   });
 
   it("has nothing to close for an external editor", async () => {

@@ -46,10 +46,13 @@ it.each([
   expect(glyphName(renderedSvg(<FileTypeIcon path={path} />))).toBe(glyph);
 });
 
-it("shows each agent's icon and a generic one for agents without their own", () => {
-  expect(glyphName(renderedSvg(<AgentIcon agent="claude" />))).toBe("lucide-asterisk");
+it("shows each agent's logo and a generic icon for agents without their own", () => {
+  const claude = renderedSvg(<AgentIcon agent="claude" size={8} className="text-accent" />);
+  expect(claude).toHaveClass("agent-logo-claude", "text-accent");
+  expect(claude.getAttribute("width")).toBe("0.5rem");
+  expect(claude.getAttribute("aria-hidden")).toBe("true");
   cleanup();
-  expect(glyphName(renderedSvg(<AgentIcon agent="codex" />))).toBe("lucide-square-terminal");
+  expect(renderedSvg(<AgentIcon agent="codex" />)).toHaveClass("agent-logo-openai");
   cleanup();
   expect(glyphName(renderedSvg(<AgentIcon agent="some-new-agent" />))).toBe("lucide-bot");
 });

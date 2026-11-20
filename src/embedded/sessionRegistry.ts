@@ -11,6 +11,8 @@ export type SurfaceOf<Kind extends SessionKind> = Extract<TaskSurface, { kind: K
 export interface SessionState<Surface extends TaskSurface = TaskSurface> {
   taskId: string;
   surface: Surface;
+  /** Tells apart sessions of one surface that run side by side, such as chat tabs. */
+  instance?: string;
   status: TerminalStatus | null;
 }
 
@@ -34,8 +36,8 @@ interface Entry {
   stamp: number;
 }
 
-const sessionKey = ({ taskId, surface }: SessionState) =>
-  "agent" in surface ? `${taskId}:${surface.agent}` : taskId;
+const sessionKey = ({ taskId, surface, instance }: SessionState) =>
+  ["agent" in surface ? `${taskId}:${surface.agent}` : taskId, instance].filter(Boolean).join("@");
 
 /** Errors outrank running sessions; otherwise any live session keeps the task running. */
 function statusesByTask(states: SessionState[]): Record<string, TerminalStatus> {
