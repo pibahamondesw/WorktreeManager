@@ -109,7 +109,7 @@ it("omits the PR links when the issue has none", () => {
 it("shows the full title and branch name on hover", () => {
   renderHeader(undefined, null, { ...task, linearIssueTitle: "A long title" });
   expect(screen.getByTitle("A long title")).toHaveClass("truncate");
-  expect(screen.getByTitle("feat/x")).toHaveClass("truncate");
+  expect(screen.getByTitle("feat/x")).toHaveTextContent("feat/x");
   expect(screen.getByTitle("feat/x").parentElement).toHaveClass(
     "grid-cols-[auto_minmax(4rem,max-content)]",
     "shrink-[999]"

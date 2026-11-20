@@ -3,6 +3,7 @@ import { homeDir } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
+import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { VaultConfig } from "../../types";
 import { defaultVaultPath, enableVault, vaultUri } from "../../services/vault";
 
@@ -123,7 +124,9 @@ export function VaultSettings({
         <>
           <div className="rounded-lg bg-bg-tertiary border border-border px-3 py-2">
             <p className="text-xs text-text-muted">Vault location</p>
-            <p className="text-sm font-mono text-text-primary truncate select-text">{vault.path}</p>
+            <p className="text-sm font-mono text-text-primary">
+              <MiddleTruncate value={vault.path ?? ""} />
+            </p>
           </div>
 
           <div className="space-y-2">
