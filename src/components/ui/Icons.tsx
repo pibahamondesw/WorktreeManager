@@ -1,55 +1,117 @@
+import {
+  ArrowUpRight,
+  Bell,
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleCheck,
+  CircleExclamationPoint,
+  Copy,
+  Download,
+  EllipsisVertical,
+  File,
+  FileArchive,
+  FileBraces,
+  FileCode,
+  FileCog,
+  FileDatabase,
+  FileImage,
+  FileKey,
+  FileLock,
+  FileMusic,
+  FileSpreadsheet,
+  FileTerminal,
+  FileText,
+  FileVideoCamera,
+  Folder,
+  GitBranch,
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestClosed,
+  GitPullRequestDraft,
+  GripVertical,
+  Maximize2,
+  Notebook,
+  PanelLeft,
+  Pencil,
+  Pin,
+  Plus,
+  Redo2,
+  RefreshCw,
+  Scan,
+  Search,
+  Settings,
+  SquareCode,
+  Sun,
+  Trash,
+  TriangleExclamationPoint,
+  Undo2,
+  Wrench,
+  X,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
+import { createElement } from "react";
+import { agentPresentation } from "../../services/agents";
+import { AgentId } from "../../types";
+
 interface IconProps {
   size?: number;
   className?: string;
 }
 
-export function RewindIcon({ size = 16, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="m9 4-5 5 5 5" />
-      <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
-    </svg>
-  );
+const remSize = (size: number) => `${size / 16}rem`;
+
+function libraryIcon(Glyph: LucideIcon, defaultSize: number) {
+  return function LibraryIcon({ size = defaultSize, className = "" }: IconProps) {
+    return <Glyph size={remSize(size)} className={className} aria-hidden="true" />;
+  };
 }
 
+export const RewindIcon = libraryIcon(Undo2, 16);
 /** A curved arrow turning forward: redirect what is running. */
-export function SteerIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="m15 4 5 5-5 5" />
-      <path d="M20 9H10a6 6 0 0 0 0 12h3" />
-    </svg>
-  );
-}
+export const SteerIcon = libraryIcon(Redo2, 12);
+export const CheckIcon = libraryIcon(Check, 12);
+export const PlusIcon = libraryIcon(Plus, 12);
+export const CloseIcon = libraryIcon(X, 16);
+export const SearchIcon = libraryIcon(Search, 16);
+export const ChevronDownIcon = libraryIcon(ChevronDown, 10);
+export const ChevronLeftIcon = libraryIcon(ChevronLeft, 14);
+export const ChevronRightIcon = libraryIcon(ChevronRight, 14);
+export const ExternalLinkIcon = libraryIcon(ArrowUpRight, 10);
+export const CopyIcon = libraryIcon(Copy, 12);
+export const PencilIcon = libraryIcon(Pencil, 12);
+export const TrashIcon = libraryIcon(Trash, 16);
+export const RefreshIcon = libraryIcon(RefreshCw, 14);
+export const MoreVerticalIcon = libraryIcon(EllipsisVertical, 14);
+export const GripIcon = libraryIcon(GripVertical, 12);
+export const BranchIcon = libraryIcon(GitBranch, 12);
+export const PullRequestIcon = libraryIcon(GitPullRequest, 12);
+export const FolderIcon = libraryIcon(Folder, 24);
+export const WarningCircleIcon = libraryIcon(CircleExclamationPoint, 10);
+export const SuccessCircleIcon = libraryIcon(CircleCheck, 16);
+export const SunIcon = libraryIcon(Sun, 14);
+export const NotebookIcon = libraryIcon(Notebook, 14);
+export const CodeBranchIcon = libraryIcon(SquareCode, 24);
+export const GearIcon = libraryIcon(Settings, 14);
+export const AutomationIcon = libraryIcon(Zap, 14);
+export const WrenchIcon = libraryIcon(Wrench, 32);
+export const SidebarIcon = libraryIcon(PanelLeft, 14);
+export const BellIcon = libraryIcon(Bell, 14);
+export const PinIcon = libraryIcon(Pin, 16);
+export const ExpandIcon = libraryIcon(Maximize2, 14);
+export const FitIcon = libraryIcon(Scan, 14);
+export const DownloadIcon = libraryIcon(Download, 14);
+export const DocumentIcon = libraryIcon(FileText, 16);
 
 export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
   return (
     <svg
       className={`motion-spin-steps ${className}`}
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
+      width={remSize(size)}
+      height={remSize(size)}
       viewBox="0 0 24 24"
       fill="none"
     >
@@ -63,572 +125,11 @@ export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
   );
 }
 
-export function CheckIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      className={className}
-    >
-      <path d="M3.5 8.5l3 3 6-7" />
-    </svg>
-  );
-}
-
-export function PlusIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      className={className}
-    >
-      <path d="M8 2v12M2 8h12" />
-    </svg>
-  );
-}
-
-export function CloseIcon({ size = 16, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      className={className}
-    >
-      <path d="M4 4l8 8M12 4l-8 8" />
-    </svg>
-  );
-}
-
-export function SearchIcon({ size = 16, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <circle cx="7" cy="7" r="5" />
-      <path d="M10.5 10.5L14 14" />
-    </svg>
-  );
-}
-
-export function ChevronDownIcon({ size = 8, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 8 8"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M1.5 3L4 5.5L6.5 3" />
-    </svg>
-  );
-}
-
-export function ChevronLeftIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 14 14"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M8.5 3L4.5 7l4 4" />
-    </svg>
-  );
-}
-
-export function ChevronRightIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 14 14"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M5.5 3l4 4-4 4" />
-    </svg>
-  );
-}
-
-export function ExternalLinkIcon({ size = 10, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M6 3.5h6.5V10M12.5 3.5L3.5 12.5" />
-    </svg>
-  );
-}
-
-export function CopyIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <rect x="5" y="5" width="8" height="8" rx="1.5" />
-      <path d="M3 10V4.5A1.5 1.5 0 0 1 4.5 3H10" />
-    </svg>
-  );
-}
-
-export function PencilIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M11.2 2.3a1.6 1.6 0 0 1 2.3 2.3L5.3 12.8 2.5 13.5l.7-2.8 8-8.4z" />
-      <path d="M10 3.6l2.4 2.4" />
-    </svg>
-  );
-}
-
-export function TrashIcon({ size = 16, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M2 4h12M5.333 4V2.667a1.333 1.333 0 0 1 1.334-1.334h2.666a1.333 1.333 0 0 1 1.334 1.334V4m2 0v9.333a1.333 1.333 0 0 1-1.334 1.334H4.667a1.333 1.333 0 0 1-1.334-1.334V4h9.334z" />
-    </svg>
-  );
-}
-
-export function RefreshIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M1.5 8a6.5 6.5 0 0 1 11.25-4.5M14.5 8a6.5 6.5 0 0 1-11.25 4.5" />
-      <path d="M13.5 1v3.5H10M2.5 15v-3.5H6" />
-    </svg>
-  );
-}
-
-export function MoreVerticalIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-    >
-      <circle cx="8" cy="3" r="1.5" />
-      <circle cx="8" cy="8" r="1.5" />
-      <circle cx="8" cy="13" r="1.5" />
-    </svg>
-  );
-}
-
-export function GripIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-    >
-      <circle cx="6" cy="4" r="1.25" />
-      <circle cx="10" cy="4" r="1.25" />
-      <circle cx="6" cy="8" r="1.25" />
-      <circle cx="10" cy="8" r="1.25" />
-      <circle cx="6" cy="12" r="1.25" />
-      <circle cx="10" cy="12" r="1.25" />
-    </svg>
-  );
-}
-
-export function BranchIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-    >
-      <path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25z" />
-    </svg>
-  );
-}
-
-export function PullRequestIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-    >
-      <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354z" />
-    </svg>
-  );
-}
-
-export function PullRequestDraftIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 14a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM14 7.5a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm0-4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z" />
-    </svg>
-  );
-}
-
-export function PullRequestMergedIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
-    </svg>
-  );
-}
-
-export function PullRequestClosedIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 5.5a.75.75 0 0 1 .75.75v3.378a2.251 2.251 0 1 1-1.5 0V7.25a.75.75 0 0 1 .75-.75Zm-2.03-5.273a.75.75 0 0 1 1.06 0l.97.97.97-.97a.748.748 0 0 1 1.265.332.75.75 0 0 1-.205.729l-.97.97.97.97a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-.97-.97-.97.97a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l.97-.97-.97-.97a.75.75 0 0 1 0-1.06ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z" />
-    </svg>
-  );
-}
-
-export function PullRequestConflictIcon({ size = 12, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z" />
-    </svg>
-  );
-}
-
-export function FolderIcon({ size = 24, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-    </svg>
-  );
-}
-
-export function WarningCircleIcon({ size = 10, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-    >
-      <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.5 3a.5.5 0 0 1 1 0v4a.5.5 0 0 1-1 0V4zm.5 7.5a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5z" />
-    </svg>
-  );
-}
-
-export function SuccessCircleIcon({ size = 16, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      className={className}
-    >
-      <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zm3.78 5.22a.75.75 0 0 0-1.06 0L7 8.94 5.28 7.22a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.06 0l4.25-4.25a.75.75 0 0 0 0-1.06z" />
-    </svg>
-  );
-}
-
-export function SunIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <circle cx="8" cy="8" r="3" />
-      <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" />
-    </svg>
-  );
-}
-
-export function NotebookIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <rect x="3" y="2" width="10" height="12" rx="1.5" />
-      <path d="M6 2v12M8.5 5.5h2M8.5 8h2" />
-    </svg>
-  );
-}
-
-export function CodeBranchIcon({ size = 24, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M16 18l2-2-2-2M8 18l-2-2 2-2M12 10v8" />
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-    </svg>
-  );
-}
-
-export function GearIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  );
-}
-
-export function AutomationIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
-    </svg>
-  );
-}
-
-export function WrenchIcon({ size = 32, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      className={className}
-    >
-      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-    </svg>
-  );
-}
-
-export function SidebarIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
-      <path d="M6.25 2.75v10.5" />
-    </svg>
-  );
-}
-
-export function BellIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      className={className}
-    >
-      <path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3L4 11Z" />
-      <path d="M6.5 14a1.5 1.5 0 0 0 3 0" />
-    </svg>
-  );
-}
-
-export function PinIcon({ size = 16, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M16 3 21 8 17 9 14 12 14 16 8 10 12 10 15 7 Z M11 13 4 20" />
-    </svg>
-  );
-}
-
-export function ExpandIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-    </svg>
-  );
-}
-
-export function FitIcon({ size = 14, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" />
-    </svg>
-  );
-}
-
 export function FitWidthIcon({ size = 14, className = "" }: IconProps) {
   return (
     <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
+      width={remSize(size)}
+      height={remSize(size)}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -643,41 +144,88 @@ export function FitWidthIcon({ size = 14, className = "" }: IconProps) {
   );
 }
 
-export function DownloadIcon({ size = 14, className = "" }: IconProps) {
+export type PullRequestDisplayState = "open" | "draft" | "merged" | "closed" | "conflicts";
+
+const PULL_REQUEST_STATE_GLYPHS: Record<
+  PullRequestDisplayState,
+  { Glyph: LucideIcon; className: string }
+> = {
+  open: { Glyph: GitPullRequest, className: "text-success" },
+  draft: { Glyph: GitPullRequestDraft, className: "text-text-muted" },
+  merged: { Glyph: GitMerge, className: "text-accent" },
+  closed: { Glyph: GitPullRequestClosed, className: "text-danger" },
+  conflicts: { Glyph: TriangleExclamationPoint, className: "text-warning" },
+};
+
+export function PullRequestStateIcon({
+  state,
+  size = 12,
+  className = "",
+}: IconProps & { state: PullRequestDisplayState }) {
+  const { Glyph, className: stateClassName } = PULL_REQUEST_STATE_GLYPHS[state];
   return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
+    <Glyph
+      size={remSize(size)}
+      className={`${stateClassName} ${className}`}
       aria-hidden="true"
-    >
-      <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
-    </svg>
+      data-state={state}
+    />
   );
 }
 
-export function DocumentIcon({ size = 16, className = "" }: IconProps) {
-  return (
-    <svg
-      width={`${size / 16}rem`}
-      height={`${size / 16}rem`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-      <path d="M14 3v5h5M9 13h6M9 17h4" />
-    </svg>
-  );
+export function AgentIcon({ agent, size = 12, className = "" }: IconProps & { agent: AgentId }) {
+  const Glyph = agentPresentation(agent).icon ?? Bot;
+  return <Glyph size={remSize(size)} className={className} aria-hidden="true" />;
+}
+
+const GLYPHS_BY_FILE_NAME: Record<string, LucideIcon> = {
+  "cargo.lock": FileLock,
+  "package-lock.json": FileLock,
+  "pnpm-lock.yaml": FileLock,
+  "yarn.lock": FileLock,
+  dockerfile: FileCog,
+  makefile: FileCog,
+};
+
+const EXTENSIONS_BY_GLYPH: [LucideIcon, string[]][] = [
+  [FileLock, ["lock"]],
+  [
+    FileCode,
+    [
+      ...["c", "cc", "cjs", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js", "jsx"],
+      ...["kt", "mjs", "php", "py", "rb", "rs", "scss", "svelte", "swift", "ts", "tsx", "vue"],
+    ],
+  ],
+  [FileBraces, ["json", "jsonc", "toml", "xml", "yaml", "yml"]],
+  [FileText, ["md", "mdx", "rst", "txt"]],
+  [FileTerminal, ["bash", "fish", "sh", "zsh"]],
+  [FileImage, ["bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"]],
+  [FileSpreadsheet, ["csv", "tsv", "xlsx"]],
+  [FileArchive, ["gz", "tar", "tgz", "zip"]],
+  [FileDatabase, ["db", "sql", "sqlite"]],
+  [FileVideoCamera, ["mov", "mp4", "webm"]],
+  [FileMusic, ["mp3", "wav"]],
+];
+
+const GLYPH_BY_EXTENSION = new Map(
+  EXTENSIONS_BY_GLYPH.flatMap(([glyph, extensions]) =>
+    extensions.map((extension) => [extension, glyph] as const)
+  )
+);
+
+function fileTypeGlyph(path: string): LucideIcon {
+  const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+  if (Object.hasOwn(GLYPHS_BY_FILE_NAME, name)) return GLYPHS_BY_FILE_NAME[name];
+  if (name === ".env" || name.startsWith(".env.")) return FileKey;
+  const dot = name.lastIndexOf(".");
+  if (dot === 0) return FileCog;
+  return (dot > 0 && GLYPH_BY_EXTENSION.get(name.slice(dot + 1))) || File;
+}
+
+export function FileTypeIcon({ path, size = 12, className = "" }: IconProps & { path: string }) {
+  return createElement(fileTypeGlyph(path), {
+    size: remSize(size),
+    className,
+    "aria-hidden": "true",
+  });
 }
