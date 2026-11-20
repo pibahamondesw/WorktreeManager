@@ -71,6 +71,7 @@ impl ChatRegistry {
         let owner = ChatOwner {
             task_id: task_id.to_string(),
             agent: agent.to_string(),
+            tab: None,
             origin: ChatOrigin::Automation,
         };
         self.start_unattached(app, owner, request, policy)

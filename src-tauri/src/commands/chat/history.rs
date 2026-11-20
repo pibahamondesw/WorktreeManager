@@ -7,9 +7,9 @@ use tauri::{AppHandle, Manager, Runtime, State};
 
 use super::super::agents::{Agents, ForkLaunch, ForkMethod, ForkRequest};
 use super::{
-    blocking, checkpoints, conversation_store, handoff_store, model, start_session, turns,
-    ChatOrigin, ChatOwner, ChatRegistry, ChatStatus, Conversation, ConversationFork,
-    ProviderOutput, SessionSetup, Shared,
+    blocking, checkpoints, conversation_store, handoff_store, model, start_session, tabs, turns,
+    ChatOwner, ChatRegistry, ChatStatus, Conversation, ConversationFork, ProviderOutput,
+    SessionSetup, Shared,
 };
 
 fn history_item(
@@ -38,8 +38,9 @@ pub fn chat_rewind_preview(
     agent: String,
     generation: u64,
     item_id: String,
+    tab: Option<String>,
 ) -> Result<checkpoints::RewindPreview, String> {
-    registry.with_session(&task_id, &agent, |session| {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         let state = session.shared.lock().unwrap();
         let item = history_item(&state.snapshot, state.history_busy, generation, &item_id)?;
         state.turns.rewind_target(&item)?.preview()
@@ -73,16 +74,19 @@ pub async fn chat_history<R: Runtime>(
     item_id: String,
     action: HistoryAction,
     confirmation: Option<String>,
+    tab: Option<String>,
 ) -> Result<(), String> {
     let adapter = Agents::of(&app).get(&agent)?;
     let fork_method = adapter.fork_method();
-    let key = (task_id.clone(), agent.clone());
+    let tab = tabs::extra_tab(tab.as_deref());
+    let slot = tabs::slot(&agent, tab);
+    let key = (task_id.clone(), slot.clone());
     let open_lock = registry.open_lock(&key);
     let _opening = open_lock.lock().await;
     let (shared, remember, notify, rewind, peers) = {
         let sessions = registry.sessions.lock().unwrap();
         let (_, session) = sessions
-            .primary(&task_id, &agent)
+            .primary(&task_id, &slot)
             .ok_or("No chat session for this task")?;
         (|| -> Result<_, String> {
             let mut state = session.shared.lock().unwrap();
@@ -156,7 +160,7 @@ pub async fn chat_history<R: Runtime>(
             .await;
             if let Err(error) = result {
                 if shared.lock().unwrap().history_reply.is_some() {
-                    registry.with_session(&task_id, &agent, |session| {
+                    registry.with_session(&task_id, &slot, |session| {
                         session.terminate();
                         Ok(())
                     })?;
@@ -179,7 +183,7 @@ pub async fn chat_history<R: Runtime>(
             };
             let cwd = folders.first().cloned().ok_or("No task folders")?;
             let pending_source = conversation_store(&app)?
-                .entry(&task_id, &agent, &cwd)
+                .entry(&task_id, &slot, &cwd)
                 .and_then(|entry| entry.fork)
                 .map(|fork| fork.source);
             let fork_item = item_id.clone();
@@ -253,7 +257,7 @@ pub async fn chat_history<R: Runtime>(
     let (backup, previous) = {
         let mut sessions = registry.sessions.lock().unwrap();
         let active = sessions
-            .primary(&task_id, &agent)
+            .primary(&task_id, &slot)
             .filter(|(_, session)| {
                 Arc::ptr_eq(&session.shared, &shared) && session.status().is_live()
             })
@@ -296,7 +300,7 @@ pub async fn chat_history<R: Runtime>(
             let saved = conversation_store(&app).and_then(|store| {
                 store.remember(
                     &task_id,
-                    &agent,
+                    &slot,
                     Conversation {
                         conversation_id: id,
                         cwd,
@@ -311,18 +315,14 @@ pub async fn chat_history<R: Runtime>(
                 ));
             }
             session.shared.lock().unwrap().history_busy = false;
-            let owner = ChatOwner {
-                task_id: task_id.clone(),
-                agent: agent.clone(),
-                origin: ChatOrigin::User,
-            };
+            let owner = ChatOwner::user(&task_id, &agent, tab);
             sessions.insert(session_id, owner, session)
         } else {
             if action != HistoryAction::Code {
                 let state = shared.lock().unwrap();
                 conversation_store(&app)?.remember(
                     &task_id,
-                    &agent,
+                    &slot,
                     Conversation {
                         conversation_id: state
                             .turns
@@ -346,7 +346,7 @@ pub async fn chat_history<R: Runtime>(
         .await?;
     }
     if !backup.is_empty() {
-        registry.with_session(&task_id, &agent, |session| {
+        registry.with_session(&task_id, &slot, |session| {
             let mut state = session.shared.lock().unwrap();
             let mut out = ProviderOutput::default();
             out.upsert(model::ChatItem::new(

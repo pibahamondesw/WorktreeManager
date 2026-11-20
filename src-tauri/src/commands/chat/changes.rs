@@ -309,9 +309,9 @@ struct SessionState {
 fn session_state(
     registry: &ChatRegistry,
     task_id: &str,
-    agent: &str,
+    slot: &str,
 ) -> Result<SessionState, String> {
-    registry.with_session(task_id, agent, |session| {
+    registry.with_session(task_id, slot, |session| {
         let state = session.shared.lock().unwrap();
         Ok(SessionState {
             checkpoints: state.turns.checkpoints().cloned(),
@@ -332,8 +332,13 @@ pub async fn chat_changes(
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
+    tab: Option<String>,
 ) -> Result<ChatChanges, String> {
-    let state = session_state(&registry, &task_id, &agent)?;
+    let state = session_state(
+        &registry,
+        &task_id,
+        &super::tabs::slot(&agent, tab.as_deref()),
+    )?;
     let (Some(checkpoints), Some(conversation)) = (state.checkpoints, state.conversation) else {
         return Ok(ChatChanges::default());
     };
@@ -351,10 +356,11 @@ pub async fn chat_file_diff(
     folder: String,
     path: String,
     previous_path: Option<String>,
+    tab: Option<String>,
 ) -> Result<FileDiff, String> {
-    let checkpoints = session_state(&registry, &task_id, &agent)?
-        .checkpoints
-        .ok_or("Checkpoints are unavailable")?;
+    let slot = super::tabs::slot(&agent, tab.as_deref());
+    let state = session_state(&registry, &task_id, &slot)?;
+    let checkpoints = state.checkpoints.ok_or("Checkpoints are unavailable")?;
     blocking(move || {
         file_diff(
             &checkpoints,

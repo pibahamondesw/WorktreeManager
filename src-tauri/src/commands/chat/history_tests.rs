@@ -221,6 +221,7 @@ impl Fixture {
             self.repositories.folders.clone(),
             id.into(),
             title.into(),
+            None,
         ))
     }
 
@@ -258,6 +259,7 @@ impl Fixture {
             None,
             None,
             Channel::new(|_| Ok(())),
+            None,
         ))?;
         let mut started = None;
         wait_until("test agent did not initialize", || {
@@ -285,6 +287,7 @@ impl Fixture {
             agent.into(),
             self.snapshot(agent).generation,
             item.into(),
+            None,
         )
     }
 
@@ -320,6 +323,7 @@ fn apply(
         item.into(),
         action,
         token,
+        None,
     ))
 }
 
@@ -562,6 +566,7 @@ fn edits_during_a_fork_abort_restoration_and_keep_the_new_user_contents() {
             "task".into(),
             "codex".into(),
             "blocked".into(),
+            None,
             None
         )
         .is_err());
@@ -750,6 +755,7 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
         1,
         "u1".into(),
         HistoryAction::Conversation,
+        None,
         None
     ))
     .unwrap_err()
@@ -760,6 +766,7 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
         "task".into(),
         "codex".into(),
         "next".into(),
+        None,
         None,
     )
     .unwrap();
@@ -786,6 +793,7 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
         ChatOwner {
             task_id: "task".into(),
             agent: "other".into(),
+            tab: None,
             origin: ChatOrigin::User,
         },
         session,
@@ -1110,6 +1118,7 @@ fn codex_model_selection_survives_fresh_sessions_and_is_persisted_on_disk() {
             "task".into(),
             "codex".into(),
             setting,
+            None,
         )
         .unwrap();
     }
@@ -1135,6 +1144,7 @@ fn codex_model_selection_survives_fresh_sessions_and_is_persisted_on_disk() {
         "task".into(),
         "claude".into(),
         ChatSetting::Model("haiku".into()),
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -1181,6 +1191,7 @@ fn codex_model_selection_ignores_malformed_values_and_reports_save_failures() {
         "task".into(),
         "codex".into(),
         ChatSetting::Model("economical".into()),
+        None,
     )
     .unwrap_err();
     assert!(error.contains("Could not remember the model selection"));
@@ -1196,6 +1207,7 @@ fn codex_model_selection_ignores_malformed_values_and_reports_save_failures() {
         "task".into(),
         "codex".into(),
         ChatSetting::Effort("low".into()),
+        None,
     )
     .is_err());
     assert!(store.get("codex").is_none());
@@ -1277,6 +1289,7 @@ fn change_commands_read_turn_checkpoints_of_the_open_conversation() {
             fixture.app.state(),
             task.into(),
             "codex".into(),
+            None,
         ))
     };
     let file_diff = || {
@@ -1288,6 +1301,7 @@ fn change_commands_read_turn_checkpoints_of_the_open_conversation() {
             turn.after.clone(),
             fixture.repositories.folders[0].clone(),
             "file.txt".into(),
+            None,
             None,
         ))
     };
@@ -1482,6 +1496,7 @@ fn continuing_in_another_agent_seeds_it_and_keeps_the_earlier_items_read_only() 
             handoff_from.map(String::from),
             None,
             Channel::new(|_| Ok(())),
+            None,
         ))
     };
     assert!(open(OpenMode::Fresh, Some("codex"))
@@ -1522,6 +1537,7 @@ fn continuing_in_another_agent_seeds_it_and_keeps_the_earlier_items_read_only() 
         "codex".into(),
         generation,
         "carried:parent:u1".into(),
+        None,
     )
     .is_err());
 
@@ -1587,6 +1603,7 @@ fn rewinding_a_continuation_keeps_its_source_and_a_pending_fork_can_be_continued
         fixture.app.state(),
         "task".into(),
         "claude".into(),
+        None,
     ))
     .unwrap();
     tauri::async_runtime::block_on(chat_open(
@@ -1600,6 +1617,7 @@ fn rewinding_a_continuation_keeps_its_source_and_a_pending_fork_can_be_continued
         Some("claude".into()),
         None,
         Channel::new(|_| Ok(())),
+        None,
     ))
     .unwrap();
     fixture.settings(json!({ "fail_method": "thread/read" }));
@@ -1644,6 +1662,7 @@ fn attaching_reuses_the_live_primary_that_detach_then_releases() {
         None,
         None,
         Channel::new(|_| Ok(())),
+        None,
     ))
     .unwrap();
     assert_eq!(attached.session_id, primary);
@@ -1660,6 +1679,7 @@ fn attaching_reuses_the_live_primary_that_detach_then_releases() {
         "task".into(),
         "codex".into(),
         attached.snapshot.generation,
+        None,
         None,
     );
     assert!(!attached_sink());
@@ -1727,6 +1747,7 @@ fn attach_to(fixture: &Fixture, agent: &str, session_id: &str) -> Result<OpenedC
         None,
         Some(session_id.into()),
         Channel::new(|_| Ok(())),
+        None,
     ))
 }
 
@@ -1951,8 +1972,8 @@ fn headless_starts_refuse_rules_the_agent_cannot_apply_and_tasks_without_folders
 fn interrupting_the_primary_reaches_its_running_session() {
     let fixture = Fixture::new();
     fixture.open("codex", OpenMode::Restart).unwrap();
-    chat_interrupt(fixture.app.state(), "task".into(), "codex".into()).unwrap();
-    assert!(chat_interrupt(fixture.app.state(), "task".into(), "claude".into()).is_err());
+    chat_interrupt(fixture.app.state(), "task".into(), "codex".into(), None).unwrap();
+    assert!(chat_interrupt(fixture.app.state(), "task".into(), "claude".into(), None).is_err());
 }
 
 #[test]
@@ -1967,9 +1988,9 @@ fn queued_message_actions_reach_the_primary_session() {
         )
     };
     let (task, agent, item) = missing();
-    let steered = chat_steer_queued(fixture.app.state(), task, agent, item);
+    let steered = chat_steer_queued(fixture.app.state(), task, agent, item, None);
     let (task, agent, item) = missing();
-    let removed = chat_unqueue(fixture.app.state(), task, agent, item);
+    let removed = chat_unqueue(fixture.app.state(), task, agent, item, None);
     for result in [steered, removed] {
         assert_eq!(result, Err("That message is no longer queued".into()));
     }
@@ -2010,24 +2031,40 @@ fn launched_with(fixture: &Fixture, flag: &str) -> Vec<bool> {
 }
 
 #[test]
-fn a_hand_over_starts_the_named_primary_chat_that_opening_the_task_attaches_to() {
+fn a_hand_over_starts_the_named_chat_in_a_new_tab_that_opening_it_attaches_to() {
     let fixture = Fixture::new();
     fixture.settings(json!({ "reply": "On it." }));
     let opened = hand_over(&fixture, json!({ "agent": "claude", "name": "Review #12" })).unwrap();
     assert!(!opened.continued);
+    let slot = tabs::slot("claude", Some(&opened.tab));
+    assert_ne!(slot, "claude");
     let registry = fixture.app.state::<ChatRegistry>();
-    let primary = registry
-        .sessions
-        .lock()
-        .unwrap()
-        .primary("task", "claude")
-        .map(|(id, _)| id.clone());
-    assert_eq!(primary.as_deref(), Some(opened.session_id.as_str()));
+    let primary = |slot: &str| {
+        registry
+            .sessions
+            .lock()
+            .unwrap()
+            .primary("task", slot)
+            .map(|(id, _)| id.clone())
+    };
+    assert_eq!(primary(&slot).as_deref(), Some(opened.session_id.as_str()));
+    assert_eq!(primary("claude"), None);
     let store = conversation_store(fixture.app.handle()).unwrap();
     let cwd = &fixture.repositories.folders[0];
     assert_eq!(
-        store.get("task", "claude", cwd),
+        store.get("task", &slot, cwd),
         Some(opened.conversation_id.clone())
+    );
+    let open_tabs = tabs::tab_store(fixture.app.handle())
+        .unwrap()
+        .list("task", None)
+        .unwrap();
+    assert_eq!(
+        open_tabs
+            .iter()
+            .map(|tab| (tab.id.as_str(), tab.agent.as_str()))
+            .collect::<Vec<_>>(),
+        [(tabs::MAIN_TAB, "claude"), (opened.tab.as_str(), "claude")]
     );
     assert_eq!(
         await_reply(&fixture, &opened.session_id, false),
@@ -2048,6 +2085,7 @@ fn a_hand_over_starts_the_named_primary_chat_that_opening_the_task_attaches_to()
         None,
         None,
         Channel::new(|_| Ok(())),
+        Some(opened.tab.clone()),
     ))
     .unwrap();
     assert_eq!(attached.session_id, opened.session_id);
@@ -2062,13 +2100,22 @@ fn a_hand_over_starts_the_named_primary_chat_that_opening_the_task_attaches_to()
 
     let continued = hand_over(
         &fixture,
-        json!({ "agent": "claude", "name": "Ignored", "message": "Also the docs" }),
+        json!({ "agent": "claude", "name": "Ignored", "message": "Also the docs", "tab": opened.tab }),
     )
     .unwrap();
     assert!(continued.continued);
+    assert_eq!(continued.tab, opened.tab);
     assert_eq!(continued.session_id, opened.session_id);
     assert_eq!(continued.conversation_id, opened.conversation_id);
     assert_eq!(launched_with(&fixture, "--name"), [true]);
+    assert_eq!(
+        hand_over(&fixture, json!({ "agent": "codex", "tab": opened.tab })).map(|_| ()),
+        Err(format!("Chat tab {} runs claude, not codex", opened.tab))
+    );
+    assert_eq!(
+        hand_over(&fixture, json!({ "agent": "claude", "tab": "gone" })).map(|_| ()),
+        Err("No chat tab gone is open in this task".into())
+    );
 }
 
 #[test]
@@ -2081,19 +2128,33 @@ fn a_hand_over_held_to_a_schema_replies_with_its_json_and_closes_for_a_clean_res
         await_reply(&fixture, &opened.session_id, true),
         Ok(json!({ "approved": true }))
     );
+    let slot = tabs::slot("claude", Some(&opened.tab));
     let registry = fixture.app.state::<ChatRegistry>();
     assert!(registry
         .sessions
         .lock()
         .unwrap()
-        .primary("task", "claude")
+        .primary("task", &slot)
         .is_none());
     let store = conversation_store(fixture.app.handle()).unwrap();
     assert_eq!(
-        store.get("task", "claude", &fixture.repositories.folders[0]),
+        store.get("task", &slot, &fixture.repositories.folders[0]),
         Some(opened.conversation_id)
     );
-    fixture.open("claude", OpenMode::Attach).unwrap();
+    tauri::async_runtime::block_on(chat_open(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "claude".into(),
+        fixture.repositories.folders.clone(),
+        OpenMode::Attach,
+        None,
+        None,
+        None,
+        Channel::new(|_| Ok(())),
+        Some(opened.tab),
+    ))
+    .unwrap();
     wait_until("the conversation did not reopen", || {
         launched_with(&fixture, "--json-schema").len() == 2
     });
@@ -2110,35 +2171,41 @@ fn codex_hand_overs_stay_unnamed_and_a_busy_chat_or_a_running_one_with_a_schema_
     .unwrap();
     assert!(!opened.continued);
     assert_eq!(launched_with(&fixture, "--name"), [false]);
+    let slot = tabs::slot("codex", Some(&opened.tab));
     wait_until("the handed-over turn did not finish", || {
-        fixture.snapshot("codex").status == ChatStatus::Idle
+        fixture.snapshot(&slot).status == ChatStatus::Idle
     });
     let registry = fixture.app.state::<ChatRegistry>();
-    let controls = fixture.snapshot("codex").controls;
+    let controls = fixture.snapshot(&slot).controls;
     assert_eq!(controls.model.as_deref(), Some("gpt-5"));
     assert_eq!(controls.effort.as_deref(), Some("high"));
 
-    let schema = json!({ "agent": "codex", "schema": { "type": "object" } });
-    super::tests::set_turn(&registry, "task", "codex", false);
+    let tab = opened.tab.clone();
+    let schema = json!({ "agent": "codex", "tab": tab, "schema": { "type": "object" } });
+    super::tests::set_turn(&registry, "task", &slot, false);
     assert_eq!(
         hand_over(&fixture, schema),
-        Err("A schema needs a new conversation; close the task's chat first".into())
+        Err("A schema needs a new conversation; leave out the tab".into())
     );
-    super::tests::set_turn(&registry, "task", "codex", true);
+    super::tests::set_turn(&registry, "task", &slot, true);
     assert_eq!(
-        hand_over(&fixture, json!({ "agent": "codex" })),
-        Err("The task's chat has a turn in progress; send to it there".into())
+        hand_over(&fixture, json!({ "agent": "codex", "tab": tab })),
+        Err("The chat tab has a turn in progress; send to it there".into())
     );
     registry
-        .with_session("task", "codex", |session| {
+        .with_session("task", &slot, |session| {
             session.shared.lock().unwrap().snapshot.status = ChatStatus::Exited { code: None };
             Ok(())
         })
         .unwrap();
-    let replacement = hand_over(&fixture, json!({ "agent": "codex" })).unwrap();
+    let replacement = hand_over(&fixture, json!({ "agent": "codex", "tab": tab })).unwrap();
     assert!(!replacement.continued);
+    assert_eq!(replacement.tab, opened.tab);
     assert_ne!(replacement.session_id, opened.session_id);
     assert_eq!(chat_list(fixture.app.state()).len(), 1);
+    let tabs_before = tabs::tab_store(fixture.app.handle())
+        .unwrap()
+        .list("task", None);
     assert_eq!(
         hand_over(&fixture, json!({ "agent": "missing" })),
         Err("Unknown agent: missing".into())
@@ -2147,4 +2214,111 @@ fn codex_hand_overs_stay_unnamed_and_a_busy_chat_or_a_running_one_with_a_schema_
         hand_over(&fixture, json!({ "agent": "claude", "folders": [] })),
         Err("No folders for this task".into())
     );
+    assert_eq!(
+        tabs::tab_store(fixture.app.handle())
+            .unwrap()
+            .list("task", None),
+        tabs_before,
+        "a failed hand-over leaves no tab behind"
+    );
+}
+
+#[test]
+fn chat_tab_commands_list_open_and_close_tabs_and_reach_a_tab_session() {
+    let fixture = Fixture::new();
+    let handle = || fixture.app.handle().clone();
+    let folders = || fixture.repositories.folders.clone();
+    let listed = |main: Option<&str>| {
+        tauri::async_runtime::block_on(tabs::chat_tabs(
+            handle(),
+            "task".into(),
+            main.map(String::from),
+            folders(),
+        ))
+        .unwrap()
+    };
+    let main = serde_json::to_value(listed(Some("claude"))).unwrap();
+    assert_eq!(
+        main,
+        json!([{ "id": "main", "agent": "claude", "conversationId": "parent" }])
+    );
+
+    let opened = tauri::async_runtime::block_on(tabs::chat_tab_open(
+        handle(),
+        "task".into(),
+        "claude".into(),
+        "claude".into(),
+    ))
+    .unwrap();
+    let set_agent = |tab: &str| {
+        tauri::async_runtime::block_on(tabs::chat_tab_set_agent(
+            handle(),
+            "task".into(),
+            "claude".into(),
+            tab.into(),
+            "codex".into(),
+        ))
+    };
+    set_agent(&opened.id).unwrap();
+    assert_eq!(
+        set_agent("missing"),
+        Err("No such chat tab in this task".into())
+    );
+    let tab = Some(opened.id.clone());
+    tauri::async_runtime::block_on(chat_open(
+        handle(),
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        folders(),
+        OpenMode::Restart,
+        None,
+        None,
+        None,
+        Channel::new(|_| Ok(())),
+        tab.clone(),
+    ))
+    .unwrap();
+    let slot = tabs::slot("codex", tab.as_deref());
+    wait_until("the tab's agent did not start", || {
+        fixture.snapshot(&slot).status == ChatStatus::Idle
+    });
+    let (task, agent) = ("task".to_string(), "codex".to_string());
+    chat_compact(
+        fixture.app.state(),
+        task.clone(),
+        agent.clone(),
+        tab.clone(),
+    )
+    .unwrap();
+    let target = ReviewTarget::UncommittedChanges;
+    assert_eq!(
+        chat_review(
+            fixture.app.state(),
+            task.clone(),
+            agent.clone(),
+            target,
+            tab.clone()
+        ),
+        Err("Wait for the current turn to finish before starting a review".into()),
+        "the compaction runs as a turn of the tab's session"
+    );
+    chat_refresh_usage(fixture.app.state(), task, agent, tab.clone()).unwrap();
+    assert_eq!(listed(None).len(), 2);
+
+    let close = |tab: &str| {
+        tauri::async_runtime::block_on(tabs::chat_tab_close(
+            handle(),
+            fixture.app.state(),
+            "task".into(),
+            "claude".into(),
+            tab.into(),
+        ))
+    };
+    close(&opened.id).unwrap();
+    close(&opened.id).unwrap();
+    assert!(chat_list(fixture.app.state()).is_empty());
+    let left = serde_json::to_value(listed(None)).unwrap();
+    assert_eq!(left[0]["id"], "main");
+    assert_eq!(left.as_array().unwrap().len(), 1);
 }

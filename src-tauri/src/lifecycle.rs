@@ -176,6 +176,7 @@ mod tests {
         vec![InterruptedSession {
             task_id: "t1".into(),
             agent: "claude".into(),
+            tab: None,
             conversation_id: "c1".into(),
         }]
     }

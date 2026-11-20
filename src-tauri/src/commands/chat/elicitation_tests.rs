@@ -211,6 +211,7 @@ fn elicitation_responses_cross_tauri_ipc_with_generation_and_original_content() 
         ChatOwner {
             task_id: "task".into(),
             agent: "codex".into(),
+            tab: None,
             origin: ChatOrigin::User,
         },
         session,

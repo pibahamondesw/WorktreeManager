@@ -34,6 +34,7 @@ mod preferences;
 mod questions;
 mod reasoning;
 mod sessions;
+pub mod tabs;
 mod turns;
 
 pub(crate) use conversations::ConversationFork;
@@ -102,19 +103,35 @@ pub enum ChatOrigin {
 pub struct ChatOwner {
     task_id: String,
     agent: String,
+    /// The chat tab a user session runs in; none for the main tab and automation sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tab: Option<String>,
     origin: ChatOrigin,
 }
 
 impl ChatOwner {
-    fn is_primary_of(&self, task_id: &str, agent: &str) -> bool {
-        self.origin == ChatOrigin::User && self.task_id == task_id && self.agent == agent
+    fn user(task_id: &str, agent: &str, tab: Option<&str>) -> Self {
+        Self {
+            task_id: task_id.to_string(),
+            agent: agent.to_string(),
+            tab: tabs::extra_tab(tab).map(String::from),
+            origin: ChatOrigin::User,
+        }
     }
 
-    /// Where the session's conversation is remembered: the primary keeps the legacy `task:agent`
-    /// key, other sessions get their own so they never replace what the pane resumes.
+    /// The user session of `slot` (see [`tabs::slot`]) in the task.
+    fn is_primary_of(&self, task_id: &str, slot: &str) -> bool {
+        self.origin == ChatOrigin::User
+            && self.task_id == task_id
+            && tabs::slot(&self.agent, self.tab.as_deref()) == slot
+    }
+
+    /// Where the session's conversation is remembered: a user session keeps its tab's slot, the
+    /// main tab's being the legacy `task:agent` key; other sessions get their own so they never
+    /// replace what a tab resumes.
     fn conversation_slot(&self, session_id: &str) -> String {
         match self.origin {
-            ChatOrigin::User => self.agent.clone(),
+            ChatOrigin::User => tabs::slot(&self.agent, self.tab.as_deref()),
             ChatOrigin::Automation => format!("{}#{session_id}", self.agent),
         }
     }
@@ -832,6 +849,7 @@ fn wait_for_exit(process: &Mutex<Option<OwnedProcess>>) -> Option<i32> {
     }
 }
 
+/// A task and one of its chat slots (see [`tabs::slot`]).
 type SessionKey = (String, String);
 type OpenLock = Arc<tokio::sync::Mutex<()>>;
 
@@ -840,7 +858,7 @@ struct RegisteredChat {
     session: ChatSession,
 }
 
-/// Live sessions by session id; a task agent's primary is its user session.
+/// Live sessions by session id; the primary of a task's chat slot is its user session.
 #[derive(Default)]
 struct Sessions(HashMap<String, RegisteredChat>);
 
@@ -853,10 +871,10 @@ enum PrimaryClaim {
 }
 
 impl Sessions {
-    fn primary(&self, task_id: &str, agent: &str) -> Option<(&String, &ChatSession)> {
+    fn primary(&self, task_id: &str, slot: &str) -> Option<(&String, &ChatSession)> {
         self.0
             .iter()
-            .find(|(_, chat)| chat.owner.is_primary_of(task_id, agent))
+            .find(|(_, chat)| chat.owner.is_primary_of(task_id, slot))
             .map(|(id, chat)| (id, &chat.session))
     }
 
@@ -868,7 +886,7 @@ impl Sessions {
         self.0.values().map(|chat| (&chat.owner, &chat.session))
     }
 
-    /// Registers a session; a user session replaces the primary of its task agent.
+    /// Registers a session; a user session replaces the primary of its task's slot.
     fn insert(
         &mut self,
         session_id: String,
@@ -876,7 +894,10 @@ impl Sessions {
         session: ChatSession,
     ) -> Option<ChatSession> {
         let replaced = match owner.origin {
-            ChatOrigin::User => self.remove_primary(&owner.task_id, &owner.agent),
+            ChatOrigin::User => self.remove_primary(
+                &owner.task_id,
+                &tabs::slot(&owner.agent, owner.tab.as_deref()),
+            ),
             ChatOrigin::Automation => None,
         };
         let same_id = self.0.insert(session_id, RegisteredChat { owner, session });
@@ -887,11 +908,11 @@ impl Sessions {
     fn claim_primary(
         &mut self,
         task_id: &str,
-        agent: &str,
+        slot: &str,
         mode: OpenMode,
         on_event: &Channel<LiveBatch>,
     ) -> PrimaryClaim {
-        match self.primary(task_id, agent) {
+        match self.primary(task_id, slot) {
             Some((id, session)) if mode == OpenMode::Attach && session.status().is_live() => {
                 PrimaryClaim::Attached(Box::new(OpenedChat {
                     session_id: id.clone(),
@@ -902,7 +923,7 @@ impl Sessions {
                 let session_id = id.clone();
                 PrimaryClaim::Replace {
                     session_id,
-                    stale: self.remove_primary(task_id, agent),
+                    stale: self.remove_primary(task_id, slot),
                 }
             }
             None => PrimaryClaim::Replace {
@@ -931,18 +952,18 @@ impl Sessions {
         })
     }
 
-    fn detach(&self, task_id: &str, agent: &str, generation: u64, session_id: Option<&str>) {
+    fn detach(&self, task_id: &str, slot: &str, generation: u64, session_id: Option<&str>) {
         let session = match session_id {
             Some(id) => self.get(id),
-            None => self.primary(task_id, agent).map(|(_, session)| session),
+            None => self.primary(task_id, slot).map(|(_, session)| session),
         };
         if let Some(session) = session {
             session.detach(generation);
         }
     }
 
-    fn remove_primary(&mut self, task_id: &str, agent: &str) -> Option<ChatSession> {
-        let id = self.primary(task_id, agent)?.0.clone();
+    fn remove_primary(&mut self, task_id: &str, slot: &str) -> Option<ChatSession> {
+        let id = self.primary(task_id, slot)?.0.clone();
         self.0.remove(&id).map(|chat| chat.session)
     }
 
@@ -1016,13 +1037,14 @@ impl ChatRegistry {
                 Some(interrupted::InterruptedSession {
                     task_id: owner.task_id.clone(),
                     agent: owner.agent.clone(),
+                    tab: owner.tab.clone(),
                     conversation_id: session.conversation()?,
                 })
             })
             .collect()
     }
 
-    /// One open at a time per task agent: a session is registered only after it spawns, so a
+    /// One open at a time per task slot: a session is registered only after it spawns, so a
     /// second open racing the first (e.g. a pane remounting) would otherwise spawn a duplicate
     /// and leave the pane bound to the one that gets replaced.
     fn open_lock(&self, key: &SessionKey) -> OpenLock {
@@ -1034,24 +1056,24 @@ impl ChatRegistry {
             .clone()
     }
 
-    fn remove(&self, task_id: &str, agent: &str) -> Option<ChatSession> {
-        self.sessions.lock().unwrap().remove_primary(task_id, agent)
+    fn remove(&self, task_id: &str, slot: &str) -> Option<ChatSession> {
+        self.sessions.lock().unwrap().remove_primary(task_id, slot)
     }
 
     fn remove_task(&self, task_id: &str) -> Vec<ChatSession> {
         self.sessions.lock().unwrap().remove_task(task_id)
     }
 
-    /// Acts on the task agent's primary session.
+    /// Acts on the primary session of the task's slot.
     fn with_session<T>(
         &self,
         task_id: &str,
-        agent: &str,
+        slot: &str,
         action: impl FnOnce(&ChatSession) -> Result<T, String>,
     ) -> Result<T, String> {
         let sessions = self.sessions.lock().unwrap();
         let (_, session) = sessions
-            .primary(task_id, agent)
+            .primary(task_id, slot)
             .ok_or("No chat session for this task")?;
         action(session)
     }
@@ -1218,6 +1240,7 @@ pub async fn chat_open<R: Runtime>(
     handoff_from: Option<String>,
     session_id: Option<String>,
     on_event: Channel<LiveBatch>,
+    tab: Option<String>,
 ) -> Result<OpenedChat, String> {
     if let Some(session_id) = session_id {
         return registry
@@ -1231,23 +1254,21 @@ pub async fn chat_open<R: Runtime>(
     if handoff_from.as_deref() == Some(agent.as_str()) {
         return Err("A conversation already continues in its own agent".into());
     }
-    let key = (task_id.clone(), agent.clone());
+    let tab = tabs::extra_tab(tab.as_deref());
+    let slot = tabs::slot(&agent, tab);
+    let key = (task_id.clone(), slot.clone());
     let open_lock = registry.open_lock(&key);
     let _opening = open_lock.lock().await;
     let claim = registry
         .sessions
         .lock()
         .unwrap()
-        .claim_primary(&task_id, &agent, mode, &on_event);
+        .claim_primary(&task_id, &slot, mode, &on_event);
     let (session_id, stale) = match claim {
         PrimaryClaim::Attached(opened) => return Ok(*opened),
         PrimaryClaim::Replace { session_id, stale } => (session_id, stale),
     };
-    let owner = ChatOwner {
-        task_id: task_id.clone(),
-        agent: agent.clone(),
-        origin: ChatOrigin::User,
-    };
+    let owner = ChatOwner::user(&task_id, &agent, tab);
     let permission = PermissionPolicy::Interactive;
     let pending_resolution = permission.pending_resolution();
     if let Some(stale) = stale {
@@ -1265,12 +1286,12 @@ pub async fn chat_open<R: Runtime>(
     let resume = match (mode, conversation) {
         (OpenMode::Fresh, _) => None,
         (_, Some(conversation)) => Some(conversation),
-        _ => store.get(&task_id, &agent, &cwd),
+        _ => store.get(&task_id, &slot, &cwd),
     };
     let link = match handoff_from {
         Some(source) => Some(HandoffLink {
             conversation_id: store
-                .get(&task_id, &source, &cwd)
+                .get(&task_id, &tabs::slot(&source, tab), &cwd)
                 .ok_or("There is no conversation to continue")?,
             agent: source,
         }),
@@ -1279,14 +1300,14 @@ pub async fn chat_open<R: Runtime>(
             .and_then(|id| handoffs.source(&task_id, &agent, id)),
     };
     let fork = store
-        .entry(&task_id, &agent, &cwd)
+        .entry(&task_id, &slot, &cwd)
         .filter(|entry| Some(&entry.conversation_id) == resume.as_ref())
         .and_then(|entry| entry.fork);
     let expected_conversation = resume.clone();
 
     let pending_fork = link.as_ref().and_then(|link| {
         store
-            .entry(&task_id, &link.agent, &cwd)
+            .entry(&task_id, &tabs::slot(&link.agent, tab), &cwd)
             .filter(|entry| entry.conversation_id == link.conversation_id)
             .and_then(|entry| entry.fork)
     });
@@ -1367,9 +1388,12 @@ pub fn chat_send(
     agent: String,
     text: String,
     images: Option<Vec<ChatImage>>,
+    tab: Option<String>,
 ) -> Result<(), String> {
     let images = images.unwrap_or_default();
-    registry.with_session(&task_id, &agent, |session| session.send(&text, &images))
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
+        session.send(&text, &images)
+    })
 }
 
 #[tauri::command(async)]
@@ -1379,8 +1403,9 @@ pub fn chat_configure<R: Runtime>(
     task_id: String,
     agent: String,
     setting: ChatSetting,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, |session| {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.with_provider(|provider, _, out| provider.configure(&setting, out))?;
         if agent == "codex" && matches!(setting, ChatSetting::Model(_) | ChatSetting::Effort(_)) {
             let state = session.shared.lock().unwrap();
@@ -1396,8 +1421,9 @@ pub fn chat_compact(
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, |session| {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.with_provider(|provider, _, out| provider.compact(out))
     })
 }
@@ -1408,8 +1434,9 @@ pub fn chat_review(
     task_id: String,
     agent: String,
     target: ReviewTarget,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, |session| {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.with_provider(|provider, _, out| provider.review(&target, out))
     })
 }
@@ -1419,8 +1446,9 @@ pub fn chat_refresh_usage(
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, |session| {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.with_provider(|provider, _, out| provider.refresh_usage(out))
     })
 }
@@ -1474,8 +1502,13 @@ pub fn chat_interrupt(
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, ChatSession::interrupt)
+    registry.with_session(
+        &task_id,
+        &tabs::slot(&agent, tab.as_deref()),
+        ChatSession::interrupt,
+    )
 }
 
 /// Redirects the turn in progress with a message the user queued during it.
@@ -1485,8 +1518,9 @@ pub fn chat_steer_queued(
     task_id: String,
     agent: String,
     item_id: String,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, |session| {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.with_provider(|provider, _, out| provider.steer_queued(&item_id, out))
     })
 }
@@ -1497,8 +1531,9 @@ pub fn chat_unqueue(
     task_id: String,
     agent: String,
     item_id: String,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, |session| {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.with_provider(|provider, _, out| provider.unqueue(&item_id, out))
     })
 }
@@ -1511,8 +1546,9 @@ pub fn chat_respond(
     request_id: String,
     response: ChatResponse,
     generation: u64,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    registry.with_session(&task_id, &agent, |session| {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.respond(&request_id, &response, generation)
     })
 }
@@ -1524,12 +1560,14 @@ pub fn chat_detach(
     agent: String,
     generation: u64,
     session_id: Option<String>,
+    tab: Option<String>,
 ) {
+    let slot = tabs::slot(&agent, tab.as_deref());
     registry
         .sessions
         .lock()
         .unwrap()
-        .detach(&task_id, &agent, generation, session_id.as_deref());
+        .detach(&task_id, &slot, generation, session_id.as_deref());
 }
 
 fn primary_folder(folders: &[String]) -> Result<String, String> {
@@ -1563,6 +1601,7 @@ pub async fn chat_sessions<R: Runtime>(
 /// A live session owns its transcript, so it is renamed through its own process rather than by
 /// resuming the same conversation concurrently.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn chat_session_rename<R: Runtime>(
     app: AppHandle<R>,
     registry: State<'_, ChatRegistry>,
@@ -1571,6 +1610,7 @@ pub async fn chat_session_rename<R: Runtime>(
     folders: Vec<String>,
     id: String,
     title: String,
+    tab: Option<String>,
 ) -> Result<(), String> {
     let adapter = Agents::of(&app).get(&agent)?;
     let title = title.trim().to_string();
@@ -1578,10 +1618,11 @@ pub async fn chat_session_rename<R: Runtime>(
         return Err("The name cannot be empty".into());
     }
     let cwd = primary_folder(&folders)?;
-    let current = conversation_store(&app)?.get(&task_id, &agent, &cwd);
+    let slot = tabs::slot(&agent, tab.as_deref());
+    let current = conversation_store(&app)?.get(&task_id, &slot, &cwd);
     if adapter.live_session_renames_itself() && current.as_deref() == Some(id.as_str()) {
         let live = registry
-            .with_session(&task_id, &agent, |session| {
+            .with_session(&task_id, &slot, |session| {
                 if !session.status().is_live() {
                     return Err("not live".to_string());
                 }
@@ -1615,14 +1656,16 @@ pub async fn chat_session_archive<R: Runtime>(
     blocking(move || adapter.archive_session(&cwd, &id)).await
 }
 
-/// Stop one agent's chat but keep its conversation mapping, for the chat/terminal switch.
+/// Stop one tab's chat but keep its conversation mapping, for the chat/terminal switch and a
+/// tab handing its chat to another agent.
 #[tauri::command]
 pub async fn chat_stop(
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
+    tab: Option<String>,
 ) -> Result<(), String> {
-    let Some(session) = registry.remove(&task_id, &agent) else {
+    let Some(session) = registry.remove(&task_id, &tabs::slot(&agent, tab.as_deref())) else {
         return Ok(());
     };
     tauri::async_runtime::spawn_blocking(move || session.stop())
@@ -1649,6 +1692,7 @@ pub async fn chat_close<R: Runtime>(
         if let Ok(store) = handoff_store(&app) {
             store.forget_task(&task_id);
         }
+        tabs::forget_task(tabs::tab_store(&app), &task_id);
         interrupted::forget_task(&app, &task_id);
     })
     .await
@@ -1815,6 +1859,7 @@ pub(crate) mod tests {
             ChatOwner {
                 task_id: task_id.into(),
                 agent: agent.into(),
+                tab: None,
                 origin: ChatOrigin::User,
             },
             session,
@@ -2899,6 +2944,7 @@ pub(crate) mod tests {
         ChatOwner {
             task_id: task.into(),
             agent: agent.into(),
+            tab: None,
             origin,
         }
     }
@@ -2948,6 +2994,52 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn each_chat_tab_of_an_agent_has_its_own_primary() {
+        let registry = ChatRegistry::default();
+        register(&registry, "main", owner("t1", "claude", ChatOrigin::User));
+        register(
+            &registry,
+            "second",
+            ChatOwner::user("t1", "claude", Some("a1")),
+        );
+        assert!(live(&registry, "main") && live(&registry, "second"));
+        let primary_of = |slot: &str| {
+            registry
+                .sessions
+                .lock()
+                .unwrap()
+                .primary("t1", slot)
+                .map(|(id, _)| id.clone())
+        };
+        assert_eq!(primary_of("claude").as_deref(), Some("main"));
+        assert_eq!(primary_of("claude@a1").as_deref(), Some("second"));
+
+        let replaced = register(
+            &registry,
+            "third",
+            ChatOwner::user("t1", "claude", Some("a1")),
+        )
+        .unwrap();
+        replaced.terminate();
+        assert_eq!(primary_of("claude@a1").as_deref(), Some("third"));
+        assert_eq!(primary_of("claude").as_deref(), Some("main"));
+        registry.shutdown_all();
+    }
+
+    #[test]
+    fn a_user_session_in_the_main_tab_keeps_the_legacy_slot() {
+        let main = ChatOwner::user("t1", "codex", Some(tabs::MAIN_TAB));
+        assert_eq!(main.tab, None);
+        assert_eq!(main.conversation_slot("pane"), "codex");
+        let tab = ChatOwner::user("t1", "codex", Some("a1"));
+        assert_eq!(tab.conversation_slot("pane"), "codex@a1");
+        assert_eq!(
+            serde_json::to_value(&tab).unwrap()["tab"],
+            serde_json::json!("a1")
+        );
+    }
+
+    #[test]
     fn live_user_sessions_with_a_conversation_are_the_ones_interrupted() {
         let registry = ChatRegistry::default();
         for (agent, conversation) in [
@@ -2982,6 +3074,7 @@ pub(crate) mod tests {
             vec![interrupted::InterruptedSession {
                 task_id: "t1".into(),
                 agent: "claude".into(),
+                tab: None,
                 conversation_id: "c1".into(),
             }]
         );
