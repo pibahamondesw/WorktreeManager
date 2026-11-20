@@ -38,6 +38,8 @@ For embedded Codex, install Codex CLI (`brew install --cask codex`), select **Co
 
 **VSCode** is the default editor. Click **Install editor** when opening your first task. **OpenCode** runs inside the app and requires its CLI (`brew install opencode`). Existing external VS Code and OpenCode preferences switch to their integrated versions automatically. Editors and agent terminals keep running while you switch tasks. Close them explicitly, delete the task, or quit the app to end their sessions.
 
+The embedded VSCode follows the app theme as a default: it recolors its built-in Dark Modern or Light Modern theme and never writes your editor settings. A theme you pick inside the editor wins over the app theme. To follow the app again, remove `workbench.colorTheme` from the editor's user settings.
+
 Enable **Obsidian vault** from the sidebar to create task notes in `~/Documents/worktreemanager-vault`. Removing a task archives its notes; disabling the vault leaves files untouched. For agent setup and vault customization, see the [vault guide](vault-kit/README.md).
 
 ## Navigation

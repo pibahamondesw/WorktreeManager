@@ -37,6 +37,7 @@ import {
 import { adjustThemeContrast, applyTypography, setContrast, Typography } from "../appearance";
 
 import { defaultInterfacePreferences, PreferenceSession } from "../services/preferences";
+import { followAppThemeInEditor } from "../services/codeEditor";
 
 export function useStore() {
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
@@ -107,6 +108,8 @@ export function useStore() {
     window.addEventListener(THEME_CHANGE_EVENT, adjustThemeContrast);
     return () => window.removeEventListener(THEME_CHANGE_EVENT, adjustThemeContrast);
   }, []);
+
+  useEffect(() => followAppThemeInEditor(), []);
 
   useEffect(() => {
     Promise.all([
