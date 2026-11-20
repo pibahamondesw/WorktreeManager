@@ -15,6 +15,7 @@ const PRELOADS: &[(&str, &str)] = &[
 const PATCHES: &[(&str, &str, &str)] = &[
     (WORKBENCH, "options:r};return nW.set(e,c,l)", "options:{...r,extensionHostEnv:{...r?.extensionHostEnv,...globalThis.__wtmSessionEnv}}};return nW.set(e,c,l)"),
     (WORKBENCH, "e=t,eU.complete(t)", "e=t,globalThis.__wtmShutdown=()=>t.shutdown(),eU.complete(t)"),
+    (WORKBENCH, "i.options?.configurationDefaults&&this.configurationRegistry.registerDefaultConfigurations([{overrides:i.options.configurationDefaults}])}", "i.options?.configurationDefaults&&this.configurationRegistry.registerDefaultConfigurations([{overrides:i.options.configurationDefaults}]);let wtmDefaults;globalThis.__wtmApplyConfigurationDefaults=overrides=>{let previous=wtmDefaults;wtmDefaults={overrides,donotCache:!0};this.configurationRegistry.registerDefaultConfigurations([wtmDefaults]);previous&&this.configurationRegistry.deregisterDefaultConfigurations([previous])};globalThis.__wtmConfigurationDefaults&&globalThis.__wtmApplyConfigurationDefaults(globalThis.__wtmConfigurationDefaults)}"),
     (PTY_HOST, "import{spawn as Pd}from\"node-pty\";", "import{spawn as wtmSpawn}from\"node-pty\";const Pd=(...args)=>globalThis.__wtmSpawnPty(wtmSpawn,...args);"),
 ];
 

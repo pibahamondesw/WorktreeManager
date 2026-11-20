@@ -5,11 +5,11 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use tauri::webview::{Cookie, NewWindowResponse, WebviewBuilder};
-use tauri::{AppHandle, Runtime, WebviewUrl, Wry};
+use tauri::webview::{Cookie, NewWindowResponse, PageLoadEvent, WebviewBuilder};
+use tauri::{AppHandle, Manager, Runtime, WebviewUrl, Wry};
 use tauri_plugin_opener::OpenerExt;
 
-use super::{server, trust, EditorRequest};
+use super::{server, theme, trust, EditorRequest};
 use crate::commands::embedded::{attach_hidden, HiddenView, SessionInfo, View};
 
 const DISPOSABLE_POLYFILL: &str = include_str!("disposable.js");
@@ -89,6 +89,10 @@ fn editor_webview<R: EditorRuntime>(
         serde_json::json!(origin.origin().ascii_serialization()),
         serde_json::json!({"WTM_TASK_ID":task_id, "WTM_SURFACE":"editor", "WTM_EDITOR_SESSION":info.generation})
     );
+    let theme_script = app
+        .try_state::<theme::EditorTheme>()
+        .map(|theme| theme.script())
+        .unwrap_or_default();
     let unloaded = Arc::new(AtomicBool::new(false));
     let shutdown_url = format!("about:blank#wtm-closed-{}", info.generation);
     let navigation = Arc::new(EditorNavigation {
@@ -104,10 +108,18 @@ fn editor_webview<R: EditorRuntime>(
         .data_store_identifier(browser_store)
         .initialization_script(&session_script)
         .initialization_script(&trust_script)
+        .initialization_script(&theme_script)
+        .on_page_load(|view, load| reapply_theme_when_loaded(&view, load.event()))
         .initialization_script_for_all_frames(DISPOSABLE_POLYFILL)
         .on_navigation(move |target| navigation.allows(target))
         .on_new_window(move |target, _| popups.deny_popup(&target));
     Ok((builder, initial, unloaded, shutdown_url))
+}
+
+fn reapply_theme_when_loaded<R: Runtime>(view: &tauri::Webview<R>, event: PageLoadEvent) {
+    if event == PageLoadEvent::Finished {
+        theme::reapply(view);
+    }
 }
 
 struct EditorNavigation<R: EditorRuntime> {
@@ -398,6 +410,29 @@ mod tests {
         );
         assert_eq!(shutdown_url, SHUTDOWN_URL);
         assert!(!unloaded.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn editor_webview_starts_with_the_app_theme_and_reapplies_it_after_each_load() {
+        let app = mock_builder()
+            .manage(theme::EditorTheme::default())
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let (info, request, connection) = editor_inputs("http://127.0.0.1:3000/");
+        assert!(editor_webview(
+            app.handle(),
+            "editor-task",
+            &info,
+            &request,
+            &connection,
+            Path::new(WORKSPACE),
+        )
+        .is_ok());
+        let view = tauri::WebviewWindowBuilder::new(&app, "editor-task", Default::default())
+            .build()
+            .unwrap();
+        reapply_theme_when_loaded(view.as_ref(), PageLoadEvent::Started);
+        reapply_theme_when_loaded(view.as_ref(), PageLoadEvent::Finished);
     }
 
     #[test]

@@ -19,7 +19,7 @@ use serde::Deserialize;
 use tauri::{AppHandle, Manager, State};
 
 pub(crate) use process::{loopback_client, poll_until_ready, ServerProcess};
-pub(crate) use registry::{Adapter, Lease, SessionInfo, Slot, Surfaces, View};
+pub(crate) use registry::{Adapter, Lease, SessionInfo, Slot, Surfaces, View, LABEL_ROOT};
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) use view::close_on_error;
 pub(crate) use view::{attach_hidden, HiddenView};
