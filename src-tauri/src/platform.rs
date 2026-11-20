@@ -82,11 +82,9 @@ pub fn open_lock_file(path: &Path) -> io::Result<fs::File> {
 /// Takes an exclusive lock on `file`, waiting for it (`flock` / `LockFileEx`). Released when the
 /// file is closed.
 pub fn lock_exclusive(file: &fs::File) -> io::Result<()> {
-    if lock(file, true) {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    lock(file, true)
+        .then_some(())
+        .ok_or_else(io::Error::last_os_error)
 }
 
 /// Takes an exclusive lock on `file` if no one else holds it.
@@ -351,7 +349,7 @@ fn registry_string(
     value: &str,
 ) -> Option<std::ffi::OsString> {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
-    use windows_sys::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ};
+    use windows_sys::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_SZ};
     let wide = |text: &str| -> Vec<u16> {
         OsStr::new(text)
             .encode_wide()
@@ -359,7 +357,8 @@ fn registry_string(
             .collect()
     };
     let (key, value) = (wide(key), wide(value));
-    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+    // Without RRF_NOEXPAND, RRF_RT_REG_SZ also accepts REG_EXPAND_SZ values and expands them.
+    let flags = RRF_RT_REG_SZ;
     let mut size = 0u32;
     let status = unsafe {
         RegGetValueW(
@@ -497,5 +496,38 @@ pub fn os_from_bytes(bytes: &[u8]) -> OsString {
     #[cfg(windows)]
     {
         OsString::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_private_dir_cannot_be_created_under_a_file() {
+        let file = std::env::temp_dir().join(format!("wtm-platform-file-{}", std::process::id()));
+        fs::write(&file, "").unwrap();
+        let result = prepare_private_dir(&file.join("run"));
+        fs::remove_file(&file).unwrap();
+        assert_eq!(result.unwrap_err(), "Cannot create socket directory");
+    }
+
+    #[test]
+    fn signalling_a_process_stops_it() {
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id();
+        assert!(process_alive(pid));
+        signal_process(pid, false).unwrap();
+        child.wait().unwrap();
+        assert!(!process_alive(pid));
+        assert!(signal_process(pid, true).is_ok());
+    }
+
+    #[test]
+    fn signalling_another_users_process_fails() {
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        assert!(signal_process(1, false).is_err());
     }
 }
