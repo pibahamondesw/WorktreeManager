@@ -567,15 +567,50 @@ fn a_retry_names_the_item_and_leaves_the_other_items_of_its_run_alone() {
         retry(&pair, Some("a")),
         Err(format!("Run {pair} is still stopping; try again"))
     );
+}
 
+#[test]
+fn an_older_routine_run_is_retried_despite_newer_runs_ended_or_going_on() {
+    let harness = Harness::new(&format!("{TARGET}{STEPS}"));
     let older = harness.recorded(Some(harness.hash()), &failed_at("check"));
-    let newer = harness.recorded(Some(harness.hash()), &failed_at("check"));
-    assert_eq!(
-        retry(&older, None),
-        Err(format!(
-            "Run {newer} has a newer item routine; retry that one"
-        ))
+    harness.recorded(Some(harness.hash()), &failed_at("fix"));
+    harness.recorded(
+        Some(harness.hash()),
+        &routine_with(vec![moved("routine", ItemStatus::Active, Some("fix"))]),
     );
+
+    let retried = harness
+        .retry(request(&older, None, Actor::User), RetryDefinition::Current)
+        .unwrap();
+
+    assert_eq!(
+        (retried.status, retried.step.as_deref()),
+        (ItemStatus::Queued, Some("check"))
+    );
+    let driven = harness.driven_again();
+    assert_eq!(
+        (&driven[0].0.run_id, &driven[0].1),
+        (&older, &vec!["routine".to_string()])
+    );
+}
+
+#[test]
+fn a_campaign_item_is_retried_only_in_the_newest_run_that_took_its_id() {
+    let harness = Harness::new(&format!("{CAMPAIGN}{STEPS}"));
+    let older = campaign_with(&harness, ["a", "b", "c"]);
+    let newer = campaign_with(&harness, ["d", "e", "c"]);
+    let retry = |run_id: &str| {
+        harness.retry(
+            request(run_id, Some("c"), Actor::User),
+            RetryDefinition::Current,
+        )
+    };
+
+    assert_eq!(
+        retry(&older),
+        Err(format!("Run {newer} has a newer item c; retry that one"))
+    );
+    assert!(retry(&newer).is_ok());
 }
 
 #[test]

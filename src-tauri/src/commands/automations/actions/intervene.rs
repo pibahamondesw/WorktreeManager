@@ -182,7 +182,9 @@ pub fn retry(
         ));
     }
     still_stopping(executor, &run, routine)?;
-    newest(store, name, &run, item)?;
+    if !routine {
+        newest(store, name, &run, item)?;
+    }
     let step = retry_step(chosen, item, from)?;
     if run.pinned_hash() != Some(chosen.hash.as_str()) && others_open(&run, item) {
         return Err(format!(
@@ -348,7 +350,8 @@ fn still_stopping(executor: &dyn Executor, run: &RunState, routine: bool) -> Res
     Ok(())
 }
 
-/// A later selection may have taken the item's id again; only its newest item is retried.
+/// A later selection may have taken the item's id again; only its newest item is retried. A
+/// routine's runs are each their own item, so newer runs never block an older one.
 fn newest(store: &RunStore, name: &str, run: &RunState, item: &ItemState) -> Result<(), String> {
     let test = is_test(run);
     let latest = store.latest_items(name)?;
