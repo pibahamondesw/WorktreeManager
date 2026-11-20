@@ -14,6 +14,7 @@ import {
 } from "../services/terminal";
 import { xtermThemeFromCss } from "../components/terminal/xtermTheme";
 import { THEME_CHANGE_EVENT } from "../themes";
+import { TYPOGRAPHY_CHANGE_EVENT, terminalFont } from "../appearance";
 
 export type SessionStatus = { kind: "connecting" } | TerminalStatus;
 
@@ -92,8 +93,7 @@ function useXterm(
     if (!el) return;
     const term = new Terminal({
       theme: xtermThemeFromCss(),
-      fontFamily: "Menlo, Monaco, monospace",
-      fontSize: 12,
+      ...terminalFont(),
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: true,
@@ -152,16 +152,23 @@ function useXterm(
       term.options.theme = xtermThemeFromCss();
     };
     window.addEventListener(THEME_CHANGE_EVENT, followTheme);
-    const observer = new ResizeObserver(() => {
+    const refit = () => {
       safeFit();
       void terminalResize(taskId, session, term.cols, term.rows);
-    });
+    };
+    const followTypography = () => {
+      Object.assign(term.options, terminalFont());
+      refit();
+    };
+    window.addEventListener(TYPOGRAPHY_CHANGE_EVENT, followTypography);
+    const observer = new ResizeObserver(refit);
     observer.observe(el);
 
     return () => {
       disposed = true;
       observer.disconnect();
       window.removeEventListener(THEME_CHANGE_EVENT, followTheme);
+      window.removeEventListener(TYPOGRAPHY_CHANGE_EVENT, followTypography);
       input.dispose();
       if (attachment !== null) void terminalDetach(taskId, session, attachment);
       term.dispose();
