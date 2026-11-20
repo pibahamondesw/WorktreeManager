@@ -10,6 +10,7 @@ import { ProjectFilter } from "../ui/ProjectFilter";
 import { matchesProject } from "../../search/projects";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SearchIcon } from "../ui/Icons";
+import { Kbd } from "../ui/Kbd";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { WorktreeListToast } from "../worktree/WorktreeListToast";
 import { OpenTaskOptions } from "../../hooks/useOpenTask";
@@ -470,7 +471,7 @@ function ScopeTab({
 function Hint({ keys, children }: { keys: string; children: React.ReactNode }) {
   return (
     <span>
-      <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{keys}</kbd> {children}
+      <Kbd>{keys}</Kbd> {children}
     </span>
   );
 }
