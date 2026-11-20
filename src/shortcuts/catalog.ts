@@ -119,15 +119,20 @@ export const bindings: Binding[] = [
   }),
   ...(
     [
-      ["agent", "a"],
-      ["mode", "m"],
-      ["model", "i"],
-      ["effort", "e"],
+      ["agent", "a", "agent"],
+      ["mode", "m", "permissions"],
+      ["model", "i", "model"],
+      ["effort", "e", "reasoning effort"],
     ] as const
-  ).map(([name, key]) =>
-    binding(`chat.${name}`, `Choose ${name}`, "Chat", ["chat"], [shortcut(key, "meta", "shift")], {
-      inText: true,
-    })
+  ).map(([name, key, control]) =>
+    binding(
+      `chat.${name}`,
+      `Choose ${control}`,
+      "Chat",
+      ["chat"],
+      [shortcut(key, "meta", "shift")],
+      { inText: true }
+    )
   ),
   ...Array.from({ length: 10 }, (_, i) => [
     binding(`workspace.${i}`, `Switch to workspace ${i}`, "Workspaces", app, primary(String(i)), {
