@@ -274,6 +274,8 @@ struct Run {
     chats: Vec<String>,
     variables: Vec<(String, String)>,
     missing_task: Option<String>,
+    /// A step without a task, which works in a scratch directory.
+    taskless: bool,
     /// What the last `publish` recorded.
     recorded: std::cell::RefCell<Vec<RunEvent>>,
 }
@@ -294,6 +296,7 @@ impl Run {
             chats: Vec::new(),
             variables: Vec::new(),
             missing_task: None,
+            taskless: false,
             recorded: Default::default(),
         }
     }
@@ -316,7 +319,11 @@ impl Run {
             stage: None,
             active_time_left: Duration::from_secs(60),
         };
-        let task = task(&self.worktree.0);
+        let task = if self.taskless {
+            ResolvedTask::scratch(&self.worktree.0)
+        } else {
+            task(&self.worktree.0)
+        };
         let mut variables = vec![
             ("automation".to_string(), "demo".to_string()),
             ("item.id".to_string(), ITEM.to_string()),

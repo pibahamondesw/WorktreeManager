@@ -2067,7 +2067,8 @@ fn effect(report: &mut Report, scope: &Scope, value: &Value, field: &str) -> Opt
     effect
 }
 
-/// Without the item's task to default to, `branch` and `repos` are required.
+/// Without the item's task to default to, `repos` is required, and `branch` too unless
+/// `linear_issue` names the issue whose branch the task takes.
 fn task_create(
     report: &mut Report,
     fields: &mut Fields,
@@ -2089,31 +2090,27 @@ fn task_create(
         (
             effect.workspace.is_some() && effect.repos.is_empty(),
             "repos",
-            "workspace",
+            "workspace needs repos",
         ),
         (
             !effect.from_remote.is_empty() && effect.branch.is_none(),
             "branch",
-            "from_remote",
+            "from_remote needs branch",
         ),
         (
-            taskless && effect.branch.is_none(),
+            taskless && effect.branch.is_none() && effect.linear_issue.is_none(),
             "branch",
-            "a step without a task",
+            "a step without a task needs branch or linear_issue",
         ),
         (
             taskless && effect.repos.is_empty(),
             "repos",
-            "a step without a task",
+            "a step without a task needs repos",
         ),
     ];
     let mut valid = true;
-    for (_, needed, by) in missing.into_iter().filter(|(missing, ..)| *missing) {
-        report.error(
-            IssueKind::Missing,
-            &fields.path(needed),
-            format!("{by} needs {needed}"),
-        );
+    for (_, field, message) in missing.into_iter().filter(|(missing, ..)| *missing) {
+        report.error(IssueKind::Missing, &fields.path(field), message);
         valid = false;
     }
     valid.then_some(effect)

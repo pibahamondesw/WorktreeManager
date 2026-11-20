@@ -1048,6 +1048,11 @@ export class Operations {
     return linearFailure(this.linear(workspaceId).upsertMarkedIssue(input));
   }
 
+  /** Automation effects: an issue with the branch Linear suggests for it. */
+  linearIssue(workspaceId: string, identifier: string) {
+    return linearFailure(this.linear(workspaceId).getIssue(identifier));
+  }
+
   moveMarkedIssue(workspaceId: string, marker: string, state: string) {
     return linearFailure(this.linear(workspaceId).moveMarkedIssue(marker, state));
   }

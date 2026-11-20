@@ -232,7 +232,12 @@ async function taskChatInput(params: Record<string, unknown>): Promise<TaskChatI
 }
 
 /** Operations only the automation engine in this process may run, never a socket client. */
-const ENGINE_METHODS = ["linear.issue-upsert", "linear.issue-state", "task.log-append"];
+const ENGINE_METHODS = [
+  "linear.issue",
+  "linear.issue-upsert",
+  "linear.issue-state",
+  "task.log-append",
+];
 
 /** A rendered template, which may be blank: the upsert skips blank labels and milestones. */
 function renderedText(value: unknown): string {
@@ -380,6 +385,7 @@ export async function dispatchCliBridge(
       "automation.hand-back": ["runId", "item", "note"],
       "automation.retry": ["runId", "item", "definition", "from"],
       "automation.cancel": ["runId"],
+      "linear.issue": ["workspaceId", "issue"],
       "linear.issue-upsert": [
         "workspaceId",
         "marker",
@@ -596,6 +602,9 @@ export async function dispatchCliBridge(
         result = await invokeAutomations("automation_cancel", {
           target: { name: null, runId: text(params.runId), by: "cli" },
         });
+        break;
+      case "linear.issue":
+        result = await operations.linearIssue(text(params.workspaceId), text(params.issue));
         break;
       case "linear.issue-upsert":
         result = await operations.upsertMarkedIssue(

@@ -52,6 +52,11 @@ fn tasks_bridge(listed: Vec<Value>) -> FakeBridge {
         )),
         "task.log-append" => ok(json!({ "status": "appended" })),
         "task.chat" => ok(json!({ "conversationId": "c1" })),
+        "linear.issue" => ok(json!({
+            "id": "id-ENG-7",
+            "identifier": params["issue"],
+            "branchName": "me/eng-7-review",
+        })),
         _ => panic!("unexpected call to {method}"),
     })
 }
@@ -493,4 +498,120 @@ fn a_test_run_shows_what_the_run_decided_without_resolving_it() {
         effects[1].detail.as_deref(),
         Some("Create or reuse the task on wtm/demo/1")
     );
+}
+
+fn issue_task() -> TaskCreateEffect {
+    TaskCreateEffect {
+        repos: vec!["api".into()],
+        linear_issue: Some("{steps.triage.result.issue}".into()),
+        ..TaskCreateEffect::default()
+    }
+}
+
+fn taskless(issue: &str) -> Run {
+    let mut run = triaged(issue);
+    run.taskless = true;
+    run
+}
+
+#[test]
+fn without_a_branch_or_task_it_creates_the_task_on_the_branch_linear_suggests_for_the_issue() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(tasks_bridge(Vec::new()));
+
+    let (report, effects) = taskless("ENG-7").publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![Effect::TaskCreate(issue_task())],
+    );
+
+    assert_eq!(report.outcome, StepOutcome::Success);
+    assert_eq!(
+        effects[0].detail.as_deref(),
+        Some("Created a task on me/eng-7-review; linked it to ENG-7")
+    );
+    let calls = bridge.calls();
+    assert_eq!(
+        call(&calls, "linear.issue"),
+        &json!({ "workspaceId": "w1", "issue": "ENG-7" })
+    );
+    assert_eq!(
+        call(&calls, "task.create")["input"]["branchName"],
+        "me/eng-7-review"
+    );
+}
+
+#[test]
+fn the_task_already_on_the_issue_branch_is_reused() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(tasks_bridge(vec![listed_task(
+        "t1",
+        "me/eng-7-review",
+        &["r1"],
+        Some("ENG-7"),
+    )]));
+
+    let (report, effects) = taskless("ENG-7").publish(
+        &mut publisher(&forge, &bridge),
+        2,
+        vec![Effect::TaskCreate(issue_task())],
+    );
+
+    assert_eq!(report.outcome, StepOutcome::Success);
+    assert_eq!(effects[0].status, EffectStatus::Reconciled);
+    assert_eq!(effects[0].reference.as_deref(), Some("t1"));
+    assert_eq!(
+        methods(&bridge),
+        ["workspace.list", "linear.issue", "task.list"]
+    );
+}
+
+#[test]
+fn without_a_branch_or_task_an_empty_issue_or_one_without_a_branch_fails_the_effect() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(tasks_bridge(Vec::new()));
+    let (report, _) = taskless(" ").publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![Effect::TaskCreate(issue_task())],
+    );
+    assert_eq!(
+        report.cause.as_deref(),
+        Some("linear_issue rendered no issue, and there is no branch to create the task on")
+    );
+    assert!(!methods(&bridge).contains(&"task.create".to_string()));
+
+    let branchless = Arc::new(FakeBridge::answering(|method, params| match method {
+        "linear.issue" => ok(json!({ "identifier": "ENG-7", "branchName": "" })),
+        _ => (tasks_bridge(Vec::new()).answer)(method, params),
+    }));
+    let (report, _) = taskless("ENG-7").publish(
+        &mut publisher(&forge, &branchless),
+        1,
+        vec![Effect::TaskCreate(issue_task())],
+    );
+    assert_eq!(
+        report.cause.as_deref(),
+        Some("Linear suggests no branch for ENG-7")
+    );
+}
+
+#[test]
+fn a_test_run_shows_a_placeholder_for_the_issue_branch() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(silent());
+    let mut run = taskless("ENG-7");
+    run.staged = true;
+
+    let (_, effects) = run.publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![Effect::TaskCreate(issue_task())],
+    );
+
+    assert_eq!(
+        effects[0].detail.as_deref(),
+        Some("Create or reuse the task on <issue branch> with api, linked to ENG-7")
+    );
+    assert!(bridge.calls().is_empty());
 }
