@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { IS_WINDOWS } from "../platform";
 import {
   bindingById,
   bindings,
@@ -122,7 +123,8 @@ export function dispatchShortcut(event: KeyboardEvent, captureOnly = false) {
   const entry = choices.find((candidate) =>
     [...registrations.values()].some((actions) => actions[candidate.id])
   );
-  if (!entry || (entry.native && isTauri())) return;
+  // The native menu runs these on macOS; Windows has no app menu, so the DOM runs them there.
+  if (!entry || (entry.native && isTauri() && !IS_WINDOWS)) return;
   if (captureOnly && entry.category !== "Appearance" && !entry.id.startsWith("palette.jump."))
     return;
   if (event.repeat && !entry.repeat) return;
