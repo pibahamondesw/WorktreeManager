@@ -117,7 +117,7 @@ fn before_task_create_a_taskless_item_cannot_use_a_task() {
         (
             "  - id: open\n    publish: { wtm.task_create: { repos: app } }\n",
             "steps[1].publish.wtm.task_create.branch",
-            "a step without a task needs branch",
+            "a step without a task needs branch or linear_issue",
         ),
         (
             "  - id: open\n    publish: { wtm.task_create: { branch: b } }\n",
@@ -133,4 +133,19 @@ fn before_task_create_a_taskless_item_cannot_use_a_task() {
     for (rest, field, expected) in cases {
         assert_eq!(message(&taskless(rest), field), expected, "{rest}");
     }
+}
+
+#[test]
+fn a_taskless_task_create_takes_its_branch_from_the_linear_issue() {
+    let definition = valid(&taskless(
+        "  - id: open\n    publish: { wtm.task_create: { repos: app, linear_issue: \"{steps.triage.result.summary}\" } }\n",
+    ));
+    assert_eq!(
+        kind(&definition.steps[1]),
+        json!({ "publish": [{
+            "effect": "wtm.task_create",
+            "repos": ["app"],
+            "linearIssue": "{steps.triage.result.summary}",
+        }] })
+    );
 }

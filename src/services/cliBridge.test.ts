@@ -579,7 +579,12 @@ describe("engine-only operations", () => {
   };
 
   it("are unknown to socket clients", async () => {
-    for (const method of ["linear.issue-upsert", "linear.issue-state", "task.log-append"])
+    for (const method of [
+      "linear.issue",
+      "linear.issue-upsert",
+      "linear.issue-state",
+      "task.log-append",
+    ])
       expect(await call(method, {})).toMatchObject({
         ok: false,
         error: { code: "method_not_found" },
@@ -652,6 +657,27 @@ describe("engine-only operations", () => {
     expect(JSON.stringify(upsertIssue.mock.calls)).not.toContain("secret");
     upsertIssue.mockRestore();
     moveIssue.mockRestore();
+  });
+
+  it("read an issue with the branch Linear suggests for it", async () => {
+    const getIssue = vi.spyOn(LinearService.prototype, "getIssue").mockResolvedValue({
+      id: "i",
+      identifier: "ENG-7",
+      title: "Review",
+      branchName: "me/eng-7-review",
+    });
+
+    expect(await engineCall("linear.issue", { workspaceId: "w1", issue: "ENG-7" })).toMatchObject({
+      ok: true,
+      data: { identifier: "ENG-7", branchName: "me/eng-7-review" },
+    });
+    expect(getIssue).toHaveBeenCalledWith("ENG-7");
+    getIssue.mockRejectedValueOnce(new Error("Entity not found"));
+    expect(await engineCall("linear.issue", { workspaceId: "w1", issue: "ENG-8" })).toMatchObject({
+      ok: false,
+      error: { code: "linear_failed", message: "Entity not found" },
+    });
+    getIssue.mockRestore();
   });
 
   it("need Linear configured in the workspace", async () => {

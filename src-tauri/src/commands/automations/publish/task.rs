@@ -1,7 +1,8 @@
 //! `wtm.task_create`: the task the item goes on in, on a workspace, repositories, branch and
 //! Linear issue the run decides. The workspace's task on that branch is reused, so a retry never
 //! creates another; a branch given explicitly is used as is, and repositories `from_remote`
-//! check out its head on `origin` instead of starting it from their base.
+//! check out its head on `origin` instead of starting it from their base. Without a branch or an
+//! item's task to take it from, the task goes on the branch Linear suggests for its issue.
 
 use std::path::Path;
 
@@ -11,6 +12,11 @@ use super::super::definition::TaskCreateEffect;
 use super::super::routine::{resolved_task, task_of, ResolvedTask, TaskFailure};
 use super::{operation, text, warnings, EffectStatus, Outcome, PublishScope, Publisher};
 use crate::commands::validation::is_valid_branch_name;
+
+/// What a Test run shows for the branch of an issue it does not look up.
+const ISSUE_BRANCH: &str = "<issue branch>";
+const NO_BRANCH: &str =
+    "linear_issue rendered no issue, and there is no branch to create the task on";
 
 /// A repository of the task's workspace.
 #[derive(Clone)]
@@ -46,7 +52,11 @@ impl Publisher {
         scope: &PublishScope,
         effect: &TaskCreateEffect,
     ) -> Result<String, String> {
-        let branch = self.task_branch(scope, effect)?;
+        let branch = match self.named_branch(scope, effect)? {
+            Some(branch) => branch,
+            None if effect.linear_issue.is_some() => ISSUE_BRANCH.to_string(),
+            None => return Err(NO_BRANCH.into()),
+        };
         let mut detail = format!("Create or reuse the task on {branch}");
         if !effect.repos.is_empty() {
             let repos = self.rendered_names(scope, &effect.repos)?;
@@ -207,16 +217,21 @@ impl Publisher {
             .iter()
             .map(|name| find(name).map(|repo| repo.id.clone()))
             .collect::<Result<_, _>>()?;
-        let branch = self.task_branch(scope, effect)?;
+        let workspace_id = text(workspace, "id")?;
+        let linear_issue = self.linear_issue(scope, effect)?;
+        let branch = match self.named_branch(scope, effect)? {
+            Some(branch) => branch,
+            None => self.issue_branch(&workspace_id, linear_issue.as_deref())?,
+        };
         if !is_valid_branch_name(&branch)? {
             return Err(format!("branch {branch:?} is not a valid git branch name"));
         }
         Ok(Wanted {
-            workspace_id: text(workspace, "id")?,
+            workspace_id,
             repos,
             branch,
             from_remote,
-            linear_issue: self.linear_issue(scope, effect)?,
+            linear_issue,
         })
     }
 
@@ -274,15 +289,28 @@ impl Publisher {
         })
     }
 
-    fn task_branch(
+    /// The effect's branch, else the item's task's; none for a step without a task.
+    fn named_branch(
         &self,
         scope: &PublishScope,
         effect: &TaskCreateEffect,
-    ) -> Result<String, String> {
+    ) -> Result<Option<String>, String> {
         match &effect.branch {
-            Some(branch) => Ok(self.render(scope, branch)?.trim().to_string()),
-            None => Ok(scope.task.branch.clone()),
+            Some(branch) => Ok(Some(self.render(scope, branch)?.trim().to_string())),
+            None => Ok(Some(scope.task.branch.clone()).filter(|branch| !branch.is_empty())),
         }
+    }
+
+    /// The branch Linear suggests for the issue, as `target.task: per-item` tasks use.
+    fn issue_branch(&self, workspace_id: &str, issue: Option<&str>) -> Result<String, String> {
+        let issue = issue.ok_or(NO_BRANCH)?;
+        let params = json!({ "workspaceId": workspace_id, "issue": issue });
+        let found = operation(self.bridge.call("linear.issue", params))?;
+        found["branchName"]
+            .as_str()
+            .filter(|branch| !branch.trim().is_empty())
+            .map(|branch| branch.trim().to_string())
+            .ok_or_else(|| format!("Linear suggests no branch for {issue}"))
     }
 
     fn linear_issue(

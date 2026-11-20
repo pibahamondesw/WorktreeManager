@@ -589,7 +589,8 @@ pub struct ChatOpenEffect {
 }
 
 /// `wtm.task_create`: templates of what the task works on, rendered when the effect runs. Without
-/// them it is the item's branch and repositories in the target workspace.
+/// them it is the item's branch and repositories in the target workspace; without `branch` or an
+/// item's task, the branch Linear suggests for `linear_issue`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskCreateEffect {

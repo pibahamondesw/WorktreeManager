@@ -1071,7 +1071,10 @@ describe("openTaskChat", () => {
 
 describe("linkTaskIssue", () => {
   beforeEach(() => {
-    vi.spyOn(LinearService.prototype, "getIssue").mockResolvedValue(input.linearIssue!);
+    vi.spyOn(LinearService.prototype, "getIssue").mockResolvedValue({
+      ...input.linearIssue!,
+      branchName: "me/wor-80-local-cli",
+    });
   });
 
   it("persists the association and preserves all repositories and the note filename after reload", async () => {

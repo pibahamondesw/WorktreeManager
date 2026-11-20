@@ -443,6 +443,7 @@ export class LinearService {
     id: string;
     identifier: string;
     title: string;
+    branchName: string;
     projectId?: string;
     projectName?: string;
   }> {
@@ -452,6 +453,7 @@ export class LinearService {
       id: issue.id,
       identifier: issue.identifier,
       title: issue.title,
+      branchName: issue.branchName,
       projectId: project?.id,
       projectName: project?.name,
     };
