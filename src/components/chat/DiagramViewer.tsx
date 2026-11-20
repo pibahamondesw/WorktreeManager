@@ -235,7 +235,7 @@ export function DiagramViewer({
           type="button"
           onClick={onClose}
           aria-label="Close diagram preview"
-          title="Close (Esc)"
+          title="Close diagram preview (Esc)"
           className={toolbarButton}
         >
           <CloseIcon size={14} />

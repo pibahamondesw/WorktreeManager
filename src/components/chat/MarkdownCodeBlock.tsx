@@ -96,7 +96,7 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
           className="chat-mermaid-action"
           onClick={openPreview}
           aria-label="Open diagram preview"
-          title="Open preview"
+          title="Open diagram preview"
         >
           <ExpandIcon />
         </button>

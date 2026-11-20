@@ -184,7 +184,7 @@ export function MarkdownPreviewPanel({
             variant="ghost"
             onClick={() => setRevision((current) => current + 1)}
             aria-label="Reload document"
-            title="Reload"
+            title="Reload document"
             className="h-7 px-1.5"
           >
             <RefreshIcon />
@@ -194,7 +194,7 @@ export function MarkdownPreviewPanel({
           variant="ghost"
           onClick={onClose}
           aria-label="Close preview"
-          title="Close (Esc)"
+          title="Close preview (Esc)"
           className="h-7 px-1.5"
         >
           <CloseIcon size={14} />
