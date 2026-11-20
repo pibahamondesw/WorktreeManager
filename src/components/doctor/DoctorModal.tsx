@@ -5,6 +5,7 @@ import { Modal } from "../ui/Modal";
 import { EditorInstallation } from "../editor/EditorInstallation";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
+import { CopyButton } from "../ui/CopyButton";
 import { CopyIcon, ExternalLinkIcon, SpinnerIcon } from "../ui/Icons";
 import { CheckSeverity, CheckStatus, DependencyCheck, DoctorReport } from "../../services/doctor";
 
@@ -68,7 +69,6 @@ export function DependencySettings({
   onRecheck,
   onRepairVaultAgents,
 }: Omit<DoctorModalProps, "onClose">) {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [repairing, setRepairing] = useState<VaultAgent | null>(null);
   const [repairError, setRepairError] = useState<{ agent: VaultAgent; message: string } | null>(
     null
@@ -84,12 +84,6 @@ export function DependencySettings({
     } finally {
       setRepairing(null);
     }
-  };
-
-  const copy = (id: string, command: string) => {
-    void navigator.clipboard.writeText(command);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500);
   };
 
   return (
@@ -156,7 +150,7 @@ export function DependencySettings({
                   ) : check.id === "embedded-editor" ? (
                     open && <EditorInstallation onReady={onRecheck} />
                   ) : (
-                    <Remedy check={check} copiedId={copiedId} onCopy={copy} />
+                    <Remedy check={check} />
                   ))}
               </div>
             </div>
@@ -175,30 +169,22 @@ export function DependencySettings({
   );
 }
 
-function Remedy({
-  check,
-  copiedId,
-  onCopy,
-}: {
-  check: DependencyCheck;
-  copiedId: string | null;
-  onCopy: (id: string, command: string) => void;
-}) {
+function Remedy({ check }: { check: DependencyCheck }) {
   if (!check.install && !check.url) return null;
 
   return (
     <div className="flex items-center gap-2 pt-1">
       {check.install && (
-        <button
-          onClick={() => onCopy(check.id, check.install!)}
+        <CopyButton
+          value={check.install}
           className="min-w-0 flex items-center gap-2 rounded-lg bg-bg-tertiary border border-border px-2.5 py-1.5 hover:bg-bg-hover transition-colors cursor-pointer"
           title="Copy install command"
         >
           <span className="text-xs font-mono text-text-primary truncate">{check.install}</span>
           <span className="flex items-center gap-1 text-xs text-text-muted flex-shrink-0">
-            <CopyIcon /> {copiedId === check.id ? "Copied" : "Copy"}
+            <CopyIcon /> Copy
           </span>
-        </button>
+        </CopyButton>
       )}
       {check.url && (
         <button

@@ -1,4 +1,5 @@
 import { ProjectFilter } from "../ui/ProjectFilter";
+import { EmptyState } from "../ui/EmptyState";
 import { matchesProject } from "../../search/projects";
 import { useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useMouseReorder } from "../../hooks/useMouseReorder";
@@ -493,9 +494,10 @@ export function WorktreeList({
               </div>
             ) : tasks.length === 0 && exits.size === 0 ? (
               allTasks.length > 0 ? (
-                <p className="text-sm text-text-muted text-center py-10">
-                  {project ? "No tasks in this project" : "No tasks to show"}
-                </p>
+                <EmptyState
+                  className="py-10"
+                  title={project ? "No tasks in this project" : "No tasks to show"}
+                />
               ) : (
                 <WorktreeEmptyWorktrees onCreateFirst={() => setShowNew(true)} />
               )

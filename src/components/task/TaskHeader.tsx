@@ -7,6 +7,7 @@ import { SessionStatus } from "../../hooks/useTerminalSession";
 import { taskTransitionName } from "../../services/taskTransition";
 import { PullRequestLinks } from "../worktree/PullRequestLinks";
 import { EditableTaskTitle } from "./EditableTaskTitle";
+import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { linearIssueUrl } from "../../utils";
 
 interface TaskHeaderProps {
@@ -131,9 +132,7 @@ export function TaskHeader({
         style={{ viewTransitionName: taskTransitionName("branch") }}
       >
         <BranchIcon className="flex-shrink-0" />
-        <span className="truncate select-text" title={task.branchName}>
-          {task.branchName}
-        </span>
+        <MiddleTruncate value={task.branchName} />
         {gitStatus && gitStatus.ahead > 0 && (
           <span className="text-success" title={`${gitStatus.ahead} ahead of main`}>
             ↑{gitStatus.ahead}

@@ -1,3 +1,4 @@
+import { Kbd } from "../ui/Kbd";
 import { useShortcutLabels } from "../../shortcuts/runtime";
 interface WorktreeListKeyboardHintsProps {
   /** Only advertise the notes shortcut when the workspace has a notes folder. */
@@ -10,43 +11,42 @@ export function WorktreeListKeyboardHints({ showNotes }: WorktreeListKeyboardHin
     <div className="flex-shrink-0 px-6 py-2 border-t border-border">
       <div className="flex items-center gap-3 text-[0.625rem] text-text-muted font-mono flex-wrap">
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">↑↓</kbd> navigate
+          <Kbd>↑↓</Kbd> navigate
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{label("list.jump.0")}</kbd> jump to
-          first
+          <Kbd>{label("list.jump.0")}</Kbd> jump to first
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">↵</kbd> open
+          <Kbd>↵</Kbd> open
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{label("list.linear")}</kbd> linear
+          <Kbd>{label("list.linear")}</Kbd> linear
         </span>
         {showNotes && (
           <span>
-            <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{label("list.note")}</kbd> notes
+            <Kbd>{label("list.note")}</Kbd> notes
           </span>
         )}
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{label("list.branch")}</kbd> branch
+          <Kbd>{label("list.branch")}</Kbd> branch
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{label("list.path")}</kbd> path
+          <Kbd>{label("list.path")}</Kbd> path
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{label("list.delete")}</kbd> delete
+          <Kbd>{label("list.delete")}</Kbd> delete
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{label("app.search")}</kbd> palette
+          <Kbd>{label("app.search")}</Kbd> palette
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">
+          <Kbd>
             {label("app.history.back")} {label("app.history.forward")}
-          </kbd>{" "}
+          </Kbd>{" "}
           history
         </span>
         <span>
-          <kbd className="px-1 py-0.5 bg-bg-tertiary rounded">{label("list.refresh")}</kbd> refresh
+          <Kbd>{label("list.refresh")}</Kbd> refresh
         </span>
       </div>
     </div>

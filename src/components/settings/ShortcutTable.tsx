@@ -1,5 +1,6 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { Button } from "../ui/Button";
+import { CollapsibleSectionHeader } from "../ui/CollapsibleSectionHeader";
 import {
   shortcutDisplayValues,
   compactShortcutLabels,
@@ -118,13 +119,11 @@ export function ShortcutTable({
         return (
           <section key={section.id}>
             <h4>
-              <button
-                type="button"
-                aria-expanded={expanded}
-                aria-controls={`shortcut-section-${section.id}`}
-                className="w-full flex items-center gap-2 py-2 text-left text-sm font-semibold text-text-primary cursor-pointer focus-visible:outline-accent"
+              <CollapsibleSectionHeader
+                expanded={expanded}
+                controls={`shortcut-section-${section.id}`}
                 disabled={busy || searching}
-                onClick={() => {
+                onToggle={() => {
                   if (selected && sectionFor(selected) === section.id) onSelect(null);
                   setCollapsed((current) => {
                     const next = new Set(current);
@@ -134,12 +133,9 @@ export function ShortcutTable({
                   });
                 }}
               >
-                <span aria-hidden="true" className="text-text-muted">
-                  {expanded ? "▾" : "▸"}
-                </span>
                 {section.label}
                 <span className="text-xs font-normal text-text-muted">{rows.length}</span>
-              </button>
+              </CollapsibleSectionHeader>
             </h4>
             <div id={`shortcut-section-${section.id}`} hidden={!expanded}>
               <p className="pb-3 text-xs text-text-muted">{section.description}</p>

@@ -17,6 +17,7 @@ import {
   taskIndicator,
 } from "../../services/agentActivity";
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
+import { EmptyState } from "../ui/EmptyState";
 
 const WORKSPACE_INDICATOR_LABELS: Record<TaskIndicator, string> = {
   error: "An agent in this workspace has an error that requires attention",
@@ -167,15 +168,18 @@ export function WorkspaceList({
       {/* Workspace list */}
       <div className="flex-1 overflow-y-auto py-2 space-y-0.5">
         {workspaces.length === 0 && (
-          <div className="px-4 py-8 text-center">
-            <p className="text-sm text-text-muted">No workspaces yet</p>
-            <button
-              onClick={() => setShowAdd(true)}
-              className="mt-2 text-sm text-accent hover:text-accent-hover transition-colors cursor-pointer"
-            >
-              Add your first workspace
-            </button>
-          </div>
+          <EmptyState
+            className="px-4 py-8"
+            title="No workspaces yet"
+            action={
+              <button
+                onClick={() => setShowAdd(true)}
+                className="text-sm text-accent hover:text-accent-hover transition-colors cursor-pointer"
+              >
+                Add your first workspace
+              </button>
+            }
+          />
         )}
 
         {workspaces.map((workspace, index) => {
