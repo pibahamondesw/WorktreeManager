@@ -23,6 +23,7 @@ import { NavigationEntry, isNavigationEntry } from "../navigation/history";
 import { AgentAlertSettings, normalizeAgentAlerts } from "./agentActivity";
 import type { InboxMarks } from "./automationInbox";
 import { SYSTEM_THEME_ID, CUSTOM_THEME_ID, themes } from "../themes";
+import { Typography, normalizeContrast, normalizeTypography } from "../appearance";
 
 export interface Preferences {
   vault: VaultConfig;
@@ -31,6 +32,9 @@ export interface Preferences {
   agentViews: AgentViews;
   themeId: string;
   customTheme: Record<string, string> | null;
+  typography: Typography;
+  /** Percent; 100 keeps the theme's colors. */
+  contrast: number;
   sidebarCollapsed: boolean;
   keepRunningInBackground: boolean;
   /** Compact idle Claude chats with a large context before the prompt cache expires. */
@@ -102,6 +106,8 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
     raw === null || typeof raw !== "object" || Array.isArray(raw)
       ? null
       : Object.fromEntries(Object.entries(raw).filter(([, value]) => typeof value === "string")),
+  typography: normalizeTypography,
+  contrast: normalizeContrast,
   sidebarCollapsed: (raw) => raw === true,
   keepRunningInBackground: (raw) => raw !== false,
   compactIdleChats: (raw) => raw !== false,
@@ -213,6 +219,8 @@ export type InterfacePreferences = Pick<
   | "agentViews"
   | "themeId"
   | "customTheme"
+  | "typography"
+  | "contrast"
   | "sidebarCollapsed"
   | "keepRunningInBackground"
   | "compactIdleChats"
@@ -224,6 +232,8 @@ export function defaultInterfacePreferences(): InterfacePreferences {
     agentViews: normalizers.agentViews(undefined),
     themeId: normalizers.themeId(undefined),
     customTheme: normalizers.customTheme(undefined),
+    typography: normalizers.typography(undefined),
+    contrast: normalizers.contrast(undefined),
     sidebarCollapsed: normalizers.sidebarCollapsed(undefined),
     keepRunningInBackground: normalizers.keepRunningInBackground(undefined),
     compactIdleChats: normalizers.compactIdleChats(undefined),

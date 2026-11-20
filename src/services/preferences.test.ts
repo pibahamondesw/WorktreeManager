@@ -28,6 +28,13 @@ const values: Preferences = {
   agentViews: { claude: "terminal", codex: "chat" },
   themeId: "ocean",
   customTheme: { accent: "#123456" },
+  typography: {
+    ui: { family: "Inter", size: 15 },
+    chat: { family: "", size: 16 },
+    code: { family: "JetBrains Mono, Menlo", size: 13 },
+    terminal: { family: "", size: 14 },
+  },
+  contrast: 120,
   sidebarCollapsed: true,
   keepRunningInBackground: false,
   compactIdleChats: false,
@@ -120,6 +127,22 @@ describe("normalization", () => {
       { claude: "terminal", extra: "terminal" }
     );
     expect(normalizers.customTheme({ accent: "red", broken: 42 })).toEqual({ accent: "red" });
+    expect(
+      normalizers.typography({
+        ui: { family: "  Inter ", size: 99, weight: 700 },
+        chat: "bad",
+        code: { family: 7, size: 13.4 },
+        extra: { family: "x", size: 12 },
+      })
+    ).toEqual({
+      ui: { family: "Inter", size: 20 },
+      chat: { family: "", size: 14 },
+      code: { family: "", size: 13 },
+      terminal: { family: "", size: 12 },
+    });
+    expect(normalizers.contrast(10)).toBe(100);
+    expect(normalizers.contrast(132.4)).toBe(132);
+    expect(normalizers.contrast("110")).toBe(100);
     expect(normalizers.scriptApprovals({ "/a": ["ok", 1], "/b": "bad" })).toEqual({
       "/a": ["ok"],
       "/b": [],
@@ -190,6 +213,8 @@ describe("optimistic preferences", () => {
     "agentViews",
     "themeId",
     "customTheme",
+    "typography",
+    "contrast",
     "sidebarCollapsed",
     "keepRunningInBackground",
     "compactIdleChats",

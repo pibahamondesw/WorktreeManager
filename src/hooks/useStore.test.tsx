@@ -12,6 +12,13 @@ vi.mock("../services/store", () => ({
   loadEditorApp: vi.fn().mockResolvedValue("cursor"),
   loadThemeId: vi.fn().mockResolvedValue("default"),
   loadCustomColors: vi.fn().mockResolvedValue(null),
+  loadTypography: vi.fn().mockResolvedValue({
+    ui: { family: "", size: 16 },
+    chat: { family: "", size: 14 },
+    code: { family: "Fira Code", size: 12 },
+    terminal: { family: "", size: 12 },
+  }),
+  loadContrast: vi.fn().mockResolvedValue(120),
   loadSidebarCollapsed: vi.fn().mockResolvedValue(false),
   loadKeepRunningInBackground: vi.fn().mockResolvedValue(true),
   loadCompactIdleChats: vi.fn().mockResolvedValue(true),
@@ -174,6 +181,26 @@ describe("useStore preferences", () => {
       success: "#334455",
     });
     expect(persist).toHaveBeenLastCalledWith([["customTheme", result.current.customColors]]);
+  });
+
+  it("applies the saved typography and contrast, and saves changes to them", async () => {
+    const { result } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const root = document.documentElement.style;
+    const colors = presetFor("default").colors;
+    expect(root.getPropertyValue("--font-code")).toBe('"Fira Code", Menlo, Monaco, monospace');
+    expect(root.getPropertyValue("--color-text-muted")).toBe(
+      `color-mix(in srgb, ${colors["text-muted"]} 80%, ${colors["text-primary"]})`
+    );
+
+    const typography = { ...result.current.typography, chat: { family: "Inter", size: 16 } };
+    await act(async () => result.current.updateTypography(typography));
+    expect(persist).toHaveBeenLastCalledWith([["typography", typography]]);
+    expect(root.getPropertyValue("--font-size-chat")).toBe("calc(16px * var(--ui-zoom))");
+
+    await act(async () => result.current.updateContrast(100));
+    expect(persist).toHaveBeenLastCalledWith([["contrast", 100]]);
+    expect(root.getPropertyValue("--color-text-muted")).toBe(colors["text-muted"]);
   });
 
   it("restores the rendered theme and colors when the batch fails", async () => {

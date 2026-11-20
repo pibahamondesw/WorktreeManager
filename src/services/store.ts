@@ -234,6 +234,8 @@ export async function loadState(
 
 export const loadThemeId = () => loadPreference("themeId");
 export const loadCustomColors = () => loadPreference("customTheme");
+export const loadTypography = () => loadPreference("typography");
+export const loadContrast = () => loadPreference("contrast");
 export const loadEditorApp = () => loadPreference("editorApp");
 export const loadAgentViews = () => loadPreference("agentViews");
 export const loadScriptApprovals = () => loadPreference("scriptApprovals");

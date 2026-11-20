@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     dispose: vi.fn(),
     loadAddon: vi.fn(),
     onData: vi.fn(() => ({ dispose: vi.fn() })),
+    options: {} as Record<string, unknown>,
     cols: 80,
     rows: 24,
   },
@@ -49,6 +50,8 @@ import { TaskView } from "./TaskView";
 import { Task } from "../../types";
 import { invokeWithAgentCatalog } from "../../services/agents.fixture";
 import { requestChatIntent } from "../../embedded/chatIntents";
+import { Terminal } from "@xterm/xterm";
+import { applyTypography, defaultTypography } from "../../appearance";
 
 const IDLE_CHAT = {
   generation: 1,
@@ -413,6 +416,29 @@ describe("TaskView", () => {
       branchName: "feat/x",
     });
     expect(mocks.term.write).toHaveBeenCalledWith("old");
+  });
+
+  it("renders the terminal with the terminal font and follows its changes", async () => {
+    mocks.invoke.mockResolvedValue({ created: true, status: { kind: "running" }, replay: "" });
+    const typography = defaultTypography();
+    applyTypography({ ...typography, code: { family: "Fira Code", size: 13 } });
+    renderView();
+    await screen.findByRole("img", { name: "running" });
+    expect(vi.mocked(Terminal)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fontFamily: '"Fira Code", Menlo, Monaco, monospace', fontSize: 12 })
+    );
+    mocks.invoke.mockClear();
+
+    applyTypography({ ...typography, terminal: { family: "Iosevka", size: 16 } });
+
+    expect(mocks.term.options).toMatchObject({
+      fontFamily: "Iosevka, Menlo, Monaco, monospace",
+      fontSize: 16,
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "terminal_resize",
+      expect.objectContaining({ cols: 80, rows: 24 })
+    );
   });
 
   it("goes back from the button and from meta+[", async () => {

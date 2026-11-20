@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import "@testing-library/jest-dom/vitest";
 import { SettingsModal, SettingsSection } from "./SettingsModal";
 import { DEFAULT_AGENT_ALERTS } from "../../services/agentActivity";
+import { defaultTypography } from "../../appearance";
 import { invokeWithAgentCatalog } from "../../services/agents.fixture";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -41,6 +42,10 @@ function renderSettings() {
         onThemeChange={onThemeChange}
         customColors={null}
         onCustomColorsChange={vi.fn()}
+        typography={defaultTypography()}
+        onTypographyChange={vi.fn()}
+        contrast={100}
+        onContrastChange={vi.fn()}
         vault={{ enabled: false, path: null }}
         onVaultChange={onVaultChange}
         onRepairVaultAgents={vi.fn()}
@@ -91,6 +96,9 @@ describe("SettingsModal", () => {
     const theme = screen.getByRole("tab", { name: "Theme" });
     expect(theme).toHaveFocus();
     fireEvent.keyDown(theme, { key: "ArrowDown" });
+    const typography = screen.getByRole("tab", { name: "Typography" });
+    expect(typography).toHaveFocus();
+    fireEvent.keyDown(typography, { key: "ArrowDown" });
     const vault = screen.getByRole("tab", { name: "Obsidian vault" });
     expect(vault).toHaveFocus();
     expect(vault).toHaveAttribute("aria-selected", "true");

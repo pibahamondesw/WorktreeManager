@@ -51,6 +51,10 @@ function App() {
     editorApp,
     themeId,
     customColors,
+    typography,
+    updateTypography,
+    contrast,
+    updateContrast,
     selectedWorkspace,
     selectedTasks,
     persistError,
@@ -644,6 +648,10 @@ function App() {
         onThemeChange={(id) => void updateThemeId(id)}
         customColors={customColors}
         onCustomColorsChange={(colors) => void updateCustomColors(colors)}
+        typography={typography}
+        onTypographyChange={(next) => void updateTypography(next)}
+        contrast={contrast}
+        onContrastChange={(level) => void updateContrast(level)}
         vault={state.vault}
         onVaultChange={handleVaultChange}
         onRepairVaultAgents={handleRepairVaultAgents}

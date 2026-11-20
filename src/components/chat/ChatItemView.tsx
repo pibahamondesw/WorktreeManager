@@ -74,7 +74,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
 
 export function MarkdownText({
   text,
-  className = "text-sm",
+  className = "chat-text",
 }: {
   text: string;
   className?: string;

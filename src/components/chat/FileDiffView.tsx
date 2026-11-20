@@ -499,7 +499,7 @@ function TextDiffBody({
   const formatting = !hideFormatting && lines.some((line) => line.formatting);
   return (
     <div
-      className={`diff-code font-mono text-xs leading-5 select-text ${
+      className={`diff-code select-text ${
         layout === "unified" ? "inline-block min-w-full" : "block"
       }`}
     >
