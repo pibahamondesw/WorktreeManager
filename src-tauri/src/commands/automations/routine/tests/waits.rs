@@ -574,6 +574,39 @@ fn an_item_driven_on_a_changed_definition_takes_the_parked_items_of_its_run_alon
         .all(|request| request.definition_hash == hash));
 }
 
+/// Like `wake_ready` waking both items at once: each drive found the definition changed before
+/// either adopted it.
+#[test]
+fn items_woken_together_on_a_changed_definition_adopt_it_once() {
+    let steps = "pools: { active: 2 }\nsteps:\n  - id: go\n    wait: { signal: deploy }\n";
+    let harness = Harness::campaign(steps, by_branch(None), FakeSessions::default());
+    harness.selector_printing(ITEMS_AB);
+    let run = harness.run();
+    harness.scratch.define(&format!(
+        "{CAMPAIGN}pools: {{ active: 2 }}\nsteps:\n{KEPT_WAIT}"
+    ));
+    let woken: Vec<RunRequest> = harness
+        .executor
+        .parked
+        .lock()
+        .unwrap()
+        .drain()
+        .map(|(_, request)| request)
+        .collect();
+
+    for item in ["a", "b"] {
+        harness
+            .executor
+            .adopt_current_definition(&woken[0], &[item.into()])
+            .unwrap();
+    }
+
+    assert_eq!(adoptions(&harness, &run.id), [["a", "b"]]);
+    let armed = |event: &RunEvent| matches!(event, RunEvent::WaitArmed { .. });
+    assert_eq!(count(&harness.events(&run.id), armed), 4);
+    assert_eq!(harness.executor.parked.lock().unwrap().len(), 2);
+}
+
 /// A routine run waiting on step `go` of a definition that became `changed` since.
 fn routine_waiting_on_a_changed_definition(changed: &str) -> (Harness, String) {
     let steps = "steps:\n  - id: go\n    wait: { signal: deploy }\n";

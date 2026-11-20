@@ -231,6 +231,8 @@ pub struct RoutineExecutor {
     runs_changed: RunsChanged,
     /// Items resting on a wait, with the request of their run, until it can end.
     parked: Arc<Mutex<HashMap<DrivenItem, RunRequest>>>,
+    /// Held while a run adopts a changed definition, so items woken together adopt it once.
+    adoption: Arc<Mutex<()>>,
     watchers: Watchers,
     live_turns: LiveTurns,
     takeovers: Takeovers,
@@ -333,6 +335,7 @@ impl RoutineExecutor {
             quitting: Arc::default(),
             runs_changed: Arc::new(|_| {}),
             parked: Arc::default(),
+            adoption: Arc::default(),
             watchers: watchers::registry(Arc::new(CliWatchForge::default())),
             takeovers: Takeovers::default(),
             refills_pending: Arc::default(),

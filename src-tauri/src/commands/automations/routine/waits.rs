@@ -124,13 +124,19 @@ impl RoutineExecutor {
     /// has their step with the same id and kind, and re-arm their wait with it; the rest fail so
     /// a retry can take them from their wait step, and a routine's run fails with them. The run
     /// pins one definition, so it adopts only once none of its items is driven on the one it
-    /// pinned: until then `items` stay parked.
+    /// pinned: until then `items` stay parked. Items woken together go on with the definition the
+    /// first of them adopted.
     pub(super) fn adopt_current_definition(
         &self,
         request: &RunRequest,
-        run: &RunState,
         items: &[String],
     ) -> Result<(), String> {
+        let adoption = self.adoption.lock().unwrap();
+        let run = &self.store.run(&request.automation, &request.run_id)?;
+        if self.pinned(request, run).is_some() {
+            drop(adoption);
+            return self.redrive(request, items, false);
+        }
         let routine = is_waiting_routine(run);
         if is_active(run.status) != routine {
             return Err("its definition changed".into());
@@ -162,6 +168,7 @@ impl RoutineExecutor {
             writer.append(&run.id, &event)?;
         }
         drop(writer);
+        drop(adoption);
         if routine && adopting.is_none() {
             return self.finish(request, Ending::Failed(FailureReason::DefinitionChanged));
         }
