@@ -7,6 +7,7 @@ mod profile;
 pub mod runtime;
 mod server;
 mod session;
+pub mod theme;
 mod trust;
 mod view;
 
@@ -18,6 +19,7 @@ use tauri::{AppHandle, State, Wry};
 
 pub use super::embedded::EditorRegistry;
 pub(crate) use profile::{canonical_folders, key as task_key};
+pub use theme::EditorTheme;
 pub(crate) use view::open_external;
 
 use super::embedded::{Adapter, Lease, SessionInfo, Slot};

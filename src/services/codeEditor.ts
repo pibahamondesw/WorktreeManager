@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { editorConfigurationDefaults } from "../editorTheme";
+import { appliedThemeColors, THEME_CHANGE_EVENT } from "../themes";
 import { TaskSurface } from "../types";
 
 export interface EditorRuntime {
@@ -33,6 +35,17 @@ export const editorOpen = (taskId: string, workspaceId: string, folders: string[
   invoke<EditorSession>("vscode_open", { taskId, workspaceId, folders });
 export const editorClose = (taskId: string) => invoke<void>("vscode_close", { taskId });
 export const editorList = () => invoke<EditorSession[]>("vscode_list");
+
+/** Keeps the embedded editor's default theme on the app theme, now and after every change. */
+export function followAppThemeInEditor(): () => void {
+  const sync = () =>
+    void invoke<void>("vscode_set_theme", {
+      defaults: editorConfigurationDefaults(appliedThemeColors()),
+    }).catch(() => {});
+  sync();
+  window.addEventListener(THEME_CHANGE_EVENT, sync);
+  return () => window.removeEventListener(THEME_CHANGE_EVENT, sync);
+}
 export const onEditorSession = (callback: (session: EditorSession) => void) =>
   listen<EditorSession>("editor-session", (event) => callback(event.payload));
 

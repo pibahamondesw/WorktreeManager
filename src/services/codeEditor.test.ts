@@ -1,5 +1,12 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { EditorPresentationController, type EditorPresentation } from "./codeEditor";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  EditorPresentationController,
+  followAppThemeInEditor,
+  type EditorPresentation,
+} from "./codeEditor";
+import { applyTheme } from "../themes";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -72,5 +79,33 @@ describe("editor presentation", () => {
     expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: "a" });
     controller.reset();
     expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ taskId: null });
+  });
+});
+
+describe("editor theme", () => {
+  const themeSent = () =>
+    vi.mocked(invoke).mock.calls.filter(([command]) => command === "vscode_set_theme");
+
+  it("sends the current app theme and every later change until stopped", () => {
+    vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
+    applyTheme("ocean");
+    const stop = followAppThemeInEditor();
+    applyTheme("solarized-light");
+    stop();
+    applyTheme("forest");
+    expect(
+      themeSent().map(
+        ([, args]) =>
+          (args as { defaults: Record<string, unknown> }).defaults["workbench.colorTheme"]
+      )
+    ).toEqual(["Dark Modern", "Light Modern"]);
+  });
+
+  it("keeps the app working when the editor cannot take the theme", async () => {
+    vi.mocked(invoke).mockReset().mockRejectedValue(new Error("unavailable"));
+    const stop = followAppThemeInEditor();
+    await Promise.resolve();
+    stop();
+    expect(themeSent()).toHaveLength(1);
   });
 });

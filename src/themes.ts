@@ -385,9 +385,17 @@ export function presetFor(themeId: string): Theme {
   return systemPrefersDark() ? systemThemePresets.dark : systemThemePresets.light;
 }
 
+let appliedColors: Record<string, string> = themes[0].colors;
+
+/** The base colors of the last applied theme, before contrast adjustments. */
+export function appliedThemeColors(): Record<string, string> {
+  return appliedColors;
+}
+
 export function applyTheme(themeId: string, customColors?: Record<string, string>) {
   const colors =
     themeId === CUSTOM_THEME_ID ? (customColors ?? themes[0].colors) : presetFor(themeId).colors;
+  appliedColors = colors;
   const root = document.documentElement;
   for (const [key, value] of Object.entries(colors)) {
     root.style.setProperty(`--color-${key}`, value);

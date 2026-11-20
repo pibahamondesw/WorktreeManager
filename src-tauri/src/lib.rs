@@ -26,6 +26,7 @@ pub fn run() {
         .manage(commands::terminal::TerminalRegistry::default())
         .manage(commands::chat::ChatRegistry::default())
         .manage(commands::code_server::EditorRegistry::default())
+        .manage(commands::code_server::EditorTheme::default())
         .manage(lifecycle::Background::default())
         .manage(commands::git_watch::GitWatchRegistry::default())
         .setup(|app| {
@@ -182,6 +183,7 @@ pub fn run() {
                 commands::embedded::vscode_present,
                 commands::code_server::vscode_close,
                 commands::code_server::vscode_list,
+                commands::code_server::theme::vscode_set_theme,
                 commands::opencode::opencode_open,
                 commands::opencode::opencode_close,
                 commands::opencode::opencode_list,
