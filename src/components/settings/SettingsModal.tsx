@@ -1,20 +1,30 @@
 import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
 import { CircleciSettings } from "./CircleciSettings";
+import { TypographySettings } from "./TypographySettings";
 import type { Operations } from "../../services/operations";
 import { useEffect, useRef } from "react";
 import { Modal } from "../ui/Modal";
-import { BellIcon, NotebookIcon, RefreshIcon, SunIcon, WrenchIcon } from "../ui/Icons";
+import {
+  BellIcon,
+  DocumentIcon,
+  NotebookIcon,
+  RefreshIcon,
+  SunIcon,
+  WrenchIcon,
+} from "../ui/Icons";
 import { ThemeSettings } from "../ui/ThemePicker";
 import { VaultSettings } from "../sidebar/VaultSettingsModal";
 import { AgentAlertSettingsPanel } from "../sidebar/AgentAlertsModal";
 import { DependencySettings } from "../doctor/DoctorModal";
 import { VaultAgent } from "../../services/vault";
 import { VaultConfig } from "../../types";
+import { Typography } from "../../appearance";
 import { AgentAlertSettings } from "../../services/agentActivity";
 import { CheckSeverity, DoctorReport } from "../../services/doctor";
 
 export type SettingsSection =
   | "theme"
+  | "typography"
   | "vault"
   | "dependencies"
   | "alerts"
@@ -23,6 +33,7 @@ export type SettingsSection =
 
 const SECTIONS = [
   { id: "theme", label: "Theme", icon: SunIcon },
+  { id: "typography", label: "Typography", icon: DocumentIcon },
   { id: "vault", label: "Obsidian vault", icon: NotebookIcon },
   { id: "dependencies", label: "Dependencies", icon: WrenchIcon },
   { id: "alerts", label: "Agent alerts", icon: BellIcon },
@@ -42,6 +53,10 @@ interface SettingsModalProps {
   onThemeChange: (id: string) => void;
   customColors: Record<string, string> | null;
   onCustomColorsChange: (colors: Record<string, string>) => void;
+  typography: Typography;
+  onTypographyChange: (typography: Typography) => void;
+  contrast: number;
+  onContrastChange: (contrast: number) => void;
   vault: VaultConfig;
   onVaultChange: (vault: VaultConfig) => void | Promise<void>;
   onRepairVaultAgents: (agent?: VaultAgent) => Promise<void>;
@@ -146,6 +161,14 @@ export function SettingsModal(props: SettingsModalProps) {
                     onThemeChange={props.onThemeChange}
                     customColors={props.customColors}
                     onCustomColorsChange={props.onCustomColorsChange}
+                  />
+                )}
+                {id === "typography" && section === id && (
+                  <TypographySettings
+                    typography={props.typography}
+                    onTypographyChange={props.onTypographyChange}
+                    contrast={props.contrast}
+                    onContrastChange={props.onContrastChange}
                   />
                 )}
                 {id === "vault" && (
