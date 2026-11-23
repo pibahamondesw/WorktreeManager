@@ -6,7 +6,7 @@ import type { InvokeArgs } from "@tauri-apps/api/core";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: InvokeArgs) => Promise<unknown>>(),
-  listeners: new Map<string, (event: { payload: unknown }) => void>(),
+  listeners: new Map<string, Set<(event: { payload: unknown }) => void>>(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -18,8 +18,9 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn((event: string, handler: (event: { payload: unknown }) => void) => {
-    mocks.listeners.set(event, handler);
-    return Promise.resolve(() => mocks.listeners.delete(event));
+    const handlers = mocks.listeners.get(event) ?? new Set();
+    mocks.listeners.set(event, handlers.add(handler));
+    return Promise.resolve(() => handlers.delete(handler));
   }),
 }));
 vi.mock("@tauri-apps/api/webview", () => ({
@@ -83,6 +84,9 @@ const chatOpens = (): unknown[] =>
   mocks.invoke.mock.calls
     .filter(([command]) => command === "chat_open")
     .map(([, args]) => args as unknown);
+
+const emit = (event: string, payload: unknown) =>
+  act(() => mocks.listeners.get(event)?.forEach((handler) => handler({ payload })));
 
 const renderWorkspace = (props: Partial<Parameters<typeof ChatWorkspace>[0]> = {}) =>
   render(<ChatWorkspace taskId="t1" agent="claude" folders={["/wt/a"]} {...props} />);
@@ -226,8 +230,8 @@ it("reloads its tabs when the backend reports them changed", async () => {
   renderWorkspace();
   await screen.findByRole("tab");
   tabs.push({ id: "cli", agent: "codex", conversationId: null });
-  act(() => mocks.listeners.get("chat-tabs")?.({ payload: { taskId: "other" } }));
-  act(() => mocks.listeners.get("chat-tabs")?.({ payload: { taskId: "t1" } }));
+  emit("chat-tabs", { taskId: "other" });
+  emit("chat-tabs", { taskId: "t1" });
   await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
   expect(screen.getAllByRole("tab")[0]).toHaveAttribute("aria-selected", "true");
 });
@@ -244,11 +248,13 @@ it("shows a slow title load even when the chat keeps reporting its status meanwh
   renderWorkspace({ agent: "codex" });
   await screen.findByRole("tab", { name: "Untitled conversation" });
   const status = (kind: string) =>
-    act(() =>
-      mocks.listeners.get("chat-status")?.({
-        payload: { sessionId: "s", taskId: "t1", agent: "codex", origin: "user", status: { kind } },
-      })
-    );
+    emit("chat-status", {
+      sessionId: "s",
+      taskId: "t1",
+      agent: "codex",
+      origin: "user",
+      status: { kind },
+    });
   status("busy");
   status("idle");
   status("idle");
@@ -271,20 +277,16 @@ it("marks a tab whose agent needs input", async () => {
   ]);
   renderWorkspace();
   await screen.findAllByRole("tab");
-  act(() =>
-    mocks.listeners.get("chat-status")?.({
-      payload: {
-        sessionId: "s",
-        taskId: "t1",
-        agent: "codex",
-        tab: "a1",
-        origin: "user",
-        status: { kind: "busy" },
-        waiting: true,
-        backgroundAgents: false,
-      },
-    })
-  );
+  emit("chat-status", {
+    sessionId: "s",
+    taskId: "t1",
+    agent: "codex",
+    tab: "a1",
+    origin: "user",
+    status: { kind: "busy" },
+    waiting: true,
+    backgroundAgents: false,
+  });
   expect(await screen.findByTitle("Agent needs your input")).toBeInTheDocument();
 });
 
@@ -300,4 +302,299 @@ it("falls back to the main tab when the tabs cannot be read", async () => {
   await waitFor(() =>
     expect(chatOpens()).toEqual([expect.objectContaining({ agent: "codex", tab: undefined })])
   );
+});
+
+const REVIEW_STEPS = [
+  {
+    id: "review",
+    label: "Review the diff",
+    next: "fix",
+    onFail: "fail",
+    kind: {
+      agent: {
+        agent: { id: "codex", model: "default", effort: null },
+        skill: null,
+        prompt: "Review",
+        onReject: null,
+      },
+    },
+  },
+  {
+    id: "fix",
+    label: "Fix findings",
+    next: null,
+    onFail: "fail",
+    kind: {
+      agent: {
+        agent: { id: "codex", model: "default", effort: null },
+        skill: null,
+        prompt: "Fix",
+        onReject: null,
+      },
+    },
+  },
+];
+
+const automationChat = (sessionId: string, taskId: string, kind = "busy") => ({
+  sessionId,
+  taskId,
+  agent: "codex",
+  origin: "automation",
+  status: { kind },
+  waiting: false,
+  backgroundAgents: false,
+});
+
+const attempt = (step: string, sessionId: string) => ({
+  step,
+  attempt: 1,
+  status: "running",
+  session_id: sessionId,
+  conversation_id: null,
+});
+
+interface AutomationBackend {
+  taskId: string;
+  tabs?: Tab[];
+  sessions?: Sessions;
+  chats?: ReturnType<typeof automationChat>[] | string;
+  item?: { status: string; phase: string; steps: ReturnType<typeof attempt>[] };
+  automations?: string;
+  takeOver?: { status: string; conversation_id: string | null } | string;
+}
+
+function automationBackend({
+  taskId,
+  tabs = [{ id: "main", agent: "claude", conversationId: null }],
+  sessions = {},
+  chats = [automationChat("as1", taskId)],
+  item = { status: "active", phase: "review", steps: [attempt("review", "as1")] },
+  automations,
+  takeOver = { status: "paused", conversation_id: "conv1" },
+}: AutomationBackend) {
+  backend(tabs, sessions);
+  const chatBackend = mocks.invoke.getMockImplementation()!;
+  const run = { id: "r1", status: "running", items: [{ id: "i1", title: null, ...item }] };
+  mocks.invoke.mockImplementation((command, invoked) => {
+    switch (command) {
+      case "chat_list":
+        return typeof chats === "string" ? Promise.reject(chats) : Promise.resolve(chats);
+      case "automations_list":
+        return automations
+          ? Promise.reject(automations)
+          : Promise.resolve([
+              { name: "nightly", definition: { steps: REVIEW_STEPS }, errors: [], warnings: [] },
+            ]);
+      case "automation_runs_list":
+        return Promise.resolve({ runs: [run], next_before: null });
+      case "automation_take_over":
+        return typeof takeOver === "string"
+          ? Promise.reject(takeOver)
+          : Promise.resolve({ ...takeOver, step: "review", task_id: taskId });
+      default:
+        return chatBackend(command, invoked);
+    }
+  });
+  return run;
+}
+
+const tabTitles = () => screen.getAllByRole("tab").map((tab) => tab.textContent);
+
+it("opens a task without its own conversation on its automation's session, read-only", async () => {
+  automationBackend({ taskId: "auto-default" });
+  renderWorkspace({ taskId: "auto-default" });
+  const tab = await screen.findByRole("tab", { name: "nightly · Review the diff" });
+  expect(tab).toHaveAttribute("aria-selected", "true");
+  expect(tabTitles()).toEqual(["New conversation", "nightly · Review the diff"]);
+  expect(tab).toHaveAttribute("title", "nightly · Review the diff · Codex · Automation");
+  expect(screen.getByTitle("Agent working")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(chatOpens()).toEqual([
+      expect.objectContaining({ taskId: "auto-default", agent: "codex", sessionId: "as1" }),
+    ])
+  );
+  expect(screen.getByRole("note")).toHaveTextContent(
+    "This conversation belongs to the nightly automation. Closing the tab does not stop it."
+  );
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(mocks.invoke).not.toHaveBeenCalledWith("chat_changes", expect.anything());
+});
+
+it("keeps the owner's conversation selected when the task has one", async () => {
+  automationBackend({
+    taskId: "auto-owned",
+    tabs: [{ id: "main", agent: "claude", conversationId: "c1" }],
+    sessions: { claude: [{ id: "c1", title: "Fix the login" }] },
+  });
+  renderWorkspace({ taskId: "auto-owned" });
+  await screen.findByRole("tab", { name: "nightly · Review the diff" });
+  expect(screen.getByRole("tab", { name: "Fix the login" })).toHaveAttribute(
+    "aria-selected",
+    "true"
+  );
+  expect(chatOpens()).toEqual([expect.objectContaining({ agent: "claude", tab: undefined })]);
+});
+
+it("hides a closed automation tab without stopping its session", async () => {
+  automationBackend({ taskId: "auto-close" });
+  renderWorkspace({ taskId: "auto-close" });
+  await screen.findByRole("tab", { name: "nightly · Review the diff" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Close conversation nightly · Review the diff" })
+  );
+  await waitFor(() => expect(tabTitles()).toEqual(["New conversation"]));
+  expect(screen.getByRole("tab")).toHaveAttribute("aria-selected", "true");
+  const commands = mocks.invoke.mock.calls.map(([command]) => command);
+  expect(commands).not.toContain("chat_stop");
+  expect(commands).not.toContain("chat_tab_close");
+});
+
+it("names a shared session after the step its newest turn works on", async () => {
+  const run = automationBackend({ taskId: "auto-shared" });
+  renderWorkspace({ taskId: "auto-shared" });
+  await screen.findByRole("tab", { name: "nightly · Review the diff" });
+  run.items[0].steps = [attempt("review", "as1"), attempt("fix", "as1")];
+  emit("chat-status", automationChat("as1", "auto-shared", "idle"));
+  emit("chat-status", automationChat("as1", "auto-shared", "busy"));
+  expect(await screen.findByRole("tab", { name: "nightly · Fix findings" })).toBeInTheDocument();
+});
+
+it("shows a session that appears later and drops one that ends while another is shown", async () => {
+  automationBackend({ taskId: "auto-later", chats: [] });
+  renderWorkspace({ taskId: "auto-later" });
+  await screen.findByRole("tab", { name: "New conversation" });
+  emit("chat-status", automationChat("as1", "other-task"));
+  emit("chat-status", { ...automationChat("as2", "auto-later"), origin: "user" });
+  emit("chat-status", automationChat("as1", "auto-later"));
+  expect(await screen.findByRole("tab", { name: "nightly · Review the diff" })).toHaveAttribute(
+    "aria-selected",
+    "false"
+  );
+  emit("chat-status", automationChat("as1", "auto-later", "exited"));
+  await waitFor(() => expect(tabTitles()).toEqual(["New conversation"]));
+});
+
+it("keeps the shown automation tab once its session ends, with no restart", async () => {
+  automationBackend({ taskId: "auto-ended" });
+  renderWorkspace({ taskId: "auto-ended" });
+  await screen.findByRole("tab", { name: "nightly · Review the diff" });
+  emit("chat-status", automationChat("as1", "auto-ended", "exited"));
+  expect(await screen.findByText("Session ended")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "nightly · Review the diff" })).toHaveAttribute(
+    "aria-selected",
+    "true"
+  );
+  expect(screen.queryByRole("button", { name: "Restart chat" })).toBeNull();
+});
+
+it("names a session generically when its automation cannot be found", async () => {
+  automationBackend({ taskId: "auto-unknown", automations: "definitions unreadable" });
+  renderWorkspace({ taskId: "auto-unknown" });
+  expect(await screen.findByRole("tab", { name: "Automation" })).toBeInTheDocument();
+  expect(screen.getByRole("note")).toHaveTextContent("This conversation belongs to an automation.");
+  expect(screen.queryByRole("button", { name: "Take over" })).toBeNull();
+});
+
+it("opens the task's own chat when its sessions cannot be listed", async () => {
+  automationBackend({ taskId: "auto-unlisted", chats: "registry unavailable" });
+  renderWorkspace({ taskId: "auto-unlisted" });
+  await waitFor(() =>
+    expect(chatOpens()).toEqual([expect.objectContaining({ agent: "claude", tab: undefined })])
+  );
+  expect(tabTitles()).toEqual(["New conversation"]);
+});
+
+it("takes over the automation's conversation as the owner's chat in its tab's place", async () => {
+  automationBackend({
+    taskId: "auto-take",
+    sessions: { codex: [{ id: "conv1", title: "Review the login" }] },
+  });
+  renderWorkspace({ taskId: "auto-take" });
+  await screen.findByRole("tab", { name: "nightly · Review the diff" });
+  fireEvent.click(screen.getByRole("button", { name: "Take over" }));
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("automation_take_over", {
+      target: { name: "nightly", runId: "r1", item: "i1", by: "user" },
+    })
+  );
+  await waitFor(() =>
+    expect(chatOpens().at(-1)).toEqual(
+      expect.objectContaining({
+        agent: "codex",
+        tab: "new1",
+        mode: "restart",
+        conversation: "conv1",
+      })
+    )
+  );
+  expect(await screen.findByRole("tab", { name: "Review the login" })).toHaveAttribute(
+    "aria-selected",
+    "true"
+  );
+  expect(tabTitles()).toEqual(["New conversation", "Review the login"]);
+});
+
+it("explains a take over whose step has not paused yet", async () => {
+  automationBackend({
+    taskId: "auto-stopping",
+    takeOver: { status: "active", conversation_id: null },
+  });
+  renderWorkspace({ taskId: "auto-stopping" });
+  fireEvent.click(await screen.findByRole("button", { name: "Take over" }));
+  expect(
+    await screen.findByText("The step is still stopping; it pauses once its turn ends")
+  ).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "nightly · Review the diff" })).toBeInTheDocument();
+});
+
+it("shows why a take over failed", async () => {
+  automationBackend({ taskId: "auto-refused", takeOver: "The item is not running" });
+  renderWorkspace({ taskId: "auto-refused" });
+  fireEvent.click(await screen.findByRole("button", { name: "Take over" }));
+  expect(await screen.findByText("The item is not running")).toBeInTheDocument();
+});
+
+it("offers no take over for an item the Pipeline could not take over", async () => {
+  automationBackend({
+    taskId: "auto-done",
+    item: { status: "completed", phase: "review", steps: [attempt("review", "as1")] },
+  });
+  renderWorkspace({ taskId: "auto-done" });
+  await screen.findByRole("tab", { name: "nightly · Review the diff" });
+  expect(screen.queryByRole("button", { name: "Take over" })).toBeNull();
+});
+
+it("opens on the automation when the task it showed last had no conversation of its own", async () => {
+  automationBackend({ taskId: "auto-return", chats: [] });
+  const first = renderWorkspace({ taskId: "auto-return" });
+  await waitFor(() => expect(chatOpens()).toHaveLength(1));
+  first.unmount();
+  automationBackend({ taskId: "auto-return" });
+  renderWorkspace({ taskId: "auto-return" });
+  expect(await screen.findByRole("tab", { name: "nightly · Review the diff" })).toHaveAttribute(
+    "aria-selected",
+    "true"
+  );
+});
+
+it("offers no take over from a session the item's current step no longer runs", async () => {
+  automationBackend({
+    taskId: "auto-earlier-step",
+    item: { status: "active", phase: "fix", steps: [attempt("review", "as1")] },
+  });
+  renderWorkspace({ taskId: "auto-earlier-step" });
+  await screen.findByRole("tab", { name: "nightly · Review the diff" });
+  expect(screen.queryByRole("button", { name: "Take over" })).toBeNull();
+});
+
+it("closes the automation tab when the step paused before its agent had a conversation", async () => {
+  automationBackend({
+    taskId: "auto-no-conversation",
+    takeOver: { status: "paused", conversation_id: null },
+  });
+  renderWorkspace({ taskId: "auto-no-conversation" });
+  fireEvent.click(await screen.findByRole("button", { name: "Take over" }));
+  await waitFor(() => expect(tabTitles()).toEqual(["New conversation"]));
+  expect(screen.getByRole("tab")).toHaveAttribute("aria-selected", "true");
+  expect(mocks.invoke).not.toHaveBeenCalledWith("chat_tab_open", expect.anything());
 });

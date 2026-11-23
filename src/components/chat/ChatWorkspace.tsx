@@ -4,7 +4,11 @@ import { PlusIcon } from "../ui/Icons";
 import { ChatPane } from "./ChatPane";
 import { ChatTabBar, ChatTabView } from "./ChatTabBar";
 import { SessionList } from "./SessionList";
-import { useChatTabs } from "../../hooks/useChatTabs";
+import { tabIndicator, useChatTabs } from "../../hooks/useChatTabs";
+import { AutomationSession, useAutomationSessions } from "../../hooks/useAutomationSessions";
+import { AutomationSessionSource, sessionTitle } from "../../services/automationSessions";
+import { itemActions, PipelineStep, takeOverItem } from "../../services/automations";
+import { AutomationSessionFooter } from "./AutomationSessionFooter";
 import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { describeAgent } from "../../services/agents";
@@ -16,6 +20,7 @@ import {
   chatTabClose,
   chatTabOpen,
   chatTabSetAgent,
+  isLive,
   MAIN_TAB,
 } from "../../services/chat";
 import { onChatIntentRequest, takeRequestedChatIntent } from "../../embedded/chatIntents";
@@ -34,8 +39,33 @@ interface ChatWorkspaceProps {
 /** The tab each task showed last, so coming back to a task shows it again. */
 const activeTabs = new Map<string, string>();
 
+/** Automation tabs the owner closed, by task; closing one leaves its session running. */
+const closedAutomationTabs = new Map<string, ReadonlySet<string>>();
+
 /** The main tab keeps the commands' legacy shape: it is the task agent's chat without a tab. */
 const paneTab = (tab: string) => (tab === MAIN_TAB ? undefined : tab);
+
+const automationTabId = (session: AutomationSession) => `automation:${session.chat.sessionId}`;
+
+const stepAgent = (steps: PipelineStep[], id: string | null) => {
+  const step = steps.find((candidate) => candidate.id === id);
+  return step && "agent" in step.kind ? step.kind.agent.agent.id : null;
+};
+
+/**
+ * The tab a task opens on: the one it showed last, unless the task has no conversation of its own
+ * and an automation is working in it, which it then shows.
+ */
+function openingTab(
+  tabs: ChatTab[],
+  automationTabs: AutomationSession[],
+  remembered: string | null
+): string | null {
+  const ownConversation = tabs.some((tab) => tab.conversationId);
+  if (ownConversation || automationTabs.length === 0) return remembered ?? tabs[0]?.id ?? null;
+  const shown = automationTabs.find((session) => automationTabId(session) === remembered);
+  return automationTabId(shown ?? automationTabs[0]);
+}
 
 /** A task's conversations as tabs: each runs its own agent session, side by side. */
 export function ChatWorkspace({
@@ -50,8 +80,13 @@ export function ChatWorkspace({
     agent,
     folders
   );
+  const automation = useAutomationSessions(taskId);
   const catalog = useAgentCatalog();
-  const [selected, setSelected] = useState(() => activeTabs.get(taskId) ?? null);
+  const [remembered] = useState(() => activeTabs.get(taskId) ?? null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [closedAutomation, setClosedAutomation] = useState(
+    () => closedAutomationTabs.get(taskId) ?? new Set<string>()
+  );
   const [revisions, setRevisions] = useState<Record<string, number>>({});
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [toolbar, setToolbar] = useState<HTMLElement | null>(null);
@@ -62,7 +97,20 @@ export function ChatWorkspace({
     latestTabs.current = tabs;
   }, [tabs]);
 
-  const active = tabs?.find((tab) => tab.id === selected) ?? tabs?.[0] ?? null;
+  const loaded = tabs !== null && automation.loaded;
+  const automationTabs = automation.sessions.filter(
+    (session) =>
+      !closedAutomation.has(session.chat.sessionId) &&
+      (isLive(session.chat.status) || automationTabId(session) === selected)
+  );
+  const opening = loaded && selected === null ? openingTab(tabs, automationTabs, remembered) : null;
+  const current = selected ?? opening;
+  const activeAutomation =
+    automationTabs.find((session) => automationTabId(session) === current) ?? null;
+  const active = activeAutomation
+    ? null
+    : (tabs?.find((tab) => tab.id === current) ?? (current ? tabs?.[0] : null) ?? null);
+  const showingAutomation = activeAutomation !== null;
   const activeId = active?.id ?? null;
   const activeAgent = active?.agent ?? null;
 
@@ -95,20 +143,27 @@ export function ChatWorkspace({
   );
 
   /** A conversation already open in a tab is shown there; any other opens in a new tab. */
-  const applyIntent = useCallback(
-    (intent: ChatOpenIntent) => {
+  const showIntent = useCallback(
+    async (intent: ChatOpenIntent) => {
       const open = intent.conversation
         ? latestTabs.current?.find(
             (tab) => tab.agent === intent.agent && tab.conversationId === intent.conversation
           )
         : undefined;
       if (open) activate(open.id);
-      else void run(() => openTab(intent.agent, intent));
+      else await openTab(intent.agent, intent);
     },
-    [activate, run, openTab]
+    [activate, openTab]
+  );
+  const applyIntent = useCallback(
+    (intent: ChatOpenIntent) => void run(() => showIntent(intent)),
+    [run, showIntent]
   );
 
-  const loaded = tabs !== null;
+  useEffect(() => {
+    if (opening !== null) activate(opening);
+  }, [opening, activate]);
+
   useEffect(() => {
     if (!loaded) return;
     const requested = takeRequestedChatIntent(taskId);
@@ -124,8 +179,8 @@ export function ChatWorkspace({
   }, [activeAgent, agent, onAgentChange]);
 
   useEffect(() => {
-    if (loaded && !activeId) onStatusChange?.({ kind: "exited", code: null });
-  }, [loaded, activeId, onStatusChange]);
+    if (loaded && !activeId && !showingAutomation) onStatusChange?.({ kind: "exited", code: null });
+  }, [loaded, activeId, showingAutomation, onStatusChange]);
 
   const takeOpenIntent = useCallback(() => {
     if (!activeId) return null;
@@ -143,6 +198,35 @@ export function ChatWorkspace({
       if (tab.id === activeId && rest.length > 0)
         activate(rest[Math.min(index, rest.length - 1)].id);
     });
+
+  const hideAutomationTab = (session: AutomationSession) => {
+    const closed = new Set(closedAutomationTabs.get(taskId)).add(session.chat.sessionId);
+    closedAutomationTabs.set(taskId, closed);
+    setClosedAutomation(closed);
+  };
+
+  const closeAutomationTab = (session: AutomationSession) => {
+    hideAutomationTab(session);
+    if (automationTabId(session) === current && tabs?.[0]) activate(tabs[0].id);
+  };
+
+  /** The owner continues the automation's conversation in a chat of their own, in its tab's place. */
+  const takeOver = async (session: AutomationSession, source: AutomationSessionSource) => {
+    const control = await takeOverItem({
+      name: source.automation,
+      runId: source.run.id,
+      item: source.item.id,
+    });
+    if (control.status !== "paused")
+      throw new Error("The step is still stopping; it pauses once its turn ends");
+    if (!control.conversation_id) return closeAutomationTab(session);
+    await showIntent({
+      agent: stepAgent(source.steps, control.step) ?? session.chat.agent,
+      mode: "restart",
+      conversation: control.conversation_id,
+    });
+    hideAutomationTab(session);
+  };
 
   /** The tab hands its chat to another agent: the current session stops, the next opens. */
   const switchAgent = (tab: ChatTab, intent: ChatOpenIntent) =>
@@ -172,13 +256,38 @@ export function ChatWorkspace({
       reload();
     });
 
-  const views: ChatTabView[] = (tabs ?? []).map((tab) => ({
+  const userViews: ChatTabView[] = (tabs ?? []).map((tab) => ({
     ...tab,
     title: titleOf(tab) ?? (tab.conversationId ? "Untitled conversation" : "New conversation"),
     agentLabel: describeAgent(tab.agent, catalog).label,
     canRename: canRename(tab),
     indicator: indicatorOf(tab),
   }));
+  const automationViews: ChatTabView[] = automationTabs.map((session) => ({
+    id: automationTabId(session),
+    agent: session.chat.agent,
+    conversationId: null,
+    title: session.source ? sessionTitle(session.source) : "Automation",
+    agentLabel: `${describeAgent(session.chat.agent, catalog).label} · Automation`,
+    canRename: false,
+    indicator: tabIndicator(session.chat),
+  }));
+  const views = [...userViews, ...automationViews];
+  const takeOverAction = (session: AutomationSession) => {
+    const source = session.source;
+    if (
+      !source ||
+      source.attempt.step !== source.item.phase ||
+      !itemActions(source.item, source.steps, source.run).includes("take_over")
+    )
+      return undefined;
+    return () => takeOver(session, source);
+  };
+  const closeView = (view: ChatTabView) => {
+    const session = automationTabs.find((candidate) => automationTabId(candidate) === view.id);
+    if (session) closeAutomationTab(session);
+    else void closeTab(view);
+  };
   const newLabel = `New ${describeAgent(agent, catalog).label} conversation`;
   const openInTabs = (tabs ?? []).flatMap((tab) =>
     tab.conversationId ? [`${tab.agent}:${tab.conversationId}`] : []
@@ -188,10 +297,10 @@ export function ChatWorkspace({
     <div className="flex-1 min-h-0 flex flex-col bg-bg-primary">
       <ChatTabBar
         tabs={views}
-        active={activeId}
+        active={activeAutomation ? automationTabId(activeAutomation) : activeId}
         newLabel={newLabel}
         onActivate={activate}
-        onClose={(tab) => void closeTab(tab)}
+        onClose={closeView}
         onRename={(tab, title) => void rename(tab, title)}
         onNew={() => void run(() => openTab(agent))}
         onConversations={() => setSessionsOpen(true)}
@@ -202,7 +311,26 @@ export function ChatWorkspace({
           {actionError ?? error}
         </p>
       )}
-      {active ? (
+      {activeAutomation ? (
+        <ChatPane
+          key={automationTabId(activeAutomation)}
+          taskId={taskId}
+          agent={activeAutomation.chat.agent}
+          folders={folders}
+          toolbar={toolbar}
+          onStatusChange={onStatusChange}
+          readOnly={{
+            sessionId: activeAutomation.chat.sessionId,
+            ended: !isLive(activeAutomation.chat.status),
+            footer: (
+              <AutomationSessionFooter
+                source={activeAutomation.source}
+                onTakeOver={takeOverAction(activeAutomation)}
+              />
+            ),
+          }}
+        />
+      ) : active ? (
         <ChatPane
           key={`${active.id}:${active.agent}:${revisions[active.id] ?? 0}`}
           taskId={taskId}

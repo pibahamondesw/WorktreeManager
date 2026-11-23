@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
@@ -53,7 +61,19 @@ interface ChatPaneProps {
   /** Hands the chat to another agent; the pane remounts for it. */
   onSwitchAgent?: (intent: ChatOpenIntent) => void;
   takeOpenIntent?: () => ChatOpenIntent | null;
+  /** Shows another session of the agent without taking part, such as an automation's. */
+  readOnly?: ReadOnlySession;
 }
+
+interface ReadOnlySession {
+  sessionId: string;
+  /** The session closed: its owner detached every pane before it ended, so none hears it end. */
+  ended: boolean;
+  /** Takes the composer's place. */
+  footer: ReactNode;
+}
+
+const CLOSED: ChatStatus = { kind: "exited", code: null };
 
 /** Queued messages held for editing, by chat; the edit outlives the pane so leaving a task never sends it. */
 const openQueuedEdits = new Map<string, { itemId: string; text: string }>();
@@ -91,9 +111,12 @@ export function ChatPane({
   onStatusChange,
   onSwitchAgent,
   takeOpenIntent,
+  readOnly,
 }: ChatPaneProps) {
-  const session = useChatSession(taskId, agent, folders, takeOpenIntent, tab);
-  const chatKey = `${taskId}:${agent}${tab ? `@${tab}` : ""}`;
+  const session = useChatSession(taskId, agent, folders, takeOpenIntent, tab, readOnly?.sessionId);
+  const chatKey = readOnly
+    ? `${taskId}:${agent}#${readOnly.sessionId}`
+    : `${taskId}:${agent}${tab ? `@${tab}` : ""}`;
   const catalog = useAgentCatalog();
   const descriptor = describeAgent(agent, catalog);
   const agentLabel = descriptor.label;
@@ -113,7 +136,7 @@ export function ChatPane({
     sessionKey: string;
     action: Exclude<HistoryAction, "conversation">;
   } | null>(null);
-  const changes = useChatChanges(taskId, agent, snapshot, tab);
+  const changes = useChatChanges(taskId, agent, snapshot, tab, !readOnly);
   const [changesScope, setChangesScope] = useState<ChangesScope | null>(null);
   const [diffThreads, setDiffThreads] = useDiffThreads(chatKey);
   const [preview, setPreview] = useState<(MarkdownPreviewRequest & { generation: number }) | null>(
@@ -133,7 +156,8 @@ export function ChatPane({
     users: number;
     sent: boolean;
   } | null>(null);
-  const { status, items, pending, controls } = snapshot;
+  const { items, pending, controls } = snapshot;
+  const status = readOnly?.ended ? CLOSED : snapshot.status;
   const busy = status.kind === "busy";
   const live = isLive(status);
   const mainItems = useMemo(() => items.filter(isMainItem), [items]);
@@ -356,7 +380,7 @@ export function ChatPane({
           className="chat-scroll flex-1 min-h-0 overflow-y-auto"
         >
           <div className="max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
-            {items.length === 0 && live && (
+            {items.length === 0 && live && !readOnly && (
               <p className="text-sm text-text-muted text-center py-8">
                 {status.kind === "starting"
                   ? `Starting ${agentLabel}…`
@@ -388,8 +412,12 @@ export function ChatPane({
                           item={item}
                           steps={item.kind === "agent" ? steps : undefined}
                           historyDisabled={historyDisabled}
-                          onHistory={item.kind === "user" && !item.origin ? pickHistory : undefined}
-                          queue={item.status === "queued" ? queuedActions : undefined}
+                          onHistory={
+                            !readOnly && item.kind === "user" && !item.origin
+                              ? pickHistory
+                              : undefined
+                          }
+                          queue={!readOnly && item.status === "queued" ? queuedActions : undefined}
                           editing={item.id === editedId}
                         />
                       )}
@@ -425,18 +453,19 @@ export function ChatPane({
                 {timeline.after > 0 && <div style={{ height: timeline.after }} />}
               </div>
             )}
-            {pending.map((request, index) => (
-              <PendingRequestCard
-                key={`${sessionKey}:${request.id}`}
-                request={request}
-                focused={index === 0}
-                draft={approvalDraft(request.id)}
-                onDraftChange={(draft) => changeApprovalDraft(request.id, draft)}
-                disabled={responding !== null}
-                onRespond={(response) => answerApproval(request, response)}
-                onNewConversation={() => answerApproval(request)}
-              />
-            ))}
+            {!readOnly &&
+              pending.map((request, index) => (
+                <PendingRequestCard
+                  key={`${sessionKey}:${request.id}`}
+                  request={request}
+                  focused={index === 0}
+                  draft={approvalDraft(request.id)}
+                  onDraftChange={(draft) => changeApprovalDraft(request.id, draft)}
+                  disabled={responding !== null}
+                  onRespond={(response) => answerApproval(request, response)}
+                  onNewConversation={() => answerApproval(request)}
+                />
+              ))}
             {showOutgoing && (
               <div aria-label="Sending message" className="flex flex-col opacity-60">
                 <ChatItemView item={{ id: "outgoing", kind: "user", text: outgoing.text }} />
@@ -462,9 +491,11 @@ export function ChatPane({
                       ? status.message
                       : `Session ended${status.kind === "exited" && status.code !== null ? ` (exit ${status.code})` : ""}`)}
                 </span>
-                <Button onClick={() => void restart()} className="h-8 text-xs">
-                  Restart chat
-                </Button>
+                {!readOnly && (
+                  <Button onClick={() => void restart()} className="h-8 text-xs">
+                    Restart chat
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -476,27 +507,31 @@ export function ChatPane({
               {actionError}
             </p>
           )}
-          <Composer
-            key={`${taskId}:${agent}`}
-            memoryKey={taskId}
-            agent={agent}
-            status={status}
-            controls={controls}
-            folders={folders}
-            queuedEdit={queuedEdit}
-            actions={{
-              send,
-              interrupt: session.interrupt,
-              configure: session.configure,
-              compact: session.compact,
-              review: session.review,
-              startFresh: session.startFresh,
-              showUsage: () => setUsageOpen(true),
-              showHooks: () => setHooksSession(sessionKey),
-              switchAgent: onSwitchAgent ? requestAgent : undefined,
-            }}
-            onError={setActionError}
-          />
+          {readOnly ? (
+            readOnly.footer
+          ) : (
+            <Composer
+              key={`${taskId}:${agent}`}
+              memoryKey={taskId}
+              agent={agent}
+              status={status}
+              controls={controls}
+              folders={folders}
+              queuedEdit={queuedEdit}
+              actions={{
+                send,
+                interrupt: session.interrupt,
+                configure: session.configure,
+                compact: session.compact,
+                review: session.review,
+                startFresh: session.startFresh,
+                showUsage: () => setUsageOpen(true),
+                showHooks: () => setHooksSession(sessionKey),
+                switchAgent: onSwitchAgent ? requestAgent : undefined,
+              }}
+              onError={setActionError}
+            />
+          )}
         </div>
         {changesScope !== null && changes && (
           <ChangesPanel

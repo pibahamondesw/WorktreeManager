@@ -46,7 +46,8 @@ const CONNECTING: ChatSnapshot = {
 };
 
 /**
- * Attaches to the chat session of a task's tab, the main one when `tab` is omitted. The session outlives this hook: unmounting
+ * Attaches to the chat session of a task's tab, the main one when `tab` is omitted, or to the
+ * session `sessionId` names, such as an automation's. The session outlives this hook: unmounting
  * only detaches the sink of the session it opened. Each batch of events applies as one update.
  * Batches from an older generation (a session replaced by a restart) are dropped, and batches
  * that race the snapshot are queued and replayed on top of it. The first open follows
@@ -57,7 +58,8 @@ export function useChatSession(
   agent: AgentId,
   folders: string[],
   takeIntent?: () => ChatOpenIntent | null,
-  tab?: string
+  tab?: string,
+  sessionId?: string
 ) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>(CONNECTING);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +72,7 @@ export function useChatSession(
   useEffect(() => {
     let disposed = false;
     let generation = 0;
-    let sessionId = "";
+    let attachedSession = "";
     let opening = 0;
 
     const open = async (mode: ChatOpenMode, conversation?: string, handoffFrom?: AgentId) => {
@@ -89,6 +91,7 @@ export function useChatSession(
           conversation,
           handoffFrom,
           tab,
+          sessionId,
           onEvents: (eventGeneration, events) => {
             if (disposed || version !== opening) return;
             const apply = (s: ChatSnapshot) =>
@@ -101,9 +104,9 @@ export function useChatSession(
           throw new Error("The conversation changed before it was ready");
         }
         generation = initial.generation;
-        sessionId = openedSession;
+        attachedSession = openedSession;
         ready = true;
-        setAttachment({ sessionId, generation });
+        setAttachment({ sessionId: attachedSession, generation });
         setSnapshot(
           early
             .filter((entry) => entry.generation === initial.generation)
@@ -125,9 +128,9 @@ export function useChatSession(
 
     return () => {
       disposed = true;
-      if (generation) void chatDetach(taskId, agent, generation, sessionId, tab);
+      if (generation) void chatDetach(taskId, agent, generation, attachedSession, tab);
     };
-  }, [taskId, agent, tab, foldersKey, takeIntent]);
+  }, [taskId, agent, tab, foldersKey, takeIntent, sessionId]);
 
   const restart = useCallback(() => openRef.current("restart").catch(() => undefined), []);
   const startFresh = useCallback(() => openRef.current("fresh").catch(() => undefined), []);

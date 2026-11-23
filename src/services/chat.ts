@@ -305,6 +305,8 @@ interface ChatOpenArgs {
   conversation?: string;
   handoffFrom?: AgentId;
   tab?: string;
+  /** Attaches to this session of the task's agent instead of the tab's own, whoever started it. */
+  sessionId?: string;
   onEvents: (generation: number, events: ChatEvent[]) => void;
 }
 
