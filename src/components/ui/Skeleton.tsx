@@ -13,7 +13,7 @@ export function Skeleton({
   return (
     <div
       aria-hidden="true"
-      className={`bg-bg-tertiary animate-pulse ${SHAPES[shape]} ${className}`}
+      className={`bg-bg-tertiary motion-pulse-steps ${SHAPES[shape]} ${className}`}
     />
   );
 }

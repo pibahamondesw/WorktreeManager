@@ -422,13 +422,15 @@ export function ChatPane({
               </div>
             )}
             {showOutgoing && !outgoing.sent ? (
-              <p role="status" className="text-xs text-text-muted animate-pulse">
+              <p role="status" className="text-xs text-text-muted motion-pulse-steps">
                 Preparing…
               </p>
             ) : (
               busy &&
               pending.length === 0 && (
-                <p className="text-xs text-text-muted animate-pulse">{agentLabel} is working…</p>
+                <p className="text-xs text-text-muted motion-pulse-steps">
+                  {agentLabel} is working…
+                </p>
               )
             )}
             {!live && (
