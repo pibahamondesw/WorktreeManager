@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { diffBlocks, DiffLine, lineSegments, semanticDiff } from "./semanticDiff";
+import {
+  diffBlocks,
+  DiffLine,
+  lineDiff,
+  lineSegments,
+  refineByTokens,
+  semanticDiff,
+  SourceAnalysis,
+} from "./semanticDiff";
 import { analyzeSource } from "./syntaxAnalysis";
 
 const changed = (line: DiffLine) =>
@@ -55,6 +63,67 @@ describe("semanticDiff", () => {
       ["added", "one", false, false],
       ["added", "", true, false],
       ["added", "two", false, false],
+    ]);
+  });
+});
+
+describe("refineByTokens", () => {
+  const before = "const moved = compute();\nconst total = price * qty;\nend();\n";
+  const after = "const total = price * quantity;\nend();\nconst moved = compute();\n";
+  const wholeLines = (text: string): SourceAnalysis => {
+    let from = 0;
+    const tokens = text.split("\n").map((line) => {
+      const range = { from, to: from + line.length };
+      from = range.to + 1;
+      return range;
+    });
+    return { tokens, highlights: [] };
+  };
+
+  it("refines a copy of the line diff and keeps its moved lines", () => {
+    const lines = lineDiff(before, after)!;
+
+    const refined = refineByTokens(lines, before, after);
+
+    expect(refined.filter((line) => line.moved).map((line) => line.kind)).toEqual([
+      "removed",
+      "added",
+    ]);
+    expect(refined.filter((line) => line.changes.length).map(changed)).toEqual([
+      ["qty"],
+      ["quantity"],
+    ]);
+    expect(lines.every((line) => line.changes.length === 0 && !line.formatting)).toBe(true);
+  });
+
+  it("replaces a previous refinement with the one from a new analysis", () => {
+    const words = refineByTokens(lineDiff(before, after)!, before, after);
+
+    const refined = refineByTokens(words, before, after, wholeLines(before), wholeLines(after));
+
+    expect(refined.filter((line) => line.changes.length).map(changed)).toEqual([
+      ["const total = price * qty;"],
+      ["const total = price * quantity;"],
+    ]);
+  });
+
+  it("clears previous token changes when the new token diff is too large", () => {
+    const longBefore = Array.from({ length: 7000 }, (_, i) => `a${i}`).join(" ");
+    const longAfter = `${longBefore} b`;
+    const lines = lineDiff(longBefore, longAfter)!;
+    const analyses = [wholeLines(longBefore), wholeLines(longAfter)] as const;
+    const byLines = refineByTokens(lines, longBefore, longAfter, ...analyses);
+
+    const refined = refineByTokens(byLines, longBefore, longAfter);
+
+    const marks = (diff: DiffLine[]) => diff.map((line) => [line.changes.length, line.formatting]);
+    expect(marks(byLines)).toEqual([
+      [1, false],
+      [1, false],
+    ]);
+    expect(marks(refined)).toEqual([
+      [0, false],
+      [0, false],
     ]);
   });
 });

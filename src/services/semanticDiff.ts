@@ -56,14 +56,22 @@ export const plainAnalysis = (text: string): SourceAnalysis => ({
   highlights: [],
 });
 
-interface Source {
-  text: string;
+interface SourceLines {
   lines: string[];
   starts: number[];
+}
+
+interface AnalyzedSource {
+  text: string;
   analysis: SourceAnalysis;
 }
 
-function source(text: string, analysis: SourceAnalysis): Source {
+interface ChangeGroup {
+  removed: DiffLine[];
+  added: DiffLine[];
+}
+
+function sourceLines(text: string): SourceLines {
   const lines = text.split("\n");
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   const starts: number[] = [];
@@ -72,10 +80,10 @@ function source(text: string, analysis: SourceAnalysis): Source {
     starts.push(offset);
     offset += line.length + 1;
   }
-  return { text, lines: text ? lines : [], starts, analysis };
+  return { lines: text ? lines : [], starts };
 }
 
-function line(src: Source, index: number, kind: DiffLine["kind"], side: Side): DiffLine {
+function line(src: SourceLines, index: number, kind: DiffLine["kind"], side: Side): DiffLine {
   return {
     kind,
     side,
@@ -100,7 +108,7 @@ function firstAtOrAfter(ranges: Range[], offset: number): number {
   return low;
 }
 
-function tokensOf(src: Source, lines: DiffLine[]): Range[] {
+function tokensOf(src: AnalyzedSource, lines: DiffLine[]): Range[] {
   const tokens: Range[] = [];
   for (const diffLine of lines) {
     const end = diffLine.start + diffLine.text.length;
@@ -112,11 +120,16 @@ function tokensOf(src: Source, lines: DiffLine[]): Range[] {
   return tokens;
 }
 
-function markTokenChanges(oldSrc: Source, newSrc: Source, removed: DiffLine[], added: DiffLine[]) {
+function markTokenChanges(
+  oldSrc: AnalyzedSource,
+  newSrc: AnalyzedSource,
+  removed: DiffLine[],
+  added: DiffLine[]
+) {
   const oldTokens = tokensOf(oldSrc, removed);
   const newTokens = tokensOf(newSrc, added);
   if (oldTokens.length + newTokens.length > MAX_TOKENS_PER_CHANGE) return false;
-  const text = (src: Source) => (range: Range) => src.text.slice(range.from, range.to);
+  const text = (src: AnalyzedSource) => (range: Range) => src.text.slice(range.from, range.to);
   const changes = diffArrays(oldTokens.map(text(oldSrc)), newTokens.map(text(newSrc)), {
     timeout: TOKEN_DIFF_TIMEOUT_MS,
   });
@@ -146,7 +159,24 @@ function markTokenChanges(oldSrc: Source, newSrc: Source, removed: DiffLine[], a
   return true;
 }
 
-function markMoves(groups: { removed: DiffLine[]; added: DiffLine[] }[]) {
+function changeGroups(lines: DiffLine[]): ChangeGroup[] {
+  const groups: ChangeGroup[] = [];
+  let group: ChangeGroup | null = null;
+  for (const diffLine of lines) {
+    if (diffLine.kind === "context") {
+      group = null;
+      continue;
+    }
+    if (!group) {
+      group = { removed: [], added: [] };
+      groups.push(group);
+    }
+    (diffLine.kind === "added" ? group.added : group.removed).push(diffLine);
+  }
+  return groups;
+}
+
+function markMoves(groups: ChangeGroup[]) {
   const removedByText = new Map<string, { line: DiffLine; group: number }[]>();
   groups.forEach((group, index) => {
     for (const diffLine of group.removed) {
@@ -168,54 +198,55 @@ function markMoves(groups: { removed: DiffLine[]; added: DiffLine[] }[]) {
 }
 
 /**
- * Line diff refined by a token diff inside each changed region, so only the tokens that changed are
- * highlighted, lines whose tokens all survive are marked as formatting-only, and whole lines that
- * reappear elsewhere are marked as moved. Returns null when the line diff times out.
+ * Line diff with whole lines that reappear elsewhere marked as moved, independent of any source
+ * analysis. Returns null when it times out.
  */
-export function semanticDiff(
-  oldText: string,
-  newText: string,
-  oldAnalysis: SourceAnalysis = plainAnalysis(oldText),
-  newAnalysis: SourceAnalysis = plainAnalysis(newText)
-): DiffLine[] | null {
-  const oldSrc = source(oldText, oldAnalysis);
-  const newSrc = source(newText, newAnalysis);
+export function lineDiff(oldText: string, newText: string): DiffLine[] | null {
+  const oldSrc = sourceLines(oldText);
+  const newSrc = sourceLines(newText);
   const changes = diffArrays(oldSrc.lines, newSrc.lines, { timeout: LINE_DIFF_TIMEOUT_MS });
   if (!changes) return null;
   const lines: DiffLine[] = [];
-  const groups: { removed: DiffLine[]; added: DiffLine[] }[] = [];
   let oldIndex = 0;
   let newIndex = 0;
-  let group: { removed: DiffLine[]; added: DiffLine[] } | null = null;
   for (const change of changes) {
     for (let i = 0; i < change.count; i++) {
-      if (!change.added && !change.removed) {
-        group = null;
+      if (change.added) {
+        const added = line(newSrc, newIndex, "added", "new");
+        added.newNumber = ++newIndex;
+        lines.push(added);
+      } else if (change.removed) {
+        const removed = line(oldSrc, oldIndex, "removed", "old");
+        removed.oldNumber = ++oldIndex;
+        lines.push(removed);
+      } else {
         const context = line(newSrc, newIndex, "context", "new");
         context.oldNumber = ++oldIndex;
         context.newNumber = ++newIndex;
         lines.push(context);
-        continue;
       }
-      if (!group) {
-        group = { removed: [], added: [] };
-        groups.push(group);
-      }
-      const diffLine = change.added
-        ? line(newSrc, newIndex, "added", "new")
-        : line(oldSrc, oldIndex, "removed", "old");
-      if (change.added) {
-        diffLine.newNumber = ++newIndex;
-        group.added.push(diffLine);
-      } else {
-        diffLine.oldNumber = ++oldIndex;
-        group.removed.push(diffLine);
-      }
-      lines.push(diffLine);
     }
   }
-  markMoves(groups);
-  for (const { removed, added } of groups) {
+  markMoves(changeGroups(lines));
+  return lines;
+}
+
+/**
+ * Copy of a line diff refined by a token diff inside each changed region, so only the tokens that
+ * changed are highlighted and lines whose tokens all survive are marked as formatting-only. Any
+ * previous refinement is discarded, so refining an already refined diff with a new analysis works.
+ */
+export function refineByTokens(
+  lines: DiffLine[],
+  oldText: string,
+  newText: string,
+  oldAnalysis: SourceAnalysis = plainAnalysis(oldText),
+  newAnalysis: SourceAnalysis = plainAnalysis(newText)
+): DiffLine[] {
+  const refined = lines.map((diffLine) => ({ ...diffLine, changes: [], formatting: false }));
+  const oldSrc = { text: oldText, analysis: oldAnalysis };
+  const newSrc = { text: newText, analysis: newAnalysis };
+  for (const { removed, added } of changeGroups(refined)) {
     const pairedRemoved = removed.filter((diffLine) => !diffLine.moved);
     const pairedAdded = added.filter((diffLine) => !diffLine.moved);
     if (pairedRemoved.length && pairedAdded.length) {
@@ -225,7 +256,18 @@ export function semanticDiff(
       diffLine.formatting = diffLine.text.trim() === "";
     }
   }
-  return lines;
+  return refined;
+}
+
+/** Line diff refined by tokens; null when the line diff times out. */
+export function semanticDiff(
+  oldText: string,
+  newText: string,
+  oldAnalysis?: SourceAnalysis,
+  newAnalysis?: SourceAnalysis
+): DiffLine[] | null {
+  const lines = lineDiff(oldText, newText);
+  return lines && refineByTokens(lines, oldText, newText, oldAnalysis, newAnalysis);
 }
 
 const isChange = (diffLine: DiffLine, hideFormatting: boolean) =>
