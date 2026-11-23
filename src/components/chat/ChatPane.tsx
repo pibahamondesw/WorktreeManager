@@ -1,12 +1,4 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
@@ -30,6 +22,7 @@ import { AgentUsageIndicator } from "../usage/AgentUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
 import { useDiffThreads } from "../../hooks/useDiffThreads";
 import { useChatChanges } from "../../hooks/useChatChanges";
+import { useVirtualRows } from "../../hooks/useVirtualRows";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import {
   ChatChanges,
@@ -46,10 +39,6 @@ import {
 import { agentPresentation, describeAgent } from "../../services/agents";
 import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import { AgentId } from "../../types";
-
-const CHAT_PAGE_SIZE = 50;
-const LOAD_EARLIER_THRESHOLD_PX = 400;
-const STICK_TO_BOTTOM_THRESHOLD_PX = 40;
 
 interface ChatPaneProps {
   taskId: string;
@@ -140,10 +129,6 @@ export function ChatPane({
     users: number;
     sent: boolean;
   } | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const stickRef = useRef(true);
-  const [windowStartId, setWindowStartId] = useState<string | null>(null);
-  const distanceFromBottomRef = useRef<number | null>(null);
   const { status, items, pending, controls } = snapshot;
   const busy = status.kind === "busy";
   const live = isLive(status);
@@ -151,9 +136,6 @@ export function ChatPane({
   const steps = useMemo(() => subagentSteps(items), [items]);
   const ends = turnEnds(mainItems, changes);
   const entries = useMemo(() => chatEntries(mainItems), [mainItems]);
-  const pinnedStart = windowStartId ? entries.findIndex((entry) => entry.id === windowStartId) : -1;
-  const firstVisible =
-    pinnedStart >= 0 ? pinnedStart : Math.max(0, entries.length - CHAT_PAGE_SIZE);
   const users = items.filter((item) => item.kind === "user").length;
   const showOutgoing =
     outgoing !== null &&
@@ -161,11 +143,26 @@ export function ChatPane({
     users <= outgoing.users &&
     (!outgoing.sent || busy);
   const conversationFiles = changes?.conversation?.files ?? [];
-  const pendingPlans = new Set(
-    pending.flatMap((request) =>
-      request.format === "markdown" && request.detail ? [request.detail] : []
-    )
+  const pendingPlans = useMemo(
+    () =>
+      new Set(
+        pending.flatMap((request) =>
+          request.format === "markdown" && request.detail ? [request.detail] : []
+        )
+      ),
+    [pending]
   );
+  const rows = useMemo(
+    () =>
+      entries.filter(
+        (entry) =>
+          !(entry.kind === "item" && isPlanItem(entry.item) && pendingPlans.has(entry.item.text))
+      ),
+    [entries, pendingPlans]
+  );
+  const rowKeys = useMemo(() => rows.map((row) => row.id), [rows]);
+  const timeline = useVirtualRows(rowKeys);
+  const { stickToBottom } = timeline;
   const historyDisabled =
     status.kind !== "idle" || pending.length > 0 || historyPending === chatKey;
   const approvalKey = (id: string) => `${snapshot.generation}:${id}`;
@@ -209,38 +206,7 @@ export function ChatPane({
 
   useEffect(() => onStatusChange?.(sessionStatus(status)), [status, onStatusChange]);
 
-  useEffect(() => {
-    stickRef.current = true;
-    setWindowStartId(null);
-  }, [snapshot.generation]);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [items, pending, outgoing]);
-
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const distanceFromBottom = distanceFromBottomRef.current;
-    if (!el || distanceFromBottom === null) return;
-    distanceFromBottomRef.current = null;
-    el.scrollTop = el.scrollHeight - distanceFromBottom;
-  }, [firstVisible]);
-
-  const showEarlier = () => {
-    const el = scrollRef.current;
-    if (!el || firstVisible === 0 || distanceFromBottomRef.current !== null) return;
-    distanceFromBottomRef.current = el.scrollHeight - el.scrollTop;
-    setWindowStartId(entries[Math.max(0, firstVisible - CHAT_PAGE_SIZE)].id);
-  };
-
-  const onScroll = (el: HTMLDivElement) => {
-    stickRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_THRESHOLD_PX;
-    if (stickRef.current) setWindowStartId(null);
-    else if (el.scrollTop < LOAD_EARLIER_THRESHOLD_PX) showEarlier();
-    else if (!windowStartId && entries[firstVisible]) setWindowStartId(entries[firstVisible].id);
-  };
+  useLayoutEffect(() => stickToBottom(), [snapshot.generation, stickToBottom]);
 
   const run = useCallback(async (action: () => Promise<void>) => {
     setActionError(null);
@@ -262,7 +228,7 @@ export function ChatPane({
   );
 
   const send = async (text: string, images: ChatImage[]) => {
-    stickRef.current = true;
+    stickToBottom();
     const message = { text, generation: snapshot.generation, users, sent: false };
     setOutgoing(message);
     try {
@@ -346,8 +312,8 @@ export function ChatPane({
           </div>
         )}
         <div
-          ref={scrollRef}
-          onScroll={(e) => onScroll(e.currentTarget)}
+          ref={timeline.scrollRef}
+          onScroll={timeline.onScroll}
           className="chat-scroll flex-1 min-h-0 overflow-y-auto"
         >
           <div className="max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
@@ -358,56 +324,64 @@ export function ChatPane({
                   : `Ask ${agentLabel} to work on this task.`}
               </p>
             )}
-            {firstVisible > 0 && (
-              <Button
-                variant="ghost"
-                onClick={showEarlier}
-                className="self-center h-7 px-2 text-xs"
+            {rows.length > 0 && (
+              <div
+                ref={timeline.sectionRef}
+                onFocus={timeline.onFocus}
+                onBlur={timeline.onBlur}
+                className="-mb-3"
               >
-                Show earlier messages ({firstVisible})
-              </Button>
-            )}
-            {entries.slice(firstVisible).map((entry) => {
-              const turn = ends.get(entry.lastIndex);
-              const turnChanges = turn === undefined ? undefined : changes?.turns[turn]?.changes;
-              const item = entry.kind === "item" ? entry.item : entry.items[0];
-              if (entry.kind === "item" && isPlanItem(item) && pendingPlans.has(item.text)) {
-                return null;
-              }
-              const view = (
-                <ItemDetailContext.Provider value={session.expandDetail}>
-                  {entry.kind === "work" ? (
-                    <WorkGroup items={entry.items} running={busy && entry === entries.at(-1)} />
-                  ) : (
-                    <ChatItemView
-                      item={item}
-                      steps={item.kind === "agent" ? steps : undefined}
-                      historyDisabled={historyDisabled}
-                      onHistory={item.kind === "user" && !item.origin ? pickHistory : undefined}
-                      queue={item.status === "queued" ? queuedActions : undefined}
-                    />
-                  )}
-                </ItemDetailContext.Provider>
-              );
-              return (
-                <Fragment key={entry.id}>
-                  {item.origin ? (
+                {timeline.before > 0 && <div style={{ height: timeline.before }} />}
+                {rows.slice(timeline.start, timeline.end).map((entry) => {
+                  const turn = ends.get(entry.lastIndex);
+                  const turnChanges =
+                    turn === undefined ? undefined : changes?.turns[turn]?.changes;
+                  const item = entry.kind === "item" ? entry.item : entry.items[0];
+                  const view = (
+                    <ItemDetailContext.Provider value={session.expandDetail}>
+                      {entry.kind === "work" ? (
+                        <WorkGroup items={entry.items} running={busy && entry === entries.at(-1)} />
+                      ) : (
+                        <ChatItemView
+                          item={item}
+                          steps={item.kind === "agent" ? steps : undefined}
+                          historyDisabled={historyDisabled}
+                          onHistory={item.kind === "user" && !item.origin ? pickHistory : undefined}
+                          queue={item.status === "queued" ? queuedActions : undefined}
+                        />
+                      )}
+                    </ItemDetailContext.Provider>
+                  );
+                  return (
                     <div
-                      data-origin={item.origin}
-                      title={`From the ${describeAgent(item.origin, catalog).label} conversation`}
-                      className="flex flex-col opacity-70"
+                      key={entry.id}
+                      ref={timeline.rowRef}
+                      data-row-key={entry.id}
+                      className="flex flex-col gap-3 pb-3"
                     >
-                      {view}
+                      {item.origin ? (
+                        <div
+                          data-origin={item.origin}
+                          title={`From the ${describeAgent(item.origin, catalog).label} conversation`}
+                          className="flex flex-col opacity-70"
+                        >
+                          {view}
+                        </div>
+                      ) : (
+                        view
+                      )}
+                      {turn !== undefined && turnChanges && turnChanges.files.length > 0 && (
+                        <ChangeSummaryCard
+                          changes={turnChanges}
+                          onOpen={() => setChangesScope(turn)}
+                        />
+                      )}
                     </div>
-                  ) : (
-                    view
-                  )}
-                  {turn !== undefined && turnChanges && turnChanges.files.length > 0 && (
-                    <ChangeSummaryCard changes={turnChanges} onOpen={() => setChangesScope(turn)} />
-                  )}
-                </Fragment>
-              );
-            })}
+                  );
+                })}
+                {timeline.after > 0 && <div style={{ height: timeline.after }} />}
+              </div>
+            )}
             {pending.map((request, index) => (
               <PendingRequestCard
                 key={`${sessionKey}:${request.id}`}

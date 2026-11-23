@@ -36,6 +36,7 @@ vi.mock("@tauri-apps/api/core", () => ({
     }
   },
 }));
+vi.mock("../../observeResize", () => import("../../test/fakeObserveResize"));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => undefined) }));
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({
@@ -61,6 +62,8 @@ const dropFiles = async (paths: string[], position = { x: 0, y: 0 }) => {
 import { ChatPane } from "./ChatPane";
 import { describeAgent, loadAgentCatalog } from "../../services/agents";
 import { AGENT_CATALOG } from "../../services/agents.fixture";
+import { resize } from "../../test/fakeObserveResize";
+import { layOutScroller } from "../../test/fakeLayout";
 
 const editorOf = (box: HTMLElement) => EditorView.findFromDOM(box)!;
 const composerText = (box: HTMLElement) => editorOf(box).state.doc.toString();
@@ -137,7 +140,10 @@ beforeEach(() => {
     return Promise.resolve(undefined);
   });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("ChatPane", () => {
   it.each([
@@ -248,7 +254,7 @@ describe("ChatPane", () => {
     expect(screen.getByText("+added")).toHaveClass("text-success");
   });
 
-  it("renders the latest messages and loads earlier ones on scroll or request", async () => {
+  it("renders only the messages near the viewport and follows new ones at the bottom", async () => {
     const items = Array.from({ length: 120 }, (_, index) => ({
       id: `m${index}`,
       kind: "assistant",
@@ -259,50 +265,30 @@ describe("ChatPane", () => {
     );
     render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
     await screen.findByText("Message 119");
-    await act(async () => {});
-    expect(screen.getByText("Message 70")).toBeInTheDocument();
-    expect(screen.queryByText("Message 69")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Show earlier messages (70)" }));
-    expect(screen.getByText("Message 20")).toBeInTheDocument();
-    expect(screen.queryByText("Message 19")).not.toBeInTheDocument();
+    expect(screen.getByText("Message 90")).toBeInTheDocument();
+    expect(screen.queryByText("Message 89")).not.toBeInTheDocument();
 
     const scroller = screen.getByText("Message 119").closest(".chat-scroll") as HTMLElement;
-    const itemHeight = 100;
-    Object.defineProperties(scroller, {
-      scrollHeight: {
-        configurable: true,
-        get: () => scroller.querySelectorAll(".chat-markdown").length * itemHeight,
-      },
-      clientHeight: { configurable: true, value: 500 },
-      scrollTop: { configurable: true, writable: true, value: 0 },
-    });
-    const scrollTo = (scrollTop: number) => {
-      scroller.scrollTop = scrollTop;
-      fireEvent.scroll(scroller);
-    };
+    layOutScroller(scroller, 600, () => 120);
+    resize();
+    expect(screen.getByText("Message 110")).toBeInTheDocument();
+    expect(screen.queryByText("Message 109")).not.toBeInTheDocument();
+    expect(scroller.scrollTop).toBe(120 * 120 - 600);
 
-    scrollTo(scroller.scrollHeight - 500);
-    emit(3, { type: "upsert", item: { id: "m120", kind: "assistant", text: "Message 120" } });
-    expect(screen.queryByText("Message 20")).not.toBeInTheDocument();
-    expect(screen.getByText("Message 71")).toBeInTheDocument();
-
-    scrollTo(3000);
-    emit(3, { type: "upsert", item: { id: "m121", kind: "assistant", text: "Message 121" } });
-    expect(screen.getByText("Message 71")).toBeInTheDocument();
-    expect(screen.getByText("Message 121")).toBeInTheDocument();
-
-    scrollTo(100);
-    expect(screen.getByText("Message 21")).toBeInTheDocument();
-    expect(scroller.scrollTop).toBe(100 + 50 * itemHeight);
-
-    scrollTo(100);
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
     expect(screen.getByText("Message 0")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Show earlier messages/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Message 119")).not.toBeInTheDocument();
 
-    scrollTo(scroller.scrollHeight);
-    expect(screen.queryByText("Message 71")).not.toBeInTheDocument();
-    expect(screen.getByText("Message 72")).toBeInTheDocument();
+    emit(3, { type: "upsert", item: { id: "m120", kind: "assistant", text: "Message 120" } });
+    expect(scroller.scrollTop).toBe(0);
+    expect(screen.queryByText("Message 120")).not.toBeInTheDocument();
+
+    scroller.scrollTop = scroller.scrollHeight;
+    fireEvent.scroll(scroller);
+    emit(3, { type: "upsert", item: { id: "m121", kind: "assistant", text: "Message 121" } });
+    expect(screen.getByText("Message 121")).toBeInTheDocument();
+    expect(scroller.scrollTop).toBe(122 * 120 - 600);
   });
 
   it("keeps subagent steps inside their card instead of the main conversation", async () => {
