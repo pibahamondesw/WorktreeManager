@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useMemo, useState } from "react";
+import { lazy, memo, ReactElement, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Markdown, { Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -13,6 +13,7 @@ import { useMarkdownPreview } from "./markdownPreviewContext";
 import { isPlanItem } from "./markdownDocument";
 import { SubagentSteps } from "./chatEntries";
 import { splitMarkdownBlocks } from "./markdownBlocks";
+import { LruCache } from "./lruCache";
 import { rehypeCachedHighlight } from "./rehypeCachedHighlight";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -38,6 +39,8 @@ const REMARK_PLUGINS: Options["remarkPlugins"] = [
   remarkLatexDelimiters,
 ];
 const REHYPE_PLUGINS: Options["rehypePlugins"] = [rehypeCachedHighlight];
+const MAX_RENDERED_BLOCKS = 1_000;
+const MAX_RENDERED_CHARACTERS = 200_000;
 
 function MarkdownCode({ className, children }: React.ComponentProps<"code">) {
   const classes = className?.split(" ") ?? [];
@@ -62,16 +65,35 @@ const MARKDOWN_COMPONENTS: Options["components"] = {
   pre: MarkdownCodeBlock,
 };
 
-const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
-  return (
-    <Markdown
-      remarkPlugins={REMARK_PLUGINS}
-      rehypePlugins={REHYPE_PLUGINS}
-      components={MARKDOWN_COMPONENTS}
-    >
-      {text}
-    </Markdown>
+const renderedBlocks = new LruCache<ReactElement>(MAX_RENDERED_BLOCKS, MAX_RENDERED_CHARACTERS);
+
+const renderMarkdown = (text: string) =>
+  Markdown({
+    children: text,
+    remarkPlugins: REMARK_PLUGINS,
+    rehypePlugins: REHYPE_PLUGINS,
+    components: MARKDOWN_COMPONENTS,
+  });
+
+/** Remembers the block as last shown, so a streaming block isn't cached at every step. */
+function useCacheOnUnmount(text: string, rendered: ReactElement) {
+  const shown = useRef({ text, rendered });
+  useEffect(() => {
+    shown.current = { text, rendered };
+  }, [text, rendered]);
+  useEffect(
+    () => () => {
+      const { text, rendered } = shown.current;
+      renderedBlocks.set(text, rendered, text.length);
+    },
+    []
   );
+}
+
+const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
+  const rendered = useMemo(() => renderedBlocks.get(text) ?? renderMarkdown(text), [text]);
+  useCacheOnUnmount(text, rendered);
+  return rendered;
 });
 
 export function MarkdownText({
