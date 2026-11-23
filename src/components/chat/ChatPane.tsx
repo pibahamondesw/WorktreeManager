@@ -4,7 +4,7 @@ import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
 import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
-import { Composer } from "./Composer";
+import { Composer, QueuedMessageEdit } from "./Composer";
 import { ApprovalActions } from "./ApprovalActions";
 import { ApprovalDraft } from "./approval";
 import { PendingRequestCard } from "./PendingRequestCard";
@@ -34,6 +34,7 @@ import {
   PendingRequest,
   HistoryAction,
   isLive,
+  QueuedEdit,
   totals,
 } from "../../services/chat";
 import { agentPresentation, describeAgent } from "../../services/agents";
@@ -53,6 +54,9 @@ interface ChatPaneProps {
   onSwitchAgent?: (intent: ChatOpenIntent) => void;
   takeOpenIntent?: () => ChatOpenIntent | null;
 }
+
+/** Queued messages held for editing, by chat; the edit outlives the pane so leaving a task never sends it. */
+const openQueuedEdits = new Map<string, { itemId: string; text: string }>();
 
 function sessionStatus(status: ChatStatus): SessionStatus {
   if (status.kind === "starting") return { kind: "connecting" };
@@ -224,14 +228,43 @@ export function ChatPane({
   }, []);
 
   const canSteer = descriptor.capabilities.steer;
-  const { steerQueued, unqueue, changeHistory } = session;
+  const { steerQueued, unqueue, holdQueued, releaseQueued, changeHistory } = session;
+  const [held, setHeld] = useState(() => openQueuedEdits.get(chatKey) ?? null);
+  const editedId =
+    held && items.some((item) => item.id === held.itemId && item.status === "queued")
+      ? held.itemId
+      : null;
+  const editQueued = useCallback(
+    (itemId: string) =>
+      void run(async () => {
+        const edit = { itemId, text: await holdQueued(itemId) };
+        openQueuedEdits.set(chatKey, edit);
+        setHeld(edit);
+      }),
+    [run, holdQueued, chatKey]
+  );
   const queuedActions = useMemo<QueuedActions>(
     () => ({
       steer: canSteer ? (itemId) => void run(() => steerQueued(itemId)) : undefined,
+      edit: editedId ? undefined : editQueued,
       remove: (itemId) => void run(() => unqueue(itemId)),
     }),
-    [canSteer, run, steerQueued, unqueue]
+    [canSteer, run, steerQueued, unqueue, editedId, editQueued]
   );
+  const queuedEdit: QueuedMessageEdit | undefined =
+    held && editedId
+      ? {
+          id: editedId,
+          text: held.text,
+          canSteer,
+          keepText: (text: string) => openQueuedEdits.set(chatKey, { itemId: editedId, text }),
+          finish: async (edit: QueuedEdit) => {
+            await releaseQueued(editedId, edit);
+            openQueuedEdits.delete(chatKey);
+            setHeld(null);
+          },
+        }
+      : undefined;
 
   const send = async (text: string, images: ChatImage[]) => {
     stickToBottom();
@@ -331,9 +364,7 @@ export function ChatPane({
               </p>
             )}
             {earlier > 0 && (
-              <p className="text-xs text-text-muted text-center">
-                Loading earlier messages…
-              </p>
+              <p className="text-xs text-text-muted text-center">Loading earlier messages…</p>
             )}
             {rows.length > 0 && (
               <div
@@ -359,6 +390,7 @@ export function ChatPane({
                           historyDisabled={historyDisabled}
                           onHistory={item.kind === "user" && !item.origin ? pickHistory : undefined}
                           queue={item.status === "queued" ? queuedActions : undefined}
+                          editing={item.id === editedId}
                         />
                       )}
                     </ItemDetailContext.Provider>
@@ -451,6 +483,7 @@ export function ChatPane({
             status={status}
             controls={controls}
             folders={folders}
+            queuedEdit={queuedEdit}
             actions={{
               send,
               interrupt: session.interrupt,

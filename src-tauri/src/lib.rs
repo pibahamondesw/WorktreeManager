@@ -154,6 +154,8 @@ pub fn run() {
                 commands::chat::chat_interrupt,
                 commands::chat::chat_steer_queued,
                 commands::chat::chat_unqueue,
+                commands::chat::chat_hold_queued,
+                commands::chat::chat_release_queued,
                 commands::chat::chat_configure,
                 commands::chat::chat_compact,
                 commands::chat::chat_review,

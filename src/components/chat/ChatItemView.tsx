@@ -3,7 +3,7 @@ import Markdown, { Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { remarkLatexDelimiters } from "./remarkLatexDelimiters";
-import { ChevronDownIcon, CloseIcon, SteerIcon } from "../ui/Icons";
+import { ChevronDownIcon, CloseIcon, PencilIcon, SteerIcon } from "../ui/Icons";
 import { Button } from "../ui/Button";
 import { AskedQuestion, ChatItem, HistoryAction } from "../../services/chat";
 import { MarkdownLink } from "./MarkdownLink";
@@ -395,13 +395,23 @@ function WorkGroupView({ items, running }: { items: ChatItem[]; running: boolean
 export interface QueuedActions {
   /** Absent when the agent cannot redirect a running turn. */
   steer?: (itemId: string) => void;
+  /** Absent while another queued message is being edited. */
+  edit?: (itemId: string) => void;
   remove: (itemId: string) => void;
 }
 
 const QUEUE_BUTTON =
   "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer";
 
-function MessageQueueState({ item, queue }: { item: ChatItem; queue?: QueuedActions }) {
+function MessageQueueState({
+  item,
+  queue,
+  editing,
+}: {
+  item: ChatItem;
+  queue?: QueuedActions;
+  editing?: boolean;
+}) {
   if (item.status === "steered") {
     return (
       <p
@@ -413,7 +423,18 @@ function MessageQueueState({ item, queue }: { item: ChatItem; queue?: QueuedActi
     );
   }
   if (item.status !== "queued") return null;
+  if (editing) {
+    return (
+      <p
+        title="Waits while you edit it in the composer"
+        className="mt-1 text-right text-xs text-accent"
+      >
+        Editing
+      </p>
+    );
+  }
   const steer = queue?.steer;
+  const edit = queue?.edit;
   return (
     <div className="mt-1 flex items-center justify-end gap-1 text-xs">
       <span className="text-text-muted">Queued</span>
@@ -426,6 +447,17 @@ function MessageQueueState({ item, queue }: { item: ChatItem; queue?: QueuedActi
         >
           <SteerIcon />
           Steer
+        </button>
+      )}
+      {edit && (
+        <button
+          type="button"
+          onClick={() => edit(item.id)}
+          aria-label="Edit queued message"
+          title="Edit queued message"
+          className={QUEUE_BUTTON}
+        >
+          <PencilIcon />
         </button>
       )}
       {queue && (
@@ -452,12 +484,15 @@ function ChatItemContent({
   onHistory,
   historyDisabled,
   queue,
+  editing,
 }: {
   item: ChatItem;
   steps?: SubagentSteps;
   onHistory?: (item: ChatItem, action: HistoryAction) => void;
   historyDisabled?: boolean;
   queue?: QueuedActions;
+  /** The queued message is open in the composer. */
+  editing?: boolean;
 }) {
   const preview = useMarkdownPreview();
   switch (item.kind) {
@@ -466,11 +501,11 @@ function ChatItemContent({
       return (
         <div className="group relative self-end max-w-[85%]">
           <div
-            className={`chat-user-message rounded-lg bg-bg-tertiary px-3 py-2${queued ? " opacity-60" : ""}`}
+            className={`chat-user-message rounded-lg bg-bg-tertiary px-3 py-2${queued ? " opacity-60" : ""}${editing ? " ring-1 ring-accent" : ""}`}
           >
             <MarkdownText text={item.text} />
           </div>
-          <MessageQueueState item={item} queue={queue} />
+          <MessageQueueState item={item} queue={queue} editing={editing} />
           {onHistory && !queued && (
             <HistoryMenu
               onPick={(action) => onHistory(item, action)}

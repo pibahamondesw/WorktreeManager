@@ -33,6 +33,7 @@ import {
   CommandOption,
   effortsFor,
   FileMatch,
+  QueuedEdit,
   ReviewTarget,
 } from "../../services/chat";
 import {
@@ -59,6 +60,20 @@ interface ComposerActions {
   switchAgent?: (agent: AgentId) => void;
 }
 
+/** A queued message open in the composer; the draft returns when the edit ends. */
+export interface QueuedMessageEdit {
+  id: string;
+  text: string;
+  canSteer: boolean;
+  keepText: (text: string) => void;
+  finish: (edit: QueuedEdit) => Promise<void>;
+}
+
+interface Draft {
+  text: string;
+  images: ImageAttachment[];
+}
+
 interface ComposerProps {
   memoryKey: string;
   agent: AgentId;
@@ -66,6 +81,7 @@ interface ComposerProps {
   controls: ChatControls;
   folders: string[];
   actions: ComposerActions;
+  queuedEdit?: QueuedMessageEdit;
   onError: (message: string | null) => void;
 }
 
@@ -87,6 +103,7 @@ export function Composer({
   controls,
   folders,
   actions,
+  queuedEdit,
   onError,
 }: ComposerProps) {
   const catalog = useAgentCatalog();
@@ -103,18 +120,40 @@ export function Composer({
   const [files, setFiles] = useState<FileMatch[]>([]);
   const [recall, setRecall] = useState<number | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const editId = queuedEdit?.id ?? null;
+  const [shownEditId, setShownEditId] = useState<string | null>(null);
+  const [setAside, setSetAside] = useState<Draft | null>(null);
+  if (editId !== shownEditId) {
+    setShownEditId(editId);
+    const restored = queuedEdit ? { text: queuedEdit.text, images: [] } : setAside;
+    if (queuedEdit && !setAside) setSetAside({ text, images });
+    if (!queuedEdit) setSetAside(null);
+    if (restored) {
+      setText(restored.text);
+      setCaret(restored.text.length);
+      setImages(restored.images);
+    }
+  }
   const dropTargetRef = useRef<HTMLDivElement>(null);
   const busy = status.kind === "busy";
   const ready = status.kind === "idle" || busy;
   const efforts = effortsFor(controls);
-  const canAttach = ready && acceptsImages(controls);
+  const canAttach = ready && !queuedEdit && acceptsImages(controls);
   const attached = canAttach ? images : [];
   const sendable = Boolean(text.trim() || attached.length);
   const trigger = picker || dismissed === text ? null : menuTrigger(text, caret);
   const mentionQuery = trigger?.kind === "mention" ? trigger.query : null;
   const foldersKey = folders.join("\n");
 
-  useEffect(() => promptMemory.saveDraft(memoryKey, text), [memoryKey, text]);
+  const keepEditText = queuedEdit?.keepText;
+  useEffect(() => {
+    if (keepEditText) keepEditText(text);
+    else promptMemory.saveDraft(memoryKey, text);
+  }, [memoryKey, text, keepEditText]);
+
+  useEffect(() => {
+    if (editId) requestAnimationFrame(() => editorRef.current?.focus());
+  }, [editId]);
 
   useEffect(() => {
     if (ready && nothingFocused()) editorRef.current?.focus();
@@ -267,7 +306,26 @@ export function Composer({
 
   const dragging = useFileDrop(dropTargetRef, dropPaths, ready);
 
+  const finishEdit = async (edit: QueuedMessageEdit, change: QueuedEdit) => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    onError(null);
+    try {
+      await edit.finish(change);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      sendingRef.current = false;
+    }
+  };
+  const saveEdit = (steer: boolean) => {
+    const message = text.trim();
+    if (queuedEdit && message && ready) void finishEdit(queuedEdit, { text: message, steer });
+  };
+  const cancelEdit = () => queuedEdit && void finishEdit(queuedEdit, {});
+
   const submit = async () => {
+    if (queuedEdit) return saveEdit(false);
     const message = text.trim();
     if (!sendable || !ready) return;
     const local = attached.length ? null : localCommand(message, controls);
@@ -360,7 +418,8 @@ export function Composer({
       void submit();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      if (busy) void run(actions.interrupt);
+      if (queuedEdit) cancelEdit();
+      else if (busy) void run(actions.interrupt);
       else editorRef.current?.blur();
     } else if (e.key === "ArrowUp" && caretAt === 0 && !e.shiftKey) {
       if (recallHistory(-1)) e.preventDefault();
@@ -369,8 +428,9 @@ export function Composer({
     }
   };
 
-  const placeholder =
-    status.kind === "starting"
+  const placeholder = queuedEdit
+    ? "Edit the queued message (Esc to cancel)"
+    : status.kind === "starting"
       ? `Starting ${agentLabel}…`
       : busy
         ? `${agentLabel} is working — messages you send now run after this turn${descriptor.capabilities.steer ? " unless you steer them" : ""} (Esc to stop)`
@@ -419,9 +479,14 @@ export function Composer({
               ))}
             </ul>
           )}
+          {queuedEdit && (
+            <p className="px-3 pt-2 text-xs text-accent">
+              Editing a queued message; it waits until you save it.
+            </p>
+          )}
           <ComposerEditor
             ref={editorRef}
-            label={`Message ${agentLabel}`}
+            label={queuedEdit ? "Queued message" : `Message ${agentLabel}`}
             value={text}
             onChange={(value, nextCaret) => {
               setText(value);
@@ -485,25 +550,61 @@ export function Composer({
                   <ContextRing {...controls.context} />
                 </button>
               )}
-              {busy && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="h-7 px-3 text-xs"
-                  onClick={() => void run(actions.interrupt)}
-                >
-                  Stop
-                </Button>
-              )}
-              {(!busy || sendable) && (
-                <Button
-                  type="button"
-                  className="h-7 px-3 text-xs"
-                  disabled={!sendable || !ready}
-                  onClick={() => void submit()}
-                >
-                  Send
-                </Button>
+              {queuedEdit ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-7 px-3 text-xs"
+                    onClick={cancelEdit}
+                  >
+                    Cancel
+                  </Button>
+                  {queuedEdit.canSteer && busy && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-7 px-3 text-xs"
+                      title="Save it and send it now, redirecting the turn in progress"
+                      disabled={!text.trim()}
+                      onClick={() => saveEdit(true)}
+                    >
+                      Steer
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    className="h-7 px-3 text-xs"
+                    title={busy ? "Save it to run after this turn" : "Save it and send it now"}
+                    disabled={!text.trim() || !ready}
+                    onClick={() => saveEdit(false)}
+                  >
+                    Save
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {busy && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-7 px-3 text-xs"
+                      onClick={() => void run(actions.interrupt)}
+                    >
+                      Stop
+                    </Button>
+                  )}
+                  {(!busy || sendable) && (
+                    <Button
+                      type="button"
+                      className="h-7 px-3 text-xs"
+                      disabled={!sendable || !ready}
+                      onClick={() => void submit()}
+                    >
+                      Send
+                    </Button>
+                  )}
+                </>
               )}
             </span>
           </div>

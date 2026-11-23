@@ -66,9 +66,39 @@ struct QueuedMessage {
     content: Value,
     /// Slash commands run as sent: context ahead of them would hide the command.
     command: bool,
+    text: String,
+    images: Vec<ChatImage>,
+    handoff: Option<String>,
+    /// Waits while the user edits it, even when its turn comes.
+    held: bool,
 }
 
 impl QueuedMessage {
+    fn new(id: &str, text: &str, images: &[ChatImage], handoff: Option<String>) -> Self {
+        let mut message = Self {
+            item: ChatItem::new(id, ItemKind::User, ""),
+            content: Value::Null,
+            command: false,
+            text: String::new(),
+            images: images.to_vec(),
+            handoff,
+            held: false,
+        };
+        message.rewrite(text);
+        message
+    }
+
+    fn rewrite(&mut self, text: &str) {
+        let content = user_content(text, &self.images);
+        self.content = match self.handoff.clone() {
+            Some(handoff) => with_context(handoff, content),
+            None => content,
+        };
+        self.item.text = user_display_text(text, self.images.len());
+        self.command = text.starts_with('/');
+        self.text = text.to_string();
+    }
+
     fn steered(&self) -> bool {
         self.item.status.as_deref() == Some(STEERED)
     }
@@ -434,7 +464,12 @@ impl ClaudeProvider {
     /// this one; a steer still queued cuts that turn in turn.
     fn begin_next_turn(&mut self, interrupted: bool, out: &mut ProviderOutput) {
         self.interrupting = false;
-        let Some(mut message) = self.queued.pop_front() else {
+        let Some(mut message) = self
+            .queued
+            .iter()
+            .position(|message| !message.held)
+            .and_then(|index| self.queued.remove(index))
+        else {
             out.status(ChatStatus::Idle);
             return;
         };
@@ -449,19 +484,7 @@ impl ClaudeProvider {
 
     fn message(&mut self, text: &str, images: &[ChatImage]) -> QueuedMessage {
         let message_id = uuid::Uuid::new_v4().to_string();
-        let content = user_content(text, images);
-        QueuedMessage {
-            item: ChatItem::new(
-                &message_id,
-                ItemKind::User,
-                user_display_text(text, images.len()),
-            ),
-            content: match self.handoff.take() {
-                Some(handoff) => with_context(handoff, content),
-                None => content,
-            },
-            command: text.starts_with('/'),
-        }
+        QueuedMessage::new(&message_id, text, images, self.handoff.take())
     }
 
     /// Runs the message after the steers already waiting, once Claude confirms it stopped.
@@ -477,12 +500,15 @@ impl ClaudeProvider {
         self.request_interrupt(out);
     }
 
-    fn take_queued(&mut self, item_id: &str) -> Result<QueuedMessage, String> {
-        let index = self
-            .queued
+    fn queued_index(&self, item_id: &str) -> Result<usize, String> {
+        self.queued
             .iter()
             .position(|message| message.item.id == item_id && !message.steered())
-            .ok_or("That message is no longer queued")?;
+            .ok_or_else(|| "That message is no longer queued".into())
+    }
+
+    fn take_queued(&mut self, item_id: &str) -> Result<QueuedMessage, String> {
+        let index = self.queued_index(item_id)?;
         Ok(self.queued.remove(index).unwrap())
     }
 
@@ -813,6 +839,34 @@ impl ChatProvider for ClaudeProvider {
     fn unqueue(&mut self, item_id: &str, out: &mut ProviderOutput) -> Result<(), String> {
         self.take_queued(item_id)?;
         out.event(ChatEvent::Remove { id: item_id.into() });
+        Ok(())
+    }
+
+    fn hold_queued(&mut self, item_id: &str, _out: &mut ProviderOutput) -> Result<String, String> {
+        let index = self.queued_index(item_id)?;
+        let message = &mut self.queued[index];
+        message.held = true;
+        Ok(message.text.clone())
+    }
+
+    fn release_queued(
+        &mut self,
+        item_id: &str,
+        edit: &QueuedEdit,
+        out: &mut ProviderOutput,
+    ) -> Result<(), String> {
+        let index = self.queued_index(item_id)?;
+        let message = &mut self.queued[index];
+        message.held = false;
+        if let Some(text) = &edit.text {
+            message.rewrite(text);
+            out.upsert(message.item.clone().with_status(QUEUED));
+        }
+        if self.turns == 0 {
+            self.begin_next_turn(false, out);
+        } else if edit.steer {
+            self.steer_queued(item_id, out)?;
+        }
         Ok(())
     }
 
@@ -2540,6 +2594,114 @@ mod tests {
             "use rebase"
         );
         assert_eq!(user_item(&snapshot, "use rebase").status, None);
+    }
+
+    fn completed_turn() -> Value {
+        json!({ "type": "result", "subtype": "success", "is_error": false, "terminal_reason": "completed" })
+    }
+
+    fn release(
+        provider: &mut ClaudeProvider,
+        snapshot: &mut ChatSnapshot,
+        id: &str,
+        edit: QueuedEdit,
+    ) -> ProviderOutput {
+        let mut out = ProviderOutput::default();
+        provider.release_queued(id, &edit, &mut out).unwrap();
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        out
+    }
+
+    #[test]
+    fn a_held_message_waits_past_the_turn_end_and_runs_edited_once_released() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        sent(&mut provider, &mut snapshot, "use rebase");
+        sent(&mut provider, &mut snapshot, "and squash");
+        let held = user_item(&snapshot, "use rebase").id.clone();
+        let mut out = ProviderOutput::default();
+        assert_eq!(provider.hold_queued(&held, &mut out).unwrap(), "use rebase");
+
+        let next = feed(&mut provider, &mut snapshot, completed_turn());
+        assert_eq!(
+            sent_user(&next).unwrap()["message"]["content"],
+            "and squash"
+        );
+        let idle = feed(&mut provider, &mut snapshot, completed_turn());
+        assert!(sent_user(&idle).is_none());
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+
+        let edit = QueuedEdit {
+            text: Some("use merge".into()),
+            steer: false,
+        };
+        let released = release(&mut provider, &mut snapshot, &held, edit);
+        assert_eq!(
+            sent_user(&released).unwrap()["message"]["content"],
+            "use merge"
+        );
+        assert_eq!(snapshot.item(&held).unwrap().text, "use merge");
+        assert_eq!(snapshot.status, ChatStatus::Busy);
+    }
+
+    #[test]
+    fn releasing_a_message_unchanged_mid_turn_keeps_it_queued() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        sent(&mut provider, &mut snapshot, "use rebase");
+        let held = user_item(&snapshot, "use rebase").id.clone();
+        let mut out = ProviderOutput::default();
+        provider.hold_queued(&held, &mut out).unwrap();
+
+        let released = release(&mut provider, &mut snapshot, &held, QueuedEdit::default());
+        assert!(written(&released).is_empty());
+        assert_eq!(
+            snapshot.item(&held).unwrap().status.as_deref(),
+            Some(QUEUED)
+        );
+        let next = feed(&mut provider, &mut snapshot, completed_turn());
+        assert_eq!(
+            sent_user(&next).unwrap()["message"]["content"],
+            "use rebase"
+        );
+    }
+
+    #[test]
+    fn releasing_an_edited_message_to_steer_runs_its_new_text_next() {
+        let (mut provider, mut snapshot) = started();
+        sent(&mut provider, &mut snapshot, "go");
+        sent(&mut provider, &mut snapshot, "use rebase");
+        let held = user_item(&snapshot, "use rebase").id.clone();
+        let mut out = ProviderOutput::default();
+        provider.hold_queued(&held, &mut out).unwrap();
+
+        let edit = QueuedEdit {
+            text: Some("use merge".into()),
+            steer: true,
+        };
+        let released = release(&mut provider, &mut snapshot, &held, edit);
+        assert!(interrupts(&released));
+        assert_eq!(
+            snapshot.item(&held).unwrap().status.as_deref(),
+            Some(STEERED)
+        );
+        let resumed = feed_all(&mut provider, &mut snapshot, interrupted_turn());
+        assert_eq!(
+            sent_user(&resumed).unwrap()["message"]["content"][1]["text"],
+            "use merge"
+        );
+    }
+
+    #[test]
+    fn only_queued_messages_can_be_held_or_released() {
+        let (mut provider, _) = started();
+        let mut out = ProviderOutput::default();
+        assert!(provider.hold_queued("missing", &mut out).is_err());
+        assert!(provider
+            .release_queued("missing", &QueuedEdit::default(), &mut out)
+            .is_err());
     }
 
     #[test]

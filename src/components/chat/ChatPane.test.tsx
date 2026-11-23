@@ -301,7 +301,9 @@ describe("ChatPane", () => {
       Array.from({ length: to - from }, (_, index) => message(from + index));
     mocks.invoke.mockImplementation((command: string) =>
       Promise.resolve(
-        command === "chat_open" ? snapshot({ sessionId: "s1", items: range(10, 30), earlier: 10 }) : undefined
+        command === "chat_open"
+          ? snapshot({ sessionId: "s1", items: range(10, 30), earlier: 10 })
+          : undefined
       )
     );
     const loads = () =>
@@ -787,6 +789,90 @@ describe("ChatPane", () => {
         itemId: "q",
       })
     );
+  });
+
+  const openQueuedEdit = async (taskId: string) => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(busyWithQueue());
+      if (command === "chat_hold_queued") return Promise.resolve("Then run the tests");
+      return Promise.resolve(undefined);
+    });
+    const view = render(<ChatPane taskId={taskId} agent="claude" folders={["/wt/a"]} />);
+    const draft = screen.getByRole("textbox", { name: "Message Claude Code" });
+    await waitFor(() => expect(draft).toHaveAttribute("contenteditable", "true"));
+    await typeInto(draft, "Half a thought");
+    fireEvent.click(await screen.findByRole("button", { name: "Edit queued message" }));
+    const box = await screen.findByRole("textbox", { name: "Queued message" });
+    await waitFor(() => expect(composerText(box)).toBe("Then run the tests"));
+    expect(screen.getByText("Editing")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit queued message" })).toBeNull();
+    return { view, box };
+  };
+
+  const released = (taskId: string, edit: unknown) =>
+    waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_release_queued", {
+        taskId,
+        agent: "claude",
+        itemId: "q",
+        edit,
+      })
+    );
+
+  it("edits a queued message in the composer and gives the draft back once saved", async () => {
+    const { box } = await openQueuedEdit("edit-save");
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_hold_queued", {
+      taskId: "edit-save",
+      agent: "claude",
+      itemId: "q",
+    });
+    await typeInto(box, "Then run the unit tests");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await released("edit-save", { text: "Then run the unit tests", steer: false });
+    const draft = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await waitFor(() => expect(composerText(draft)).toBe("Half a thought"));
+    expect(screen.queryByText("Editing")).toBeNull();
+  });
+
+  it("steers with the edited text of a queued message", async () => {
+    const { box } = await openQueuedEdit("edit-steer");
+    await typeInto(box, "Run the tests now");
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    await released("edit-steer", { text: "Run the tests now", steer: true });
+  });
+
+  it("leaves a queued message unchanged when its edit is cancelled", async () => {
+    const { box } = await openQueuedEdit("edit-cancel");
+    await typeInto(box, "Never mind");
+    fireEvent.keyDown(box, { key: "Escape" });
+    await released("edit-cancel", {});
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_interrupt", expect.anything());
+  });
+
+  it("keeps editing when saving fails and shows why", async () => {
+    const { box } = await openQueuedEdit("edit-fail");
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_release_queued"
+        ? Promise.reject("That message is no longer queued")
+        : Promise.resolve(undefined)
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That message is no longer queued");
+    expect(composerText(box)).toBe("Then run the tests");
+  });
+
+  it("keeps a queued message held with its edit when the pane closes and reopens", async () => {
+    const { view, box } = await openQueuedEdit("edit-close");
+    await typeInto(box, "Then run the unit tests");
+    view.unmount();
+    render(<ChatPane taskId="edit-close" agent="claude" folders={["/wt/a"]} />);
+    const reopened = await screen.findByRole("textbox", { name: "Queued message" });
+    await waitFor(() => expect(composerText(reopened)).toBe("Then run the unit tests"));
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_release_queued", expect.anything());
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await released("edit-close", { text: "Then run the unit tests", steer: false });
+    const draft = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await waitFor(() => expect(composerText(draft)).toBe("Half a thought"));
   });
 
   it("only offers to remove queued messages when the agent cannot steer", async () => {
