@@ -31,3 +31,27 @@ it("parses the whole text when syntax spans blocks", () => {
 
   expect(parsedTexts).toEqual(["See [docs][d]\n\n[d]: https://example.com"]);
 });
+
+it("reuses blocks rendered before the chat was remounted", () => {
+  const text = "Kept intro\n\nKept body";
+  render(<MarkdownText text={text} />).unmount();
+  parsedTexts.length = 0;
+
+  render(<MarkdownText text={text} />);
+
+  expect(parsedTexts).toEqual([]);
+});
+
+it("caches a streaming block only as last shown", () => {
+  const { rerender, unmount } = render(<MarkdownText text={"Stream intro\n\nPar"} />);
+  rerender(<MarkdownText text={"Stream intro\n\nPartial"} />);
+  rerender(<MarkdownText text={"Stream intro\n\nPartial reply"} />);
+  unmount();
+  parsedTexts.length = 0;
+
+  render(<MarkdownText text={"Stream intro\n\nPartial"} />);
+  cleanup();
+  render(<MarkdownText text={"Stream intro\n\nPartial reply"} />);
+
+  expect(parsedTexts).toEqual(["Partial"]);
+});
