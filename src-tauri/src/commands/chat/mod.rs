@@ -16,6 +16,7 @@ mod elicitation_tests;
 
 pub use codex::purge_stale_chat_images;
 mod conversations;
+mod detail;
 mod file_preview;
 mod files;
 pub mod hand_over;
@@ -67,6 +68,7 @@ use super::agents::permission::{PendingResolution, PermissionPolicy};
 use super::agents::{Agents, ChatRequest};
 use super::process::OwnedProcess;
 use conversations::{Conversation, ConversationStore};
+use detail::DetailView;
 use handoff::{Handoff, HandoffLink, HandoffStore};
 use live::{LiveBatch, LiveSink};
 use model::{
@@ -350,8 +352,7 @@ impl Shared {
                 let before = self.activity();
                 self.snapshot.apply(&event);
                 self.notify_change(before, notify);
-                self.sink
-                    .push(event, self.snapshot.generation, Instant::now());
+                self.sink.push(event, &self.snapshot, Instant::now());
             }
         }
         for id in out.kept {
@@ -488,8 +489,8 @@ fn flush_live_batches(shared: &Mutex<Shared>, wake: &Condvar) {
         let now = Instant::now();
         let wait = match state.sink.due() {
             Some(due) if due <= now => {
-                let generation = state.snapshot.generation;
-                state.sink.flush(generation);
+                let Shared { sink, snapshot, .. } = &mut *state;
+                sink.flush_due(snapshot, now);
                 continue;
             }
             Some(due) => due - now,
@@ -771,7 +772,15 @@ impl ChatSession {
     fn attach(&self, sink: Channel<LiveBatch>) -> ChatSnapshot {
         let mut state = self.shared.lock().unwrap();
         state.replace_sink(Some(sink));
-        state.snapshot.clone()
+        state.sink.snapshot_for_pane(&state.snapshot)
+    }
+
+    fn expand(&self, generation: u64, item_id: &str, view: Option<DetailView>) {
+        let mut state = self.shared.lock().unwrap();
+        if state.snapshot.generation == generation {
+            let Shared { sink, snapshot, .. } = &mut *state;
+            sink.expand(item_id, view, snapshot);
+        }
     }
 
     fn detach(&self, generation: u64) {
@@ -1555,6 +1564,20 @@ pub fn chat_respond(
     registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.respond(&request_id, &response, generation)
     })
+}
+
+/// Sends an expanded row's output to the pane, or stops when `view` is `None`.
+#[tauri::command(async)]
+pub fn chat_expand_detail(
+    registry: State<'_, ChatRegistry>,
+    session_id: String,
+    generation: u64,
+    item_id: String,
+    view: Option<DetailView>,
+) {
+    if let Some(session) = registry.sessions.lock().unwrap().get(&session_id) {
+        session.expand(generation, &item_id, view);
+    }
 }
 
 #[tauri::command(async)]
@@ -2370,15 +2393,18 @@ pub(crate) mod tests {
             Ok(())
         }));
         let queued_at = Instant::now();
-        session.shared.lock().unwrap().sink.push(
+        let mut state = session.shared.lock().unwrap();
+        let Shared { sink, snapshot, .. } = &mut *state;
+        sink.push(
             ChatEvent::Delta {
                 id: "a".into(),
                 field: model::DeltaField::Text,
                 delta: "Hi".into(),
             },
-            7,
+            snapshot,
             queued_at,
         );
+        drop(state);
 
         let batch = received.recv_timeout(Duration::from_secs(5)).unwrap();
 
@@ -2387,6 +2413,32 @@ pub(crate) mod tests {
         let batch: serde_json::Value = serde_json::from_str(&batch).unwrap();
         assert_eq!(batch["generation"], 7);
         assert_eq!(batch["events"][0]["delta"], "Hi");
+        session.terminate();
+    }
+
+    #[test]
+    fn command_output_reaches_the_pane_only_for_rows_it_expands() {
+        let session = spawn("sleep 60", Arc::default(), Arc::default());
+        session.shared.lock().unwrap().snapshot.items =
+            vec![ChatItem::new("c", ItemKind::Command, "").with_detail(Some("ok".into()))];
+        let (sent, received) = std::sync::mpsc::channel();
+        let attached = session.attach(Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                let _ = sent.send(json);
+            }
+            Ok(())
+        }));
+        assert_eq!(attached.items[0].detail, None);
+        assert_eq!(attached.items[0].detail_length, Some(2));
+
+        session.expand(6, "c", Some(DetailView::Tail));
+        session.expand(7, "c", Some(DetailView::Tail));
+
+        let batch = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        let batch: serde_json::Value = serde_json::from_str(&batch).unwrap();
+        assert_eq!(batch["events"].as_array().unwrap().len(), 1);
+        assert_eq!(batch["events"][0]["item"]["detail"], "ok");
+        assert!(received.try_recv().is_err());
         session.terminate();
     }
 

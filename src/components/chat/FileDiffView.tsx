@@ -14,6 +14,7 @@ import {
 import { plainDiffAnalysis } from "../../services/syntaxAnalysis";
 import { analyzeInWorker } from "../../services/syntaxWorker";
 import { AgentId } from "../../types";
+import { formatSize } from "./formatSize";
 import {
   addDiffComment,
   diffAnchor,
@@ -81,12 +82,6 @@ async function highlightedDiff(
   if (!oldAnalysis || !newAnalysis) return null;
   const analysis = { old: oldAnalysis, new: newAnalysis };
   return { kind: "text", diff: refinedDiff(lines, oldText, newText, analysis) };
-}
-
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export function MediaSide({ label, content }: { label: string; content: FileContent | null }) {

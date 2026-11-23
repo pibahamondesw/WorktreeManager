@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChatItemView, MarkdownText } from "./ChatItemView";
+import { ItemDetailContext } from "./itemDetailContext";
 import { renderMermaid } from "./mermaid";
 import { saveDiagramPng } from "./diagramExport";
 
@@ -412,4 +413,53 @@ it("shows why a question was rejected", () => {
   const card = screen.getByRole("region", { name: "Question" });
   expect(within(card).getByText("Not answered")).toBeInTheDocument();
   expect(within(card).getByText("Not now")).toBeInTheDocument();
+});
+
+it("asks for a command's output while its row is expanded and marks a partial one", () => {
+  const expand = vi.fn();
+  const item = {
+    id: "c1",
+    kind: "command" as const,
+    text: "",
+    title: "make test",
+    detailLength: 40960,
+  };
+  const { rerender } = render(
+    <ItemDetailContext.Provider value={expand}>
+      <ChatItemView item={item} />
+    </ItemDetailContext.Provider>
+  );
+  expect(expand).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: /make test/ }));
+  expect(expand).toHaveBeenLastCalledWith("c1", "tail");
+  expect(screen.getByText("Loading output…")).toBeVisible();
+
+  rerender(
+    <ItemDetailContext.Provider value={expand}>
+      <ChatItemView item={{ ...item, detail: "last lines" }} />
+    </ItemDetailContext.Provider>
+  );
+  expect(screen.getByText("last lines")).toBeVisible();
+  expect(screen.getByText("Showing the end of 40.0 KB of output")).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Show full output" }));
+  expect(expand).toHaveBeenLastCalledWith("c1", "full");
+  rerender(
+    <ItemDetailContext.Provider value={expand}>
+      <ChatItemView item={{ ...item, detail: "all lines", detailLength: undefined }} />
+    </ItemDetailContext.Provider>
+  );
+  expect(screen.queryByRole("button", { name: "Show full output" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /make test/ }));
+  expect(expand).toHaveBeenLastCalledWith("c1", null);
+  fireEvent.click(screen.getByRole("button", { name: /make test/ }));
+  expect(expand).toHaveBeenLastCalledWith("c1", "tail");
+  expect(expand).toHaveBeenCalledTimes(4);
+});
+
+it("keeps a row without output collapsed", () => {
+  render(<ChatItemView item={{ id: "c1", kind: "command", text: "", title: "true" }} />);
+  expect(screen.getByRole("button", { name: /true/ })).toBeDisabled();
 });

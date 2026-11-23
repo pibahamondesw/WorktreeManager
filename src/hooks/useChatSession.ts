@@ -11,6 +11,7 @@ import {
   chatRefreshUsage,
   chatConfigure,
   chatDetach,
+  chatExpandDetail,
   chatInterrupt,
   chatOpen,
   chatRespond,
@@ -23,8 +24,14 @@ import {
   ChatSnapshot,
   ChatOpenIntent,
   ChatOpenMode,
+  DetailView,
   EMPTY_CONTROLS,
 } from "../services/chat";
+
+interface Attachment {
+  sessionId: string;
+  generation: number;
+}
 
 const CONNECTING: ChatSnapshot = {
   generation: 0,
@@ -50,6 +57,7 @@ export function useChatSession(
 ) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>(CONNECTING);
   const [error, setError] = useState<string | null>(null);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
   const openRef = useRef<(mode: ChatOpenMode, conversation?: string) => Promise<void>>(
     async () => undefined
   );
@@ -91,6 +99,7 @@ export function useChatSession(
         generation = initial.generation;
         sessionId = openedSession;
         ready = true;
+        setAttachment({ sessionId, generation });
         setSnapshot(
           early
             .filter((entry) => entry.generation === initial.generation)
@@ -156,6 +165,13 @@ export function useChatSession(
       chatRespond(taskId, agent, requestId, response, snapshot.generation, tab),
     [taskId, agent, tab, snapshot.generation]
   );
+  const expandDetail = useCallback(
+    (itemId: string, view: DetailView | null) => {
+      if (!attachment) return;
+      void chatExpandDetail(attachment.sessionId, attachment.generation, itemId, view);
+    },
+    [attachment]
+  );
   const previewRewind = (itemId: string) =>
     chatRewindPreview(taskId, agent, snapshot.generation, itemId, tab);
   const changeHistory = useCallback(
@@ -184,5 +200,6 @@ export function useChatSession(
     refreshUsage,
     previewRewind,
     changeHistory,
+    expandDetail,
   };
 }

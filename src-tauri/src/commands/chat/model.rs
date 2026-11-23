@@ -58,6 +58,9 @@ pub struct ChatItem {
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Bytes in the full `detail` when the pane receives only its end, or none of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_length: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,6 +94,7 @@ impl ChatItem {
             text: text.into(),
             title: None,
             detail: None,
+            detail_length: None,
             status: None,
             checkpoint: None,
             duration_ms: None,

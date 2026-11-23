@@ -36,6 +36,8 @@ export interface ChatItem {
   text: string;
   title?: string;
   detail?: string;
+  /** Bytes in the full output when `detail` holds only its end, or none of it. */
+  detailLength?: number;
   status?: string;
   checkpoint?: string;
   durationMs?: number;
@@ -516,6 +518,19 @@ export const chatDetach = (
   tab?: string
 ) =>
   invoke<void>("chat_detach", { taskId, agent, generation, sessionId, tab }).catch(() => undefined);
+
+/** How much of an expanded row's output the pane receives. */
+export type DetailView = "tail" | "full";
+
+export const chatExpandDetail = (
+  sessionId: string,
+  generation: number,
+  itemId: string,
+  view: DetailView | null
+) =>
+  invoke<void>("chat_expand_detail", { sessionId, generation, itemId, view }).catch(
+    () => undefined
+  );
 
 export const chatStop = (taskId: string, agent: AgentId, tab?: string) =>
   invoke<void>("chat_stop", { taskId, agent, tab });

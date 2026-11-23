@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { remarkLatexDelimiters } from "./remarkLatexDelimiters";
 import { ChevronDownIcon, CloseIcon, SteerIcon } from "../ui/Icons";
+import { Button } from "../ui/Button";
 import { AskedQuestion, ChatItem, HistoryAction } from "../../services/chat";
 import { MarkdownLink } from "./MarkdownLink";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
@@ -15,6 +16,8 @@ import { SubagentSteps } from "./chatEntries";
 import { splitMarkdownBlocks } from "./markdownBlocks";
 import { LruCache } from "./lruCache";
 import { rehypeCachedHighlight } from "./rehypeCachedHighlight";
+import { useExpandedDetail } from "./itemDetailContext";
+import { formatSize } from "./formatSize";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted motion-pulse-steps",
@@ -196,13 +199,19 @@ function SubagentCard({ item, steps }: { item: ChatItem; steps?: SubagentSteps }
 
 function Activity({ item }: { item: ChatItem }) {
   const [open, setOpen] = useState(false);
+  const [full, setFull] = useState(false);
+  useExpandedDetail(item.id, open ? (full ? "full" : "tail") : null);
   const label = item.title ?? item.text;
-  const hasDetail = !!item.detail || (!!item.title && !!item.text);
+  const hasDetail =
+    !!item.detail || item.detailLength !== undefined || (!!item.title && !!item.text);
   return (
     <div className="rounded-lg border border-border bg-bg-secondary/40 text-xs">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          setOpen(!open);
+          setFull(false);
+        }}
         disabled={!hasDetail}
         aria-expanded={open}
         className="w-full flex items-center gap-2 px-3 py-1.5 text-left cursor-pointer disabled:cursor-default"
@@ -226,6 +235,17 @@ function Activity({ item }: { item: ChatItem }) {
             <pre className="font-mono text-text-secondary whitespace-pre-wrap select-text">
               {item.text}
             </pre>
+          )}
+          {item.detail !== undefined && item.detailLength !== undefined && (
+            <div className="flex items-center gap-2 text-text-muted">
+              <span>Showing the end of {formatSize(item.detailLength)} of output</span>
+              <Button variant="ghost" onClick={() => setFull(true)} className="h-6 px-2 text-xs">
+                Show full output
+              </Button>
+            </div>
+          )}
+          {item.detail === undefined && item.detailLength !== undefined && (
+            <span className="text-text-muted">Loading output…</span>
           )}
           {item.detail &&
             (item.kind === "fileChange" ? (
