@@ -25,6 +25,7 @@ import { tags } from "@lezer/highlight";
 export interface ComposerEditorHandle {
   focus: (caret?: number) => void;
   blur: () => void;
+  insert: (text: string) => void;
 }
 
 export interface ComposerEditorProps {
@@ -261,6 +262,10 @@ export function ComposerEditor({
           view.dispatch({ selection: { anchor: Math.min(caret, view.state.doc.length) } });
       },
       blur: () => viewRef.current?.contentDOM.blur(),
+      insert: (text) => {
+        const view = viewRef.current;
+        if (view) view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true });
+      },
     }),
     []
   );

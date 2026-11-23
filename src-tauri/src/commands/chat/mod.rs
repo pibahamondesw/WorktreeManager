@@ -1497,6 +1497,11 @@ pub async fn chat_read_image(path: String) -> Result<images::DroppedImage, Strin
 }
 
 #[tauri::command]
+pub async fn chat_clipboard_text() -> Result<String, String> {
+    blocking(crate::platform::clipboard_text).await
+}
+
+#[tauri::command]
 pub async fn chat_read_markdown(
     folders: Vec<String>,
     path: String,
@@ -3491,6 +3496,12 @@ pub(crate) mod tests {
             tauri::async_runtime::block_on(chat_read_image(shot.display().to_string())).unwrap();
         assert_eq!(image.data, "aGk=");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn clipboard_text_is_read_natively_only_on_macos() {
+        let read = tauri::async_runtime::block_on(chat_clipboard_text());
+        assert_eq!(read.is_ok(), cfg!(target_os = "macos"));
     }
 
     #[test]

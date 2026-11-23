@@ -208,6 +208,9 @@ export const bindings: Binding[] = [
   reference("chat.newline", "Insert newline", ["chat"], [shortcut("Enter", "shift")], {
     inText: true,
   }),
+  reference("chat.pasteInline", "Paste inline", ["chat"], primary("v", "shift"), {
+    inText: true,
+  }),
   reference(
     "chat.cancel",
     "Close picker / stop response / leave composer",
