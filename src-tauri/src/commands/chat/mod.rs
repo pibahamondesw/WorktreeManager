@@ -35,6 +35,8 @@ mod preferences;
 mod questions;
 mod reasoning;
 mod sessions;
+#[cfg(test)]
+mod snapshot_budget_tests;
 pub mod tabs;
 mod turns;
 
@@ -1844,7 +1846,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn spawn(
+    pub(super) fn spawn(
         script: &str,
         remembered: Arc<Mutex<Vec<String>>>,
         statuses: Arc<Mutex<Vec<ChatStatus>>>,
