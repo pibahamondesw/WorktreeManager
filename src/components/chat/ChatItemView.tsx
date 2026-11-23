@@ -32,7 +32,11 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const LazyMath = lazy(() => import("./MarkdownMath"));
-const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm, remarkMath, remarkLatexDelimiters];
+const REMARK_PLUGINS: Options["remarkPlugins"] = [
+  remarkGfm,
+  [remarkMath, { singleDollarTextMath: false }],
+  remarkLatexDelimiters,
+];
 const REHYPE_PLUGINS: Options["rehypePlugins"] = [
   [rehypeHighlight, { plainText: ["mermaid", "math"] }],
 ];
