@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { WorktreeList, TaskActions } from "./WorktreeList";
@@ -7,6 +7,13 @@ import type { ReactNode } from "react";
 import { Task } from "../../types";
 import type { TaskCardActions } from "./WorktreeCard";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
+import type { OpenedTask } from "../../hooks/useOpenTask";
+import { loadShowAutomationTasks, persist } from "../../services/store";
+
+vi.mock("../../services/store", () => ({
+  loadShowAutomationTasks: vi.fn(),
+  persist: vi.fn(),
+}));
 
 vi.mock("../../hooks/useWorktreeData", () => ({
   useWorktreeData: () => ({
@@ -23,7 +30,9 @@ vi.mock("./WorktreeListHeader", () => ({
   WorktreeListHeader: ({ projectFilter }: { projectFilter?: ReactNode }) => projectFilter,
 }));
 vi.mock("./NewWorktreeModal", () => ({ NewWorktreeModal: () => null }));
-vi.mock("../task/TaskView", () => ({ TaskView: () => null }));
+vi.mock("../task/TaskView", () => ({
+  TaskView: ({ onBack }: { onBack: () => void }) => <button onClick={onBack}>Back</button>,
+}));
 vi.mock("./WorktreeCard", () => ({
   WorktreeCard: ({
     task,
@@ -55,6 +64,11 @@ vi.mock("./WorktreeCard", () => ({
   ),
 }));
 
+beforeEach(() => {
+  vi.mocked(loadShowAutomationTasks).mockReset().mockResolvedValue(true);
+  vi.mocked(persist).mockReset().mockResolvedValue(undefined);
+});
+
 afterEach(cleanup);
 
 const TASKS: Task[] = [
@@ -72,10 +86,12 @@ const TASKS: Task[] = [
 function fixture({
   tasks = TASKS,
   revealTaskId = null,
+  openedTask = null,
   onTaskDeleted = vi.fn<TaskActions["delete"]>(),
 }: {
   tasks?: Task[];
   revealTaskId?: string | null;
+  openedTask?: OpenedTask | null;
   onTaskDeleted?: TaskActions["delete"];
 } = {}) {
   const onTaskPinned = vi.fn().mockResolvedValue(undefined);
@@ -109,7 +125,7 @@ function fixture({
       searchOpen={false}
       revealTaskId={revealTaskId}
       onRevealHandled={vi.fn()}
-      openedTask={null}
+      openedTask={openedTask}
       onOpenTask={vi.fn()}
       onCloseTask={vi.fn()}
       onSwitchSurface={vi.fn()}
@@ -333,25 +349,84 @@ it("keeps shortcut help visible when the workspace has no tasks", () => {
   expect(screen.getByText(/history/)).toBeInTheDocument();
 });
 
-it("hides automation tasks until the toggle shows them, and reveals one on request", () => {
-  const automationTasks = TASKS.map((task, index) =>
-    index === 0 ? { ...task, automationId: "pr-babysitter" } : task
-  );
-  const { setTasks } = fixture();
-  setTasks(automationTasks);
-  expect(screen.queryByText("first")).not.toBeInTheDocument();
-  expect(
-    vi.mocked(useWorktreeListKeyboardShortcuts).mock.lastCall?.[0].tasks.map((task) => task.id)
-  ).toEqual(["second", "unpinned"]);
-  const toggle = screen.getByRole("checkbox", { name: "Automation tasks (1)" });
-  fireEvent.click(toggle);
-  expect(screen.getByText("first")).toBeInTheDocument();
-  fireEvent.click(toggle);
-  expect(screen.queryByText("first")).not.toBeInTheDocument();
+const AUTOMATION_TASKS = TASKS.map((task, index) =>
+  index === 0 ? { ...task, automationId: "pr-babysitter" } : task
+);
+const listedTaskIds = () =>
+  vi.mocked(useWorktreeListKeyboardShortcuts).mock.lastCall?.[0].tasks.map((task) => task.id);
+const automationToggle = () => screen.getByRole("checkbox", { name: "Automation tasks (1)" });
 
-  cleanup();
-  const revealed = fixture({ revealTaskId: "first" });
-  revealed.setTasks(automationTasks);
+it("shows automation tasks when no preference was saved", async () => {
+  fixture({ tasks: AUTOMATION_TASKS });
+  await waitFor(() => expect(loadShowAutomationTasks).toHaveBeenCalled());
   expect(screen.getByText("first")).toBeInTheDocument();
-  expect(screen.getByRole("checkbox", { name: "Automation tasks (1)" })).toBeChecked();
+  expect(listedTaskIds()).toEqual(["first", "second", "unpinned"]);
+  expect(automationToggle()).toBeChecked();
+});
+
+it("hides automation tasks when the saved preference hides them", async () => {
+  vi.mocked(loadShowAutomationTasks).mockResolvedValue(false);
+  fixture({ tasks: AUTOMATION_TASKS });
+  await waitFor(() => expect(screen.queryByText("first")).not.toBeInTheDocument());
+  expect(listedTaskIds()).toEqual(["second", "unpinned"]);
+  expect(automationToggle()).not.toBeChecked();
+});
+
+it("remembers the toggle choice", () => {
+  fixture({ tasks: AUTOMATION_TASKS });
+  fireEvent.click(automationToggle());
+  expect(screen.queryByText("first")).not.toBeInTheDocument();
+  fireEvent.click(automationToggle());
+  expect(screen.getByText("first")).toBeInTheDocument();
+  expect(vi.mocked(persist).mock.calls).toEqual([
+    [[["showAutomationTasks", false]]],
+    [[["showAutomationTasks", true]]],
+  ]);
+});
+
+it("keeps a choice made before the saved preference loads", async () => {
+  let resolveSaved: (show: boolean) => void = () => undefined;
+  vi.mocked(loadShowAutomationTasks).mockReturnValue(new Promise((r) => (resolveSaved = r)));
+  fixture({ tasks: AUTOMATION_TASKS });
+  fireEvent.click(automationToggle());
+  await act(async () => resolveSaved(true));
+  expect(screen.queryByText("first")).not.toBeInTheDocument();
+});
+
+it("keeps showing automation tasks when the preference cannot be read", async () => {
+  vi.mocked(loadShowAutomationTasks).mockRejectedValue(new Error("store unavailable"));
+  fixture({ tasks: AUTOMATION_TASKS });
+  await waitFor(() => expect(loadShowAutomationTasks).toHaveBeenCalled());
+  expect(screen.getByText("first")).toBeInTheDocument();
+});
+
+it("keeps the choice for the session when it cannot be saved", async () => {
+  vi.mocked(persist).mockRejectedValue(new Error("disk full"));
+  fixture({ tasks: AUTOMATION_TASKS });
+  fireEvent.click(automationToggle());
+  await waitFor(() => expect(persist).toHaveBeenCalled());
+  expect(screen.queryByText("first")).not.toBeInTheDocument();
+});
+
+it("reveals a hidden automation task without changing the saved preference", async () => {
+  let resolveSaved: (show: boolean) => void = () => undefined;
+  vi.mocked(loadShowAutomationTasks).mockReturnValue(new Promise((r) => (resolveSaved = r)));
+  const { setTasks } = fixture({ revealTaskId: "first" });
+  await act(async () => resolveSaved(false));
+  setTasks(AUTOMATION_TASKS);
+  expect(screen.getByText("first")).toBeInTheDocument();
+  expect(automationToggle()).toBeChecked();
+  expect(persist).not.toHaveBeenCalled();
+});
+
+it("shows a hidden automation task when returning from it to the list", async () => {
+  vi.mocked(loadShowAutomationTasks).mockResolvedValue(false);
+  fixture({
+    tasks: AUTOMATION_TASKS,
+    openedTask: { taskId: "first", surface: { kind: "external" } },
+  });
+  await waitFor(() => expect(screen.queryByText("first")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.getByText("first")).toBeInTheDocument();
+  expect(persist).not.toHaveBeenCalled();
 });

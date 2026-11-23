@@ -17,6 +17,7 @@ import { useRevealRing } from "../../hooks/useRevealRing";
 import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { useWorktreeData } from "../../hooks/useWorktreeData";
+import { useShowAutomationTasks } from "../../hooks/useShowAutomationTasks";
 import { taskLinearStore } from "../../services/taskLinear";
 import { WorktreeCard, TaskCardActions } from "./WorktreeCard";
 import { cardScrollDelta } from "./cardScroll";
@@ -203,7 +204,11 @@ export function WorktreeList({
   } = navigation;
   const [projectFilter, setProjectFilter] = useState({ workspaceId: workspace?.id, value: "" });
   const project = projectFilter.workspaceId === workspace?.id ? projectFilter.value : "";
-  const [showAutomationTasks, setShowAutomationTasks] = useState(false);
+  const {
+    show: showAutomationTasks,
+    reveal: revealAutomationTasks,
+    choose: chooseShowAutomationTasks,
+  } = useShowAutomationTasks();
   const automationTaskCount = allTasks.filter((task) => task.automationId).length;
   const revealing = !!revealTaskId && allTasks.some((task) => task.id === revealTaskId);
   const tasks = useMemo(
@@ -216,7 +221,7 @@ export function WorktreeList({
     [allTasks, project, revealing, showAutomationTasks]
   );
   const changeShowAutomationTasks = (show: boolean) => {
-    setShowAutomationTasks(show);
+    chooseShowAutomationTasks(show);
     setSelectedIndex(-1);
     setDeleteRequested(false);
   };
@@ -270,7 +275,7 @@ export function WorktreeList({
     if (!task) return;
     const showAutomation = showAutomationTasks || !!task.automationId;
     setProjectFilter({ workspaceId: workspace?.id, value: "" });
-    setShowAutomationTasks(showAutomation);
+    if (task.automationId) revealAutomationTasks();
     setSelectedIndex(listedTasks(allTasks, showAutomation).indexOf(task));
     setRevealNonce((n) => n + 1);
     if (!openedTask) ringTask(revealTaskId);
@@ -280,6 +285,7 @@ export function WorktreeList({
     tasks,
     allTasks,
     showAutomationTasks,
+    revealAutomationTasks,
     onRevealHandled,
     openedTask,
     ringTask,
@@ -347,7 +353,7 @@ export function WorktreeList({
     if (openTask) {
       const showAutomation = showAutomationTasks || !!openTask.automationId;
       setProjectFilter({ workspaceId: workspace?.id, value: "" });
-      setShowAutomationTasks(showAutomation);
+      if (openTask.automationId) revealAutomationTasks();
       setSelectedIndex(listedTasks(allTasks, showAutomation).indexOf(openTask));
       setRevealNonce((n) => n + 1);
     }
