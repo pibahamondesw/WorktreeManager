@@ -109,6 +109,15 @@ body,
   cursor: pointer;
 }
 
+/* Skips layout and paint of list rows while off-screen. Pair with a contain-intrinsic-size estimate.
+   Rows holding something drawn past their box (menus, rings) render normally so it is not clipped. */
+.offscreen-lazy {
+  content-visibility: auto;
+}
+.offscreen-lazy:has([data-overflows-row]) {
+  content-visibility: visible;
+}
+
 /* Titlebar drag regions are handled in JS (useWindowDrag); -webkit-app-region is a no-op in WKWebView */
 [data-drag-region] {
   cursor: default;

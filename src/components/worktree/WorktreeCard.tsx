@@ -451,7 +451,10 @@ export const WorktreeCard = memo(function WorktreeCard({
             </button>
 
             {menuOpen && (
-              <div className="motion-rise absolute right-0 top-9 z-50 w-48 rounded-lg border border-border bg-bg-secondary shadow-xl py-1">
+              <div
+                data-overflows-row
+                className="motion-rise absolute right-0 top-9 z-50 w-48 rounded-lg border border-border bg-bg-secondary shadow-xl py-1"
+              >
                 <MenuButton
                   label={shortcutLabel("list.branch")}
                   onClick={() => handleMenuAction("copy-branch")}

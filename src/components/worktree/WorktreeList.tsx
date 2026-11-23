@@ -518,7 +518,7 @@ export function WorktreeList({
                       key={task.id}
                       {...reorder.itemProps(task.id, task.pinOrder !== undefined && !exit)}
                       inert={!!exit}
-                      className={`relative transition-opacity ${
+                      className={`offscreen-lazy [contain-intrinsic-size:auto_7rem] relative transition-opacity ${
                         exit ? "opacity-50 saturate-50" : ""
                       } ${
                         reorder.over === task.id && reorder.dragging !== task.id
@@ -530,6 +530,7 @@ export function WorktreeList({
                         <span
                           key={ring.nonce}
                           data-testid="reveal-ring"
+                          data-overflows-row
                           aria-hidden="true"
                           className="motion-reveal-ring rounded-xl z-10"
                           onAnimationEnd={clearRing}
