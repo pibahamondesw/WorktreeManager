@@ -19,6 +19,9 @@ import {
   chatSend,
   chatSteerQueued,
   chatUnqueue,
+  chatHoldQueued,
+  chatReleaseQueued,
+  QueuedEdit,
   ChatResponse,
   ReviewTarget,
   ChatSetting,
@@ -161,6 +164,14 @@ export function useChatSession(
     (itemId: string) => chatUnqueue(taskId, agent, itemId, tab),
     [taskId, agent, tab]
   );
+  const holdQueued = useCallback(
+    (itemId: string) => chatHoldQueued(taskId, agent, itemId, tab),
+    [taskId, agent, tab]
+  );
+  const releaseQueued = useCallback(
+    (itemId: string, edit: QueuedEdit) => chatReleaseQueued(taskId, agent, itemId, edit, tab),
+    [taskId, agent, tab]
+  );
   const respond = useCallback(
     (requestId: string, response: ChatResponse) =>
       chatRespond(taskId, agent, requestId, response, snapshot.generation, tab),
@@ -197,6 +208,8 @@ export function useChatSession(
     interrupt,
     steerQueued,
     unqueue,
+    holdQueued,
+    releaseQueued,
     respond,
     configure,
     compact,

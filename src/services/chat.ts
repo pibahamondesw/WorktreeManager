@@ -506,6 +506,25 @@ export const chatSteerQueued = (taskId: string, agent: AgentId, itemId: string, 
 export const chatUnqueue = (taskId: string, agent: AgentId, itemId: string, tab?: string) =>
   invoke<void>("chat_unqueue", { taskId, agent, itemId, tab });
 
+/** Keeps a queued message from running while it is edited; resolves to its text. */
+export const chatHoldQueued = (taskId: string, agent: AgentId, itemId: string, tab?: string) =>
+  invoke<string>("chat_hold_queued", { taskId, agent, itemId, tab });
+
+/** How an edit of a queued message ends; without `text` the message stays as it was. */
+export interface QueuedEdit {
+  text?: string;
+  steer?: boolean;
+}
+
+/** Ends the edit of a held message, which runs at once if no turn is in progress. */
+export const chatReleaseQueued = (
+  taskId: string,
+  agent: AgentId,
+  itemId: string,
+  edit: QueuedEdit,
+  tab?: string
+) => invoke<void>("chat_release_queued", { taskId, agent, itemId, edit, tab });
+
 export const chatRespond = (
   taskId: string,
   agent: AgentId,
