@@ -22,7 +22,7 @@ interface ChatTabTitles {
 const conversationKey = (agent: AgentId, conversation: string) => `${agent}:${conversation}`;
 
 /** What a tab's dot shows: only states that ask for a look, not an idle chat. */
-function tabIndicator(chat: ChatInfo | undefined): TaskIndicator | null {
+export function tabIndicator(chat: ChatInfo | undefined): TaskIndicator | null {
   if (!chat) return null;
   if (chat.hasError || chat.status.kind === "failed") return "error";
   if (chat.waiting) return "input";
