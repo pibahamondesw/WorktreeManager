@@ -6,9 +6,10 @@ import {
   DiffBlock,
   diffBlocks,
   DiffLine,
+  lineDiff,
   lineSegments,
+  refineByTokens,
   SourceAnalysis,
-  semanticDiff,
 } from "../../services/semanticDiff";
 import { plainDiffAnalysis } from "../../services/syntaxAnalysis";
 import { analyzeInWorker } from "../../services/syntaxWorker";
@@ -43,8 +44,13 @@ const textOf = (content: FileContent | null) => (content?.kind === "text" ? cont
 
 const isText = (content: FileContent | null) => !content || content.kind === "text";
 
-function textDiff(oldText: string, newText: string, analysis: TextDiff["analysis"]): TextDiff {
-  return { lines: semanticDiff(oldText, newText, analysis.old, analysis.new), analysis };
+function refinedDiff(
+  lines: DiffLine[],
+  oldText: string,
+  newText: string,
+  analysis: TextDiff["analysis"]
+): TextDiff {
+  return { lines: refineByTokens(lines, oldText, newText, analysis.old, analysis.new), analysis };
 }
 
 function plainDiff(diff: FileDiff): Loaded {
@@ -54,10 +60,18 @@ function plainDiff(diff: FileDiff): Loaded {
   const oldText = textOf(diff.before);
   const newText = textOf(diff.after);
   const analysis = { old: plainDiffAnalysis(oldText), new: plainDiffAnalysis(newText) };
-  return { kind: "text", diff: textDiff(oldText, newText, analysis) };
+  const lines = lineDiff(oldText, newText);
+  return {
+    kind: "text",
+    diff: lines ? refinedDiff(lines, oldText, newText, analysis) : { lines: null, analysis },
+  };
 }
 
-async function highlightedDiff(file: FileChange, diff: FileDiff): Promise<Loaded | null> {
+async function highlightedDiff(
+  file: FileChange,
+  diff: FileDiff,
+  lines: DiffLine[]
+): Promise<Loaded | null> {
   const oldText = textOf(diff.before);
   const newText = textOf(diff.after);
   const [oldAnalysis, newAnalysis] = await Promise.all([
@@ -65,8 +79,8 @@ async function highlightedDiff(file: FileChange, diff: FileDiff): Promise<Loaded
     analyzeInWorker(file.path, newText),
   ]);
   if (!oldAnalysis || !newAnalysis) return null;
-  const highlighted = textDiff(oldText, newText, { old: oldAnalysis, new: newAnalysis });
-  return highlighted.lines ? { kind: "text", diff: highlighted } : null;
+  const analysis = { old: oldAnalysis, new: newAnalysis };
+  return { kind: "text", diff: refinedDiff(lines, oldText, newText, analysis) };
 }
 
 function formatSize(bytes: number) {
@@ -566,7 +580,9 @@ export function FileDiffView({
       .then(async (diff) => {
         const plain = plainDiff(diff);
         show(plain);
-        if (plain.kind === "text" && plain.diff.lines) show(await highlightedDiff(file, diff));
+        if (plain.kind === "text" && plain.diff.lines) {
+          show(await highlightedDiff(file, diff, plain.diff.lines));
+        }
       })
       .catch((e) => !cancelled && setState({ key, error: String(e) }));
     return () => {

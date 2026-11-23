@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   analyzeInWorker: vi.fn(),
-  semanticDiff: vi.fn(),
+  lineDiff: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("../../services/syntaxWorker", () => ({ analyzeInWorker: mocks.analyzeInWorker }));
 vi.mock("../../services/semanticDiff", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../services/semanticDiff")>();
-  mocks.semanticDiff.mockImplementation(actual.semanticDiff);
-  return { ...actual, semanticDiff: mocks.semanticDiff };
+  mocks.lineDiff.mockImplementation(actual.lineDiff);
+  return { ...actual, lineDiff: mocks.lineDiff };
 });
 
 import { useEffect, useState } from "react";
@@ -69,7 +69,7 @@ const text = (value: string) => ({ kind: "text" as const, text: value });
 beforeEach(() => {
   mocks.invoke.mockReset();
   mocks.analyzeInWorker.mockReset().mockImplementation(analyzeDiffSource);
-  mocks.semanticDiff.mockClear();
+  mocks.lineDiff.mockClear();
 });
 afterEach(cleanup);
 
@@ -118,20 +118,18 @@ describe("FileDiffView", () => {
     expect(container.querySelector(".hljs-keyword")).toBeNull();
   });
 
-  it("keeps the diff without highlighting when the highlighted line diff times out", async () => {
-    const actual = mocks.semanticDiff.getMockImplementation()!;
-    mocks.semanticDiff.mockImplementationOnce(actual).mockReturnValueOnce(null);
+  it("highlights the diff without computing the line diff again", async () => {
     const { container } = show({ before: text("const v = 6;"), after: text("const v = 60;") });
 
-    expect(await screen.findByText("60", { selector: ".diff-changed" })).toBeInTheDocument();
-    await waitFor(() => expect(mocks.semanticDiff).toHaveBeenCalledTimes(2));
-    await act(async () => {});
+    await waitFor(() =>
+      expect(container.querySelector(".diff-added .hljs-keyword")).toHaveTextContent("const")
+    );
     expect(screen.getByText("60", { selector: ".diff-changed" })).toBeInTheDocument();
-    expect(container.querySelector(".hljs-keyword")).toBeNull();
+    expect(mocks.lineDiff).toHaveBeenCalledTimes(1);
   });
 
   it("skips syntax analysis when the line diff is too large", async () => {
-    mocks.semanticDiff.mockReturnValueOnce(null);
+    mocks.lineDiff.mockReturnValueOnce(null);
     show({ before: text("a"), after: text("b") });
 
     expect(await screen.findByText("This diff is too large to display.")).toBeInTheDocument();
