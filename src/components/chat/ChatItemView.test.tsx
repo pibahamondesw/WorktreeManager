@@ -16,7 +16,7 @@ beforeEach(() => vi.mocked(openUrl).mockReset().mockResolvedValue(undefined));
 afterEach(cleanup);
 
 it.each([
-  ["inline dollar math", "$x^2$", "x^2", false],
+  ["inline double dollar math", "Area $$x^2$$ here", "x^2", false],
   ["inline LaTeX math", String.raw`\(x_i^2\)`, "x_i^2", false],
   ["display dollar math", "$$\n\\frac{1}{2}\n\n+ x\n$$", "\\frac{1}{2}\n\n+ x", true],
   ["display LaTeX math", String.raw`\[\frac{x_i}{y_i}\]`, String.raw`\frac{x_i}{y_i}`, true],
@@ -53,15 +53,22 @@ it("preserves LaTeX and dollars in code and respects escaped delimiters", () => 
 });
 
 it("shows invalid TeX as source and renders the corrected expression", async () => {
-  const { container, rerender } = render(<MarkdownText text={String.raw`$\frac{1{$`} />);
+  const { container, rerender } = render(<MarkdownText text={String.raw`$$\frac{1{$$`} />);
   expect(screen.getByText(String.raw`\frac{1{`)).toBeVisible();
-  rerender(<MarkdownText text={String.raw`$\frac{1}{2}$`} />);
+  rerender(<MarkdownText text={String.raw`$$\frac{1}{2}$$`} />);
   await waitFor(() =>
     expect(container.querySelector("math annotation")).toHaveTextContent(String.raw`\frac{1}{2}`)
   );
 
-  rerender(<MarkdownText text={String.raw`$\frac{1{$`} />);
+  rerender(<MarkdownText text={String.raw`$$\frac{1{$$`} />);
   expect(screen.getByText(String.raw`\frac{1{`)).toBeVisible();
+});
+
+it("keeps single dollar amounts as text", () => {
+  const text = "Pay more than $7.000.000: now in transfers of up to $7.000.000 each.";
+  const { container } = render(<MarkdownText text={text} />);
+  expect(screen.getByText(text)).toBeVisible();
+  expect(container.querySelector("code, .chat-math-source")).toBeNull();
 });
 
 it("keeps a response readable while a LaTeX delimiter is incomplete", () => {
