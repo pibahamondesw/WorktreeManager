@@ -1,10 +1,10 @@
 //! Budget for the snapshot a pane receives when it reopens a large conversation. A regression
 //! that sends more of the conversation on reopen fails here.
 //!
-//! Reopening still sends every item, so `MAX_ITEMS` is the whole conversation until older history
-//! is paged; lower it when that lands. It sent 1,230,562 bytes when `MAX_BYTES` was set: to change
-//! it on purpose, lower it to 1 and run this module to read the current size from the failure
-//! message, set it about 20% above that and explain the change in the pull request.
+//! Reopening sends only the latest page of history (see [`super::window`]), so `MAX_ITEMS` is the
+//! ten turns a page holds. It sent 61,797 bytes when `MAX_BYTES` was set: to change it on purpose,
+//! lower it to 1 and run this module to read the current size from the failure message, set it
+//! about 20% above that and explain the change in the pull request.
 
 use std::sync::Arc;
 
@@ -15,8 +15,8 @@ use super::tests::spawn;
 
 const TURNS: usize = 200;
 const ITEMS_PER_TURN: usize = 11;
-const MAX_ITEMS: usize = TURNS * ITEMS_PER_TURN;
-const MAX_BYTES: usize = 1_500_000;
+const MAX_ITEMS: usize = 10 * ITEMS_PER_TURN;
+const MAX_BYTES: usize = 75_000;
 
 fn text(label: &str, bytes: usize) -> String {
     let line = format!("{label}: lorem ipsum dolor sit amet, consectetur adipiscing elit\n");
