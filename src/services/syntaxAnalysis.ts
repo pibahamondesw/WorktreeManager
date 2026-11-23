@@ -6,6 +6,7 @@ import { plainAnalysis, Range, SourceAnalysis, StyledRange, wordTokens } from ".
 type Tree = Parameters<typeof highlightTree>[0];
 
 const MAX_PARSED_LENGTH = 1_000_000;
+const MAX_TOKENIZED_LINE_LENGTH = 1000;
 
 const highlighter = tagHighlighter([
   { tag: tags.keyword, class: "hljs-keyword" },
@@ -72,3 +73,57 @@ export async function analyzeSource(path: string, text: string): Promise<SourceA
     return plainAnalysis(text);
   }
 }
+
+function longLines(text: string): Range[] {
+  const lines: Range[] = [];
+  let from = 0;
+  for (const line of text.split("\n")) {
+    if (line.length > MAX_TOKENIZED_LINE_LENGTH) lines.push({ from, to: from + line.length });
+    from += line.length + 1;
+  }
+  return lines;
+}
+
+function firstEndingAfter(ranges: Range[], offset: number): number {
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (ranges[mid].to <= offset) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function outside<T extends Range>(ranges: T[], excluded: Range[]): T[] {
+  const kept: T[] = [];
+  for (const range of ranges) {
+    let from = range.from;
+    for (
+      let i = firstEndingAfter(excluded, from);
+      i < excluded.length && excluded[i].from < range.to;
+      i++
+    ) {
+      if (excluded[i].from > from) kept.push({ ...range, from, to: excluded[i].from });
+      from = excluded[i].to;
+    }
+    if (range.to > from) kept.push({ ...range, from });
+  }
+  return kept;
+}
+
+/** Lines too long to render token by token become a single unhighlighted token. */
+export function withLongLinesUntokenized(text: string, analysis: SourceAnalysis): SourceAnalysis {
+  const lines = longLines(text);
+  if (!lines.length) return analysis;
+  return {
+    tokens: [...outside(analysis.tokens, lines), ...lines].sort((a, b) => a.from - b.from),
+    highlights: outside(analysis.highlights, lines),
+  };
+}
+
+export const plainDiffAnalysis = (text: string) =>
+  withLongLinesUntokenized(text, plainAnalysis(text));
+
+export const analyzeDiffSource = async (path: string, text: string) =>
+  withLongLinesUntokenized(text, await analyzeSource(path, text));

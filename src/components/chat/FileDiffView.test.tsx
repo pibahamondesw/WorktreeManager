@@ -1,15 +1,27 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  analyzeInWorker: vi.fn(),
+  semanticDiff: vi.fn(),
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("../../services/syntaxWorker", () => ({ analyzeInWorker: mocks.analyzeInWorker }));
+vi.mock("../../services/semanticDiff", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../services/semanticDiff")>();
+  mocks.semanticDiff.mockImplementation(actual.semanticDiff);
+  return { ...actual, semanticDiff: mocks.semanticDiff };
+});
 
 import { useEffect, useState } from "react";
 import { FileDiffView } from "./FileDiffView";
 import { DiffThread } from "./diffComments";
 import { FileChange, FileDiff } from "../../services/chat";
+import { SourceAnalysis } from "../../services/semanticDiff";
+import { analyzeDiffSource } from "../../services/syntaxAnalysis";
 
 const changes = { before: "b", after: "a", files: [] };
 const file: FileChange = {
@@ -56,6 +68,8 @@ const text = (value: string) => ({ kind: "text" as const, text: value });
 
 beforeEach(() => {
   mocks.invoke.mockReset();
+  mocks.analyzeInWorker.mockReset().mockImplementation(analyzeDiffSource);
+  mocks.semanticDiff.mockClear();
 });
 afterEach(cleanup);
 
@@ -75,6 +89,53 @@ describe("FileDiffView", () => {
     ]);
     fireEvent.click(gaps[0]);
     expect(screen.getByText("v0")).toBeInTheDocument();
+  });
+
+  it("shows the diff without highlighting until the worker answers", async () => {
+    const answers: (() => Promise<void>)[] = [];
+    mocks.analyzeInWorker.mockImplementation(
+      (path: string, source: string) =>
+        new Promise<SourceAnalysis>((resolve) =>
+          answers.push(async () => resolve(await analyzeDiffSource(path, source)))
+        )
+    );
+    const { container } = show({ before: text("const v = 6;"), after: text("const v = 60;") });
+
+    expect(await screen.findByText("60", { selector: ".diff-changed" })).toBeInTheDocument();
+    expect(container.querySelector(".hljs-keyword")).toBeNull();
+    await Promise.all(answers.map((answer) => answer()));
+    await waitFor(() =>
+      expect(container.querySelector(".diff-added .hljs-keyword")).toHaveTextContent("const")
+    );
+  });
+
+  it("keeps the diff without highlighting when the worker fails", async () => {
+    mocks.analyzeInWorker.mockResolvedValue(null);
+    const { container } = show({ before: text("const v = 6;"), after: text("const v = 60;") });
+
+    expect(await screen.findByText("60", { selector: ".diff-changed" })).toBeInTheDocument();
+    await waitFor(() => expect(mocks.analyzeInWorker).toHaveBeenCalledTimes(2));
+    expect(container.querySelector(".hljs-keyword")).toBeNull();
+  });
+
+  it("keeps the diff without highlighting when the highlighted line diff times out", async () => {
+    const actual = mocks.semanticDiff.getMockImplementation()!;
+    mocks.semanticDiff.mockImplementationOnce(actual).mockReturnValueOnce(null);
+    const { container } = show({ before: text("const v = 6;"), after: text("const v = 60;") });
+
+    expect(await screen.findByText("60", { selector: ".diff-changed" })).toBeInTheDocument();
+    await waitFor(() => expect(mocks.semanticDiff).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(screen.getByText("60", { selector: ".diff-changed" })).toBeInTheDocument();
+    expect(container.querySelector(".hljs-keyword")).toBeNull();
+  });
+
+  it("skips syntax analysis when the line diff is too large", async () => {
+    mocks.semanticDiff.mockReturnValueOnce(null);
+    show({ before: text("a"), after: text("b") });
+
+    expect(await screen.findByText("This diff is too large to display.")).toBeInTheDocument();
+    expect(mocks.analyzeInWorker).not.toHaveBeenCalled();
   });
 
   it("pairs removed and added lines side by side and marks formatting changes", async () => {

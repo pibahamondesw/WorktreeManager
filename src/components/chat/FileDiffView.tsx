@@ -10,7 +10,8 @@ import {
   SourceAnalysis,
   semanticDiff,
 } from "../../services/semanticDiff";
-import { analyzeSource } from "../../services/syntaxAnalysis";
+import { plainDiffAnalysis } from "../../services/syntaxAnalysis";
+import { analyzeInWorker } from "../../services/syntaxWorker";
 import { AgentId } from "../../types";
 import {
   addDiffComment,
@@ -40,24 +41,32 @@ const lineId = (line: DiffLine) => `${line.side}:${line.start}`;
 
 const textOf = (content: FileContent | null) => (content?.kind === "text" ? content.text : "");
 
-async function loadDiff(file: FileChange, diff: FileDiff): Promise<Loaded> {
-  const isText = (content: FileContent | null) => !content || content.kind === "text";
+const isText = (content: FileContent | null) => !content || content.kind === "text";
+
+function textDiff(oldText: string, newText: string, analysis: TextDiff["analysis"]): TextDiff {
+  return { lines: semanticDiff(oldText, newText, analysis.old, analysis.new), analysis };
+}
+
+function plainDiff(diff: FileDiff): Loaded {
   if (!isText(diff.before) || !isText(diff.after)) {
     return { kind: "media", before: diff.before, after: diff.after };
   }
   const oldText = textOf(diff.before);
   const newText = textOf(diff.after);
+  const analysis = { old: plainDiffAnalysis(oldText), new: plainDiffAnalysis(newText) };
+  return { kind: "text", diff: textDiff(oldText, newText, analysis) };
+}
+
+async function highlightedDiff(file: FileChange, diff: FileDiff): Promise<Loaded | null> {
+  const oldText = textOf(diff.before);
+  const newText = textOf(diff.after);
   const [oldAnalysis, newAnalysis] = await Promise.all([
-    analyzeSource(file.previousPath ?? file.path, oldText),
-    analyzeSource(file.path, newText),
+    analyzeInWorker(file.previousPath ?? file.path, oldText),
+    analyzeInWorker(file.path, newText),
   ]);
-  return {
-    kind: "text",
-    diff: {
-      lines: semanticDiff(oldText, newText, oldAnalysis, newAnalysis),
-      analysis: { old: oldAnalysis, new: newAnalysis },
-    },
-  };
+  if (!oldAnalysis || !newAnalysis) return null;
+  const highlighted = textDiff(oldText, newText, { old: oldAnalysis, new: newAnalysis });
+  return highlighted.lines ? { kind: "text", diff: highlighted } : null;
 }
 
 function formatSize(bytes: number) {
@@ -552,9 +561,13 @@ export function FileDiffView({
 
   useEffect(() => {
     let cancelled = false;
+    const show = (loaded: Loaded | null) => loaded && !cancelled && setState({ key, loaded });
     chatFileDiff(taskId, agent, changes, file, tab)
-      .then((diff) => loadDiff(file, diff))
-      .then((loaded) => !cancelled && setState({ key, loaded }))
+      .then(async (diff) => {
+        const plain = plainDiff(diff);
+        show(plain);
+        if (plain.kind === "text" && plain.diff.lines) show(await highlightedDiff(file, diff));
+      })
       .catch((e) => !cancelled && setState({ key, error: String(e) }));
     return () => {
       cancelled = true;
