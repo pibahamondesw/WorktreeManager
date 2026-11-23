@@ -16,6 +16,7 @@ import { xtermThemeFromCss } from "../components/terminal/xtermTheme";
 import { loadWebglRenderer } from "../components/terminal/webglRenderer";
 import { THEME_CHANGE_EVENT } from "../themes";
 import { TYPOGRAPHY_CHANGE_EVENT, terminalFont } from "../appearance";
+import { observeResize } from "../observeResize";
 
 export type SessionStatus = { kind: "connecting" } | TerminalStatus;
 
@@ -163,12 +164,11 @@ function useXterm(
       refit();
     };
     window.addEventListener(TYPOGRAPHY_CHANGE_EVENT, followTypography);
-    const observer = new ResizeObserver(refit);
-    observer.observe(el);
+    const stopObserving = observeResize(el, refit);
 
     return () => {
       disposed = true;
-      observer.disconnect();
+      stopObserving();
       window.removeEventListener(THEME_CHANGE_EVENT, followTheme);
       window.removeEventListener(TYPOGRAPHY_CHANGE_EVENT, followTypography);
       input.dispose();

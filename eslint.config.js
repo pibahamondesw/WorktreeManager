@@ -65,6 +65,20 @@ export default defineConfig([
     rules: { "react-hooks/set-state-in-effect": "off" },
   },
   {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/observeResize.ts"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "ResizeObserver",
+          message:
+            "Use observeResize from src/observeResize.ts so resize callbacks share one flushSync.",
+        },
+      ],
+    },
+  },
+  {
     files: ["src/**/*.test.tsx"],
     plugins: { "testing-library": testingLibrary },
     rules: {
