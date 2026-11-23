@@ -10,7 +10,7 @@ it("renders a pulsing placeholder hidden from assistive technology", () => {
   const { container } = render(<Skeleton className="h-3 w-16" />);
   const placeholder = container.firstElementChild;
   expect(placeholder).toHaveAttribute("aria-hidden", "true");
-  expect(placeholder).toHaveClass("animate-pulse", "rounded", "h-3", "w-16");
+  expect(placeholder).toHaveClass("motion-pulse-steps", "rounded", "h-3", "w-16");
 });
 
 it("rounds pills fully", () => {

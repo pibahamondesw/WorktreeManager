@@ -8,6 +8,8 @@ import testingLibrary from "eslint-plugin-testing-library";
 import tseslint from "typescript-eslint";
 import { defineConfig, globalIgnores } from "eslint/config";
 
+const CONTINUOUS_ANIMATION_CLASS = "/(^|[\\s:!])animate-(pulse|spin|ping|bounce)(?![\\w-])/";
+
 export default defineConfig([
   globalIgnores(["dist"]),
   {
@@ -75,6 +77,23 @@ export default defineConfig([
           message:
             "Use observeResize from src/observeResize.ts so resize callbacks share one flushSync.",
         },
+      ],
+    },
+  },
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...[
+          `Literal[value=${CONTINUOUS_ANIMATION_CLASS}]`,
+          `TemplateElement[value.raw=${CONTINUOUS_ANIMATION_CLASS}]`,
+        ].map((selector) => ({
+          selector,
+          message:
+            "Continuous animations repaint every frame. Use motion-pulse-steps or motion-spin-steps from src/index.css.",
+        })),
       ],
     },
   },

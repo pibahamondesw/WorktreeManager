@@ -17,7 +17,7 @@ import { LruCache } from "./lruCache";
 import { rehypeCachedHighlight } from "./rehypeCachedHighlight";
 
 const STATUS_STYLE: Record<string, string> = {
-  inProgress: "text-text-muted animate-pulse",
+  inProgress: "text-text-muted motion-pulse-steps",
   completed: "text-success",
   failed: "text-danger",
   declined: "text-warning",
@@ -250,7 +250,7 @@ function QuestionAnswer({ question, status }: { question: AskedQuestion; status?
     );
   const waiting = status === "inProgress";
   return (
-    <p className={`text-xs italic text-text-muted${waiting ? " animate-pulse" : ""}`}>
+    <p className={`text-xs italic text-text-muted${waiting ? " motion-pulse-steps" : ""}`}>
       {waiting ? "Waiting for an answer…" : "Not answered"}
     </p>
   );
@@ -292,7 +292,9 @@ function Reasoning({ item }: { item: ChatItem }) {
   if (!isVisibleStep(item)) return null;
   if (!item.text.trim()) {
     return (
-      <span className={`self-start text-xs text-text-muted${thinking ? " animate-pulse" : ""}`}>
+      <span
+        className={`self-start text-xs text-text-muted${thinking ? " motion-pulse-steps" : ""}`}
+      >
         {label}
       </span>
     );
@@ -305,7 +307,7 @@ function Reasoning({ item }: { item: ChatItem }) {
         aria-expanded={open}
         className="self-start flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary cursor-pointer"
       >
-        <span className={thinking ? "animate-pulse" : undefined}>{label}</span>
+        <span className={thinking ? "motion-pulse-steps" : undefined}>{label}</span>
         <ChevronDownIcon
           className={`opacity-50 transition-transform ${open ? "rotate-180" : ""}`}
         />
@@ -345,7 +347,7 @@ function WorkGroupView({ items, running }: { items: ChatItem[]; running: boolean
         aria-expanded={open}
         className="self-start flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary cursor-pointer"
       >
-        <span className={running ? "animate-pulse" : undefined}>
+        <span className={running ? "motion-pulse-steps" : undefined}>
           {running ? "Working" : "Worked"} · {plural(steps.length, "step")}
           {failed > 0 && (
             <>

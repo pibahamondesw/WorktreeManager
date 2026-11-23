@@ -27,7 +27,7 @@ interface TaskHeaderProps {
 }
 
 const statusLabel: Record<SessionStatus["kind"], { text: string; dot: string }> = {
-  connecting: { text: "connecting", dot: "bg-text-muted animate-pulse" },
+  connecting: { text: "connecting", dot: "bg-text-muted motion-pulse-steps" },
   running: { text: "running", dot: "bg-success" },
   exited: { text: "ended", dot: "bg-text-muted" },
 };
