@@ -13,6 +13,9 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 1500,
   },
+  worker: {
+    format: "es",
+  },
   server: {
     port: 5173,
     strictPort: true,
