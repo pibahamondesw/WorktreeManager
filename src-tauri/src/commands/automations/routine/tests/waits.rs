@@ -480,7 +480,7 @@ fn a_waiting_item_whose_step_changed_kind_fails_and_retries_from_it() {
 
     failed_on_its_wait(&harness, &run_id);
     harness.retry(&run_id, RetryDefinition::Current).unwrap();
-    wait_until(|| item(&harness.state(&run_id), "a").status == ItemStatus::Waiting);
+    wait_until(|| harness.executor.parked.lock().unwrap().len() == 1);
     let approval = json!({ "decision": "approve" });
     harness.signal(&run_id, "go", None, approval).unwrap();
     harness.executor.wake_ready();
