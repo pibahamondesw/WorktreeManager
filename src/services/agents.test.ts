@@ -78,4 +78,9 @@ describe("agent catalog", () => {
       agents.agentPresentation("claude").tone
     );
   });
+
+  it("offers alert hooks only for agents that have a hooks config", () => {
+    const replay = { ...AGENT_CATALOG[0], id: "replay", label: "Replay" };
+    expect(agents.alertHookAgents([...AGENT_CATALOG, replay])).toEqual(AGENT_CATALOG);
+  });
 });
