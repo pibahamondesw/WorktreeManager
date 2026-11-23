@@ -288,7 +288,8 @@ export function WorktreeList({
 
   // The card may not be mounted yet when a reveal lands mid workspace switch (skeletons are
   // rendered instead). Retries on a timer rather than rAF, which is throttled to nothing while
-  // the window sits behind a just-opened editor.
+  // the window sits behind a just-opened editor. Off-screen rows above it take their real height
+  // once scrolled near, which can push it out of view again, so it re-checks after each scroll.
   useEffect(() => {
     if (selectedIndex < 0) return;
     let attempts = 0;
@@ -299,11 +300,14 @@ export function WorktreeList({
         if (attempts++ < SELECTED_CARD_SCROLL_ATTEMPTS) timer = setTimeout(focusSelectedCard, 32);
         return;
       }
-      container.scrollTop += cardScrollDelta(
+      const delta = cardScrollDelta(
         container.getBoundingClientRect(),
         card.getBoundingClientRect()
       );
+      container.scrollTop += delta;
       card.focus({ preventScroll: true });
+      if (delta !== 0 && attempts++ < SELECTED_CARD_SCROLL_ATTEMPTS)
+        timer = setTimeout(focusSelectedCard, 32);
     };
     let timer = setTimeout(focusSelectedCard, 0);
     return () => clearTimeout(timer);
