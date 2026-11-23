@@ -588,6 +588,12 @@ fn run_cli(
     if let shim @ Some(_) = doppler::run_shim_if_invoked(executable, &args) {
         return shim;
     }
+    #[cfg(debug_assertions)]
+    if let replay @ Some(_) =
+        crate::commands::agents::replay::run_if_invoked(&args, std::io::stdin, std::io::stdout)
+    {
+        return replay;
+    }
     // `file_stem` so `wtm.exe` counts on Windows.
     let cli = Path::new(executable)
         .file_stem()
@@ -780,6 +786,18 @@ mod tests {
     fn doppler_named_launches_run_as_the_doppler_shim() {
         let code = run_cli("/shims/doppler", args("--version"), || Err("opened".into()));
         assert!(matches!(code, Some(0 | 127)));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn replay_agent_launches_run_the_replay_before_the_cli() {
+        let opened = || Err("opened".into());
+        let code = run_cli(
+            "/build/worktree-manager",
+            args("--replay-agent /x.jsonl"),
+            opened,
+        );
+        assert_eq!(code, Some(1));
     }
 
     #[test]
