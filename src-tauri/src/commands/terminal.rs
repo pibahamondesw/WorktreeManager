@@ -5,6 +5,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -22,6 +23,7 @@ use super::login_shell::{LoginShell, SHIM_DIR_ENV};
 const SCROLLBACK_CAP: usize = 2 * 1024 * 1024;
 const READ_BUF: usize = 32 * 1024;
 const KILL_GRACE: Duration = Duration::from_millis(500);
+const BATCH_WINDOW: Duration = Duration::from_millis(8);
 const EXIT_EVENT: &str = "terminal-exit";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -145,6 +147,29 @@ fn split_utf8_tail(bytes: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
+/// Read the PTY on its own thread, so a batch can close on time while the next read blocks.
+fn spawn_pty_reader(mut reader: Box<dyn Read + Send>) -> Receiver<Vec<u8>> {
+    let (chunks, received) = mpsc::channel();
+    thread::spawn(move || {
+        let mut buf = vec![0u8; READ_BUF];
+        while let Ok(n @ 1..) = reader.read(&mut buf) {
+            let _ = chunks.send(buf[..n].to_vec());
+        }
+    });
+    received
+}
+
+/// The next chunk plus every chunk that arrives within `window` of it, in order. `None` once the
+/// reader has finished and everything it read was returned.
+fn next_batch(chunks: &Receiver<Vec<u8>>, window: Duration) -> Option<Vec<u8>> {
+    let mut batch = chunks.recv().ok()?;
+    let deadline = Instant::now() + window;
+    while let Ok(chunk) = chunks.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        batch.extend_from_slice(&chunk);
+    }
+    Some(batch)
+}
+
 pub struct TerminalSession {
     master: Option<Box<dyn MasterPty + Send>>,
     writer: Option<Box<dyn Write + Send>>,
@@ -164,6 +189,17 @@ impl TerminalSession {
         agent: &str,
         cols: u16,
         rows: u16,
+        on_exit: impl FnOnce(Option<i32>) + Send + 'static,
+    ) -> Result<Self, String> {
+        Self::spawn_batching(spec, agent, cols, rows, BATCH_WINDOW, on_exit)
+    }
+
+    fn spawn_batching(
+        spec: &LaunchSpec,
+        agent: &str,
+        cols: u16,
+        rows: u16,
+        batch_window: Duration,
         on_exit: impl FnOnce(Option<i32>) + Send + 'static,
     ) -> Result<Self, String> {
         let pair = native_pty_system()
@@ -195,7 +231,7 @@ impl TerminalSession {
             .spawn_command(cmd)
             .map_err(|e| format!("spawn {}: {e}", spec.program))?;
         drop(pair.slave);
-        let mut reader = pair
+        let reader = pair
             .master
             .try_clone_reader()
             .map_err(|e| format!("pty reader: {e}"))?;
@@ -210,6 +246,7 @@ impl TerminalSession {
         let channel: Arc<Mutex<Option<Channel<TermEvent>>>> = Arc::new(Mutex::new(None));
         let status = Arc::new(Mutex::new(TermStatus::Running));
 
+        let chunks = spawn_pty_reader(reader);
         let reader_handle = {
             let (child, scrollback, channel, status) = (
                 child.clone(),
@@ -218,16 +255,9 @@ impl TerminalSession {
                 status.clone(),
             );
             thread::spawn(move || {
-                let mut buf = vec![0u8; READ_BUF];
                 let mut carry: Vec<u8> = Vec::new();
-                loop {
-                    let n = match reader.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => n,
-                        Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
-                        Err(_) => break,
-                    };
-                    carry.extend_from_slice(&buf[..n]);
+                while let Some(batch) = next_batch(&chunks, batch_window) {
+                    carry.extend_from_slice(&batch);
                     let (valid, tail) = split_utf8_tail(&carry);
                     let text = String::from_utf8_lossy(valid).into_owned();
                     let tail = tail.to_vec();
@@ -948,6 +978,102 @@ mod tests {
         let (valid, tail) = split_utf8_tail(&[0xff, b'a']);
         assert_eq!(valid, &[0xff, b'a']);
         assert!(tail.is_empty());
+    }
+
+    #[test]
+    fn a_batch_joins_queued_reads_in_order_and_ends_with_the_reader() {
+        let (reads, chunks) = mpsc::channel();
+        for read in ["one ", "two ", "three"] {
+            reads.send(read.as_bytes().to_vec()).unwrap();
+        }
+        drop(reads);
+        let batch = next_batch(&chunks, Duration::from_secs(60)).unwrap();
+        assert_eq!(batch, b"one two three");
+        assert_eq!(next_batch(&chunks, Duration::from_secs(60)), None);
+    }
+
+    #[test]
+    fn a_batch_closes_when_its_window_elapses_while_the_reader_waits() {
+        let (reads, chunks) = mpsc::channel();
+        reads.send(b"prompt".to_vec()).unwrap();
+        let batch = next_batch(&chunks, Duration::from_millis(20)).unwrap();
+        assert_eq!(batch, b"prompt");
+        drop(reads);
+    }
+
+    fn recording_channel() -> (Channel<TermEvent>, Arc<Mutex<Vec<serde_json::Value>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorded = events.clone();
+        let channel = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_str(&json).unwrap());
+            }
+            Ok(())
+        });
+        (channel, events)
+    }
+
+    #[test]
+    fn replay_and_batched_events_carry_every_byte_in_order_before_the_exit() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut session = TerminalSession::spawn_batching(
+            &shell("seq 1 20000; exit 5"),
+            "test",
+            80,
+            24,
+            Duration::from_millis(50),
+            move |code| {
+                let _ = tx.send(code);
+            },
+        )
+        .unwrap();
+        let (channel, events) = recording_channel();
+        let mut received = session.attach(channel);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), Some(5));
+        let events = events.lock().unwrap();
+        let (last, data) = events.split_last().unwrap();
+        assert_eq!(last["type"], "exit");
+        for event in data {
+            assert_eq!(event["type"], "data");
+            received.push_str(event["data"].as_str().unwrap());
+        }
+        let expected: String = (1..=20000).map(|n| format!("{n}\n")).collect();
+        assert_eq!(received.replace('\r', ""), expected);
+        session.terminate();
+    }
+
+    #[test]
+    fn closing_a_session_keeps_output_still_waiting_in_its_batch() {
+        let printed = std::env::temp_dir().join(format!("wtm-batch-close-{}", std::process::id()));
+        let _ = std::fs::remove_file(&printed);
+        let script = format!(
+            "printf pending; touch '{}'; exec sleep 30",
+            printed.display()
+        );
+        let mut session = TerminalSession::spawn_batching(
+            &shell(&script),
+            "test",
+            80,
+            24,
+            Duration::from_secs(60),
+            |_| {},
+        )
+        .unwrap();
+        let (channel, events) = recording_channel();
+        session.attach(channel);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !printed.exists() {
+            assert!(Instant::now() < deadline, "script did not print");
+            thread::sleep(Duration::from_millis(10));
+        }
+        session.terminate();
+        let _ = std::fs::remove_file(&printed);
+        let replay = session.scrollback.lock().unwrap().replay();
+        assert!(replay.contains("pending"), "lost output: {replay:?}");
+        assert!(events.lock().unwrap().is_empty());
     }
 
     #[test]

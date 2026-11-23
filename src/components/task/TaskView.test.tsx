@@ -44,6 +44,11 @@ vi.mock("@xterm/addon-fit", () => ({
     return { fit: vi.fn() };
   }),
 }));
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: vi.fn(function () {
+    return { onContextLoss: vi.fn(), dispose: vi.fn() };
+  }),
+}));
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 
 import { TaskView } from "./TaskView";
