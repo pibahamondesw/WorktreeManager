@@ -47,6 +47,7 @@ export interface Preferences {
   automationsDir: string | null;
   /** Read and archived automation Inbox entries, by key. */
   automationInbox: InboxMarks;
+  showAutomationTasks: boolean;
 }
 
 export type PersistedValues = Omit<AppState, "shortcutOverrides"> &
@@ -130,6 +131,7 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
       Array.isArray(list) ? list.filter((key): key is string => typeof key === "string") : [];
     return { read: keys(value.read), archived: keys(value.archived) };
   },
+  showAutomationTasks: (raw) => raw !== false,
 };
 
 export async function loadPreference<K extends keyof PersistedValues>(

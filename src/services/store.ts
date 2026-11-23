@@ -245,3 +245,4 @@ export const loadCompactIdleChats = () => loadPreference("compactIdleChats");
 export const loadAgentAlerts = () => loadPreference("agentAlerts");
 export const loadNavigationHistory = () => loadPreference("navigationHistory");
 export const loadAutomationInbox = () => loadPreference("automationInbox");
+export const loadShowAutomationTasks = () => loadPreference("showAutomationTasks");

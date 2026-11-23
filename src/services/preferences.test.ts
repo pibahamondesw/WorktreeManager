@@ -46,6 +46,7 @@ const values: Preferences = {
   navigationHistory: [{ kind: "task", taskId: "t1", workspaceId: "w1", at: "2026-10-28" }],
   automationsDir: "/skills/automations",
   automationInbox: { read: ["run:demo:1"], archived: ["question:demo:routine:triage:abc"] },
+  showAutomationTasks: false,
 };
 
 beforeEach(() => {
@@ -182,6 +183,13 @@ describe("normalization", () => {
     expect(normalizers.compactIdleChats(undefined)).toBe(true);
     expect(normalizers.compactIdleChats("false")).toBe(true);
     expect(normalizers.compactIdleChats(false)).toBe(false);
+  });
+
+  it("shows automation tasks unless explicitly hidden", async () => {
+    const { normalizers } = await import("./preferences");
+    expect(normalizers.showAutomationTasks(undefined)).toBe(true);
+    expect(normalizers.showAutomationTasks("false")).toBe(true);
+    expect(normalizers.showAutomationTasks(false)).toBe(false);
   });
 });
 
