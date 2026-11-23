@@ -1674,6 +1674,21 @@ fn attaching_reuses_the_live_primary_that_detach_then_releases() {
             .unwrap()
     };
     assert!(attached_sink());
+    for session_id in [attached.session_id.clone(), "gone".into()] {
+        chat_expand_detail(
+            fixture.app.state(),
+            session_id,
+            attached.snapshot.generation,
+            "row".into(),
+            Some(DetailView::Tail),
+        );
+    }
+    let expanded = registry
+        .with_session("task", "codex", |session| {
+            Ok(session.shared.lock().unwrap().sink.is_expanded("row"))
+        })
+        .unwrap();
+    assert!(expanded);
     chat_detach(
         fixture.app.state(),
         "task".into(),
