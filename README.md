@@ -77,6 +77,12 @@ wtm --local workspace list
 
 Omit `--local` for the installed/shared profile. Bare `wtm` with this alias launches the development binary and requires its Vite server to be running.
 
+#### Replay agent
+
+Development builds add a **Replay** chat agent that costs nothing and runs no model: it replays a recorded Claude Code `stream-json` transcript through the same adapter and chat UI as Claude. Pick it in the composer's agent picker; each message you send plays the next turn (a turn ends at a `result` line, and the transcript loops), streaming text word by word. A recorded `control_request` shows its approval or question and waits for your answer, though answers never change what is replayed.
+
+The [built-in transcript](src-tauri/src/commands/agents/replay/transcript.jsonl) covers reasoning, tools, an edit approval, a question and long Markdown. To replay your own, start the app with `WTM_REPLAY_TRANSCRIPT=/path/to/transcript.jsonl`. Recorded `stream_event` lines are dropped and regenerated, so a `claude -p --output-format stream-json --verbose` capture works as is. Remove any personal or sensitive data before sharing one. Release builds don't include the agent.
+
 ### Windows
 
 The app builds and runs from source on Windows 10 (1803+) and 11; there is no Windows installer or in-app update yet. The embedded VS Code is not available there: choosing it opens desktop VS Code instead. Requires [Git for Windows](https://git-scm.com/downloads/win) (its Git Bash runs the app's commands and tools), Rust with the MSVC toolchain and the Visual Studio C++ Build Tools, Node.js 22.13+, and the pinned pnpm. WebView2 ships with Windows 11.
