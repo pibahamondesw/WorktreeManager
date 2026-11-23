@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({ onDragDropEvent: vi.fn().mockResolvedValue(() => undefined) }),
 }));
+vi.mock("../../observeResize", () => import("../../test/fakeObserveResize"));
 
 import { ChatWorkspace } from "./ChatWorkspace";
 import { invokeWithAgentCatalog } from "../../services/agents.fixture";
