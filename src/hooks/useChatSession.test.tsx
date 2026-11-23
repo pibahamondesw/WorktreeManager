@@ -113,6 +113,28 @@ describe("useChatSession", () => {
     ]);
   });
 
+  it("expands rows in the session it attached to, after a restart opens another", async () => {
+    const sessions = [opened("pane", 1), opened("pane-restarted", 2)];
+    invoke.mockImplementation((command) =>
+      Promise.resolve(command === "chat_open" ? sessions.shift() : undefined)
+    );
+    const view = renderHook(() => useChatSession("t1", "codex", ["/wt"]));
+    view.result.current.expandDetail("c1", "tail");
+    await waitFor(() => expect(view.result.current.snapshot.generation).toBe(1));
+    view.result.current.expandDetail("c1", "tail");
+    await act(() => view.result.current.restart());
+    await waitFor(() => expect(view.result.current.snapshot.generation).toBe(2));
+    view.result.current.expandDetail("c1", null);
+
+    expect(invoke.mock.calls.filter(([command]) => command === "chat_expand_detail")).toEqual([
+      ["chat_expand_detail", { sessionId: "pane", generation: 1, itemId: "c1", view: "tail" }],
+      [
+        "chat_expand_detail",
+        { sessionId: "pane-restarted", generation: 2, itemId: "c1", view: null },
+      ],
+    ]);
+  });
+
   it("ignores events from the session it replaced", async () => {
     const sessions = [opened("pane", 1), opened("pane-restarted", 2)];
     invoke.mockImplementation((command) =>

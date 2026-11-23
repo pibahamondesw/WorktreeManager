@@ -10,6 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
+import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
 import { Composer } from "./Composer";
 import { ApprovalActions } from "./ApprovalActions";
@@ -373,18 +374,21 @@ export function ChatPane({
               if (entry.kind === "item" && isPlanItem(item) && pendingPlans.has(item.text)) {
                 return null;
               }
-              const view =
-                entry.kind === "work" ? (
-                  <WorkGroup items={entry.items} running={busy && entry === entries.at(-1)} />
-                ) : (
-                  <ChatItemView
-                    item={item}
-                    steps={item.kind === "agent" ? steps : undefined}
-                    historyDisabled={historyDisabled}
-                    onHistory={item.kind === "user" && !item.origin ? pickHistory : undefined}
-                    queue={item.status === "queued" ? queuedActions : undefined}
-                  />
-                );
+              const view = (
+                <ItemDetailContext.Provider value={session.expandDetail}>
+                  {entry.kind === "work" ? (
+                    <WorkGroup items={entry.items} running={busy && entry === entries.at(-1)} />
+                  ) : (
+                    <ChatItemView
+                      item={item}
+                      steps={item.kind === "agent" ? steps : undefined}
+                      historyDisabled={historyDisabled}
+                      onHistory={item.kind === "user" && !item.origin ? pickHistory : undefined}
+                      queue={item.status === "queued" ? queuedActions : undefined}
+                    />
+                  )}
+                </ItemDetailContext.Provider>
+              );
               return (
                 <Fragment key={entry.id}>
                   {item.origin ? (
