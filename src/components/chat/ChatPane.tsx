@@ -163,6 +163,7 @@ export function ChatPane({
   const rowKeys = useMemo(() => rows.map((row) => row.id), [rows]);
   const timeline = useVirtualRows(rowKeys);
   const { stickToBottom } = timeline;
+  const earlier = snapshot.earlier ?? 0;
   const historyDisabled =
     status.kind !== "idle" || pending.length > 0 || historyPending === chatKey;
   const approvalKey = (id: string) => `${snapshot.generation}:${id}`;
@@ -189,7 +190,7 @@ export function ChatPane({
   const requestAgent = (target: AgentId) => {
     if (target === agent) return;
     if (switchBlocker) return setActionError(switchBlocker);
-    if (items.some((item) => item.kind === "user")) setHandoffTarget(target);
+    if (earlier > 0 || items.some((item) => item.kind === "user")) setHandoffTarget(target);
     else switchTo({ agent: target, mode: "fresh" });
   };
 
@@ -207,6 +208,11 @@ export function ChatPane({
   useEffect(() => onStatusChange?.(sessionStatus(status)), [status, onStatusChange]);
 
   useLayoutEffect(() => stickToBottom(), [snapshot.generation, stickToBottom]);
+
+  const { loadEarlier } = session;
+  useEffect(() => {
+    if (timeline.nearTop && earlier > 0) loadEarlier();
+  }, [timeline.nearTop, earlier, loadEarlier]);
 
   const run = useCallback(async (action: () => Promise<void>) => {
     setActionError(null);
@@ -322,6 +328,11 @@ export function ChatPane({
                 {status.kind === "starting"
                   ? `Starting ${agentLabel}…`
                   : `Ask ${agentLabel} to work on this task.`}
+              </p>
+            )}
+            {earlier > 0 && (
+              <p className="text-xs text-text-muted text-center">
+                Loading earlier messages…
               </p>
             )}
             {rows.length > 0 && (

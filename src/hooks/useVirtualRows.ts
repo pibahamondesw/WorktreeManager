@@ -265,6 +265,7 @@ export function useVirtualRows(keys: readonly string[]) {
     rowRef,
     start,
     end,
+    nearTop: viewport !== null && start === 0,
     before: offsets[start],
     after: offsets[keys.length] - offsets[end],
     onScroll,

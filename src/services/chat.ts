@@ -194,12 +194,15 @@ export type ChatEvent =
   | { type: "pending"; request: PendingRequest }
   | { type: "resolved"; id: string }
   | { type: "status"; status: ChatStatus }
-  | { type: "controls"; controls: ChatControls };
+  | { type: "controls"; controls: ChatControls }
+  | { type: "earlier"; items: ChatItem[]; earlier: number };
 
 export interface ChatSnapshot {
   generation: number;
   status: ChatStatus;
   items: ChatItem[];
+  /** Items before `items` not loaded yet; `chatLoadEarlier` sends the page before the oldest one. */
+  earlier?: number;
   pending: PendingRequest[];
   controls: ChatControls;
 }
@@ -242,7 +245,7 @@ export const isLive = (status: ChatStatus) => status.kind !== "exited" && status
 export function applyChatEvent(snapshot: ChatSnapshot, event: ChatEvent): ChatSnapshot {
   switch (event.type) {
     case "items":
-      return { ...snapshot, items: event.items };
+      return { ...snapshot, items: event.items, earlier: 0 };
     case "upsert": {
       const index = snapshot.items.findIndex((item) => item.id === event.item.id);
       const items =
@@ -279,6 +282,8 @@ export function applyChatEvent(snapshot: ChatSnapshot, event: ChatEvent): ChatSn
       };
     case "controls":
       return { ...snapshot, controls: event.controls };
+    case "earlier":
+      return { ...snapshot, items: [...event.items, ...snapshot.items], earlier: event.earlier };
   }
 }
 
@@ -531,6 +536,9 @@ export const chatExpandDetail = (
   invoke<void>("chat_expand_detail", { sessionId, generation, itemId, view }).catch(
     () => undefined
   );
+
+export const chatLoadEarlier = (sessionId: string, generation: number) =>
+  invoke<void>("chat_load_earlier", { sessionId, generation }).catch(() => undefined);
 
 export const chatStop = (taskId: string, agent: AgentId, tab?: string) =>
   invoke<void>("chat_stop", { taskId, agent, tab });
