@@ -2011,9 +2011,23 @@ fn queued_message_actions_reach_the_primary_session() {
     let steered = chat_steer_queued(fixture.app.state(), task, agent, item, None);
     let (task, agent, item) = missing();
     let removed = chat_unqueue(fixture.app.state(), task, agent, item, None);
-    for result in [steered, removed] {
+    let (task, agent, item) = missing();
+    let released = chat_release_queued(
+        fixture.app.state(),
+        task,
+        agent,
+        item,
+        QueuedEdit::default(),
+        None,
+    );
+    for result in [steered, removed, released] {
         assert_eq!(result, Err("That message is no longer queued".into()));
     }
+    let (task, agent, item) = missing();
+    assert_eq!(
+        chat_hold_queued(fixture.app.state(), task, agent, item, None),
+        Err("That message is no longer queued".into())
+    );
 }
 
 fn hand_over(fixture: &Fixture, request: Value) -> Result<hand_over::HandedOver, String> {

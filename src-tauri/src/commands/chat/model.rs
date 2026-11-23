@@ -656,6 +656,15 @@ pub const QUEUED: &str = "queued";
 /// A user message that redirected the turn in progress.
 pub const STEERED: &str = "steered";
 
+/// How the user ended the edit of a queued message; no `text` keeps it unchanged.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueuedEdit {
+    pub text: Option<String>,
+    #[serde(default)]
+    pub steer: bool,
+}
+
 pub fn user_display_text(text: &str, image_count: usize) -> String {
     match image_count {
         0 => text.to_string(),
@@ -703,6 +712,20 @@ pub trait ChatProvider: Send {
     }
     /// Drops a message queued by `send` before it runs.
     fn unqueue(&mut self, _item_id: &str, _out: &mut ProviderOutput) -> Result<(), String> {
+        Err("This agent does not queue messages".into())
+    }
+    /// Holds a message queued by `send` so it waits while the user edits it, and returns its text.
+    fn hold_queued(&mut self, _item_id: &str, _out: &mut ProviderOutput) -> Result<String, String> {
+        Err("This agent does not queue messages".into())
+    }
+    /// Ends the edit of a held message: `text` replaces it, and `steer` sends it into the turn in
+    /// progress. It runs at once when no turn is in progress.
+    fn release_queued(
+        &mut self,
+        _item_id: &str,
+        _edit: &QueuedEdit,
+        _out: &mut ProviderOutput,
+    ) -> Result<(), String> {
         Err("This agent does not queue messages".into())
     }
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String>;

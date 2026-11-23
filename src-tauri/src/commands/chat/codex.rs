@@ -129,9 +129,15 @@ pub struct CodexProvider {
     steered_items: HashSet<String>,
 }
 
+const STARTING_TURN: &str = "Codex is starting the turn; steer again in a moment";
+
 struct QueuedInput {
     item: ChatItem,
     action: QueuedAction,
+    text: String,
+    image_paths: Vec<PathBuf>,
+    /// Waits while the user edits it, even when its turn comes.
+    held: bool,
 }
 
 enum QueuedAction {
@@ -511,7 +517,7 @@ impl CodexProvider {
     fn steer_input(&mut self, input: Vec<Value>, out: &mut ProviderOutput) -> Result<(), String> {
         let (Some(thread_id), Some(turn_id)) = (self.thread_id.clone(), self.turn_id.clone())
         else {
-            return Err("Codex is starting the turn; steer again in a moment".into());
+            return Err(STARTING_TURN.into());
         };
         self.call(
             out,
@@ -521,6 +527,22 @@ impl CodexProvider {
         );
         self.steered_echoes += 1;
         Ok(())
+    }
+
+    fn run_next_queued(&mut self, out: &mut ProviderOutput) {
+        let Some(next) = self
+            .queued
+            .iter()
+            .position(|queued| !queued.held)
+            .and_then(|index| self.queued.remove(index))
+        else {
+            return;
+        };
+        out.event(ChatEvent::Remove { id: next.item.id });
+        match next.action {
+            QueuedAction::Message(input) => self.start_turn(input, out),
+            QueuedAction::Compact => self.start_compaction(out),
+        }
     }
 
     fn queued_index(&self, item_id: &str) -> Result<usize, String> {
@@ -831,13 +853,7 @@ impl CodexProvider {
                 }
                 out.status(ChatStatus::Idle);
                 self.steered_echoes = 0;
-                if let Some(next) = self.queued.pop_front() {
-                    out.event(ChatEvent::Remove { id: next.item.id });
-                    match next.action {
-                        QueuedAction::Message(input) => self.start_turn(input, out),
-                        QueuedAction::Compact => self.start_compaction(out),
-                    }
-                }
+                self.run_next_queued(out);
             }
             "item/started" | "item/completed" => {
                 if let Some(mut item) = map_item(&params["item"]) {
@@ -1248,6 +1264,9 @@ impl ChatProvider for CodexProvider {
             self.queued.push_back(QueuedInput {
                 item,
                 action: QueuedAction::Message(input),
+                text: text.to_string(),
+                image_paths,
+                held: false,
             });
             return Ok(());
         }
@@ -1278,6 +1297,43 @@ impl ChatProvider for CodexProvider {
         let index = self.queued_index(item_id)?;
         self.queued.remove(index);
         out.event(ChatEvent::Remove { id: item_id.into() });
+        Ok(())
+    }
+
+    fn hold_queued(&mut self, item_id: &str, _out: &mut ProviderOutput) -> Result<String, String> {
+        let index = self.queued_index(item_id)?;
+        let queued = &mut self.queued[index];
+        if matches!(queued.action, QueuedAction::Compact) {
+            return Err("A queued compaction cannot be edited".into());
+        }
+        queued.held = true;
+        Ok(queued.text.clone())
+    }
+
+    fn release_queued(
+        &mut self,
+        item_id: &str,
+        edit: &QueuedEdit,
+        out: &mut ProviderOutput,
+    ) -> Result<(), String> {
+        let index = self.queued_index(item_id)?;
+        if edit.steer && self.busy && self.turn_id.is_none() {
+            return Err(STARTING_TURN.into());
+        }
+        if let Some(text) = &edit.text {
+            let input = self.user_input(text, &self.queued[index].image_paths);
+            let queued = &mut self.queued[index];
+            queued.item.text = user_display_text(text, queued.image_paths.len());
+            queued.action = QueuedAction::Message(input);
+            queued.text = text.clone();
+            out.upsert(queued.item.clone());
+        }
+        self.queued[index].held = false;
+        if !self.busy {
+            self.run_next_queued(out);
+        } else if edit.steer {
+            self.steer_queued(item_id, out)?;
+        }
         Ok(())
     }
 
@@ -1354,6 +1410,9 @@ impl ChatProvider for CodexProvider {
             self.queued.push_back(QueuedInput {
                 item,
                 action: QueuedAction::Compact,
+                text: String::new(),
+                image_paths: Vec::new(),
+                held: false,
             });
             return Ok(());
         }
@@ -2438,6 +2497,123 @@ mod tests {
         );
         assert!(snapshot.item(&first).is_none());
         assert_eq!(snapshot.status, ChatStatus::Busy);
+    }
+
+    fn turn_completed() -> Value {
+        json!({ "method": "turn/completed", "params": { "threadId": "th1", "turn": { "id": "t1", "status": "completed" } } })
+    }
+
+    fn release(
+        provider: &mut CodexProvider,
+        snapshot: &mut ChatSnapshot,
+        id: &str,
+        edit: QueuedEdit,
+    ) -> ProviderOutput {
+        let mut out = ProviderOutput::default();
+        provider.release_queued(id, &edit, &mut out).unwrap();
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        out
+    }
+
+    #[test]
+    fn a_held_message_waits_past_the_turn_end_and_runs_edited_once_released() {
+        let (mut provider, mut snapshot) = busy();
+        let held = queue(&mut provider, &mut snapshot, "use rebase");
+        let mut out = ProviderOutput::default();
+        assert_eq!(provider.hold_queued(&held, &mut out).unwrap(), "use rebase");
+
+        let ended = feed(&mut provider, &mut snapshot, turn_completed());
+        assert!(!ended.starts_turn);
+        assert_eq!(
+            snapshot.item(&held).unwrap().status.as_deref(),
+            Some(QUEUED)
+        );
+
+        let edit = QueuedEdit {
+            text: Some("use merge".into()),
+            steer: false,
+        };
+        let released = release(&mut provider, &mut snapshot, &held, edit);
+        assert!(released.starts_turn);
+        assert_eq!(
+            request(&released, "turn/start")["params"]["input"][0]["text"],
+            "use merge"
+        );
+        assert!(snapshot.item(&held).is_none());
+    }
+
+    #[test]
+    fn releasing_an_edited_message_mid_turn_keeps_it_queued_with_its_new_text() {
+        let (mut provider, mut snapshot) = busy();
+        let held = queue(&mut provider, &mut snapshot, "use rebase");
+        let mut out = ProviderOutput::default();
+        provider.hold_queued(&held, &mut out).unwrap();
+
+        let edit = QueuedEdit {
+            text: Some("use merge".into()),
+            steer: false,
+        };
+        let released = release(&mut provider, &mut snapshot, &held, edit);
+        assert!(released.writes.is_empty());
+        let item = snapshot.item(&held).unwrap();
+        assert_eq!(
+            (item.text.as_str(), item.status.as_deref()),
+            ("use merge", Some(QUEUED))
+        );
+        let next = feed(&mut provider, &mut snapshot, turn_completed());
+        assert_eq!(
+            request(&next, "turn/start")["params"]["input"][0]["text"],
+            "use merge"
+        );
+    }
+
+    #[test]
+    fn releasing_an_edited_message_to_steer_sends_its_new_text_into_the_turn() {
+        let (mut provider, mut snapshot) = busy();
+        let held = queue(&mut provider, &mut snapshot, "use rebase");
+        let mut out = ProviderOutput::default();
+        provider.hold_queued(&held, &mut out).unwrap();
+
+        let edit = QueuedEdit {
+            text: Some("use merge".into()),
+            steer: true,
+        };
+        let released = release(&mut provider, &mut snapshot, &held, edit);
+        assert_eq!(
+            request(&released, "turn/steer")["params"]["input"][0]["text"],
+            "use merge"
+        );
+        assert!(snapshot.item(&held).is_none());
+    }
+
+    #[test]
+    fn steering_an_edit_before_the_turn_starts_leaves_the_message_held_and_unchanged() {
+        let (mut provider, mut snapshot) = resumed();
+        let mut out = ProviderOutput::default();
+        provider.send("go", &[], &mut out).unwrap();
+        let held = queue(&mut provider, &mut snapshot, "use rebase");
+        provider.hold_queued(&held, &mut out).unwrap();
+
+        let edit = QueuedEdit {
+            text: Some("use merge".into()),
+            steer: true,
+        };
+        let mut failed = ProviderOutput::default();
+        let result = provider.release_queued(&held, &edit, &mut failed);
+        assert_eq!(result, Err(STARTING_TURN.into()));
+        let queued = &provider.queued[0];
+        assert_eq!((queued.text.as_str(), queued.held), ("use rebase", true));
+    }
+
+    #[test]
+    fn a_queued_compaction_cannot_be_held() {
+        let (mut provider, mut snapshot) = busy();
+        let compact = compacted_mid_turn(&mut provider, &mut snapshot);
+        let mut out = ProviderOutput::default();
+        assert!(provider.hold_queued(&compact, &mut out).is_err());
+        assert!(provider.hold_queued("missing", &mut out).is_err());
     }
 
     fn compacted_mid_turn(provider: &mut CodexProvider, snapshot: &mut ChatSnapshot) -> String {

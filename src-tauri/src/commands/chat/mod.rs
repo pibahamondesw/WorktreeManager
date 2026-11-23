@@ -76,7 +76,7 @@ use handoff::{Handoff, HandoffLink, HandoffStore};
 use live::{LiveBatch, LiveSink};
 use model::{
     ChatEvent, ChatImage, ChatProvider, ChatResponse, ChatSetting, ChatSnapshot, ChatStatus,
-    PendingRequest, ProviderOutput, ReviewTarget, UnansweredRequest,
+    PendingRequest, ProviderOutput, QueuedEdit, ReviewTarget, UnansweredRequest,
 };
 
 pub(crate) const STATUS_EVENT: &str = "chat-status";
@@ -699,14 +699,14 @@ impl ChatSession {
         Ok(session)
     }
 
-    fn with_provider(
+    fn with_provider<T>(
         &self,
         action: impl FnOnce(
             &mut dyn ChatProvider,
             &ChatSnapshot,
             &mut ProviderOutput,
-        ) -> Result<(), String>,
-    ) -> Result<(), String> {
+        ) -> Result<T, String>,
+    ) -> Result<T, String> {
         let mut state = self.shared.lock().unwrap();
         if state.history_busy {
             return Err("A conversation action is in progress".into());
@@ -718,9 +718,9 @@ impl ChatSession {
         let Shared {
             provider, snapshot, ..
         } = &mut *state;
-        action(provider.as_mut(), snapshot, &mut out)?;
+        let result = action(provider.as_mut(), snapshot, &mut out)?;
         state.commit(out, &*self.remember, &self.notify);
-        Ok(())
+        Ok(result)
     }
 
     fn send(&self, text: &str, images: &[ChatImage]) -> Result<(), String> {
@@ -1563,6 +1563,34 @@ pub fn chat_unqueue(
     })
 }
 
+/// Holds a queued message while the user edits it and returns its text.
+#[tauri::command(async)]
+pub fn chat_hold_queued(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+    item_id: String,
+    tab: Option<String>,
+) -> Result<String, String> {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
+        session.with_provider(|provider, _, out| provider.hold_queued(&item_id, out))
+    })
+}
+
+#[tauri::command(async)]
+pub fn chat_release_queued(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+    item_id: String,
+    edit: QueuedEdit,
+    tab: Option<String>,
+) -> Result<(), String> {
+    registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
+        session.with_provider(|provider, _, out| provider.release_queued(&item_id, &edit, out))
+    })
+}
+
 #[tauri::command(async)]
 pub fn chat_respond(
     registry: State<'_, ChatRegistry>,
@@ -1933,6 +1961,9 @@ pub(crate) mod tests {
         let mut out = ProviderOutput::default();
         assert!(Echo.steer_queued("x", &mut out).is_err());
         assert!(Echo.unqueue("x", &mut out).is_err());
+        assert!(Echo.hold_queued("x", &mut out).is_err());
+        let release = Echo.release_queued("x", &QueuedEdit::default(), &mut out);
+        assert!(release.is_err());
         Echo.steer("now", &mut out).unwrap();
         assert_eq!(out.writes, ["now"]);
     }
