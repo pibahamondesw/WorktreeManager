@@ -1,11 +1,20 @@
 import { ProjectFilter } from "../ui/ProjectFilter";
 import { EmptyState } from "../ui/EmptyState";
 import { matchesProject } from "../../search/projects";
-import { useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  ReactNode,
+  useCallback,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { useMouseReorder } from "../../hooks/useMouseReorder";
 import { LinearProvider } from "../../contexts/LinearContext";
 import { useEphemeralToast } from "../../hooks/useEphemeralToast";
 import { useRevealRing } from "../../hooks/useRevealRing";
+import { useProgressiveRows } from "../../hooks/useProgressiveRows";
 import { useWorktreeListKeyboardShortcuts } from "../../hooks/useWorktreeListKeyboardShortcuts";
 import { useWorktreeData } from "../../hooks/useWorktreeData";
 import { taskLinearStore } from "../../services/taskLinear";
@@ -139,6 +148,10 @@ function withExit(exits: Exits, id: string, exit: ExitingTask | undefined): Exit
   if (exit) next.set(id, exit);
   else next.delete(id);
   return next;
+}
+
+function ProgressiveRows<T>({ rows, children }: { rows: T[]; children: (row: T) => ReactNode }) {
+  return useProgressiveRows(rows).map(children);
 }
 
 const SELECTED_CARD_SCROLL_ATTEMPTS = 60;
@@ -503,43 +516,45 @@ export function WorktreeList({
               )
             ) : (
               <div key="tasks" className="grid gap-3 motion-rise">
-                {withExits(tasks, exits).map(({ task, exit }) =>
-                  exit?.phase === "departing" ? (
-                    <DepartingCard
-                      key={task.id}
-                      gap={CARD_GAP}
-                      taskId={task.id}
-                      onDeparted={finishDeparture}
-                    >
-                      {renderCard(task, -1)}
-                    </DepartingCard>
-                  ) : (
-                    <div
-                      key={task.id}
-                      {...reorder.itemProps(task.id, task.pinOrder !== undefined && !exit)}
-                      inert={!!exit}
-                      className={`offscreen-lazy [contain-intrinsic-size:auto_7rem] relative transition-opacity ${
-                        exit ? "opacity-50 saturate-50" : ""
-                      } ${
-                        reorder.over === task.id && reorder.dragging !== task.id
-                          ? "rounded-xl outline outline-2 outline-accent"
-                          : ""
-                      } ${reorder.dragging === task.id ? "opacity-50" : ""}`}
-                    >
-                      {ring?.taskId === task.id && (
-                        <span
-                          key={ring.nonce}
-                          data-testid="reveal-ring"
-                          data-overflows-row
-                          aria-hidden="true"
-                          className="motion-reveal-ring rounded-xl z-10"
-                          onAnimationEnd={clearRing}
-                        />
-                      )}
-                      {renderCard(task, tasks.indexOf(task))}
-                    </div>
-                  )
-                )}
+                <ProgressiveRows rows={withExits(tasks, exits)}>
+                  {({ task, exit }) =>
+                    exit?.phase === "departing" ? (
+                      <DepartingCard
+                        key={task.id}
+                        gap={CARD_GAP}
+                        taskId={task.id}
+                        onDeparted={finishDeparture}
+                      >
+                        {renderCard(task, -1)}
+                      </DepartingCard>
+                    ) : (
+                      <div
+                        key={task.id}
+                        {...reorder.itemProps(task.id, task.pinOrder !== undefined && !exit)}
+                        inert={!!exit}
+                        className={`offscreen-lazy [contain-intrinsic-size:auto_7rem] relative transition-opacity ${
+                          exit ? "opacity-50 saturate-50" : ""
+                        } ${
+                          reorder.over === task.id && reorder.dragging !== task.id
+                            ? "rounded-xl outline outline-2 outline-accent"
+                            : ""
+                        } ${reorder.dragging === task.id ? "opacity-50" : ""}`}
+                      >
+                        {ring?.taskId === task.id && (
+                          <span
+                            key={ring.nonce}
+                            data-testid="reveal-ring"
+                            data-overflows-row
+                            aria-hidden="true"
+                            className="motion-reveal-ring rounded-xl z-10"
+                            onAnimationEnd={clearRing}
+                          />
+                        )}
+                        {renderCard(task, tasks.indexOf(task))}
+                      </div>
+                    )
+                  }
+                </ProgressiveRows>
               </div>
             )}
           </div>
