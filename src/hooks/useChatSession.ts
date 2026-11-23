@@ -12,6 +12,7 @@ import {
   chatConfigure,
   chatDetach,
   chatExpandDetail,
+  chatLoadEarlier,
   chatInterrupt,
   chatOpen,
   chatRespond,
@@ -172,6 +173,9 @@ export function useChatSession(
     },
     [attachment]
   );
+  const loadEarlier = useCallback(() => {
+    if (attachment) void chatLoadEarlier(attachment.sessionId, attachment.generation);
+  }, [attachment]);
   const previewRewind = (itemId: string) =>
     chatRewindPreview(taskId, agent, snapshot.generation, itemId, tab);
   const changeHistory = useCallback(
@@ -201,5 +205,6 @@ export function useChatSession(
     previewRewind,
     changeHistory,
     expandDetail,
+    loadEarlier,
   };
 }

@@ -39,6 +39,7 @@ mod sessions;
 mod snapshot_budget_tests;
 pub mod tabs;
 mod turns;
+mod window;
 
 pub(crate) use conversations::ConversationFork;
 pub(crate) use headless::{HeadlessRequest, SettledRequest, TurnEnd};
@@ -774,7 +775,16 @@ impl ChatSession {
     fn attach(&self, sink: Channel<LiveBatch>) -> ChatSnapshot {
         let mut state = self.shared.lock().unwrap();
         state.replace_sink(Some(sink));
-        state.sink.snapshot_for_pane(&state.snapshot)
+        let Shared { sink, snapshot, .. } = &mut *state;
+        sink.snapshot_for_pane(snapshot)
+    }
+
+    fn load_earlier(&self, generation: u64) {
+        let mut state = self.shared.lock().unwrap();
+        if state.snapshot.generation == generation {
+            let Shared { sink, snapshot, .. } = &mut *state;
+            sink.load_earlier(snapshot);
+        }
     }
 
     fn expand(&self, generation: u64, item_id: &str, view: Option<DetailView>) {
@@ -1579,6 +1589,14 @@ pub fn chat_expand_detail(
 ) {
     if let Some(session) = registry.sessions.lock().unwrap().get(&session_id) {
         session.expand(generation, &item_id, view);
+    }
+}
+
+/// Sends the pane the page of history before the oldest item it holds.
+#[tauri::command(async)]
+pub fn chat_load_earlier(registry: State<'_, ChatRegistry>, session_id: String, generation: u64) {
+    if let Some(session) = registry.sessions.lock().unwrap().get(&session_id) {
+        session.load_earlier(generation);
     }
 }
 
@@ -2440,6 +2458,32 @@ pub(crate) mod tests {
         let batch: serde_json::Value = serde_json::from_str(&batch).unwrap();
         assert_eq!(batch["events"].as_array().unwrap().len(), 1);
         assert_eq!(batch["events"][0]["item"]["detail"], "ok");
+        assert!(received.try_recv().is_err());
+        session.terminate();
+    }
+
+    #[test]
+    fn earlier_history_reaches_the_pane_of_the_current_generation() {
+        let session = spawn("sleep 60", Arc::default(), Arc::default());
+        session.shared.lock().unwrap().snapshot.items = (0..12)
+            .map(|turn| ChatItem::new(format!("u{turn}"), ItemKind::User, "prompt"))
+            .collect();
+        let (sent, received) = std::sync::mpsc::channel();
+        let attached = session.attach(Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                let _ = sent.send(json);
+            }
+            Ok(())
+        }));
+        assert_eq!((attached.items.len(), attached.earlier), (10, 2));
+
+        session.load_earlier(6);
+        session.load_earlier(7);
+
+        let batch = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        let batch: serde_json::Value = serde_json::from_str(&batch).unwrap();
+        assert_eq!(batch["events"][0]["type"], "earlier");
+        assert_eq!(batch["events"][0]["items"][0]["id"], "u0");
         assert!(received.try_recv().is_err());
         session.terminate();
     }

@@ -10,6 +10,17 @@ const base: ChatSnapshot = {
 };
 
 describe("applyChatEvent", () => {
+  it("places earlier items before the loaded ones until the items are replaced", () => {
+    let s = applyChatEvent(
+      { ...base, items: [{ id: "b", kind: "user", text: "" }], earlier: 3 },
+      { type: "earlier", items: [{ id: "a", kind: "user", text: "" }], earlier: 2 }
+    );
+    expect(s.items.map((item) => item.id)).toEqual(["a", "b"]);
+    expect(s.earlier).toBe(2);
+    s = applyChatEvent(s, { type: "items", items: [] });
+    expect(s.earlier).toBe(0);
+  });
+
   it("streams deltas into an upserted item and lets the final item replace it", () => {
     let s = applyChatEvent(base, {
       type: "upsert",

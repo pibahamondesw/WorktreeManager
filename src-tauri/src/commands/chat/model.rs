@@ -482,6 +482,11 @@ pub enum ChatEvent {
     Controls {
         controls: ChatControls,
     },
+    /// Older items for a pane to place before the ones it holds; `earlier` more come before them.
+    Earlier {
+        items: Vec<ChatItem>,
+        earlier: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -490,6 +495,8 @@ pub struct ChatSnapshot {
     pub generation: u64,
     pub status: ChatStatus,
     pub items: Vec<ChatItem>,
+    /// Items before `items` that a pane has not loaded yet.
+    pub earlier: usize,
     pub pending: Vec<PendingRequest>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unanswered: Vec<UnansweredRequest>,
@@ -509,6 +516,7 @@ impl ChatSnapshot {
             generation,
             status: ChatStatus::Starting,
             items: Vec::new(),
+            earlier: 0,
             pending: Vec::new(),
             unanswered: Vec::new(),
             denied: Vec::new(),
@@ -536,7 +544,10 @@ impl ChatSnapshot {
     /// Mirror of `applyChatEvent` in the webview; keep the two in step.
     pub fn apply(&mut self, event: &ChatEvent) {
         match event {
-            ChatEvent::Items { items } => self.items = items.clone(),
+            ChatEvent::Items { items } => {
+                self.items = items.clone();
+                self.earlier = 0;
+            }
             ChatEvent::Upsert { item } => match self.items.iter_mut().find(|i| i.id == item.id) {
                 Some(existing) => *existing = item.clone(),
                 None => self.items.push(item.clone()),
@@ -564,6 +575,10 @@ impl ChatSnapshot {
                 self.status = status.clone();
             }
             ChatEvent::Controls { controls } => self.controls = controls.clone(),
+            ChatEvent::Earlier { items, earlier } => {
+                self.items.splice(0..0, items.iter().cloned());
+                self.earlier = *earlier;
+            }
         }
     }
 
@@ -745,6 +760,22 @@ mod tests {
         carried.origin = Some("claude".into());
         snapshot.items.push(carried);
         assert!(!snapshot.has_error());
+    }
+
+    #[test]
+    fn earlier_items_go_before_the_loaded_ones_until_items_are_replaced() {
+        let mut snapshot = ChatSnapshot::new(1);
+        snapshot.items = vec![ChatItem::new("b", ItemKind::User, "")];
+
+        snapshot.apply(&ChatEvent::Earlier {
+            items: vec![ChatItem::new("a", ItemKind::User, "")],
+            earlier: 3,
+        });
+        let ids: Vec<_> = snapshot.items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!((ids, snapshot.earlier), (vec!["a", "b"], 3));
+
+        snapshot.apply(&ChatEvent::Items { items: Vec::new() });
+        assert_eq!(snapshot.earlier, 0);
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! Streams a session's events to the attached pane in batches: text deltas wait up to
 //! `BATCH_WINDOW` so a long reply re-renders once per batch instead of once per token, and any
 //! other event sends the batch at once, so order holds and questions or approvals never wait.
-//! The output of commands and tools reaches only the rows the pane expanded (see [`detail`]).
+//! The output of commands and tools reaches only the rows the pane expanded (see [`detail`]), and
+//! older history only once the pane asks for it (see [`window`]).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar};
@@ -12,6 +13,7 @@ use tauri::ipc::Channel;
 
 use super::detail::{self, DetailLimits, DetailView};
 use super::model::{ChatEvent, ChatItem, ChatSnapshot, DeltaField};
+use super::window::{self, PageLimits};
 
 pub(super) const BATCH_WINDOW: Duration = Duration::from_millis(33);
 pub(super) const IDLE_WAIT: Duration = Duration::from_secs(1);
@@ -34,6 +36,9 @@ pub(super) struct LiveSink {
     /// Expanded rows whose output changed since the pane last received it.
     stale: HashSet<String>,
     detail_due: Option<Instant>,
+    pages: PageLimits,
+    /// Items the pane has not loaded: always the oldest ones.
+    unloaded: HashSet<String>,
 }
 
 impl LiveSink {
@@ -55,6 +60,14 @@ impl LiveSink {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn with_pages(pages: PageLimits) -> Self {
+        Self {
+            pages,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn due(&self) -> Option<Instant> {
         self.due.into_iter().chain(self.detail_due).min()
     }
@@ -67,14 +80,17 @@ impl LiveSink {
         self.expanded.clear();
         self.stale.clear();
         self.detail_due = None;
+        self.unloaded.clear();
     }
 
-    /// The snapshot a pane attaching now receives, with every row collapsed.
-    pub(super) fn snapshot_for_pane(&self, snapshot: &ChatSnapshot) -> ChatSnapshot {
+    /// The snapshot a pane attaching now receives: the latest page, with every row collapsed.
+    pub(super) fn snapshot_for_pane(&mut self, snapshot: &ChatSnapshot) -> ChatSnapshot {
+        let (earlier, items) = self.latest_page(&snapshot.items);
         ChatSnapshot {
             generation: snapshot.generation,
             status: snapshot.status.clone(),
-            items: snapshot.items.iter().map(|item| self.shown(item)).collect(),
+            items,
+            earlier,
             pending: snapshot.pending.clone(),
             unanswered: snapshot.unanswered.clone(),
             denied: snapshot.denied.clone(),
@@ -86,6 +102,10 @@ impl LiveSink {
 
     pub(super) fn push(&mut self, event: ChatEvent, snapshot: &ChatSnapshot, now: Instant) {
         if self.channel.is_none() {
+            return;
+        }
+        if let ChatEvent::Items { items } = event {
+            self.reload(&items, snapshot.generation);
             return;
         }
         let Some(event) = self.for_pane(event, snapshot, now) else {
@@ -122,6 +142,27 @@ impl LiveSink {
         }
     }
 
+    /// Sends the page before the oldest item the pane holds, even an empty one when none is left.
+    pub(super) fn load_earlier(&mut self, snapshot: &ChatSnapshot) {
+        if self.channel.is_none() {
+            return;
+        }
+        let loaded_from = snapshot
+            .items
+            .iter()
+            .take_while(|item| self.unloaded.contains(&item.id))
+            .count();
+        let (earlier, items) =
+            window::last_page(&snapshot.items[..loaded_from], self.pages, |item| {
+                self.shown(item)
+            });
+        for item in &items {
+            self.unloaded.remove(&item.id);
+        }
+        self.enqueue(ChatEvent::Earlier { items, earlier });
+        self.flush(snapshot.generation);
+    }
+
     /// Sends the batch once its window closes, with the output of expanded rows once theirs does.
     pub(super) fn flush_due(&mut self, snapshot: &ChatSnapshot, now: Instant) {
         let details_due = self.detail_due.is_some_and(|due| due <= now);
@@ -150,6 +191,28 @@ impl LiveSink {
         }
     }
 
+    fn latest_page(&mut self, items: &[ChatItem]) -> (usize, Vec<ChatItem>) {
+        let (earlier, page) = window::last_page(items, self.pages, |item| self.shown(item));
+        self.unloaded = items[..earlier]
+            .iter()
+            .map(|item| item.id.clone())
+            .collect();
+        (earlier, page)
+    }
+
+    /// Replaces the pane's items with the latest page of `items`.
+    fn reload(&mut self, items: &[ChatItem], generation: u64) {
+        let (earlier, items) = self.latest_page(items);
+        self.enqueue(ChatEvent::Items { items });
+        if earlier > 0 {
+            self.enqueue(ChatEvent::Earlier {
+                items: Vec::new(),
+                earlier,
+            });
+        }
+        self.flush(generation);
+    }
+
     fn shown(&self, item: &ChatItem) -> ChatItem {
         if !detail::sent_on_demand(item) {
             return item.clone();
@@ -165,24 +228,15 @@ impl LiveSink {
         now: Instant,
     ) -> Option<ChatEvent> {
         match event {
+            ChatEvent::Upsert { ref item } if self.unloaded.contains(&item.id) => None,
+            ChatEvent::Delta { ref id, .. } if self.unloaded.contains(id) => None,
+            ChatEvent::Remove { ref id } if self.unloaded.remove(id) => None,
             ChatEvent::Upsert { item } if detail::sent_on_demand(&item) => {
                 self.stale.remove(&item.id);
                 Some(ChatEvent::Upsert {
                     item: self.shown(&item),
                 })
             }
-            ChatEvent::Items { items } => Some(ChatEvent::Items {
-                items: items
-                    .into_iter()
-                    .map(|item| {
-                        if detail::sent_on_demand(&item) {
-                            self.shown(&item)
-                        } else {
-                            item
-                        }
-                    })
-                    .collect(),
-            }),
             ChatEvent::Delta {
                 ref id,
                 field: DeltaField::Detail,
@@ -439,7 +493,7 @@ mod tests {
 
     #[test]
     fn an_attaching_pane_receives_command_output_collapsed_and_other_details_whole() {
-        let sink = LiveSink::with_limits(LIMITS);
+        let mut sink = LiveSink::with_limits(LIMITS);
         let subagent = ChatItem::new("s", ItemKind::Agent, "")
             .with_detail(Some("Investigate the failure".into()));
         let snapshot = snapshot_with(vec![command("c", Some("line 1\nline 2")), subagent]);
@@ -669,5 +723,156 @@ mod tests {
         sink.flush_due(&snapshot, now + LIMITS.interval);
 
         assert_eq!(sent_events(&sent).len(), 1);
+    }
+
+    const ONE_TURN: PageLimits = PageLimits {
+        turns: 1,
+        rows: 100,
+        bytes: 1024 * 1024,
+    };
+
+    fn turns(count: usize) -> Vec<ChatItem> {
+        (0..count)
+            .flat_map(|turn| {
+                [
+                    ChatItem::new(format!("u{turn}"), ItemKind::User, "prompt"),
+                    ChatItem::new(format!("a{turn}"), ItemKind::Assistant, "answer"),
+                ]
+            })
+            .collect()
+    }
+
+    fn paged_pane(snapshot: &ChatSnapshot) -> (LiveSink, Sent, ChatSnapshot) {
+        let (channel, sent) = recording_channel();
+        let mut sink = LiveSink::with_pages(ONE_TURN);
+        sink.replace(Some(channel), 1);
+        let shown = sink.snapshot_for_pane(snapshot);
+        (sink, sent, shown)
+    }
+
+    fn item_ids(value: &serde_json::Value) -> Vec<String> {
+        value["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn an_attaching_pane_receives_the_latest_page_and_how_many_items_come_before() {
+        let (_, _, shown) = paged_pane(&snapshot_with(turns(3)));
+
+        let ids: Vec<_> = shown.items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["u2", "a2"]);
+        assert_eq!(shown.earlier, 4);
+    }
+
+    #[test]
+    fn loading_earlier_sends_the_previous_page_until_none_is_left() {
+        let snapshot = snapshot_with(turns(3));
+        let (mut sink, sent, _) = paged_pane(&snapshot);
+
+        for _ in 0..3 {
+            sink.load_earlier(&snapshot);
+        }
+
+        let events = sent_events(&sent);
+        let pages: Vec<_> = events
+            .iter()
+            .map(|event| (item_ids(event), event["earlier"].as_u64().unwrap()))
+            .collect();
+        assert_eq!(
+            pages,
+            [
+                (vec!["u1".to_string(), "a1".to_string()], 2),
+                (vec!["u0".to_string(), "a0".to_string()], 0),
+                (vec![], 0),
+            ]
+        );
+        assert!(events.iter().all(|event| event["type"] == "earlier"));
+    }
+
+    #[test]
+    fn a_detached_sink_sends_no_earlier_history() {
+        let snapshot = snapshot_with(turns(3));
+        let mut sink = LiveSink::with_pages(ONE_TURN);
+        sink.snapshot_for_pane(&snapshot);
+
+        sink.load_earlier(&snapshot);
+
+        assert!(sink.queued.is_empty());
+    }
+
+    #[test]
+    fn changes_to_unloaded_items_do_not_reach_the_pane() {
+        let mut snapshot = snapshot_with(turns(2));
+        let (mut sink, sent, _) = paged_pane(&snapshot);
+        let now = Instant::now();
+
+        for event in [
+            ChatEvent::Upsert {
+                item: ChatItem::new("a0", ItemKind::Assistant, "edited"),
+            },
+            delta("a0", DeltaField::Text, "more"),
+            ChatEvent::Remove { id: "u0".into() },
+        ] {
+            commit(&mut sink, &mut snapshot, event, now);
+        }
+        sink.flush(1);
+
+        assert!(sent_events(&sent).is_empty());
+    }
+
+    #[test]
+    fn loaded_pages_carry_their_latest_changes_and_receive_new_ones() {
+        let mut snapshot = snapshot_with(turns(2));
+        let (mut sink, sent, _) = paged_pane(&snapshot);
+        let now = Instant::now();
+        let edited = ChatEvent::Upsert {
+            item: ChatItem::new("a0", ItemKind::Assistant, "edited"),
+        };
+        commit(&mut sink, &mut snapshot, edited, now);
+        commit(
+            &mut sink,
+            &mut snapshot,
+            ChatEvent::Remove { id: "u0".into() },
+            now,
+        );
+
+        sink.load_earlier(&snapshot);
+        commit(
+            &mut sink,
+            &mut snapshot,
+            delta("a0", DeltaField::Text, "!"),
+            now,
+        );
+        sink.flush(1);
+
+        let events = sent_events(&sent);
+        assert_eq!(item_ids(&events[0]), ["a0"]);
+        assert_eq!(events[0]["items"][0]["text"], "edited");
+        assert_eq!(events[1]["type"], "delta");
+    }
+
+    #[test]
+    fn reloaded_items_send_their_latest_page_and_how_many_items_come_before() {
+        let mut snapshot = snapshot_with(Vec::new());
+        let (mut sink, sent, _) = paged_pane(&snapshot);
+
+        let reloaded = ChatEvent::Items { items: turns(3) };
+        commit(&mut sink, &mut snapshot, reloaded, Instant::now());
+        commit(
+            &mut sink,
+            &mut snapshot,
+            ChatEvent::Items { items: turns(1) },
+            Instant::now(),
+        );
+
+        let events = sent_events(&sent);
+        assert_eq!(sent_types(&sent), [vec!["items", "earlier"], vec!["items"]]);
+        assert_eq!(item_ids(&events[0]), ["u2", "a2"]);
+        assert_eq!(events[1]["earlier"], 4);
+        assert_eq!(item_ids(&events[2]), ["u0", "a0"]);
     }
 }

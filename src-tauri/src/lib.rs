@@ -166,6 +166,7 @@ pub fn run() {
                 commands::chat::chat_respond,
                 commands::chat::chat_detach,
                 commands::chat::chat_expand_detail,
+                commands::chat::chat_load_earlier,
                 commands::chat::chat_close,
                 commands::chat::chat_list,
                 commands::chat::tabs::chat_tabs,

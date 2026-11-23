@@ -11,7 +11,7 @@ export function useChatChanges(
 ) {
   const [changes, setChanges] = useState<ChatChanges | null>(null);
   const settled = snapshot.status.kind !== "busy" && snapshot.status.kind !== "starting";
-  const userItems = snapshot.items.filter((item) => item.kind === "user").length;
+  const latestPrompt = snapshot.items.filter((item) => item.kind === "user").at(-1)?.id;
 
   useEffect(() => {
     if (!settled) return;
@@ -22,7 +22,7 @@ export function useChatChanges(
     return () => {
       cancelled = true;
     };
-  }, [taskId, agent, tab, snapshot.generation, settled, userItems]);
+  }, [taskId, agent, tab, snapshot.generation, settled, latestPrompt]);
 
   return changes;
 }

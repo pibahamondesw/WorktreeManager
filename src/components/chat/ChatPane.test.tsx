@@ -291,6 +291,40 @@ describe("ChatPane", () => {
     expect(scroller.scrollTop).toBe(122 * 120 - 600);
   });
 
+  it("loads earlier history at the top and keeps the first visible message in place", async () => {
+    const message = (index: number) => ({
+      id: `m${index}`,
+      kind: "assistant",
+      text: `Message ${index}`,
+    });
+    const range = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, index) => message(from + index));
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open" ? snapshot({ sessionId: "s1", items: range(10, 30), earlier: 10 }) : undefined
+      )
+    );
+    const loads = () =>
+      mocks.invoke.mock.calls.filter(([command]) => command === "chat_load_earlier");
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    await screen.findByText("Message 29");
+    const scroller = screen.getByText("Message 29").closest(".chat-scroll") as HTMLElement;
+    layOutScroller(scroller, 600, () => 120);
+    resize();
+    expect(screen.getByText("Loading earlier messages…")).toBeInTheDocument();
+    expect(loads()).toEqual([]);
+
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    expect(loads()).toEqual([["chat_load_earlier", { sessionId: "s1", generation: 3 }]]);
+
+    emit(3, { type: "earlier", items: range(0, 10), earlier: 0 });
+    expect(scroller.scrollTop).toBe(10 * 120);
+    expect(screen.getByText("Message 10")).toBeInTheDocument();
+    expect(screen.queryByText("Loading earlier messages…")).not.toBeInTheDocument();
+    expect(loads()).toHaveLength(1);
+  });
+
   it("keeps subagent steps inside their card instead of the main conversation", async () => {
     const items = [
       { id: "u1", kind: "user", text: "Investigate" },

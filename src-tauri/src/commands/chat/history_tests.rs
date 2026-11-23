@@ -1675,6 +1675,11 @@ fn attaching_reuses_the_live_primary_that_detach_then_releases() {
     };
     assert!(attached_sink());
     for session_id in [attached.session_id.clone(), "gone".into()] {
+        chat_load_earlier(
+            fixture.app.state(),
+            session_id.clone(),
+            attached.snapshot.generation,
+        );
         chat_expand_detail(
             fixture.app.state(),
             session_id,
