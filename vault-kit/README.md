@@ -66,7 +66,7 @@ This is plain Markdown, so it works with any agent that supports global instruct
 | [`wtm`](skills/wtm/SKILL.md) | The `wtm` CLI, and why tasks replace hand-made worktrees. |
 | [`wtm-start-task`](skills/wtm-start-task/SKILL.md) | Issue → workspace, repositories and task with Linear's branch name. |
 | [`wtm-where-am-i`](skills/wtm-where-am-i/SKILL.md) | Session orientation: task, Git state, PRs, notes and a next step. |
-| [`wtm-split-work`](skills/wtm-split-work/SKILL.md) | One sub-issue and one task per PR. |
+| [`wtm-split-work`](skills/wtm-split-work/SKILL.md) | One sub-issue and one task per PR, each continued in its own chat. |
 | [`wtm-vault-project`](skills/wtm-vault-project/SKILL.md) | Projects for work that spans issues or repositories. |
 | [`task-log`](skills/task-log/SKILL.md) | Distilled decisions and learnings per task. |
 | [`wtm-finish-task`](skills/wtm-finish-task/SKILL.md) | After merge: keep what matters, then delete the task. |
