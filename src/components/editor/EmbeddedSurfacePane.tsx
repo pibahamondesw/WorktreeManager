@@ -3,6 +3,7 @@ import { editorPresentation, EditorSession } from "../../services/codeEditor";
 import { SessionStatus } from "../../hooks/useTerminalSession";
 import { Button } from "../ui/Button";
 import { EmbeddedSurface } from "./embeddedSurfaces";
+import { observeResize } from "../../observeResize";
 
 interface EmbeddedSurfacePaneProps {
   surface: EmbeddedSurface;
@@ -38,11 +39,10 @@ export function EmbeddedSurfacePane({
     };
     const lease = editorPresentation.attach(taskId, surface.kind, bounds(), setError);
     const resize = () => lease.update(bounds());
-    const observer = new ResizeObserver(resize);
-    observer.observe(element);
+    const stopObserving = observeResize(element, resize);
     window.addEventListener("resize", resize);
     return () => {
-      observer.disconnect();
+      stopObserving();
       window.removeEventListener("resize", resize);
       lease.release();
     };

@@ -61,6 +61,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   globalThis.ResizeObserver = class {
     observe() {}
+    unobserve() {}
     disconnect() {}
   } as never;
   mocks.attach.mockReturnValue({ release: mocks.release, update: mocks.update });
