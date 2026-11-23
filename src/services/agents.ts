@@ -82,6 +82,10 @@ const PRESENTATION: Record<AgentId, AgentPresentation> = {
 export const agentPresentation = (id: AgentId): AgentPresentation =>
   Object.hasOwn(PRESENTATION, id) ? PRESENTATION[id] : { tone: NEUTRAL_TONE };
 
+/** The agents whose global alert hooks the app can install. */
+export const alertHookAgents = (catalog: AgentDescriptor[]) =>
+  catalog.filter(({ id }) => agentPresentation(id).alertHooksConfig !== undefined);
+
 const NO_CAPABILITIES: AgentCapabilities = {
   fork: null,
   review: false,

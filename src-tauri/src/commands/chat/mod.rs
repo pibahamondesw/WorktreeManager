@@ -41,6 +41,10 @@ pub(crate) use conversations::ConversationFork;
 pub(crate) use headless::{HeadlessRequest, SettledRequest, TurnEnd};
 pub use interrupted::record_interrupted_sessions;
 pub(crate) use model::{ChatItem, ItemKind, PlanUsage, UsageWindow};
+#[cfg(test)]
+pub(crate) mod test_support {
+    pub(crate) use super::model::{ChatProvider, ChatSnapshot, ProviderOutput};
+}
 pub(crate) use sessions::{
     exchange, truncate, truncate_to, SessionList, SessionSummary, LIST_LIMIT,
 };

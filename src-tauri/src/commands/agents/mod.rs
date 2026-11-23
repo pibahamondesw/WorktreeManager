@@ -6,6 +6,8 @@
 pub mod claude;
 pub mod codex;
 pub mod permission;
+#[cfg(debug_assertions)]
+pub mod replay;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -170,8 +172,20 @@ pub struct Agents {
 
 impl Default for Agents {
     fn default() -> Self {
-        Self::new(user_claude(), user_codex())
+        let mut agents = Self::new(user_claude(), user_codex());
+        agents.adapters.extend(development_agents());
+        agents
     }
+}
+
+#[cfg(debug_assertions)]
+fn development_agents() -> Vec<Arc<dyn AgentAdapter>> {
+    vec![Arc::new(replay::Replay::from_env())]
+}
+
+#[cfg(not(debug_assertions))]
+fn development_agents() -> Vec<Arc<dyn AgentAdapter>> {
+    Vec::new()
 }
 
 fn user_home() -> Option<PathBuf> {

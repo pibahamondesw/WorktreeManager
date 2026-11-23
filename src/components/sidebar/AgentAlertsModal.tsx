@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../ui/Button";
 import { AgentId } from "../../types";
-import { agentPresentation } from "../../services/agents";
+import { agentPresentation, alertHookAgents } from "../../services/agents";
 import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import {
   AgentAlertSettings,
@@ -131,7 +131,7 @@ export function AgentAlertSettingsPanel({
           report it on their own. Subagent activity is ignored. Alerts require WorktreeManager to be
           running. Your other hooks are kept as they are.
         </p>
-        {catalog.map(({ id, label }) => {
+        {alertHookAgents(catalog).map(({ id, label }) => {
           const state = hooks?.[id];
           const { alertHooksConfig, alertHooksTrust } = agentPresentation(id);
           return (
