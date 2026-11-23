@@ -13,6 +13,7 @@ import {
   TerminalStatus,
 } from "../services/terminal";
 import { xtermThemeFromCss } from "../components/terminal/xtermTheme";
+import { loadWebglRenderer } from "../components/terminal/webglRenderer";
 import { THEME_CHANGE_EVENT } from "../themes";
 import { TYPOGRAPHY_CHANGE_EVENT, terminalFont } from "../appearance";
 
@@ -101,6 +102,7 @@ function useXterm(
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
+    loadWebglRenderer(term);
     const safeFit = () => {
       if (el.clientWidth > 0 && el.clientHeight > 0) fit.fit();
     };
