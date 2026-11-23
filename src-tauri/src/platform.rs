@@ -196,6 +196,27 @@ pub fn own_group(command: &mut Command) -> &mut Command {
     }
 }
 
+/// macOS webviews have no "paste as plain text" command, so the chat composer reads the
+/// clipboard itself. Windows webviews paste natively and never call this.
+pub fn clipboard_text() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        clipboard_text_from(Path::new("/usr/bin/pbpaste"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Reading the clipboard is only supported on macOS".to_string())
+    }
+}
+
+/// A GUI launch has no `LANG`, and without it `pbpaste` mangles non-ASCII text.
+#[cfg(target_os = "macos")]
+fn clipboard_text_from(pbpaste: &Path) -> Result<String, String> {
+    let read = Command::new(pbpaste).env("LANG", "en_US.UTF-8").output();
+    let output = read.map_err(|e| format!("Could not read the clipboard: {e}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// Keeps a console program launched from the GUI from flashing a console window on Windows.
 /// No-op elsewhere.
 pub fn hide_console(command: &mut Command) -> &mut Command {
@@ -502,6 +523,28 @@ pub fn os_from_bytes(bytes: &[u8]) -> OsString {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clipboard_text_is_read_as_utf8() {
+        let dir = std::env::temp_dir().join(format!("wtm-clipboard-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let pbpaste = dir.join("pbpaste");
+        fs::write(&pbpaste, "#!/bin/sh\nprintf '%s ñ' \"$LANG\"\n").unwrap();
+        set_mode(&pbpaste, 0o755).unwrap();
+        let read = clipboard_text_from(&pbpaste);
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(read.unwrap(), "en_US.UTF-8 ñ");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_missing_clipboard_reader_is_reported() {
+        let read = clipboard_text_from(Path::new("/nonexistent/pbpaste"));
+        assert!(read
+            .unwrap_err()
+            .starts_with("Could not read the clipboard"));
+    }
 
     #[test]
     fn a_private_dir_cannot_be_created_under_a_file() {

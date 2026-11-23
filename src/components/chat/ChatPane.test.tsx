@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   channels: [] as { onmessage?: (m: unknown) => void }[],
   dropHandlers: new Set<(event: { payload: unknown }) => void>(),
   markdownRenders: [] as unknown[],
+  windows: false,
 }));
 
 vi.mock("react-markdown", async (importOriginal) => {
@@ -34,6 +35,12 @@ vi.mock("@tauri-apps/api/core", () => ({
     constructor() {
       mocks.channels.push(this);
     }
+  },
+}));
+vi.mock("../../platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../platform")>()),
+  get IS_WINDOWS() {
+    return mocks.windows;
   },
 }));
 vi.mock("../../observeResize", () => import("../../test/fakeObserveResize"));
@@ -568,12 +575,128 @@ describe("ChatPane", () => {
     const box = await screen.findByRole("textbox", { name: "Message Codex" });
     expect(box.getAttribute("aria-placeholder")).not.toContain("paste images");
     fireEvent.paste(box, {
-      clipboardData: { files: [new File(["hi"], "one.png", { type: "image/png" })] },
+      clipboardData: {
+        files: [new File(["hi"], "one.png", { type: "image/png" })],
+        getData: () => "",
+      },
     });
     await dropFiles(["/shots/two.png"]);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByRole("list", { name: "Attached images" })).not.toBeInTheDocument();
     expect(composerText(box)).toBe("@/shots/two.png ");
+  });
+
+  const pasteText = (box: HTMLElement, text: string) =>
+    fireEvent.paste(box, {
+      clipboardData: { files: [], getData: (type: string) => (type === "text/plain" ? text : "") },
+    });
+  const readyComposer = async () => {
+    Object.assign(Range.prototype, {
+      getClientRects: () => [],
+      getBoundingClientRect: () => new DOMRect(),
+    });
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await waitFor(() => expect(box).not.toHaveAttribute("aria-disabled"));
+    return box;
+  };
+  const largeLog = "error: something failed\n".repeat(1400);
+
+  it("attaches pastes of 32 KB or more as removable text and sends them after the message", async () => {
+    render(<ChatPane taskId="paste-1" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    pasteText(box, "short note");
+    expect(composerText(box)).toBe("short note");
+    pasteText(box, largeLog);
+    pasteText(box, "```js\n" + largeLog + "```");
+    expect(composerText(box)).toBe("short note");
+    const chips = screen.getByRole("list", { name: "Attached text" });
+    expect(within(chips).getAllByRole("listitem")[0]).toHaveTextContent(
+      "Pasted text · 1,400 lines · 33 KB"
+    );
+    expect(within(chips).getAllByRole("listitem")[0].title).toContain("32 KB or more");
+    fireEvent.click(screen.getAllByRole("button", { name: /^Remove Pasted text/ })[0]);
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_send", {
+        taskId: "paste-1",
+        agent: "claude",
+        text: `short note\n\nPasted text · 1,402 lines · 33 KB:\n\`\`\`\`\n\`\`\`js\n${largeLog}\`\`\`\n\`\`\`\``,
+        images: [],
+      })
+    );
+    expect(screen.queryByRole("list", { name: "Attached text" })).not.toBeInTheDocument();
+  });
+
+  it("sends a text attachment alone instead of running it as a slash command", async () => {
+    render(<ChatPane taskId="paste-2" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    pasteText(box, largeLog);
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_send", {
+        taskId: "paste-2",
+        agent: "claude",
+        text: `Pasted text · 1,400 lines · 33 KB:\n\`\`\`\n${largeLog}\n\`\`\``,
+        images: [],
+      })
+    );
+  });
+
+  it("restores text attachments when sending fails", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_send") return Promise.reject("agent is gone");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="paste-3" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    pasteText(box, largeLog);
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("agent is gone");
+    expect(screen.getByRole("list", { name: "Attached text" })).toBeInTheDocument();
+  });
+
+  it("pastes the clipboard inline with Command-Shift-V on macOS", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_clipboard_text") return Promise.resolve(largeLog);
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="paste-4" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    await typeInto(box, "log: ");
+    fireEvent.keyDown(box, { key: "V", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(composerText(box)).toBe(`log: ${largeLog}`));
+    expect(screen.queryByRole("list", { name: "Attached text" })).not.toBeInTheDocument();
+  });
+
+  it("reports a clipboard that cannot be read for an inline paste", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot());
+      if (command === "chat_clipboard_text") return Promise.reject("Could not read the clipboard");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="paste-5" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    fireEvent.keyDown(box, { key: "V", metaKey: true, shiftKey: true });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not read the clipboard");
+  });
+
+  it("keeps the native Ctrl-Shift-V paste inline on Windows", async () => {
+    mocks.windows = true;
+    try {
+      render(<ChatPane taskId="paste-6" agent="claude" folders={["/wt/a"]} />);
+      const box = await readyComposer();
+      fireEvent.keyDown(box, { key: "V", ctrlKey: true, shiftKey: true });
+      pasteText(box, largeLog);
+      expect(composerText(box)).toBe(largeLog);
+      fireEvent.keyDown(box, { key: "a" });
+      pasteText(box, largeLog);
+      expect(screen.getByRole("list", { name: "Attached text" })).toBeInTheDocument();
+      expect(mocks.invoke).not.toHaveBeenCalledWith("chat_clipboard_text", undefined);
+    } finally {
+      mocks.windows = false;
+    }
   });
 
   it("keeps elicitation validation errors in the original form and removes it on external resolution", async () => {

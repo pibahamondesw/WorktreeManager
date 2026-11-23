@@ -480,6 +480,8 @@ export interface DroppedImage {
 
 export const chatReadImage = (path: string) => invoke<DroppedImage>("chat_read_image", { path });
 
+export const chatClipboardText = () => invoke<string>("chat_clipboard_text");
+
 export interface MarkdownDocument {
   path: string;
   text: string;

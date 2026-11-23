@@ -10,6 +10,14 @@ import {
   oversizedImages,
   readImage,
 } from "./composerImages";
+import {
+  describeTextAttachment,
+  isLargePaste,
+  LARGE_PASTE_BYTES,
+  TextAttachment,
+  textAttachment,
+  withTextAttachments,
+} from "./composerPastes";
 import { MenuOption, OptionMenu } from "./OptionMenu";
 import { ComposerEditor, ComposerEditorHandle } from "./ComposerEditor";
 import {
@@ -25,6 +33,7 @@ import {
 import {
   acceptsImages,
   ChatImage,
+  chatClipboardText,
   chatFileSearch,
   chatReadImage,
   ChatControls,
@@ -45,6 +54,8 @@ import {
 import { useAgentCatalog } from "../../hooks/useAgentCatalog";
 import { useFileDrop } from "../../hooks/useFileDrop";
 import { AgentId } from "../../types";
+import { bindingById, matches } from "../../shortcuts/catalog";
+import { IS_WINDOWS } from "../../platform";
 
 type Picker = "agent" | "model" | "effort" | "mode" | "review";
 
@@ -72,6 +83,7 @@ export interface QueuedMessageEdit {
 interface Draft {
   text: string;
   images: ImageAttachment[];
+  pastes: TextAttachment[];
 }
 
 interface ComposerProps {
@@ -92,6 +104,9 @@ const PICKER_LABEL: Record<Picker, string> = {
   mode: "Permissions",
   review: "Review",
 };
+
+const isPasteInlineShortcut = (event: KeyboardEvent) =>
+  bindingById.get("chat.pasteInline")!.defaults.some((value) => matches(event, value));
 
 const labelFor = (options: { id: string; label: string }[], id: string | null) =>
   options.find((option) => option.id === id)?.label ?? id;
@@ -120,18 +135,21 @@ export function Composer({
   const [files, setFiles] = useState<FileMatch[]>([]);
   const [recall, setRecall] = useState<number | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [pastes, setPastes] = useState<TextAttachment[]>([]);
+  const pasteInlineRef = useRef(false);
   const editId = queuedEdit?.id ?? null;
   const [shownEditId, setShownEditId] = useState<string | null>(null);
   const [setAside, setSetAside] = useState<Draft | null>(null);
   if (editId !== shownEditId) {
     setShownEditId(editId);
-    const restored = queuedEdit ? { text: queuedEdit.text, images: [] } : setAside;
-    if (queuedEdit && !setAside) setSetAside({ text, images });
+    const restored = queuedEdit ? { text: queuedEdit.text, images: [], pastes: [] } : setAside;
+    if (queuedEdit && !setAside) setSetAside({ text, images, pastes });
     if (!queuedEdit) setSetAside(null);
     if (restored) {
       setText(restored.text);
       setCaret(restored.text.length);
       setImages(restored.images);
+      setPastes(restored.pastes);
     }
   }
   const dropTargetRef = useRef<HTMLDivElement>(null);
@@ -140,7 +158,9 @@ export function Composer({
   const efforts = effortsFor(controls);
   const canAttach = ready && !queuedEdit && acceptsImages(controls);
   const attached = canAttach ? images : [];
-  const sendable = Boolean(text.trim() || attached.length);
+  const canAttachText = ready && !queuedEdit;
+  const attachedTexts = canAttachText ? pastes : [];
+  const sendable = Boolean(text.trim() || attached.length || attachedTexts.length);
   const trigger = picker || dismissed === text ? null : menuTrigger(text, caret);
   const mentionQuery = trigger?.kind === "mention" ? trigger.query : null;
   const foldersKey = folders.join("\n");
@@ -281,9 +301,24 @@ export function Composer({
 
   const onPaste = (e: ClipboardEvent) => {
     const files = imageFiles(e.clipboardData?.files);
-    if (!canAttach || !files.length) return;
+    if (canAttach && files.length) {
+      e.preventDefault();
+      return void attach(files);
+    }
+    const inline = pasteInlineRef.current;
+    pasteInlineRef.current = false;
+    const pasted = e.clipboardData?.getData("text/plain") ?? "";
+    if (inline || !canAttachText || !isLargePaste(pasted)) return;
     e.preventDefault();
-    void attach(files);
+    setPastes((current) => [...current, textAttachment(pasted)]);
+  };
+
+  const pasteInline = async () => {
+    try {
+      editorRef.current?.insert(await chatClipboardText());
+    } catch (e) {
+      onError(String(e));
+    }
   };
 
   const attachDroppedImages = async (paths: string[]) => {
@@ -328,7 +363,7 @@ export function Composer({
     if (queuedEdit) return saveEdit(false);
     const message = text.trim();
     if (!sendable || !ready) return;
-    const local = attached.length ? null : localCommand(message, controls);
+    const local = attached.length || attachedTexts.length ? null : localCommand(message, controls);
     if (local) {
       update("");
       if (local.kind === "picker") openPicker(local.picker);
@@ -344,18 +379,20 @@ export function Composer({
     if (sendingRef.current) return;
     sendingRef.current = true;
     onError(null);
-    const draft = { text, images };
+    const draft = { text, images, pastes };
     if (message) promptMemory.remember(memoryKey, message);
     setImages([]);
+    setPastes([]);
     update("");
     try {
       await actions.send(
-        message,
+        withTextAttachments(message, attachedTexts),
         attached.map(({ mediaType, data }) => ({ mediaType, data }))
       );
     } catch (e) {
       setText((current) => current || draft.text);
       setImages((current) => (current.length ? current : draft.images));
+      setPastes((current) => (current.length ? current : draft.pastes));
       onError(String(e));
     } finally {
       sendingRef.current = false;
@@ -384,6 +421,15 @@ export function Composer({
   });
   const onKeyDown = (e: KeyboardEvent, caretAt: number) => {
     if (e.isComposing) return;
+    pasteInlineRef.current = false;
+    if (isPasteInlineShortcut(e)) {
+      if (IS_WINDOWS) pasteInlineRef.current = true;
+      else {
+        e.preventDefault();
+        void pasteInline();
+      }
+      return;
+    }
     dispatchShortcut(e);
     if (e.defaultPrevented) return;
     if (menuOpen) {
@@ -472,6 +518,28 @@ export function Composer({
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => setImages((current) => current.filter((i) => i.id !== image.id))}
                     className="absolute -top-1.5 -right-1.5 h-4 w-4 flex items-center justify-center rounded-full bg-bg-primary border border-border text-text-secondary hover:text-text-primary cursor-pointer"
+                  >
+                    <CloseIcon size={8} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {attachedTexts.length > 0 && (
+            <ul aria-label="Attached text" className="flex flex-wrap gap-2 px-3 pt-2">
+              {attachedTexts.map((paste) => (
+                <li
+                  key={paste.id}
+                  title={`Pastes of ${LARGE_PASTE_BYTES / 1024} KB or more attach as text. ${shortcutLabel("chat.pasteInline")} pastes inline.`}
+                  className="flex items-center gap-1.5 rounded-md border border-border pl-2 pr-1 py-1 text-xs text-text-secondary"
+                >
+                  {describeTextAttachment(paste)}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${describeTextAttachment(paste)}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setPastes((current) => current.filter((p) => p.id !== paste.id))}
+                    className="h-4 w-4 flex items-center justify-center rounded-full text-text-secondary hover:text-text-primary cursor-pointer"
                   >
                     <CloseIcon size={8} />
                   </button>
