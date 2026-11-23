@@ -1,6 +1,5 @@
 import { lazy, memo, Suspense, useMemo, useState } from "react";
 import Markdown, { Options } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { remarkLatexDelimiters } from "./remarkLatexDelimiters";
@@ -14,6 +13,7 @@ import { useMarkdownPreview } from "./markdownPreviewContext";
 import { isPlanItem } from "./markdownDocument";
 import { SubagentSteps } from "./chatEntries";
 import { splitMarkdownBlocks } from "./markdownBlocks";
+import { rehypeCachedHighlight } from "./rehypeCachedHighlight";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted animate-pulse",
@@ -37,9 +37,7 @@ const REMARK_PLUGINS: Options["remarkPlugins"] = [
   [remarkMath, { singleDollarTextMath: false }],
   remarkLatexDelimiters,
 ];
-const REHYPE_PLUGINS: Options["rehypePlugins"] = [
-  [rehypeHighlight, { plainText: ["mermaid", "math"] }],
-];
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [rehypeCachedHighlight];
 
 function MarkdownCode({ className, children }: React.ComponentProps<"code">) {
   const classes = className?.split(" ") ?? [];
