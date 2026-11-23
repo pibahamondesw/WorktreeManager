@@ -95,6 +95,7 @@ it("shows the trigger, pause reason and runs, and pages older runs", async () =>
   expect(await screen.findByText("Completed: reported")).toBeInTheDocument();
   expect(screen.getByText("Skipped: paused")).toBeInTheDocument();
   expect(screen.getAllByText("5s")).toHaveLength(2);
+  expect(screen.getAllByRole("row")).toHaveLength(3);
   expect(invoke).toHaveBeenLastCalledWith("automation_runs_list", {
     name: "pr-babysitter",
     before: "1761800000002-aaaaaaaa",

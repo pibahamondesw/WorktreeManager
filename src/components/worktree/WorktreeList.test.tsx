@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { WorktreeList, TaskActions } from "./WorktreeList";
@@ -25,9 +25,22 @@ vi.mock("./WorktreeListHeader", () => ({
 vi.mock("./NewWorktreeModal", () => ({ NewWorktreeModal: () => null }));
 vi.mock("../task/TaskView", () => ({ TaskView: () => null }));
 vi.mock("./WorktreeCard", () => ({
-  WorktreeCard: ({ task, actions }: { task: Task; actions: TaskCardActions }) => (
+  WorktreeCard: ({
+    task,
+    actions,
+    selected,
+  }: {
+    task: Task;
+    actions: TaskCardActions;
+    selected: boolean;
+  }) => (
     <>
-      <button onClick={() => actions.togglePin?.(task)}>{task.id}</button>
+      <button
+        data-selected={selected ? "true" : undefined}
+        onClick={() => actions.togglePin?.(task)}
+      >
+        {task.id}
+      </button>
       <button
         data-genie-target
         onClick={() =>
@@ -57,9 +70,11 @@ const TASKS: Task[] = [
 }));
 
 function fixture({
+  tasks = TASKS,
   revealTaskId = null,
   onTaskDeleted = vi.fn<TaskActions["delete"]>(),
 }: {
+  tasks?: Task[];
   revealTaskId?: string | null;
   onTaskDeleted?: TaskActions["delete"];
 } = {}) {
@@ -100,7 +115,7 @@ function fixture({
       onSwitchSurface={vi.fn()}
     />
   );
-  const view = render(listProps(TASKS));
+  const view = render(listProps(tasks));
   const setTasks = (tasks: Task[]) => view.rerender(listProps(tasks));
   const switchWorkspace = (workspaceId: string, tasks: Task[]) =>
     view.rerender(listProps(tasks, workspaceId));
@@ -167,6 +182,33 @@ it("rings the card jumped to by number", () => {
   const { jumpToIndex } = vi.mocked(useWorktreeListKeyboardShortcuts).mock.lastCall![0];
   act(() => jumpToIndex(2));
   expect(revealRingOwner()).toBe("unpinned");
+});
+
+it("renders every card of a long list and focuses a revealed one past the first rows", async () => {
+  const tasks = Array.from({ length: 40 }, (_, index) => ({
+    ...TASKS[2],
+    id: `task-${index}`,
+    branchName: `task-${index}`,
+  }));
+  fixture({ tasks, revealTaskId: "task-39" });
+  expect(screen.getByText("task-0")).toBeInTheDocument();
+  expect(screen.getByText("task-39")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText("task-39")).toHaveFocus());
+});
+
+it("scrolls a revealed card back into view when rows above it change height", async () => {
+  const rects = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+  onTestFinished(() => rects.mockRestore());
+  rects.mockImplementation(function (this: HTMLElement) {
+    const scrollTop = this.closest(".overflow-y-auto")?.scrollTop ?? 0;
+    const rowsAboveGrowth = scrollTop > 0 ? 300 : 0;
+    const top = this.dataset.selected ? 1000 + rowsAboveGrowth - scrollTop : 0;
+    return { top, bottom: top + (this.dataset.selected ? 100 : 400) } as DOMRect;
+  });
+  fixture({ revealTaskId: "unpinned" });
+  const container = screen.getByText("unpinned").closest<HTMLElement>(".overflow-y-auto")!;
+  await waitFor(() => expect(container.scrollTop).toBe(1276));
+  expect(screen.getByText("unpinned")).toHaveFocus();
 });
 
 function deferredDeletion() {

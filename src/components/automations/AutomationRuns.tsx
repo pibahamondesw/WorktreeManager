@@ -2,6 +2,8 @@ import { useAutomationRuns } from "../../hooks/useAutomations";
 import { runDuration, runResult, runSource, runStartedAt } from "../../services/automations";
 import { Button } from "../ui/Button";
 
+const RUN_ROW_COLUMNS = "grid grid-cols-[11rem_minmax(0,1fr)_minmax(0,2fr)_5rem] gap-x-4";
+
 export function AutomationRuns({ name }: { name: string }) {
   const { runs, error, loading, loadMore } = useAutomationRuns(name);
 
@@ -11,28 +13,46 @@ export function AutomationRuns({ name }: { name: string }) {
 
   return (
     <div className="space-y-3">
-      <table className="w-full text-xs select-text">
-        <thead className="text-left text-text-muted">
-          <tr>
-            <th className="py-1.5 pr-4 font-medium">Date</th>
-            <th className="py-1.5 pr-4 font-medium">Source</th>
-            <th className="py-1.5 pr-4 font-medium">Result</th>
-            <th className="py-1.5 font-medium">Duration</th>
-          </tr>
-        </thead>
-        <tbody className="text-text-secondary">
+      <div role="table" aria-label="Runs" className="text-xs select-text">
+        <div role="rowgroup" className="text-text-muted">
+          <div role="row" className={RUN_ROW_COLUMNS}>
+            <span role="columnheader" className="py-1.5 font-medium">
+              Date
+            </span>
+            <span role="columnheader" className="py-1.5 font-medium">
+              Source
+            </span>
+            <span role="columnheader" className="py-1.5 font-medium">
+              Result
+            </span>
+            <span role="columnheader" className="py-1.5 font-medium">
+              Duration
+            </span>
+          </div>
+        </div>
+        <div role="rowgroup" className="text-text-secondary">
           {runs.map((run) => (
-            <tr key={run.id} className="border-t border-border">
-              <td className="py-1.5 pr-4 whitespace-nowrap" title={run.id}>
+            <div
+              key={run.id}
+              role="row"
+              className={`${RUN_ROW_COLUMNS} offscreen-lazy [contain-intrinsic-size:auto_1.8125rem] border-t border-border`}
+            >
+              <span role="cell" className="py-1.5 whitespace-nowrap" title={run.id}>
                 {runStartedAt(run).toLocaleString()}
-              </td>
-              <td className="py-1.5 pr-4">{runSource(run)}</td>
-              <td className="py-1.5 pr-4">{runResult(run)}</td>
-              <td className="py-1.5 whitespace-nowrap">{runDuration(run) ?? "—"}</td>
-            </tr>
+              </span>
+              <span role="cell" className="py-1.5 break-words">
+                {runSource(run)}
+              </span>
+              <span role="cell" className="py-1.5 break-words">
+                {runResult(run)}
+              </span>
+              <span role="cell" className="py-1.5 whitespace-nowrap">
+                {runDuration(run) ?? "—"}
+              </span>
+            </div>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
       {loadMore && (
         <Button variant="secondary" className="h-8 text-xs" loading={loading} onClick={loadMore}>
           Load older runs
