@@ -2,6 +2,7 @@
 //! by any tool, so the same review works for both agents.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use base64::Engine;
@@ -15,6 +16,7 @@ use super::{blocking, model, ChatRegistry};
 const DIFF_TIMEOUT: Duration = Duration::from_millis(500);
 const MAX_TEXT_BYTES: usize = 4 * 1024 * 1024;
 pub(super) const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+static REVIEWED_WRITES: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +38,9 @@ pub struct FileChange {
     pub additions: usize,
     pub deletions: usize,
     pub binary: bool,
+    /// Identifies the file's resulting content: the after blob, or the removed blob for
+    /// deletions. A later turn that changes the file changes it too.
+    pub content: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -130,6 +135,15 @@ fn file_change(
         additions,
         deletions,
         binary,
+        content: comparison
+            .after
+            .as_ref()
+            .map(|after| after.blob().to_string())
+            .or_else(|| {
+                let before = comparison.before.as_ref()?;
+                Some(format!("deleted:{}", before.blob()))
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -173,7 +187,7 @@ pub fn change_set(
 ) -> Result<ChangeSet, String> {
     let baseline = checkpoints.baseline(before, after)?;
     let cache = format!(
-        "changes-{}.json",
+        "changes-v2-{}.json",
         checkpoints::hash(format!("{before}\0{after}{}", baseline.key()).as_bytes())
     );
     if let Ok(set) = checkpoints.read::<ChangeSet>(&cache) {
@@ -327,6 +341,82 @@ fn session_state(
     })
 }
 
+fn reviewed_file_name(conversation: &str) -> String {
+    format!(
+        "reviewed-{}.json",
+        checkpoints::hash(conversation.as_bytes())
+    )
+}
+
+pub fn reviewed_files(checkpoints: &Checkpoints, conversation: &str) -> BTreeSet<String> {
+    checkpoints
+        .read(&reviewed_file_name(conversation))
+        .unwrap_or_default()
+}
+
+pub fn set_file_reviewed(
+    checkpoints: &Checkpoints,
+    conversation: &str,
+    key: &str,
+    reviewed: bool,
+) -> Result<BTreeSet<String>, String> {
+    let _guard = REVIEWED_WRITES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut keys = reviewed_files(checkpoints, conversation);
+    if reviewed {
+        keys.insert(key.to_string());
+    } else {
+        keys.remove(key);
+    }
+    checkpoints.save(&reviewed_file_name(conversation), &keys)?;
+    Ok(keys)
+}
+
+struct ConversationStore {
+    checkpoints: Checkpoints,
+    conversation: String,
+}
+
+fn conversation_store(
+    registry: &ChatRegistry,
+    task_id: &str,
+    agent: &str,
+    tab: Option<&str>,
+) -> Result<ConversationStore, String> {
+    let state = session_state(registry, task_id, &super::tabs::slot(agent, tab))?;
+    match (state.checkpoints, state.conversation) {
+        (Some(checkpoints), Some(conversation)) => Ok(ConversationStore {
+            checkpoints,
+            conversation,
+        }),
+        _ => Err("This conversation has no checkpoints yet".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn chat_reviewed_files(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+    tab: Option<String>,
+) -> Result<BTreeSet<String>, String> {
+    let store = conversation_store(&registry, &task_id, &agent, tab.as_deref())?;
+    blocking(move || Ok(reviewed_files(&store.checkpoints, &store.conversation))).await
+}
+
+#[tauri::command]
+pub async fn chat_set_file_reviewed(
+    registry: State<'_, ChatRegistry>,
+    task_id: String,
+    agent: String,
+    tab: Option<String>,
+    key: String,
+    reviewed: bool,
+) -> Result<BTreeSet<String>, String> {
+    let store = conversation_store(&registry, &task_id, &agent, tab.as_deref())?;
+    blocking(move || set_file_reviewed(&store.checkpoints, &store.conversation, &key, reviewed))
+        .await
+}
+
 #[tauri::command]
 pub async fn chat_changes(
     registry: State<'_, ChatRegistry>,
@@ -435,6 +525,61 @@ mod tests {
         assert_eq!(conversation.after, third);
         assert_eq!(conversation.files[0].status, ChangeStatus::Deleted);
         assert_eq!(conversation.files[1].folder, fixture.folders[1]);
+    }
+
+    #[test]
+    fn content_ids_follow_the_resulting_file_across_turns() {
+        let fixture = Fixture::new(1);
+        let checkpoints = &fixture.store;
+        let first = capture(&fixture);
+        fs::write(fixture.file(0, "kept.txt"), "kept\n").unwrap();
+        fs::write(fixture.file(0, "file.txt"), "edited\n").unwrap();
+        let second = capture(&fixture);
+        fs::write(fixture.file(0, "file.txt"), "edited again\n").unwrap();
+        let third = capture(&fixture);
+        fs::remove_file(fixture.file(0, "kept.txt")).unwrap();
+        let fourth = capture(&fixture);
+        let content = |before: &str, after: &str, path: &str| {
+            change_set(checkpoints, before, after)
+                .unwrap()
+                .files
+                .into_iter()
+                .find(|file| file.path == path)
+                .unwrap()
+                .content
+        };
+
+        assert_eq!(
+            content(&first, &second, "kept.txt"),
+            content(&first, &third, "kept.txt")
+        );
+        assert_ne!(
+            content(&first, &second, "file.txt"),
+            content(&first, &third, "file.txt")
+        );
+        assert_eq!(
+            content(&third, &fourth, "kept.txt"),
+            format!("deleted:{}", content(&first, &second, "kept.txt"))
+        );
+    }
+
+    #[test]
+    fn reviewed_files_persist_per_conversation() {
+        let fixture = Fixture::new(1);
+        let checkpoints = &fixture.store;
+
+        set_file_reviewed(checkpoints, "conv", "a", true).unwrap();
+        set_file_reviewed(checkpoints, "conv", "b", true).unwrap();
+        set_file_reviewed(checkpoints, "conv", "a", false).unwrap();
+
+        let reloaded = Checkpoints::new(&fixture.dir.join("app-data"));
+        assert_eq!(
+            reviewed_files(&reloaded, "conv")
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+        assert!(reviewed_files(&reloaded, "other").is_empty());
     }
 
     #[test]
