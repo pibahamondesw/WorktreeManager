@@ -102,6 +102,20 @@ describe("FileDiffView", () => {
     expect(screen.getAllByRole("button", { name: /^Open file at line/ })).toHaveLength(2);
   });
 
+  it("keeps a collapsed file's diff unloaded until asked", async () => {
+    show(
+      { before: text("lock 1"), after: text("lock 2") },
+      { file: { ...file, path: "web/pnpm-lock.yaml" } }
+    );
+
+    expect(screen.getByText("Lock file · diff hidden")).toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Load diff" }));
+
+    expect(await screen.findByText("2", { selector: ".diff-changed" })).toBeInTheDocument();
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the diff without highlighting until the worker answers", async () => {
     const answers: (() => Promise<void>)[] = [];
     mocks.analyzeInWorker.mockImplementation(
