@@ -3,6 +3,7 @@ import { Button } from "../ui/Button";
 import { CloseIcon, FileTypeIcon } from "../ui/Icons";
 import { byRepository, ChangeSet, ChatChanges, FileChange, totals } from "../../services/chat";
 import { AgentId } from "../../types";
+import { joinPath } from "../../platform";
 import { DiffLayout, DiffThreadsUpdate, FileDiffView } from "./FileDiffView";
 import { diffCommentCount, diffKeyOf, DiffThread, removeDiffThread } from "./diffComments";
 
@@ -169,6 +170,8 @@ export function ChangesPanel({
   threads,
   onThreadsChange,
   onSendComments,
+  onOpenFile,
+  covered = false,
   onClose,
 }: {
   taskId: string;
@@ -180,6 +183,8 @@ export function ChangesPanel({
   threads: DiffThread[];
   onThreadsChange: DiffThreadsUpdate;
   onSendComments: () => Promise<void>;
+  onOpenFile: (path: string, line?: number) => void;
+  covered?: boolean;
   onClose: () => void;
 }) {
   const [scope, setScope] = useState<ChangesScope>(initialScope);
@@ -214,13 +219,13 @@ export function ChangesPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (e.key !== "Escape" || e.defaultPrevented || covered) return;
       e.preventDefault();
       onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, covered]);
 
   return (
     <section
@@ -349,9 +354,20 @@ export function ChangesPanel({
           </nav>
           {selected && changeSet && (
             <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-              <div className="shrink-0 px-3 py-1.5 border-b border-border text-xs font-mono text-text-secondary select-text truncate">
-                {selected.previousPath && `${selected.previousPath} → `}
-                {selected.path}
+              <div className="shrink-0 flex items-center gap-3 px-3 py-1.5 border-b border-border text-xs">
+                <span className="flex-1 min-w-0 font-mono text-text-secondary select-text truncate">
+                  {selected.previousPath && `${selected.previousPath} → `}
+                  {selected.path}
+                </span>
+                {selected.status !== "deleted" && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => onOpenFile(joinPath(selected.folder, selected.path))}
+                    className="shrink-0 h-6 px-1.5 text-xs"
+                  >
+                    Open file
+                  </Button>
+                )}
               </div>
               <div className="flex-1 min-h-0 overflow-auto">
                 <FileDiffView
@@ -364,6 +380,7 @@ export function ChangesPanel({
                   hideFormatting={hideFormatting}
                   threads={threads}
                   onThreadsChange={onThreadsChange}
+                  onOpenLine={(line) => onOpenFile(joinPath(selected.folder, selected.path), line)}
                 />
               </div>
             </div>

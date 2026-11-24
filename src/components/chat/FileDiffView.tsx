@@ -148,7 +148,20 @@ export function Code({ line, analysis }: { line: DiffLine; analysis: TextDiff["a
   );
 }
 
-export function LineNumber({ value }: { value?: number }) {
+export function LineNumber({ value, onOpen }: { value?: number; onOpen?: (line: number) => void }) {
+  if (onOpen && value !== undefined) {
+    return (
+      <button
+        type="button"
+        aria-label={`Open file at line ${value}`}
+        title={`Open file at line ${value}`}
+        onClick={() => onOpen(value)}
+        className="diff-number w-10 shrink-0 pr-2 text-right text-text-muted select-none hover:text-accent hover:underline cursor-pointer"
+      >
+        {value}
+      </button>
+    );
+  }
   return (
     <span className="diff-number w-10 shrink-0 pr-2 text-right text-text-muted select-none">
       {value ?? ""}
@@ -182,10 +195,12 @@ function UnifiedRow({
   line,
   analysis,
   target,
+  onOpenLine,
 }: {
   line: DiffLine;
   analysis: TextDiff["analysis"];
   target: CommentTarget;
+  onOpenLine?: (line: number) => void;
 }) {
   return (
     <div
@@ -194,7 +209,7 @@ function UnifiedRow({
     >
       <CommentButton {...target} line={line} />
       <LineNumber value={line.oldNumber} />
-      <LineNumber value={line.newNumber} />
+      <LineNumber value={line.newNumber} onOpen={onOpenLine} />
       <span className="w-4 shrink-0 text-center text-text-muted select-none">
         {SIGN[line.kind]}
       </span>
@@ -243,11 +258,13 @@ function SplitCell({
   side,
   analysis,
   target,
+  onOpenLine,
 }: {
   line: DiffLine | undefined;
   side: "old" | "new";
   analysis: TextDiff["analysis"];
   target?: CommentTarget;
+  onOpenLine?: (line: number) => void;
 }) {
   const number = side === "old" ? line?.oldNumber : line?.newNumber;
   return (
@@ -260,7 +277,7 @@ function SplitCell({
       ) : (
         <span className="w-4 shrink-0" />
       )}
-      <LineNumber value={number} />
+      <LineNumber value={number} onOpen={side === "new" ? onOpenLine : undefined} />
       <span className="diff-wrap flex-1 min-w-0 pr-2">
         {line && <Code line={line} analysis={analysis} />}
       </span>
@@ -411,6 +428,7 @@ function TextDiffBody({
   path,
   threads,
   onThreadsChange,
+  onOpenLine,
 }: {
   diff: TextDiff;
   layout: DiffLayout;
@@ -419,6 +437,7 @@ function TextDiffBody({
   path: string;
   threads: DiffThread[];
   onThreadsChange: DiffThreadsUpdate;
+  onOpenLine?: (line: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [draft, setDraft] = useState<(DiffRange & { anchor: number }) | null>(null);
@@ -486,7 +505,12 @@ function TextDiffBody({
           const lineTarget = target(line)!;
           return (
             <div key={lineTarget.index}>
-              <UnifiedRow line={line} analysis={diff.analysis} target={lineTarget} />
+              <UnifiedRow
+                line={line}
+                analysis={diff.analysis}
+                target={lineTarget}
+                onOpenLine={onOpenLine}
+              />
               {annotations([lineTarget.index])}
             </div>
           );
@@ -498,7 +522,13 @@ function TextDiffBody({
             <div key={index}>
               <div className="flex">
                 <SplitCell line={left} side="old" analysis={diff.analysis} target={leftTarget} />
-                <SplitCell line={right} side="new" analysis={diff.analysis} target={rightTarget} />
+                <SplitCell
+                  line={right}
+                  side="new"
+                  analysis={diff.analysis}
+                  target={rightTarget}
+                  onOpenLine={onOpenLine}
+                />
               </div>
               {annotations(
                 [leftTarget?.index, rightTarget?.index].filter((value) => value !== undefined)
@@ -554,6 +584,7 @@ export function FileDiffView({
   hideFormatting,
   threads,
   onThreadsChange,
+  onOpenLine,
 }: {
   taskId: string;
   agent: AgentId;
@@ -564,6 +595,7 @@ export function FileDiffView({
   hideFormatting: boolean;
   threads: DiffThread[];
   onThreadsChange: DiffThreadsUpdate;
+  onOpenLine?: (line: number) => void;
 }) {
   const [state, setState] = useState<{ key: string; loaded?: Loaded; error?: string } | null>(null);
   const key = diffKeyOf(changes, file);
@@ -618,6 +650,7 @@ export function FileDiffView({
       path={`${file.folder}/${file.path}`}
       threads={threads.filter((thread) => thread.diffKey === key)}
       onThreadsChange={onThreadsChange}
+      onOpenLine={file.status === "deleted" ? undefined : onOpenLine}
     />
   );
 }
