@@ -568,6 +568,10 @@ export function ChatPane({
             threads={diffThreads}
             onThreadsChange={setDiffThreads}
             onSendComments={sendDiffComments}
+            onOpenFile={(path, line) =>
+              previewContext.open({ source: { kind: "code", path, line } })
+            }
+            covered={preview !== null}
             onClose={() => setChangesScope(null)}
           />
         )}

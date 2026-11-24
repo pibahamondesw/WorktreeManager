@@ -1472,6 +1472,79 @@ describe("ChatPane", () => {
     expect(screen.queryByRole("region", { name: "Changes" })).toBeNull();
   });
 
+  it("opens a changed file in the code preview at the chosen line", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const file = (path: string, status: string) => ({
+      folder: "/wt/a",
+      path,
+      status,
+      additions: 1,
+      deletions: 1,
+      binary: false,
+    });
+    const set = {
+      before: "b1",
+      after: "a1",
+      files: [file("src/x.ts", "modified"), file("gone.ts", "deleted")],
+    };
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            items: [
+              { id: "u", kind: "user", text: "Edit" },
+              { id: "a", kind: "assistant", text: "Done" },
+            ],
+          })
+        );
+      if (command === "chat_changes")
+        return Promise.resolve({
+          turns: [{ items: ["u"], changes: set, branch: null }],
+          conversation: set,
+        });
+      if (command === "chat_file_diff")
+        return Promise.resolve({
+          before: { kind: "text", text: "a\nb\n" },
+          after: { kind: "text", text: "a\nc\n" },
+        });
+      if (command === "chat_read_file")
+        return Promise.resolve({
+          path: "/wt/a/src/x.ts",
+          content: { kind: "text", text: "a\nc\n" },
+        });
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Changes / }));
+    const changes = screen.getByRole("region", { name: "Changes" });
+    fireEvent.click(await within(changes).findByRole("button", { name: "Open file at line 2" }));
+
+    const preview = await screen.findByRole("region", { name: "Preview of x.ts" });
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_read_file", {
+      folders: ["/wt/a"],
+      base: null,
+      path: "/wt/a/src/x.ts",
+    });
+    await waitFor(() => expect(preview.querySelector(".diff-selected")).toHaveTextContent("2c"));
+    expect(
+      within(changes).queryByRole("button", { name: /Open file at line 1$/ })
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Preview of x.ts" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Changes" })).toBeInTheDocument();
+
+    fireEvent.click(within(changes).getByRole("button", { name: "Open file" }));
+    expect(await screen.findByRole("region", { name: "Preview of x.ts" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    fireEvent.click(within(changes).getByRole("button", { name: /gone\.ts/ }));
+    await waitFor(() =>
+      expect(within(changes).queryByRole("button", { name: /^Open file/ })).toBeNull()
+    );
+  });
+
   it("keeps diff comments across panel reopenings and sends them as one message", async () => {
     const turn = {
       before: "b1",
