@@ -8,6 +8,7 @@ import { SettingsModal, SettingsSection } from "./components/settings/SettingsMo
 import { SpinnerIcon } from "./components/ui/Icons";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { useStore } from "./hooks/useStore";
+import { FirstPromptContext } from "./components/chat/firstPromptContext";
 import { enableVault, VaultAgent } from "./services/vault";
 import { isShortcutCaptureActive, useShortcutActions } from "./shortcuts/runtime";
 import { useUpdater } from "./hooks/useUpdater";
@@ -89,6 +90,11 @@ function App() {
   } = useStore();
 
   useTaskProjects(state.tasks, state.workspaces, operations);
+
+  const firstPrompt = useCallback(
+    (taskId: string) => operations.firstPrompt(taskId).catch(() => null),
+    [operations]
+  );
 
   const setupControls = useMemo(
     () => ({
@@ -566,29 +572,31 @@ function App() {
         </ErrorBoundary>
         <ErrorBoundary fallbackClassName="flex-1">
           <TakenOverTasksContext.Provider value={takenOverTasks}>
-            <WorktreeList
-              tasks={selectedTasks}
-              agentSessions={agentSessions}
-              agentActivities={agentActivity.activities}
-              workspace={selectedWorkspace}
-              vault={state.vault}
-              taskActions={taskActions}
-              navigation={listNavigation}
-              setupControls={setupControls}
-              editorApp={editorApp}
-              onEditorChange={changeEditorApp}
-              workspaceSwitching={workspaceSwitching}
-              onWorkspaceReady={clearWorkspaceSwitching}
-              searchOpen={search.open}
-              revealTaskId={revealTaskId}
-              onRevealHandled={clearRevealTask}
-              openedTask={openedTask}
-              onOpenTask={openTask}
-              onCloseTask={closeTask}
-              onSwitchSurface={switchTaskSurface}
-              requestNewTask={newTaskRequested}
-              onRequestNewTaskHandled={clearNewTaskRequest}
-            />
+            <FirstPromptContext.Provider value={firstPrompt}>
+              <WorktreeList
+                tasks={selectedTasks}
+                agentSessions={agentSessions}
+                agentActivities={agentActivity.activities}
+                workspace={selectedWorkspace}
+                vault={state.vault}
+                taskActions={taskActions}
+                navigation={listNavigation}
+                setupControls={setupControls}
+                editorApp={editorApp}
+                onEditorChange={changeEditorApp}
+                workspaceSwitching={workspaceSwitching}
+                onWorkspaceReady={clearWorkspaceSwitching}
+                searchOpen={search.open}
+                revealTaskId={revealTaskId}
+                onRevealHandled={clearRevealTask}
+                openedTask={openedTask}
+                onOpenTask={openTask}
+                onCloseTask={closeTask}
+                onSwitchSurface={switchTaskSurface}
+                requestNewTask={newTaskRequested}
+                onRequestNewTaskHandled={clearNewTaskRequest}
+              />
+            </FirstPromptContext.Provider>
           </TakenOverTasksContext.Provider>
         </ErrorBoundary>
       </div>
@@ -663,6 +671,8 @@ function App() {
         }
         compactIdleChats={compactIdleChats}
         onCompactIdleChatsChange={(compact) => void updateCompactIdleChats(compact)}
+        firstPromptTemplate={state.firstPromptTemplate}
+        onFirstPromptTemplateChange={(template) => operations.updateFirstPromptTemplate(template)}
         severity={doctorSeverity}
         report={doctorReport}
         running={doctorRunning || keychainRetrying}

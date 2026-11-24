@@ -37,7 +37,9 @@ interface WorkspaceListProps {
   onAdd: (workspace: Workspace) => Promise<Workspace>;
   onUpdate: (
     workspaceId: string,
-    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
+    updates: Partial<
+      Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos" | "firstPromptTemplate">
+    >
   ) => Promise<Workspace>;
   onRemove: (
     workspaceId: string,

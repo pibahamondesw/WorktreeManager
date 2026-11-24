@@ -163,3 +163,27 @@ describe("workspace Linear connections", () => {
     expect(screen.getByPlaceholderText("lin_api_...")).toHaveValue("saved-key");
   });
 });
+
+describe("workspace first-prompt template", () => {
+  const field = () =>
+    screen.getByRole("textbox", { name: "First prompt template (replaces the global one)" });
+
+  it("saves the template and clears a blank one", async () => {
+    const onSave = await edit({ ...workspace, firstPromptTemplate: "Old {task.branch}" });
+    expect(field()).toHaveValue("Old {task.branch}");
+    fireEvent.change(field(), { target: { value: "  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith(
+      "target",
+      expect.objectContaining({ firstPromptTemplate: undefined })
+    );
+  });
+
+  it("does not save a template with an unknown variable", async () => {
+    const onSave = await edit();
+    fireEvent.change(field(), { target: { value: "{nope}" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getAllByText("The template uses the unknown variable {nope}.")).toHaveLength(2);
+  });
+});
