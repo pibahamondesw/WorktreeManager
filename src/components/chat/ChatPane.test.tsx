@@ -1545,6 +1545,92 @@ describe("ChatPane", () => {
     );
   });
 
+  it("marks files reviewed until a later turn changes them", async () => {
+    const file = (path: string, content: string) => ({
+      folder: "/wt/a",
+      path,
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      binary: false,
+      content,
+    });
+    const first = { before: "b1", after: "a1", files: [file("x.ts", "x1"), file("y.ts", "y1")] };
+    const second = { before: "a1", after: "a2", files: [file("x.ts", "x2")] };
+    let reviewed = ["/wt/a\ny.ts\ny1"];
+    let failNextMark = true;
+    mocks.invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            items: [
+              { id: "u", kind: "user", text: "Edit" },
+              { id: "a", kind: "assistant", text: "Done" },
+              { id: "u2", kind: "user", text: "Again" },
+              { id: "a2", kind: "assistant", text: "Done again" },
+            ],
+          })
+        );
+      if (command === "chat_changes")
+        return Promise.resolve({
+          turns: [
+            { items: ["u"], changes: first, branch: null },
+            { items: ["u2"], changes: second, branch: null },
+          ],
+          conversation: {
+            before: "b1",
+            after: "a2",
+            files: [file("x.ts", "x2"), file("y.ts", "y1")],
+          },
+        });
+      if (command === "chat_reviewed_files") return Promise.resolve(reviewed);
+      if (command === "chat_set_file_reviewed") {
+        if (failNextMark) {
+          failNextMark = false;
+          return Promise.reject("disk full");
+        }
+        reviewed = args!.reviewed
+          ? [...reviewed, args!.key as string]
+          : reviewed.filter((key) => key !== args!.key);
+        return Promise.resolve(reviewed);
+      }
+      if (command === "chat_file_diff")
+        return Promise.resolve({
+          before: { kind: "text", text: "a\n" },
+          after: { kind: "text", text: "b\n" },
+        });
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Changes / }));
+    const panel = screen.getByRole("region", { name: "Changes" });
+    const files = within(panel).getByRole("navigation", { name: "Changed files" });
+    await waitFor(() =>
+      expect(within(files).getByRole("button", { name: /y\.ts/ })).toHaveTextContent("Reviewed")
+    );
+    const checkbox = within(panel).getByRole("checkbox", { name: "Reviewed" });
+    expect(checkbox).not.toBeChecked();
+
+    fireEvent.click(checkbox);
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("disk full");
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(checkbox).toBeChecked());
+    expect(within(files).getByRole("button", { name: /x\.ts/ })).toHaveTextContent("Reviewed");
+    expect(within(panel).queryByRole("alert")).toBeNull();
+
+    fireEvent.change(within(panel).getByLabelText("Changes scope"), { target: { value: "0" } });
+    expect(within(files).getByRole("button", { name: /x\.ts/ })).not.toHaveTextContent("Reviewed");
+    fireEvent.click(within(panel).getByRole("checkbox", { name: "Reviewed" }));
+    await waitFor(() =>
+      expect(within(files).getByRole("button", { name: /x\.ts/ })).toHaveTextContent("Reviewed")
+    );
+    fireEvent.click(within(panel).getByRole("checkbox", { name: "Reviewed" }));
+    await waitFor(() =>
+      expect(within(files).getByRole("button", { name: /x\.ts/ })).not.toHaveTextContent("Reviewed")
+    );
+  });
+
   it("keeps diff comments across panel reopenings and sends them as one message", async () => {
     const turn = {
       before: "b1",
