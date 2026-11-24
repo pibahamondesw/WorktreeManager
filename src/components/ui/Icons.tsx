@@ -4,6 +4,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronUp,
   ChevronLeft,
   ChevronRight,
   CircleCheck,
@@ -78,6 +79,7 @@ export const PlusIcon = libraryIcon(Plus, 12);
 export const CloseIcon = libraryIcon(X, 16);
 export const SearchIcon = libraryIcon(Search, 16);
 export const ChevronDownIcon = libraryIcon(ChevronDown, 10);
+export const ChevronUpIcon = libraryIcon(ChevronUp, 10);
 export const ChevronLeftIcon = libraryIcon(ChevronLeft, 14);
 export const ChevronRightIcon = libraryIcon(ChevronRight, 14);
 export const ExternalLinkIcon = libraryIcon(ArrowUpRight, 10);

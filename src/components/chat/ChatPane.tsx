@@ -10,6 +10,8 @@ import {
 import { createPortal } from "react-dom";
 import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
+import { ChatFindBar } from "./ChatFindBar";
+import { useChatFind } from "./useChatFind";
 import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
 import { Composer, QueuedMessageEdit } from "./Composer";
@@ -241,6 +243,7 @@ export function ChatPane({
   useEffect(() => {
     if (timeline.nearTop && earlier > 0) loadEarlier();
   }, [timeline.nearTop, earlier, loadEarlier]);
+  const find = useChatFind(rows, timeline, earlier, loadEarlier);
 
   const run = useCallback(async (action: () => Promise<void>) => {
     setActionError(null);
@@ -374,6 +377,7 @@ export function ChatPane({
             {paneControls}
           </div>
         )}
+        {find.open && <ChatFindBar find={find} />}
         <div
           ref={timeline.scrollRef}
           onScroll={timeline.onScroll}
