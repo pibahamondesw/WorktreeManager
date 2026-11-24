@@ -1305,8 +1305,35 @@ fn change_commands_read_turn_checkpoints_of_the_open_conversation() {
             None,
         ))
     };
+    let reviewed = || {
+        tauri::async_runtime::block_on(super::changes::chat_reviewed_files(
+            fixture.app.state(),
+            "task".into(),
+            "codex".into(),
+            None,
+        ))
+    };
+    let mark_reviewed = |key: &str| {
+        tauri::async_runtime::block_on(super::changes::chat_set_file_reviewed(
+            fixture.app.state(),
+            "task".into(),
+            "codex".into(),
+            None,
+            key.into(),
+            true,
+        ))
+    };
     assert!(changes("missing").unwrap_err().contains("No chat session"));
+    assert!(reviewed().unwrap_err().contains("No chat session"));
     fixture.open("codex", OpenMode::Restart).unwrap();
+    assert_eq!(
+        mark_reviewed("file")
+            .unwrap()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        ["file"]
+    );
+    assert!(reviewed().unwrap().contains("file"));
 
     let result = changes("task").unwrap();
 
@@ -1347,6 +1374,9 @@ fn change_commands_read_turn_checkpoints_of_the_open_conversation() {
         super::changes::ChatChanges::default()
     );
     assert!(file_diff().unwrap_err().contains("unavailable"));
+    assert!(mark_reviewed("file")
+        .unwrap_err()
+        .contains("no checkpoints"));
 }
 
 #[test]

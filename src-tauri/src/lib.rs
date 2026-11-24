@@ -151,6 +151,8 @@ pub fn run() {
                 commands::chat::history::chat_history,
                 commands::chat::changes::chat_changes,
                 commands::chat::changes::chat_file_diff,
+                commands::chat::changes::chat_reviewed_files,
+                commands::chat::changes::chat_set_file_reviewed,
                 commands::chat::chat_interrupt,
                 commands::chat::chat_steer_queued,
                 commands::chat::chat_unqueue,

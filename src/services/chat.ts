@@ -387,6 +387,7 @@ export interface FileChange {
   additions: number;
   deletions: number;
   binary: boolean;
+  content: string;
 }
 
 export interface ChangeSet {
@@ -451,6 +452,26 @@ export const chatFileDiff = (
     folder: file.folder,
     path: file.path,
     previousPath: file.previousPath ?? null,
+  });
+
+export const reviewKeyOf = (file: FileChange) => `${file.folder}\n${file.path}\n${file.content}`;
+
+export const chatReviewedFiles = (taskId: string, agent: AgentId, tab?: string) =>
+  invoke<string[]>("chat_reviewed_files", { taskId, agent, tab });
+
+export const chatSetFileReviewed = (
+  taskId: string,
+  agent: AgentId,
+  file: FileChange,
+  reviewed: boolean,
+  tab?: string
+) =>
+  invoke<string[]>("chat_set_file_reviewed", {
+    taskId,
+    agent,
+    tab,
+    key: reviewKeyOf(file),
+    reviewed,
   });
 
 export const chatConfigure = (taskId: string, agent: AgentId, setting: ChatSetting, tab?: string) =>

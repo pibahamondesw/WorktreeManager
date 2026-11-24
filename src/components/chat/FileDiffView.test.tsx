@@ -31,6 +31,7 @@ const file: FileChange = {
   additions: 1,
   deletions: 1,
   binary: false,
+  content: "blob",
 };
 
 const show = (diff: FileDiff | (() => Promise<never>), props = {}) => {

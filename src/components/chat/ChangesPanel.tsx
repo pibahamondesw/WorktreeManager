@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/Button";
-import { CloseIcon, FileTypeIcon } from "../ui/Icons";
-import { byRepository, ChangeSet, ChatChanges, FileChange, totals } from "../../services/chat";
+import { CheckIcon, CloseIcon, FileTypeIcon } from "../ui/Icons";
+import {
+  byRepository,
+  ChangeSet,
+  ChatChanges,
+  chatReviewedFiles,
+  chatSetFileReviewed,
+  FileChange,
+  reviewKeyOf,
+  totals,
+} from "../../services/chat";
 import { AgentId } from "../../types";
 import { joinPath } from "../../platform";
 import { DiffLayout, DiffThreadsUpdate, FileDiffView } from "./FileDiffView";
@@ -71,10 +80,12 @@ export function ChangeSummaryCard({ changes, onOpen }: { changes: ChangeSet; onO
 function FileRow({
   file,
   selected,
+  reviewed,
   onSelect,
 }: {
   file: FileChange;
   selected: boolean;
+  reviewed: boolean;
   onSelect: () => void;
 }) {
   const slash = file.path.lastIndexOf("/");
@@ -93,10 +104,16 @@ function FileRow({
         {status.letter}
       </span>
       <FileTypeIcon path={file.path} className="shrink-0 text-text-muted" />
-      <span className="flex-1 min-w-0 truncate">
+      <span className={`flex-1 min-w-0 truncate ${reviewed ? "opacity-60" : ""}`}>
         <span className="text-text-primary">{file.path.slice(slash + 1)}</span>
         {slash > 0 && <span className="text-text-muted"> {file.path.slice(0, slash)}</span>}
       </span>
+      {reviewed && (
+        <span title="Reviewed" className="shrink-0 text-success">
+          <CheckIcon />
+          <span className="sr-only">Reviewed</span>
+        </span>
+      )}
       {file.binary ? (
         <span className="text-text-muted">bin</span>
       ) : (
@@ -202,6 +219,28 @@ export function ChangesPanel({
   const detachedThreads = threads.filter((thread) => !diffKeys.has(thread.diffKey));
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [reviewed, setReviewed] = useState<Set<string>>(new Set());
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const conversationStart = changes.conversation?.before;
+
+  useEffect(() => {
+    let stale = false;
+    chatReviewedFiles(taskId, agent, tab)
+      .then((keys) => !stale && setReviewed(new Set(keys)))
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [taskId, agent, tab, conversationStart]);
+
+  const setFileReviewed = async (file: FileChange, value: boolean) => {
+    setReviewError(null);
+    try {
+      setReviewed(new Set(await chatSetFileReviewed(taskId, agent, file, value, tab)));
+    } catch (e) {
+      setReviewError(String(e));
+    }
+  };
 
   const sendComments = async () => {
     setSending(true);
@@ -315,12 +354,12 @@ export function ChangesPanel({
       {detachedThreads.length > 0 && (
         <DetachedThreads threads={detachedThreads} onThreadsChange={onThreadsChange} />
       )}
-      {sendError && (
+      {(sendError || reviewError) && (
         <p
           role="alert"
           className="px-3 py-1.5 border-b border-border text-xs text-danger select-text"
         >
-          {sendError}
+          {sendError ?? reviewError}
         </p>
       )}
       {files.length === 0 ? (
@@ -346,6 +385,7 @@ export function ChangesPanel({
                     key={fileKey(file)}
                     file={file}
                     selected={file === selected}
+                    reviewed={reviewed.has(reviewKeyOf(file))}
                     onSelect={() => setSelectedKey(fileKey(file))}
                   />
                 ))}
@@ -368,6 +408,14 @@ export function ChangesPanel({
                     Open file
                   </Button>
                 )}
+                <label className="shrink-0 flex items-center gap-1.5 text-text-secondary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={reviewed.has(reviewKeyOf(selected))}
+                    onChange={(e) => void setFileReviewed(selected, e.target.checked)}
+                  />
+                  Reviewed
+                </label>
               </div>
               <div className="flex-1 min-h-0 overflow-auto">
                 <FileDiffView
