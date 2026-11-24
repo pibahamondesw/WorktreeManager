@@ -497,6 +497,9 @@ export interface PreviewFile {
 export const chatReadFile = (folders: string[], base: string | null, path: string) =>
   invoke<PreviewFile>("chat_read_file", { folders, base, path });
 
+export const chatWriteFile = (folders: string[], path: string, original: string, text: string) =>
+  invoke<PreviewFile>("chat_write_file", { folders, path, original, text });
+
 export const chatReadMarkdown = (folders: string[], path: string) =>
   invoke<MarkdownDocument>("chat_read_markdown", { folders, path });
 
