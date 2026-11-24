@@ -2068,3 +2068,196 @@ describe("switching agents", () => {
     expect(screen.getAllByRole("button", { name: "Rewind or fork" })).toHaveLength(1);
   });
 });
+
+describe("Find in conversation", () => {
+  const message = (index: number) => ({
+    id: `m${index}`,
+    kind: "assistant",
+    text: `Message ${index}`,
+  });
+  const range = (from: number, to: number) =>
+    Array.from({ length: to - from }, (_, index) => message(from + index));
+  const openFind = async () => {
+    const composer = await screen.findByRole("textbox");
+    act(() => composer.focus());
+    fireEvent.keyDown(composer, { key: "f", metaKey: true });
+    return screen.findByRole("textbox", { name: "Find in conversation" });
+  };
+  const status = () => within(screen.getByRole("search")).getByRole("status");
+
+  beforeEach(() => {
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value(this: Range) {
+        return this.startContainer
+          .parentElement!.closest("[data-row-key]")!
+          .getBoundingClientRect();
+      },
+    });
+  });
+  afterEach(() => {
+    delete (Range.prototype as Partial<Range>).getBoundingClientRect;
+  });
+
+  it("counts matches from the newest one and moves through them with Enter", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({
+              items: [
+                { id: "u", kind: "user", text: "Fix the BUG" },
+                { id: "c", kind: "command", text: "grep bug" },
+                { id: "a", kind: "assistant", text: "The bug is fixed; no bug left" },
+              ],
+            })
+          : undefined
+      )
+    );
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    const input = await openFind();
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "bug" } });
+    expect(status()).toHaveTextContent("3/3");
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(status()).toHaveTextContent("3/3");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(status()).toHaveTextContent("2/3");
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(status()).toHaveTextContent("1/3");
+    fireEvent.click(screen.getByRole("button", { name: "Previous match" }));
+    expect(status()).toHaveTextContent("3/3");
+
+    fireEvent.change(input, { target: { value: "missing" } });
+    expect(status()).toHaveTextContent("No results");
+    expect(screen.getByRole("button", { name: "Next match" })).toBeDisabled();
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("search")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveFocus();
+  });
+
+  it("focuses the open find bar again instead of searching the workspace", async () => {
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    const input = await openFind();
+    fireEvent.change(input, { target: { value: "care" } });
+    const composer = screen.getAllByRole("textbox").find((box) => box !== input)!;
+    act(() => composer.focus());
+    fireEvent.keyDown(composer, { key: "f", metaKey: true });
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("care");
+  });
+
+  it("highlights the rendered matches and the current one until the bar closes", async () => {
+    const highlights = new Map<string, Range[]>();
+    vi.stubGlobal("CSS", { highlights });
+    vi.stubGlobal(
+      "Highlight",
+      class {
+        constructor(...ranges: Range[]) {
+          return ranges;
+        }
+      }
+    );
+    const texts = (name: string) => highlights.get(name)?.map((range) => range.toString());
+    try {
+      render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+      const input = await openFind();
+      fireEvent.change(input, { target: { value: "the" } });
+      expect(texts("chat-find")).toEqual(["the"]);
+      expect(texts("chat-find-current")).toEqual(["the"]);
+      fireEvent.change(input, { target: { value: "" } });
+      expect(texts("chat-find")).toEqual([]);
+      expect(highlights.has("chat-find-current")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("highlights only the message text, not the titles and controls around it", async () => {
+    const highlights = new Map<string, Range[]>();
+    vi.stubGlobal("CSS", { highlights });
+    vi.stubGlobal(
+      "Highlight",
+      class {
+        constructor(...ranges: Range[]) {
+          return ranges;
+        }
+      }
+    );
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({
+              items: [
+                { id: "n", kind: "notice", title: "Bug report", text: "bug found" },
+                { id: "e", kind: "error", text: "bug crashed" },
+              ],
+            })
+          : undefined
+      )
+    );
+    try {
+      render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+      const input = await openFind();
+      fireEvent.change(input, { target: { value: "bug" } });
+      expect(status()).toHaveTextContent("2/2");
+      const [current] = highlights.get("chat-find-current")!;
+      expect(current.startContainer.textContent).toBe("bug crashed");
+      expect(highlights.get("chat-find")?.map((range) => range.startContainer.textContent)).toEqual(
+        ["bug found", "bug crashed"]
+      );
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(highlights.get("chat-find")).toEqual([]);
+      expect(highlights.has("chat-find-current")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("loads the earlier history while searching", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({ sessionId: "s1", items: range(10, 20), earlier: 10 })
+          : undefined
+      )
+    );
+    const loads = () =>
+      mocks.invoke.mock.calls.filter(([command]) => command === "chat_load_earlier");
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    const input = await openFind();
+    expect(loads()).toEqual([]);
+    fireEvent.change(input, { target: { value: "Message 1" } });
+    expect(loads()).toHaveLength(1);
+    expect(status()).toHaveTextContent("10/10…");
+
+    emit(3, { type: "earlier", items: range(5, 10), earlier: 5 });
+    expect(loads()).toHaveLength(2);
+    emit(3, { type: "earlier", items: range(0, 5), earlier: 0 });
+    expect(status()).toHaveTextContent("11/11");
+    expect(loads()).toHaveLength(2);
+  });
+
+  it("scrolls to a match that is not rendered yet", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? snapshot({ items: range(0, 120) }) : undefined)
+    );
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    await screen.findByText("Message 119");
+    const scroller = screen.getByText("Message 119").closest(".chat-scroll") as HTMLElement;
+    layOutScroller(scroller, 600, () => 120);
+    resize();
+    expect(screen.queryByText("Message 5")).not.toBeInTheDocument();
+
+    const input = await openFind();
+    fireEvent.change(input, { target: { value: "message 5" } });
+    expect(status()).toHaveTextContent("11/11");
+    expect(screen.getByText("Message 59")).toBeInTheDocument();
+    expect(scroller.scrollTop).toBe(59 * 120 - 200);
+
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(status()).toHaveTextContent("1/11");
+    expect(screen.getByText("Message 5")).toBeInTheDocument();
+  });
+});

@@ -623,3 +623,11 @@ body,
     transform: scaleX(0);
   }
 }
+
+::highlight(chat-find) {
+  background-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+::highlight(chat-find-current) {
+  background-color: color-mix(in srgb, var(--color-warning) 75%, transparent);
+  color: var(--color-bg-primary);
+}

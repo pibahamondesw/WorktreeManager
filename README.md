@@ -44,7 +44,7 @@ Enable **Obsidian vault** from the sidebar to create task notes in `~/Documents/
 
 ## Navigation
 
-Use `↑` / `↓` or `j` / `k` to select tasks, `Enter` to open one, and `⌘[` to return. `⌘K` opens the command palette; `⌘F` searches the current workspace. In the embedded editor, use `⌘⌥P` for search. `L` opens the selected issue and `O` its notes.
+Use `↑` / `↓` or `j` / `k` to select tasks, `Enter` to open one, and `⌘[` to return. `⌘K` opens the command palette; `⌘F` searches the current workspace from the task list and the open conversation in a chat. In the embedded editor, use `⌘⌥P` for search. `L` opens the selected issue and `O` its notes.
 
 ## Development
 

@@ -58,10 +58,13 @@ export const bindings: Binding[] = [
     "app.search.workspace",
     "Search current workspace",
     "Application",
-    [...app, "palette"],
+    ["list", "palette"],
     primary("f"),
     { inText: true }
   ),
+  binding("conversation.find", "Find in conversation", "Chat", ["task", "chat"], primary("f"), {
+    inText: true,
+  }),
   binding("app.history.back", "Previous location", "Application", app, primary("ArrowLeft"), {
     native: "history-back",
   }),
