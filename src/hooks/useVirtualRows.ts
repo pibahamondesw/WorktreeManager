@@ -92,11 +92,13 @@ export function useVirtualRows(keys: readonly string[]) {
   const [viewport, setViewport] = useState<Viewport | null>(null);
   const [selectionKeys, setSelectionKeys] = useState<readonly string[]>([]);
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
 
   const offsets = useMemo(() => rowOffsets(keys, heights), [keys, heights]);
   const { start, end } = includePins(visibleSpan(offsets, viewport, stuck), keys, [
     ...selectionKeys,
     focusKey,
+    revealedKey,
   ]);
 
   const changeStuck = useCallback((value: boolean) => {
@@ -180,6 +182,27 @@ export function useVirtualRows(keys: readonly string[]) {
     anchorRef.current = null;
     changeStuck(true);
   }, [changeStuck]);
+
+  const scrollTo = useCallback(
+    (top: number) => {
+      anchorRef.current = null;
+      changeStuck(false);
+      scrollRef.current!.scrollTop = top;
+      measureViewport();
+    },
+    [changeStuck, measureViewport]
+  );
+
+  /** Keeps the row mounted and scrolls to it if it is not; `null` lets it unmount again. */
+  const reveal = useCallback(
+    (key: string | null) => {
+      setRevealedKey(key);
+      const index = key === null ? -1 : keysRef.current.indexOf(key);
+      if (index < 0 || rowElements.current.has(key!)) return;
+      scrollTo(sectionTopIn(scrollRef.current!, sectionRef.current) + offsetsRef.current[index]);
+    },
+    [scrollTo]
+  );
 
   const rowRef = useCallback(
     (row: HTMLElement | null) => {
@@ -272,5 +295,7 @@ export function useVirtualRows(keys: readonly string[]) {
     onFocus,
     onBlur,
     stickToBottom,
+    scrollTo,
+    reveal,
   };
 }
