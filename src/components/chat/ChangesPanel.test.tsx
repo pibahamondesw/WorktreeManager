@@ -17,6 +17,7 @@ const file = (folder: string, path: string): FileChange => ({
   additions: 1,
   deletions: 1,
   binary: false,
+  content: `${path}-v1`,
 });
 
 const changeSet = {
