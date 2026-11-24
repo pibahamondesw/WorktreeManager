@@ -15,6 +15,7 @@ import { plainDiffAnalysis } from "../../services/syntaxAnalysis";
 import { analyzeInWorker } from "../../services/syntaxWorker";
 import { AgentId } from "../../types";
 import { formatSize } from "./formatSize";
+import { collapsedReason } from "./collapsedFiles";
 import {
   addDiffComment,
   diffAnchor,
@@ -605,9 +606,12 @@ export function FileDiffView({
   onOpenLine?: (line: number) => void;
 }) {
   const [state, setState] = useState<{ key: string; loaded?: Loaded; error?: string } | null>(null);
+  const [requestedKey, setRequestedKey] = useState<string | null>(null);
   const key = diffKeyOf(changes, file);
+  const collapsed = requestedKey === key ? null : collapsedReason(file);
 
   useEffect(() => {
+    if (collapsed) return;
     let cancelled = false;
     const show = (loaded: Loaded | null) => loaded && !cancelled && setState({ key, loaded });
     chatFileDiff(taskId, agent, changes, file, tab)
@@ -622,8 +626,22 @@ export function FileDiffView({
     return () => {
       cancelled = true;
     };
-  }, [taskId, agent, tab, changes, file, key]);
+  }, [taskId, agent, tab, changes, file, key, collapsed]);
 
+  if (collapsed) {
+    return (
+      <div className="flex items-center gap-3 p-4 text-xs text-text-muted">
+        <span>{collapsed} · diff hidden</span>
+        <Button
+          variant="secondary"
+          onClick={() => setRequestedKey(key)}
+          className="h-7 px-2 text-xs"
+        >
+          Load diff
+        </Button>
+      </div>
+    );
+  }
   if (state?.key !== key) {
     return (
       <div className="flex items-center gap-2 p-4 text-xs text-text-muted">
