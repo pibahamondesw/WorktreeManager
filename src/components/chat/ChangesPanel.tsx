@@ -7,6 +7,7 @@ import { joinPath } from "../../platform";
 import { DiffLayout, DiffThreadsUpdate, FileDiffView } from "./FileDiffView";
 import { diffCommentCount, diffKeyOf, DiffThread, removeDiffThread } from "./diffComments";
 import { readDiffLayout, saveDiffLayout } from "./diffLayoutPreference";
+import { useShortcutActions, useShortcutLabels } from "../../shortcuts/runtime";
 
 export type ChangesScope = "conversation" | number;
 
@@ -156,6 +157,17 @@ function DetachedThreads({
   );
 }
 
+function changeOffsets(scroller: HTMLElement) {
+  const top = scroller.getBoundingClientRect().top;
+  return [...scroller.querySelectorAll("[data-diff-hunk]")].map(
+    (hunk) => hunk.getBoundingClientRect().top - top
+  );
+}
+
+function scrolledToEnd(scroller: HTMLElement) {
+  return scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
+}
+
 function scopeLabel(index: number, prompt: string | undefined) {
   const text = prompt?.replace(/\s+/g, " ").trim() ?? "";
   return `Turn ${index + 1}${text ? ` · ${text.length > 48 ? `${text.slice(0, 48)}…` : text}` : ""}`;
@@ -197,7 +209,11 @@ export function ChangesPanel({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selected = files.find((file) => fileKey(file) === selectedKey) ?? files[0];
   const repositories = byRepository(files);
+  const orderedFiles = repositories.flatMap((repository) => repository.files);
   const panelRef = useRef<HTMLElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [focused, setFocused] = useState(false);
+  const shortcutLabel = useShortcutLabels();
   const commentCount = diffCommentCount(threads);
   const diffKeys = diffKeysOf(changes);
   const detachedThreads = threads.filter((thread) => !diffKeys.has(thread.diffKey));
@@ -221,6 +237,39 @@ export function ChangesPanel({
     saveDiffLayout(next);
   };
 
+  const selectFile = (step: 1 | -1) => {
+    const index = selected ? orderedFiles.indexOf(selected) : -1;
+    const next = orderedFiles[index + step];
+    if (!next) return;
+    setSelectedKey(fileKey(next));
+    if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
+  };
+
+  const goToChange = (step: 1 | -1) => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const offsets = changeOffsets(scroller);
+    const target =
+      step === 1
+        ? scrolledToEnd(scroller)
+          ? undefined
+          : offsets.find((offset) => offset > 1)
+        : offsets.reverse().find((offset) => offset < -1);
+    if (target === undefined) selectFile(step);
+    else scroller.scrollBy({ top: target });
+  };
+
+  useShortcutActions(
+    {
+      "changes.nextFile": { handler: () => selectFile(1) },
+      "changes.previousFile": { handler: () => selectFile(-1) },
+      "changes.nextChange": { handler: () => goToChange(1) },
+      "changes.previousChange": { handler: () => goToChange(-1) },
+      "changes.layout": { handler: () => setLayout(layout === "unified" ? "split" : "unified") },
+    },
+    focused && !covered
+  );
+
   useEffect(() => panelRef.current?.focus(), []);
 
   useEffect(() => {
@@ -238,6 +287,10 @@ export function ChangesPanel({
       ref={panelRef}
       tabIndex={-1}
       aria-label="Changes"
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
+      }}
       className="@container absolute inset-0 z-20 flex flex-col bg-bg-primary outline-none"
     >
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
@@ -290,7 +343,12 @@ export function ChangesPanel({
           />
           Hide formatting
         </label>
-        <div role="group" aria-label="Diff layout" className="flex rounded-md border border-border">
+        <div
+          role="group"
+          aria-label="Diff layout"
+          title={`Switch diff layout (${shortcutLabel("changes.layout")})`}
+          className="flex rounded-md border border-border"
+        >
           {(["unified", "split"] as const).map((option) => (
             <button
               key={option}
@@ -375,7 +433,7 @@ export function ChangesPanel({
                   </Button>
                 )}
               </div>
-              <div className="flex-1 min-h-0 overflow-auto">
+              <div ref={scrollerRef} className="flex-1 min-h-0 overflow-auto">
                 <FileDiffView
                   taskId={taskId}
                   agent={agent}
