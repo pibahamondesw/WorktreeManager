@@ -1,6 +1,6 @@
 //! Files the agent links in chat, read for the file preview. Unlike Markdown documents, only files
 //! inside the task repositories are served, even when the path resolves against the directory of
-//! the document holding the link.
+//! the document holding the link. Text files can be saved back from the preview.
 
 use std::fs;
 use std::path::Path;
@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use super::changes::{content, image_mime, FileContent, MAX_IMAGE_BYTES};
 use super::markdown::candidates;
+use crate::commands::user_file::UserFile;
 
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
@@ -58,6 +59,34 @@ pub fn read(
     let bytes = fs::read(&found).map_err(|e| e.to_string())?;
     Ok(PreviewFile {
         content: content(&found_path, bytes),
+        path: found_path,
+    })
+}
+
+/// Saves text edited in the preview. Refuses when the file is outside the task repositories or
+/// no longer holds the text the edit started from, so concurrent edits are never overwritten.
+pub fn write(
+    folders: &[String],
+    path: &str,
+    original: &str,
+    text: &str,
+) -> Result<PreviewFile, String> {
+    let found = Path::new(path)
+        .canonicalize()
+        .ok()
+        .filter(|real| real.is_file() && is_inside_any(folders, real))
+        .ok_or_else(|| format!("File not found in the task repositories: {path}"))?;
+    if fs::read(&found).ok().as_deref() != Some(original.as_bytes()) {
+        return Err(format!(
+            "{path} changed on disk since you started editing. Reload it and apply your edit again."
+        ));
+    }
+    UserFile::new(&found)
+        .unchanged_from(original)
+        .replace(text)?;
+    let found_path = found.to_string_lossy().to_string();
+    Ok(PreviewFile {
+        content: content(&found_path, text.as_bytes().to_vec()),
         path: found_path,
     })
 }
@@ -194,6 +223,67 @@ mod tests {
         let file = read(&folders, None, "shot.png", None).unwrap();
 
         assert!(matches!(file.content, FileContent::Image { .. }));
+    }
+
+    #[test]
+    fn saves_edited_text_in_place() {
+        let scratch = Scratch::new("save");
+        let folders = [scratch.folder("repo")];
+        let path = scratch.write("repo/src/x.ts", b"const a = 1;\n");
+
+        let saved = write(&folders, &path, "const a = 1;\n", "const a = 2;\n").unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "const a = 2;\n");
+        assert_eq!(saved, read(&folders, None, &path, None).unwrap());
+    }
+
+    #[test]
+    fn refuses_to_overwrite_a_file_changed_since_the_edit_started() {
+        let scratch = Scratch::new("conflict");
+        let folders = [scratch.folder("repo")];
+        let path = scratch.write("repo/x.ts", b"agent edit\n");
+
+        let error = write(&folders, &path, "original\n", "mine\n").unwrap_err();
+
+        assert!(error.contains("changed on disk"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "agent edit\n");
+    }
+
+    #[test]
+    fn refuses_to_save_outside_the_task_repositories() {
+        let scratch = Scratch::new("save-outside");
+        let folders = [scratch.folder("repo")];
+        let secret = scratch.write("secret.txt", b"secret");
+        std::os::unix::fs::symlink(&secret, scratch.0.join("repo/link.txt")).unwrap();
+        let link = scratch
+            .0
+            .join("repo/link.txt")
+            .to_string_lossy()
+            .to_string();
+
+        for path in [secret.as_str(), link.as_str(), "missing.rs"] {
+            assert!(write(&folders, path, "secret", "changed")
+                .unwrap_err()
+                .starts_with("File not found"));
+        }
+        assert_eq!(fs::read_to_string(&secret).unwrap(), "secret");
+    }
+
+    #[test]
+    fn the_command_saves_files_off_the_main_thread() {
+        let scratch = Scratch::new("save-command");
+        let folder = scratch.folder("repo");
+        let path = scratch.write("repo/a.txt", b"a");
+
+        let saved = tauri::async_runtime::block_on(super::super::chat_write_file(
+            vec![folder],
+            path.clone(),
+            "a".into(),
+            "b".into(),
+        ))
+        .unwrap();
+
+        assert_eq!(saved.content, FileContent::Text { text: "b".into() });
     }
 
     #[test]

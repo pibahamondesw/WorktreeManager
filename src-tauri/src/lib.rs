@@ -165,6 +165,7 @@ pub fn run() {
                 commands::chat::chat_read_image,
                 commands::chat::chat_clipboard_text,
                 commands::chat::chat_read_file,
+                commands::chat::chat_write_file,
                 commands::chat::chat_read_markdown,
                 commands::chat::chat_respond,
                 commands::chat::chat_detach,
