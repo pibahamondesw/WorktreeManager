@@ -137,6 +137,24 @@ export const bindings: Binding[] = [
       { inText: true }
     )
   ),
+  binding("changes.nextFile", "Next changed file", "Changes", ["task"], [shortcut("j")], {
+    repeat: true,
+  }),
+  binding("changes.previousFile", "Previous changed file", "Changes", ["task"], [shortcut("k")], {
+    repeat: true,
+  }),
+  binding("changes.nextChange", "Next change", "Changes", ["task"], [shortcut("n")], {
+    repeat: true,
+  }),
+  binding(
+    "changes.previousChange",
+    "Previous change",
+    "Changes",
+    ["task"],
+    [shortcut("n", "shift")],
+    { repeat: true }
+  ),
+  binding("changes.layout", "Switch diff layout", "Changes", ["task"], [shortcut("s")]),
   ...Array.from({ length: 10 }, (_, i) => [
     binding(`workspace.${i}`, `Switch to workspace ${i}`, "Workspaces", app, primary(String(i)), {
       editable: false,

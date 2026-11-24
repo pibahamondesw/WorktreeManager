@@ -559,7 +559,14 @@ function TextDiffBody({
       )}
       {blocks.map((block) => {
         const key = blockKey(block);
-        if (block.kind === "lines" || expanded.has(key) || hasThread(block)) {
+        if (block.kind === "lines") {
+          return (
+            <div key={key} data-diff-hunk="">
+              {renderLines(block.lines)}
+            </div>
+          );
+        }
+        if (expanded.has(key) || hasThread(block)) {
           return <div key={key}>{renderLines(block.lines)}</div>;
         }
         return (
