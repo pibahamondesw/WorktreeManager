@@ -40,6 +40,8 @@ wtm automation status <name> <run_id>    # one run: status, items and step attem
 
 Task input: `{"workspaceId":"…","branchName":"…","repoIds":["…"],"linearIssue":{"id":"<uuid>","identifier":"WOR-80","title":"…"}}`. Omit `repoIds` to include every repository. With `linearIssue`, pass Linear's exact `branchName`.
 
+`wtm task chat` without `--tab` starts the conversation with the user's first-prompt template, when they set one, ahead of `--message`. It may already carry the issue, branch and repositories; don't repeat them.
+
 ## Find the current task
 
 Match `git rev-parse --show-toplevel` against `members[].path` in `wtm task list`. No match means the session is outside a WTM task.

@@ -22,6 +22,8 @@ export interface Workspace {
   repos: WorkspaceRepo[];
   linearApiKey?: string | null;
   linearOrgUrlKey?: string | null;
+  /** Seeds the first message of a new agent conversation; overrides the global template. */
+  firstPromptTemplate?: string;
 }
 
 /** One repo's worktree within a task. */
@@ -76,6 +78,8 @@ export interface AppState {
     isComplete: boolean;
   };
   vault: VaultConfig;
+  /** Seeds the first message of a new agent conversation; empty leaves it unseeded. */
+  firstPromptTemplate?: string;
   workspaces: Workspace[];
   tasks: Task[];
   selectedWorkspaceId: string | null;

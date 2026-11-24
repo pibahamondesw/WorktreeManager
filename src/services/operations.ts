@@ -22,13 +22,26 @@ import {
   VaultConfig,
 } from "../types";
 import { isAbsolutePath, joinPath } from "../platform";
-import { compareTaskPins } from "../utils";
+import { compareTaskPins, linearIssueUrl } from "../utils";
 import { LinearService, MarkedIssueInput } from "./linear";
 import { taskLinearStore } from "./taskLinear";
 import { emitAppEvent, taskAppEvent } from "./automationEvents";
 import { persist } from "./store";
 import { persistedEntries } from "./preferences";
-import { appendTaskNoteEntry, archiveTaskNote, ensureTaskNote, taskNoteFileName } from "./notes";
+import {
+  appendTaskNoteEntry,
+  archiveTaskNote,
+  ensureTaskNote,
+  taskNoteFileName,
+  taskNotePath,
+} from "./notes";
+import {
+  effectiveFirstPromptTemplate,
+  firstPromptProblem,
+  firstPromptVariables,
+  renderFirstPrompt,
+  seededMessage,
+} from "./firstPrompt";
 import { closeTaskSessions } from "./taskSessions";
 import { ChatTab, chatTabClose, chatTabs } from "./chat";
 import { VaultAgent, VAULT_AGENT_LABELS } from "./vault";
@@ -120,6 +133,8 @@ export interface TaskChatInput {
   wait?: boolean;
   /** Continues this chat tab instead of opening a new one. */
   tab?: string;
+  /** Values for the first-prompt template beyond the task's own, such as an automation's. */
+  variables?: Record<string, string>;
 }
 
 export interface TaskChat {
@@ -203,6 +218,11 @@ function linearFailure<T>(request: Promise<T>): Promise<T> {
       error instanceof Error ? error.message : "The Linear request failed."
     );
   });
+}
+
+function assertFirstPromptTemplate(template: string | undefined) {
+  const problem = template ? firstPromptProblem(template) : null;
+  if (problem) throw new OperationError("invalid_params", problem);
 }
 
 export class Operations {
@@ -340,6 +360,56 @@ export class Operations {
     });
   }
 
+  updateFirstPromptTemplate(template: string) {
+    return this.enqueue(async () => {
+      assertFirstPromptTemplate(template);
+      await this.write({ firstPromptTemplate: template });
+    });
+  }
+
+  /**
+   * The first message a new conversation in the task starts with, from the workspace's
+   * template or the global one; null when neither is set or it renders empty.
+   */
+  async firstPrompt(taskId: string, extra: Record<string, string> = {}): Promise<string | null> {
+    const task = this.task(taskId);
+    const workspace = this.workspace(task.workspaceId);
+    const template = effectiveFirstPromptTemplate(
+      this.getState().firstPromptTemplate,
+      workspace.firstPromptTemplate
+    );
+    if (!template.trim()) return null;
+    const needsDescription = firstPromptVariables(template).includes("issue.description");
+    const description =
+      needsDescription && task.linearIssueId ? await this.issueDescription(task) : "";
+    const values: Record<string, string> = {
+      "issue.identifier": task.linearIssueIdentifier ?? "",
+      "issue.title": task.linearIssueTitle ?? "",
+      "issue.description": description,
+      "issue.url": task.linearIssueIdentifier
+        ? linearIssueUrl(task.linearIssueIdentifier, workspace.linearOrgUrlKey)
+        : "",
+      "issue.project": task.linearProjectName ?? "",
+      "task.id": task.id,
+      "task.branch": task.branchName,
+      "workspace.name": workspace.name,
+      repos: task.members.map((member) => `- ${member.repoName}: ${member.path}`).join("\n"),
+      "note.path": taskNotePath(this.getState().vault, task) ?? "",
+      ...extra,
+    };
+    return renderFirstPrompt(template, values) || null;
+  }
+
+  /** Best-effort: a prompt without the description beats a conversation that cannot start. */
+  private async issueDescription(task: Task): Promise<string> {
+    try {
+      const issue = await this.linear(task.workspaceId).getIssue(task.linearIssueId!);
+      return issue.description ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   repairVaultAgents(agent?: VaultAgent) {
     return this.enqueue(() =>
       this.syncVaultAgents(this.getState().vault, true, agent ? [agent] : undefined)
@@ -464,6 +534,7 @@ export class Operations {
     if (new Set(workspace.repos.map((repo) => repo.id)).size !== workspace.repos.length) {
       throw new OperationError("invalid_params", "Repository IDs must be unique.");
     }
+    assertFirstPromptTemplate(workspace.firstPromptTemplate);
     await this.lifecycle.validateRepos(workspace.repos).catch(() => {
       throw new OperationError(
         "invalid_repositories",
@@ -488,7 +559,9 @@ export class Operations {
 
   updateWorkspace(
     id: string,
-    patch: Partial<Pick<Workspace, "name" | "repos" | "linearApiKey" | "linearOrgUrlKey">>
+    patch: Partial<
+      Pick<Workspace, "name" | "repos" | "linearApiKey" | "linearOrgUrlKey" | "firstPromptTemplate">
+    >
   ) {
     return this.enqueue(async () => {
       const workspace = { ...this.workspace(id), ...patch };
@@ -1071,6 +1144,7 @@ export class Operations {
     const chatFailure = (error: unknown) => {
       throw new OperationError("chat_failed", String(error));
     };
+    const seed = input.tab ? null : await this.firstPrompt(id, input.variables);
     const started = await invoke<Omit<TaskChat, "taskId" | "agent">>("chat_hand_over", {
       request: {
         taskId: id,
@@ -1079,7 +1153,7 @@ export class Operations {
         model: input.model ?? null,
         effort: input.effort ?? null,
         name: input.name ?? null,
-        message: input.message,
+        message: seededMessage(seed, input.message),
         schema: input.schema ?? null,
         tab: input.tab ?? null,
         mainAgent: task.agent ?? input.agent,

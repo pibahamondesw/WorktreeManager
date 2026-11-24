@@ -80,11 +80,13 @@ export function normalizeRepoScripts(raw: unknown): RepoScripts | undefined {
 export function normalizeWorkspaces(raw: unknown): Workspace[] {
   return persistedArray(raw).map((value) => {
     const w = persistedRecord(value);
+    const firstPromptTemplate = persistedString(w.firstPromptTemplate);
     return {
       id: persistedId(w.id),
       name: persistedString(w.name) ?? "",
       linearApiKey: persistedString(w.linearApiKey) ?? null,
       linearOrgUrlKey: persistedString(w.linearOrgUrlKey) ?? null,
+      ...(firstPromptTemplate?.trim() ? { firstPromptTemplate } : {}),
       repos: persistedArray(w.repos).map((value) => {
         const r = persistedRecord(value);
         const scripts = normalizeRepoScripts(r.scripts);

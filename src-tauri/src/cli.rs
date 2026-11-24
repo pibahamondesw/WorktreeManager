@@ -37,6 +37,8 @@ task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
                                      named with --name (agents that cannot name one
                                      leave it unnamed), or in the tab --tab names,
                                      continuing its chat if it is still running.
+                                     Without --tab, the message follows the
+                                     first-prompt template, when one is set.
                                      Prints the tab, session and conversation ids once
                                      the turn starts; --wait also waits for the reply,
                                      which --schema holds to a JSON schema (the chat
@@ -120,7 +122,8 @@ lease status                         Pools, held leases and waiters.
 
 Workspace input: {"name":"Payments","repos":[{"localPath":"/repos/api"}]}
 Repo fields: id (existing members only), name, localPath, worktreeBasePath.
-Workspace update accepts name, repos (replacement list), linearOrgUrlKey (or null).
+Workspace update accepts name, repos (replacement list), linearOrgUrlKey (or null),
+firstPromptTemplate (or null; replaces the global first-prompt template).
 Task input: {"workspaceId":"...","branchName":"feature", "repoIds":["..."]}
 Optional linearIssue: {"id":"uuid","identifier":"WOR-80","title":"Local CLI"}.
 Use Linear's exact branchName alongside linearIssue. Without it, branch names

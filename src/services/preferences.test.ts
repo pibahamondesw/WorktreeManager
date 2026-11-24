@@ -128,6 +128,8 @@ describe("normalization", () => {
       { claude: "terminal", extra: "terminal" }
     );
     expect(normalizers.customTheme({ accent: "red", broken: 42 })).toEqual({ accent: "red" });
+    expect(normalizers.firstPromptTemplate("Work on {task.branch}")).toBe("Work on {task.branch}");
+    expect(normalizers.firstPromptTemplate(42)).toBe("");
     expect(
       normalizers.typography({
         ui: { family: "  Inter ", size: 99, weight: 700 },
