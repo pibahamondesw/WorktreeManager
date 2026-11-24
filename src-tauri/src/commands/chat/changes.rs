@@ -2,6 +2,8 @@
 //! by any tool, so the same review works for both agents.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
+use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -12,11 +14,13 @@ use tauri::State;
 
 use super::checkpoints::{self, Checkpoints, FileComparison};
 use super::{blocking, model, ChatRegistry};
+use crate::commands::git::git_command;
 
 const DIFF_TIMEOUT: Duration = Duration::from_millis(500);
 const MAX_TEXT_BYTES: usize = 4 * 1024 * 1024;
 pub(super) const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 static REVIEWED_WRITES: Mutex<()> = Mutex::new(());
+const GENERATED_ATTRIBUTES: [&str; 2] = ["linguist-generated", "gitlab-generated"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +45,8 @@ pub struct FileChange {
     /// Identifies the file's resulting content: the after blob, or the removed blob for
     /// deletions. A later turn that changes the file changes it too.
     pub content: String,
+    #[serde(default)]
+    pub generated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -144,6 +150,7 @@ fn file_change(
                 Some(format!("deleted:{}", before.blob()))
             })
             .unwrap_or_default(),
+        generated: false,
     })
 }
 
@@ -212,6 +219,77 @@ fn branch_change_set(checkpoints: &Checkpoints, point: &str) -> Result<ChangeSet
     change_set(checkpoints, &checkpoints.upstream_checkpoint(point)?, point)
 }
 
+fn generated_paths(folder: &str, paths: &BTreeSet<String>) -> Result<BTreeSet<String>, String> {
+    let mut child = git_command()
+        .arg("-C")
+        .arg(folder)
+        .args(["check-attr", "--stdin", "-z"])
+        .args(GENERATED_ATTRIBUTES)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let input = paths
+        .iter()
+        .map(|path| format!("{path}\0"))
+        .collect::<String>();
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let _ = writer.join();
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let fields = stdout.split('\0').collect::<Vec<_>>();
+    Ok(fields
+        .chunks_exact(3)
+        .filter(|entry| matches!(entry[2], "set" | "true"))
+        .map(|entry| entry[0].to_string())
+        .collect())
+}
+
+fn change_sets_mut(changes: &mut ChatChanges) -> impl Iterator<Item = &mut ChangeSet> {
+    changes.conversation.iter_mut().chain(
+        changes
+            .turns
+            .iter_mut()
+            .flat_map(|turn| std::iter::once(&mut turn.changes).chain(turn.branch.iter_mut())),
+    )
+}
+
+/// Marks files that `.gitattributes` declares generated. Attributes come from the current
+/// worktree, so a failure to read them only leaves files expanded.
+fn mark_generated(changes: &mut ChatChanges) {
+    let mut paths_by_folder = BTreeMap::<String, BTreeSet<String>>::new();
+    for set in change_sets_mut(changes) {
+        for file in &set.files {
+            paths_by_folder
+                .entry(file.folder.clone())
+                .or_default()
+                .insert(file.path.clone());
+        }
+    }
+    let generated = paths_by_folder
+        .into_iter()
+        .map(|(folder, paths)| {
+            let found = generated_paths(&folder, &paths).unwrap_or_else(|error| {
+                log::warn!("could not read generated attributes in {folder}: {error}");
+                BTreeSet::new()
+            });
+            (folder, found)
+        })
+        .collect::<BTreeMap<_, _>>();
+    for set in change_sets_mut(changes) {
+        for file in &mut set.files {
+            file.generated = generated
+                .get(&file.folder)
+                .is_some_and(|paths| paths.contains(&file.path));
+        }
+    }
+}
+
 fn logged(set: Result<ChangeSet, String>) -> Option<ChangeSet> {
     set.map_err(|error| log::warn!("could not compute chat changes: {error}"))
         .ok()
@@ -238,7 +316,7 @@ pub fn collect(
         }
         _ => None,
     };
-    ChatChanges {
+    let mut changes = ChatChanges {
         turns: turns
             .into_iter()
             .filter_map(|(items, turn)| {
@@ -252,7 +330,9 @@ pub fn collect(
             })
             .collect(),
         conversation,
-    }
+    };
+    mark_generated(&mut changes);
+    changes
 }
 
 const IMAGE_TYPES: [(&str, &str); 8] = [
@@ -580,6 +660,73 @@ mod tests {
             ["b"]
         );
         assert!(reviewed_files(&reloaded, "other").is_empty());
+    }
+
+    #[test]
+    fn marks_files_that_gitattributes_declares_generated_in_every_change_set() {
+        let fixture = Fixture::new(1);
+        let checkpoints = &fixture.store;
+        fs::write(
+            fixture.file(0, ".gitattributes"),
+            "*.gen.ts linguist-generated\nschema.json gitlab-generated=true\nkept.gen.ts -linguist-generated\n",
+        )
+        .unwrap();
+        let before = capture(&fixture);
+        for name in ["api.gen.ts", "schema.json", "kept.gen.ts", "app.ts"] {
+            fs::write(fixture.file(0, name), "content\n").unwrap();
+        }
+        let after = capture(&fixture);
+        let turn = checkpoints::TurnCheckpoints {
+            before: before.clone(),
+            after,
+        };
+        checkpoints.bind_turn("conv", "turn-1", &turn).unwrap();
+
+        let changes = collect(checkpoints, "conv", &["turn-1".to_string()]);
+
+        let generated = |set: &ChangeSet| {
+            set.files
+                .iter()
+                .filter(|file| file.generated)
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            generated(changes.conversation.as_ref().unwrap()),
+            ["api.gen.ts", "schema.json"]
+        );
+        assert_eq!(
+            generated(&changes.turns[0].changes),
+            ["api.gen.ts", "schema.json"]
+        );
+    }
+
+    #[test]
+    fn leaves_files_expanded_when_attributes_cannot_be_read() {
+        let folder = std::env::temp_dir().join(format!("wtm-no-repo-{}", uuid::Uuid::new_v4()));
+        let file = FileChange {
+            folder: folder.to_string_lossy().to_string(),
+            path: "api.gen.ts".into(),
+            previous_path: None,
+            status: ChangeStatus::Added,
+            additions: 1,
+            deletions: 0,
+            binary: false,
+            content: "blob".into(),
+            generated: true,
+        };
+        let mut changes = ChatChanges {
+            turns: Vec::new(),
+            conversation: Some(ChangeSet {
+                before: "b".into(),
+                after: "a".into(),
+                files: vec![file],
+            }),
+        };
+
+        mark_generated(&mut changes);
+
+        assert!(!changes.conversation.unwrap().files[0].generated);
     }
 
     #[test]

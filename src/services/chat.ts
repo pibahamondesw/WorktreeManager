@@ -388,6 +388,7 @@ export interface FileChange {
   deletions: number;
   binary: boolean;
   content: string;
+  generated?: boolean;
 }
 
 export interface ChangeSet {
