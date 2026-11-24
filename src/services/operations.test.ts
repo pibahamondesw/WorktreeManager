@@ -1080,6 +1080,106 @@ describe("openTaskChat", () => {
   });
 });
 
+describe("first prompt", () => {
+  const started = { sessionId: "s1", conversationId: "c1", tab: "a1", continued: false };
+  const linked: Task = {
+    ...task,
+    linearIssueId: "issue-id",
+    linearIssueIdentifier: "ENG-7",
+    linearIssueTitle: "Fix login",
+    linearProjectName: "Auth",
+  };
+  const sentMessage = () =>
+    (vi.mocked(invoke).mock.calls[0][1] as { request: { message: string } }).request.message;
+
+  it("is null until a template is set", async () => {
+    const { operations } = fixture([linked]);
+    expect(await operations.firstPrompt("t1")).toBeNull();
+  });
+
+  it("fills the task, its issue and its repositories into the global template", async () => {
+    const { operations } = fixture([linked]);
+    await operations.updateFirstPromptTemplate(
+      "{issue.identifier} {issue.title} ({issue.project})\n{issue.url}\n{task.branch} in {workspace.name}\n{repos}\nLog: {note.path}"
+    );
+    expect(await operations.firstPrompt("t1")).toBe(
+      [
+        "ENG-7 Fix login (Auth)",
+        "https://linear.app/issue/ENG-7",
+        "feature in Payments",
+        "- api: /wt/api/feature\n- web: /wt/web/feature",
+      ].join("\n")
+    );
+  });
+
+  it("prefers the workspace template and fetches the description only when it is used", async () => {
+    const { operations } = fixture([linked]);
+    const getIssue = vi.spyOn(LinearService.prototype, "getIssue").mockResolvedValue({
+      id: "issue-id",
+      identifier: "ENG-7",
+      title: "Fix login",
+      branchName: "eng-7",
+      description: "Users cannot sign in.",
+    });
+    await operations.updateFirstPromptTemplate("Global {task.branch}");
+    expect(await operations.firstPrompt("t1")).toBe("Global feature");
+    expect(getIssue).not.toHaveBeenCalled();
+    await operations.updateWorkspace("w1", {
+      linearApiKey: "key",
+      firstPromptTemplate: "{issue.identifier}\n{issue.description}",
+    });
+    expect(await operations.firstPrompt("t1")).toBe("ENG-7\nUsers cannot sign in.");
+    expect(getIssue).toHaveBeenCalledWith("issue-id");
+  });
+
+  it("starts without the description when Linear cannot provide it", async () => {
+    const { operations } = fixture([linked]);
+    vi.spyOn(LinearService.prototype, "getIssue").mockRejectedValue(new Error("offline"));
+    await operations.updateWorkspace("w1", {
+      linearApiKey: "key",
+      firstPromptTemplate: "{issue.identifier}\n{issue.description}",
+    });
+    expect(await operations.firstPrompt("t1")).toBe("ENG-7");
+  });
+
+  it("fills what the caller adds, such as an automation's variables", async () => {
+    const { operations } = fixture([task]);
+    await operations.updateFirstPromptTemplate("Run {run.id}\nIssue {issue.identifier}");
+    expect(await operations.firstPrompt("t1", { "run.id": "r-1" })).toBe("Run r-1");
+  });
+
+  it("rejects a template with an unknown variable", async () => {
+    const { operations, save } = fixture([task]);
+    await expect(operations.updateFirstPromptTemplate("{nope}")).rejects.toMatchObject({
+      code: "invalid_params",
+    });
+    await expect(
+      operations.updateWorkspace("w1", { firstPromptTemplate: "{task.branch" })
+    ).rejects.toMatchObject({ code: "invalid_params" });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("seeds a new conversation's first message with the template and its variables", async () => {
+    const { operations } = fixture([task]);
+    await operations.updateFirstPromptTemplate("Branch {task.branch}\nItem {item.id}");
+    vi.mocked(invoke).mockClear().mockResolvedValueOnce(started);
+    await operations.openTaskChat("t1", {
+      agent: "claude",
+      message: "Review",
+      variables: { "item.id": "ENG-9" },
+    });
+    expect(sentMessage()).toBe("Branch feature\nItem ENG-9\n\nReview");
+  });
+
+  it("leaves a message to an existing tab as written", async () => {
+    const { operations } = fixture([task]);
+    await operations.updateFirstPromptTemplate("Branch {task.branch}");
+    vi.mocked(invoke).mockClear().mockResolvedValueOnce(started);
+    await operations.openTaskChat("t1", { agent: "claude", message: "Go on", tab: "a1" });
+    expect(sentMessage()).toBe("Go on");
+  });
+});
+
 describe("chat tabs", () => {
   const tabs = [
     { id: "main", agent: "claude", conversationId: "c1" },

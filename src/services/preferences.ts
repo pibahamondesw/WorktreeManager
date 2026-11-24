@@ -50,7 +50,7 @@ export interface Preferences {
   showAutomationTasks: boolean;
 }
 
-export type PersistedValues = Omit<AppState, "shortcutOverrides"> &
+export type PersistedValues = Required<Omit<AppState, "shortcutOverrides">> &
   Preferences & { schemaVersion: number };
 export type PersistedEntry = {
   [K in keyof PersistedValues]: [K, PersistedValues[K]];
@@ -81,6 +81,7 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
   workspaces: normalizeWorkspaces,
   tasks: normalizeTasks,
   selectedWorkspaceId: (raw) => (typeof raw === "string" ? raw : null),
+  firstPromptTemplate: (raw) => (typeof raw === "string" ? raw : ""),
   schemaVersion: (raw) => (typeof raw === "number" && Number.isInteger(raw) && raw >= 0 ? raw : 0),
   vault: (raw) => {
     const value = record(raw);

@@ -106,6 +106,8 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 
 Effects are idempotent (reconciled before retries) and staged in Test runs.
 
+`wtm.chat_open` sends `message` after the first-prompt template of the task's workspace (or the global one), when the owner set one; the template can use the step's template variables, such as `{automation}`, `{run.id}`, `{item.title}` and `{item.data.<key>}`.
+
 `wtm.task_create` params are templates, usually step outputs: `repos` and `from_remote` take names or a JSON array of them, `branch` is used exactly as rendered (without it or an item's task, the branch Linear suggests for `linear_issue`; a Test run shows `<issue branch>`), `from_remote` repositories check out `origin/<branch>` (it must exist), and `linear_issue` is an identifier. A task already on the branch is reused. The item's later effects and steps work in the resolved task; its output adds `branch` and `worktrees`. With `target.task: none` it gives the item its task mid-run (it then needs `repos`, and `branch` or `linear_issue`): steps before it have no task, steps after it work in the task.
 
 ## Authorization

@@ -1,11 +1,13 @@
 import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
 import { CircleciSettings } from "./CircleciSettings";
 import { TypographySettings } from "./TypographySettings";
+import { FirstPromptSettings } from "./FirstPromptSettings";
 import type { Operations } from "../../services/operations";
 import { useEffect, useRef } from "react";
 import { Modal } from "../ui/Modal";
 import {
   BellIcon,
+  BotIcon,
   DocumentIcon,
   NotebookIcon,
   RefreshIcon,
@@ -28,6 +30,7 @@ export type SettingsSection =
   | "vault"
   | "dependencies"
   | "alerts"
+  | "firstPrompt"
   | "circleci"
   | "shortcuts";
 
@@ -37,6 +40,7 @@ const SECTIONS = [
   { id: "vault", label: "Obsidian vault", icon: NotebookIcon },
   { id: "dependencies", label: "Dependencies", icon: WrenchIcon },
   { id: "alerts", label: "Agent alerts", icon: BellIcon },
+  { id: "firstPrompt", label: "First prompt", icon: BotIcon },
   { id: "circleci", label: "CircleCI", icon: RefreshIcon },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: WrenchIcon },
 ] as const;
@@ -66,6 +70,8 @@ interface SettingsModalProps {
   onKeepRunningInBackgroundChange: (keepRunning: boolean) => void;
   compactIdleChats: boolean;
   onCompactIdleChatsChange: (compact: boolean) => void;
+  firstPromptTemplate?: string;
+  onFirstPromptTemplateChange?: (template: string) => Promise<void>;
   report: DoctorReport | null;
   running: boolean;
   severity: CheckSeverity | null;
@@ -155,6 +161,12 @@ export function SettingsModal(props: SettingsModalProps) {
                   />
                 )}
                 {id === "circleci" && section === id && <CircleciSettings />}
+                {id === "firstPrompt" && section === id && props.onFirstPromptTemplateChange && (
+                  <FirstPromptSettings
+                    template={props.firstPromptTemplate ?? ""}
+                    onSave={props.onFirstPromptTemplateChange}
+                  />
+                )}
                 {id === "theme" && (
                   <ThemeSettings
                     currentThemeId={props.themeId}

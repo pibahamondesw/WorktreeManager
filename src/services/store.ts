@@ -121,6 +121,7 @@ export async function loadState(
   if (schemaVersion >= 1 || rawWorkspaces) {
     const workspaces = normalizers.workspaces(rawWorkspaces);
     const tasks = await loadPreference("tasks");
+    const firstPromptTemplate = await loadPreference("firstPromptTemplate");
     const selectedWorkspaceId = resolveSelectedWorkspaceId(
       await loadPreference("selectedWorkspaceId"),
       workspaces
@@ -185,6 +186,7 @@ export async function loadState(
       setup: setupWithSecret(setup, credentialState.secrets),
       shortcutOverrides,
       vault,
+      firstPromptTemplate,
       workspaces: workspacesWithSecrets(workspaces, credentialState.secrets),
       tasks,
       selectedWorkspaceId,

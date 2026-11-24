@@ -67,6 +67,7 @@ const dropFiles = async (paths: string[], position = { x: 0, y: 0 }) => {
 };
 
 import { ChatPane } from "./ChatPane";
+import { FirstPromptContext } from "./firstPromptContext";
 import { describeAgent, loadAgentCatalog } from "../../services/agents";
 import { AGENT_CATALOG } from "../../services/agents.fixture";
 import { resize } from "../../test/fakeObserveResize";
@@ -460,6 +461,75 @@ describe("ChatPane", () => {
 
     expect(screen.getByText("Working")).toBeInTheDocument();
     expect(mocks.markdownRenders).toEqual(["Working"]);
+  });
+
+  it("fills a new conversation's empty composer with the first prompt once", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? snapshot({ items: [] }) : undefined)
+    );
+    const firstPrompt = vi.fn().mockResolvedValue("Work on ENG-7");
+    const pane = () => (
+      <FirstPromptContext.Provider value={firstPrompt}>
+        <ChatPane taskId="seeded" agent="claude" folders={["/wt/a"]} />
+      </FirstPromptContext.Provider>
+    );
+    const { unmount } = render(pane());
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await waitFor(() => expect(composerText(box)).toBe("Work on ENG-7"));
+    expect(firstPrompt).toHaveBeenCalledExactlyOnceWith("seeded");
+
+    typeInto(box, "");
+    unmount();
+    render(pane());
+    const reopened = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    expect(composerText(reopened)).toBe("");
+    expect(firstPrompt).toHaveBeenCalledOnce();
+  });
+
+  it("offers the same first prompt again to the conversation /clear starts", async () => {
+    const clearCommand = { name: "clear", description: "Start fresh", action: { kind: "clear" } };
+    mocks.invoke.mockImplementation((command: string, args: { mode?: string }) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({
+              generation: args.mode === "fresh" ? 4 : 3,
+              items: [],
+              controls: { ...snapshot().controls, commands: [clearCommand] },
+            })
+          : undefined
+      )
+    );
+    const firstPrompt = vi.fn().mockResolvedValue("Work on ENG-7");
+    render(
+      <FirstPromptContext.Provider value={firstPrompt}>
+        <ChatPane taskId="cleared" agent="claude" folders={["/wt/a"]} />
+      </FirstPromptContext.Provider>
+    );
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await waitFor(() => expect(composerText(box)).toBe("Work on ENG-7"));
+    typeInto(box, "/clear");
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        "chat_open",
+        expect.objectContaining({ mode: "fresh" })
+      )
+    );
+    await waitFor(() => expect(composerText(box)).toBe("Work on ENG-7"));
+    expect(firstPrompt).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves the composer alone when the conversation already has messages", async () => {
+    const firstPrompt = vi.fn().mockResolvedValue("Work on ENG-7");
+    render(
+      <FirstPromptContext.Provider value={firstPrompt}>
+        <ChatPane taskId="ongoing" agent="claude" folders={["/wt/a"]} />
+      </FirstPromptContext.Provider>
+    );
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await screen.findByText("Fix the bug");
+    expect(composerText(box)).toBe("");
+    expect(firstPrompt).not.toHaveBeenCalled();
   });
 
   it("sends on Enter, streams the reply and ignores a stale generation", async () => {

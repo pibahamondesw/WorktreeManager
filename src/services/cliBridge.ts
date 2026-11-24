@@ -63,6 +63,9 @@ function publicWorkspace(workspace: Workspace) {
       ...(scripts ? { scripts } : {}),
     })),
     linearOrgUrlKey: workspace.linearOrgUrlKey ?? null,
+    ...(workspace.firstPromptTemplate
+      ? { firstPromptTemplate: workspace.firstPromptTemplate }
+      : {}),
   };
 }
 
@@ -74,8 +77,17 @@ function repoScriptsInput(value: unknown) {
   return normalizeRepoScripts(input);
 }
 
+const WORKSPACE_INPUT_KEYS = ["name", "repos", "linearOrgUrlKey", "firstPromptTemplate"];
+
+function firstPromptTemplateInput(value: unknown): string | undefined {
+  if (value === null) return undefined;
+  if (typeof value !== "string")
+    throw new OperationError("invalid_params", "firstPromptTemplate must be a string or null.");
+  return value.trim() ? value : undefined;
+}
+
 async function workspaceInput(value: unknown, existing?: Workspace): Promise<Workspace> {
-  const input = object(value, ["name", "repos", "linearOrgUrlKey"]);
+  const input = object(value, WORKSPACE_INPUT_KEYS);
   let repos = existing?.repos;
   if (input.repos !== undefined) {
     if (!Array.isArray(input.repos))
@@ -128,6 +140,9 @@ async function workspaceInput(value: unknown, existing?: Workspace): Promise<Wor
     repos,
     ...(input.linearOrgUrlKey !== undefined
       ? { linearOrgUrlKey: input.linearOrgUrlKey === null ? null : text(input.linearOrgUrlKey) }
+      : {}),
+    ...(input.firstPromptTemplate !== undefined
+      ? { firstPromptTemplate: firstPromptTemplateInput(input.firstPromptTemplate) }
       : {}),
   };
 }
@@ -236,7 +251,16 @@ async function taskChatInput(params: Record<string, unknown>): Promise<TaskChatI
     schema,
     wait: params.wait === true,
     tab: optionalText(params.tab),
+    variables: chatVariables(params.variables),
   };
+}
+
+function chatVariables(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  const entries = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  if (!entries || Object.values(entries).some((entry) => typeof entry !== "string"))
+    throw new OperationError("invalid_params", "variables must map names to strings.");
+  return entries as Record<string, string>;
 }
 
 /** Operations only the automation engine in this process may run, never a socket client. */
@@ -361,7 +385,18 @@ export async function dispatchCliBridge(
       "task.get": ["id", "git"],
       "task.create": ["input"],
       "task.link-issue": ["id", "issue"],
-      "task.chat": ["id", "agent", "model", "effort", "name", "message", "schema", "wait", "tab"],
+      "task.chat": [
+        "id",
+        "agent",
+        "model",
+        "effort",
+        "name",
+        "message",
+        "schema",
+        "wait",
+        "tab",
+        "variables",
+      ],
       "task.tabs": ["id"],
       "task.tab-close": ["id", "tab"],
       "task.delete": ["id", "deleteWorktrees", "force", "skipTeardown"],
@@ -431,13 +466,16 @@ export async function dispatchCliBridge(
       case "workspace.update": {
         const id = text(params.id);
         const input = await workspaceInput(params.input, operations.workspace(id));
-        const patch = object(params.input, ["name", "repos", "linearOrgUrlKey"]);
+        const patch = object(params.input, WORKSPACE_INPUT_KEYS);
         result = publicWorkspace(
           await operations.updateWorkspace(id, {
             ...(patch.name !== undefined ? { name: input.name } : {}),
             ...(patch.repos !== undefined ? { repos: input.repos } : {}),
             ...(patch.linearOrgUrlKey !== undefined
               ? { linearOrgUrlKey: input.linearOrgUrlKey }
+              : {}),
+            ...(patch.firstPromptTemplate !== undefined
+              ? { firstPromptTemplate: input.firstPromptTemplate }
               : {}),
           })
         );

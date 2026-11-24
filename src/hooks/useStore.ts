@@ -218,7 +218,12 @@ export function useStore() {
   const updateWorkspace = useCallback(
     (
       id: string,
-      updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
+      updates: Partial<
+        Pick<
+          Workspace,
+          "name" | "linearApiKey" | "linearOrgUrlKey" | "repos" | "firstPromptTemplate"
+        >
+      >
     ) => report(operations.updateWorkspace(id, updates)),
     [operations, report]
   );

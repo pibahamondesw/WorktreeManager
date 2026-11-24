@@ -192,6 +192,15 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     });
   });
 
+  it("keeps a workspace's first-prompt template unless it is blank", () => {
+    const [kept, blank] = normalizeWorkspaces([
+      { id: "w1", repos: [], firstPromptTemplate: "On {task.branch}" },
+      { id: "w2", repos: [], firstPromptTemplate: "  " },
+    ]);
+    expect(kept.firstPromptTemplate).toBe("On {task.branch}");
+    expect(blank).not.toHaveProperty("firstPromptTemplate");
+  });
+
   it("keeps only non-blank repository script overrides", () => {
     const [w] = normalizeWorkspaces([
       {

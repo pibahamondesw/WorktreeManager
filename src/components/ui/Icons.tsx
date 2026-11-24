@@ -105,6 +105,7 @@ export const ExpandIcon = libraryIcon(Maximize2, 14);
 export const FitIcon = libraryIcon(Scan, 14);
 export const DownloadIcon = libraryIcon(Download, 14);
 export const DocumentIcon = libraryIcon(FileText, 16);
+export const BotIcon = libraryIcon(Bot, 14);
 
 export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
   return (

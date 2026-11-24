@@ -96,6 +96,26 @@ describe("cli bridge contract", () => {
     expect(operations.workspace("w1").repos[0]).not.toHaveProperty("scripts");
   });
 
+  it("sets, keeps and clears a workspace's first-prompt template", async () => {
+    const update = (input: Record<string, unknown>) =>
+      call("workspace.update", { id: "w1", input });
+    expect(await update({ firstPromptTemplate: "Work on {issue.identifier}" })).toMatchObject({
+      ok: true,
+      data: { firstPromptTemplate: "Work on {issue.identifier}" },
+    });
+    await update({ name: "Renamed" });
+    expect(operations.workspace("w1").firstPromptTemplate).toBe("Work on {issue.identifier}");
+    for (const firstPromptTemplate of [1, "{unknown}"])
+      expect(await update({ firstPromptTemplate })).toMatchObject({
+        ok: false,
+        error: { code: "invalid_params" },
+      });
+    const cleared = await update({ firstPromptTemplate: null });
+    expect(cleared).toMatchObject({ ok: true });
+    expect(cleared.ok && cleared.data).not.toHaveProperty("firstPromptTemplate");
+    expect(operations.workspace("w1").firstPromptTemplate).toBeUndefined();
+  });
+
   it("rejects mismatched protocol, IDs, flags, and malformed inputs", async () => {
     expect(await call("workspace.list", {}, 2)).toMatchObject({
       ok: false,
@@ -307,6 +327,17 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
     "chat_hand_over",
     { request: { tab: "a1", mainAgent: "codex" } },
   ]);
+  await operations.updateFirstPromptTemplate("Run {run.id} on {task.branch}");
+  await call("task.chat", {
+    id: "t1",
+    agent: "claude",
+    message: "Review",
+    variables: { "run.id": "r-1" },
+  });
+  expect(invokeCommand.mock.lastCall).toMatchObject([
+    "chat_hand_over",
+    { request: { message: "Run r-1 on feature\n\nReview" } },
+  ]);
   invokeCommand.mockResolvedValueOnce([{ id: "a1", agent: "codex", conversationId: "c1" }]);
   expect(await call("task.tabs", { id: "t1" })).toMatchObject({
     ok: true,
@@ -328,6 +359,8 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
     { id: "t1", agent: "claude", message: "Hi", schema: [], wait: true },
     { id: "t1", agent: "claude", message: "Hi", schema },
     { id: "t1", agent: "claude", message: "Hi", name: " " },
+    { id: "t1", agent: "claude", message: "Hi", variables: [] },
+    { id: "t1", agent: "claude", message: "Hi", variables: { "run.id": 1 } },
   ])
     expect(await call("task.chat", params)).toMatchObject({
       ok: false,

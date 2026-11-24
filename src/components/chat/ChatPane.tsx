@@ -12,7 +12,7 @@ import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
 import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
-import { Composer, QueuedMessageEdit } from "./Composer";
+import { Composer, ComposerSeed, QueuedMessageEdit } from "./Composer";
 import { ApprovalActions } from "./ApprovalActions";
 import { ApprovalDraft } from "./approval";
 import { PendingRequestCard } from "./PendingRequestCard";
@@ -25,6 +25,7 @@ import { ChangeSummaryCard, ChangesPanel, ChangesScope, LineCounts } from "./Cha
 import { diffReviewMessage } from "./diffComments";
 import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 import { MarkdownPreviewContext, MarkdownPreviewRequest } from "./markdownPreviewContext";
+import { useFirstPrompt } from "./firstPromptContext";
 import { isPlanItem } from "./markdownDocument";
 import { AgentUsageIndicator } from "../usage/AgentUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
@@ -74,6 +75,9 @@ interface ReadOnlySession {
 }
 
 const CLOSED: ChatStatus = { kind: "exited", code: null };
+
+/** Conversations whose composer was already offered the first prompt, so clearing it sticks. */
+const seededConversations = new Set<string>();
 
 /** Queued messages held for editing, by chat; the edit outlives the pane so leaving a task never sends it. */
 const openQueuedEdits = new Map<string, { itemId: string; text: string }>();
@@ -192,6 +196,23 @@ export function ChatPane({
   const timeline = useVirtualRows(rowKeys);
   const { stickToBottom } = timeline;
   const earlier = snapshot.earlier ?? 0;
+  const firstPrompt = useFirstPrompt();
+  const [seed, setSeed] = useState<ComposerSeed | null>(null);
+  const startsEmpty = !readOnly && status.kind === "idle" && items.length === 0 && earlier === 0;
+  useEffect(() => {
+    if (!startsEmpty || seededConversations.has(sessionKey)) return;
+    let stale = false;
+    firstPrompt(taskId)
+      .then((text) => {
+        if (stale || seededConversations.has(sessionKey)) return;
+        seededConversations.add(sessionKey);
+        if (text) setSeed({ key: sessionKey, text });
+      })
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [startsEmpty, sessionKey, taskId, firstPrompt]);
   const historyDisabled =
     status.kind !== "idle" || pending.length > 0 || historyPending === chatKey;
   const approvalKey = (id: string) => `${snapshot.generation}:${id}`;
@@ -518,6 +539,7 @@ export function ChatPane({
               controls={controls}
               folders={folders}
               queuedEdit={queuedEdit}
+              seed={seed}
               actions={{
                 send,
                 interrupt: session.interrupt,

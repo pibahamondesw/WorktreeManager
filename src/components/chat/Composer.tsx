@@ -80,6 +80,12 @@ export interface QueuedMessageEdit {
   finish: (edit: QueuedEdit) => Promise<void>;
 }
 
+/** Text for an empty composer; a new key offers it again, even with the same text. */
+export interface ComposerSeed {
+  key: string;
+  text: string;
+}
+
 interface Draft {
   text: string;
   images: ImageAttachment[];
@@ -94,6 +100,8 @@ interface ComposerProps {
   folders: string[];
   actions: ComposerActions;
   queuedEdit?: QueuedMessageEdit;
+  /** Fills an empty composer once per key, such as with a new conversation's first prompt. */
+  seed?: ComposerSeed | null;
   onError: (message: string | null) => void;
 }
 
@@ -119,6 +127,7 @@ export function Composer({
   folders,
   actions,
   queuedEdit,
+  seed = null,
   onError,
 }: ComposerProps) {
   const catalog = useAgentCatalog();
@@ -140,6 +149,14 @@ export function Composer({
   const editId = queuedEdit?.id ?? null;
   const [shownEditId, setShownEditId] = useState<string | null>(null);
   const [setAside, setSetAside] = useState<Draft | null>(null);
+  const [offeredSeedKey, setOfferedSeedKey] = useState<string | null>(null);
+  if (seed && seed.key !== offeredSeedKey) {
+    setOfferedSeedKey(seed.key);
+    if (!text.trim() && !queuedEdit) {
+      setText(seed.text);
+      setCaret(seed.text.length);
+    }
+  }
   if (editId !== shownEditId) {
     setShownEditId(editId);
     const restored = queuedEdit ? { text: queuedEdit.text, images: [], pastes: [] } : setAside;

@@ -10,6 +10,8 @@ import { SavedLinearKeySelect } from "./SavedLinearKeySelect";
 import { LinearKeyField } from "./LinearKeyField";
 import { useLinearKeyValidation } from "../../hooks/useLinearKeyValidation";
 import { normalizeRepoScripts } from "../../utils";
+import { FirstPromptTemplateField } from "../settings/FirstPromptTemplateField";
+import { firstPromptProblem } from "../../services/firstPrompt";
 
 interface EditWorkspaceModalProps {
   open: boolean;
@@ -19,7 +21,9 @@ interface EditWorkspaceModalProps {
   workspace: Workspace;
   onSave: (
     workspaceId: string,
-    updates: Partial<Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos">>
+    updates: Partial<
+      Pick<Workspace, "name" | "linearApiKey" | "linearOrgUrlKey" | "repos" | "firstPromptTemplate">
+    >
   ) => void | Promise<unknown>;
   onRequestDelete: () => void;
 }
@@ -35,6 +39,7 @@ export function EditWorkspaceModal({
 }: EditWorkspaceModalProps) {
   const [name, setName] = useState("");
   const [repos, setRepos] = useState<WorkspaceRepo[]>([]);
+  const [firstPromptTemplate, setFirstPromptTemplate] = useState("");
   const [home, setHome] = useState("");
   const [error, setError] = useState<string | null>(null);
   const linear = useLinearKeyValidation();
@@ -49,12 +54,14 @@ export function EditWorkspaceModal({
     if (!open) {
       setName("");
       setRepos([]);
+      setFirstPromptTemplate("");
       setError(null);
       linear.reset();
       return;
     }
     setName(workspace.name);
     setRepos(workspace.repos);
+    setFirstPromptTemplate(workspace.firstPromptTemplate ?? "");
     if (workspace.linearApiKey) {
       linear.setLinearKey(workspace.linearApiKey);
       void linear.runValidation(workspace.linearApiKey);
@@ -90,6 +97,11 @@ export function EditWorkspaceModal({
       setError("Validate the Linear API key before saving");
       return;
     }
+    const templateProblem = firstPromptProblem(firstPromptTemplate);
+    if (templateProblem) {
+      setError(templateProblem);
+      return;
+    }
     const newLinearKey = linear.linearKey.trim() || null;
     try {
       await onSave(workspace.id, {
@@ -109,6 +121,7 @@ export function EditWorkspaceModal({
             ? linear.linearOrgUrlKey
             : workspace.linearOrgUrlKey
           : null,
+        firstPromptTemplate: firstPromptTemplate.trim() ? firstPromptTemplate : undefined,
       });
       onClose();
     } catch (error) {
@@ -142,6 +155,12 @@ export function EditWorkspaceModal({
           linearError={linear.linearError}
           onChange={linear.setLinearKey}
           onValidate={() => void linear.runValidation(linear.linearKey)}
+        />
+
+        <FirstPromptTemplateField
+          label="First prompt template (replaces the global one)"
+          value={firstPromptTemplate}
+          onChange={setFirstPromptTemplate}
         />
 
         {error && <p className="text-sm text-danger select-text">{error}</p>}
