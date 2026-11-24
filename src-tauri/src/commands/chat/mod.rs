@@ -1527,6 +1527,16 @@ pub async fn chat_read_file(
     .await
 }
 
+#[tauri::command]
+pub async fn chat_write_file(
+    folders: Vec<String>,
+    path: String,
+    original: String,
+    text: String,
+) -> Result<file_preview::PreviewFile, String> {
+    blocking(move || file_preview::write(&folders, &path, &original, &text)).await
+}
+
 #[tauri::command(async)]
 pub fn chat_interrupt(
     registry: State<'_, ChatRegistry>,

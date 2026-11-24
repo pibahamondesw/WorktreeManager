@@ -585,6 +585,7 @@ export function ChatPane({
             request={preview}
             folders={folders}
             error={actionError}
+            busy={busy}
             onClose={() => setPreview(null)}
             editable={
               previewRequest?.kind === "approval" && previewRequest.editablePlan

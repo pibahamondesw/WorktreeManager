@@ -4,6 +4,7 @@ import { ChevronLeftIcon, CloseIcon, DocumentIcon, RefreshIcon, SpinnerIcon } fr
 import { MarkdownText } from "./ChatItemView";
 import { FilePreview } from "./FilePreview";
 import { usePreviewFile } from "./previewFile";
+import { chatWriteFile } from "../../services/chat";
 import {
   directoryOf,
   documentSummary,
@@ -19,6 +20,10 @@ import {
 } from "./markdownPreviewContext";
 
 const OUTLINE_MIN_HEADINGS = 3;
+
+function withLineEndingsOf(base: string, text: string) {
+  return base.includes("\r\n") ? text.replace(/\r?\n/g, "\r\n") : text;
+}
 const ACTIVE_HEADING_OFFSET = 96;
 
 interface OutlineEntry {
@@ -57,6 +62,7 @@ export function MarkdownPreviewPanel({
   footer,
   editable,
   error,
+  busy = false,
   onClose,
 }: {
   request: MarkdownPreviewRequest;
@@ -64,6 +70,7 @@ export function MarkdownPreviewPanel({
   footer?: ReactNode;
   error?: string | null;
   editable?: { text: string; onChange: (text: string) => void; disabled: boolean };
+  busy?: boolean;
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -79,6 +86,35 @@ export function MarkdownPreviewPanel({
     revision
   );
   const canEdit = editable && history.length === 1;
+  const [fileEdit, setFileEdit] = useState<{ base: string; text: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const editableText =
+    source.kind === "code" && codeFile.kind === "ready" && codeFile.content.kind === "text"
+      ? codeFile.content.text
+      : null;
+  const unsaved =
+    fileEdit !== null && withLineEndingsOf(fileEdit.base, fileEdit.text) !== fileEdit.base;
+  const requestClose = () => (unsaved ? setConfirmingClose(true) : onClose());
+  const stopEditing = () => {
+    setFileEdit(null);
+    setSaveError(null);
+    setConfirmingClose(false);
+  };
+  const saveFile = async (edit: { base: string; text: string }, path: string) => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await chatWriteFile(folders, path, edit.base, withLineEndingsOf(edit.base, edit.text));
+      stopEditing();
+      setRevision((current) => current + 1);
+    } catch (e) {
+      setSaveError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
   const text = canEdit ? editable.text : loaded.kind === "ready" ? loaded.text : "";
   const path =
     source.kind === "code"
@@ -116,6 +152,11 @@ export function MarkdownPreviewPanel({
     [folders, path]
   );
 
+  const requestCloseRef = useRef(requestClose);
+  useEffect(() => {
+    requestCloseRef.current = requestClose;
+  });
+
   useEffect(() => {
     const returnFocus = document.activeElement;
     panelRef.current?.focus();
@@ -128,11 +169,11 @@ export function MarkdownPreviewPanel({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       e.preventDefault();
-      onClose();
+      requestCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
@@ -147,7 +188,7 @@ export function MarkdownPreviewPanel({
       className="markdown-preview @container absolute inset-0 z-20 flex flex-col bg-bg-primary outline-none"
     >
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
-        {history.length > 1 && (
+        {history.length > 1 && !fileEdit && (
           <Button
             variant="ghost"
             onClick={() => setHistory((current) => current.slice(0, -1))}
@@ -179,7 +220,31 @@ export function MarkdownPreviewPanel({
             {editing ? "Preview plan" : "Edit plan"}
           </Button>
         )}
-        {source.kind !== "inline" && (
+        {editableText !== null && !fileEdit && (
+          <Button
+            variant="secondary"
+            className="h-7 px-2 text-xs"
+            onClick={() => setFileEdit({ base: editableText, text: editableText })}
+          >
+            Edit file
+          </Button>
+        )}
+        {fileEdit && codeFile.kind === "ready" && (
+          <>
+            <Button variant="ghost" className="h-7 px-2 text-xs" onClick={stopEditing}>
+              Cancel
+            </Button>
+            <Button
+              className="h-7 px-2 text-xs"
+              disabled={busy || !unsaved}
+              loading={saving}
+              onClick={() => void saveFile(fileEdit, codeFile.path)}
+            >
+              Save
+            </Button>
+          </>
+        )}
+        {source.kind !== "inline" && !fileEdit && (
           <Button
             variant="ghost"
             onClick={() => setRevision((current) => current + 1)}
@@ -192,7 +257,7 @@ export function MarkdownPreviewPanel({
         )}
         <Button
           variant="ghost"
-          onClick={onClose}
+          onClick={requestClose}
           aria-label="Close preview"
           title="Close preview (Esc)"
           className="h-7 px-1.5"
@@ -229,7 +294,17 @@ export function MarkdownPreviewPanel({
           onScroll={(e) => showOutline && setActive(activeHeading(e.currentTarget, outline))}
           className="chat-scroll flex-1 min-w-0 overflow-y-auto"
         >
-          {source.kind === "code" && <FilePreview file={codeFile} line={source.line} />}
+          {fileEdit ? (
+            <textarea
+              aria-label="File contents"
+              value={fileEdit.text}
+              onChange={(e) => setFileEdit({ ...fileEdit, text: e.target.value })}
+              spellCheck={false}
+              className="diff-code h-full min-h-64 w-full resize-none bg-bg-primary p-4 text-text-primary outline-none"
+            />
+          ) : (
+            source.kind === "code" && <FilePreview file={codeFile} line={source.line} />
+          )}
           {loaded.kind === "loading" && (
             <div className="flex items-center justify-center gap-2 p-8 text-xs text-text-muted">
               <SpinnerIcon size={12} /> Loading…
@@ -270,9 +345,33 @@ export function MarkdownPreviewPanel({
           )}
         </div>
       </div>
-      {error && (
+      {fileEdit && busy && (
+        <p className="px-4 py-2 text-xs text-text-muted">
+          The agent is working. Save once it finishes so neither edit is lost.
+        </p>
+      )}
+      {confirmingClose && (
+        <div
+          role="alertdialog"
+          aria-label="Unsaved changes"
+          className="flex items-center gap-2 border-t border-border px-4 py-2 text-xs"
+        >
+          <span className="flex-1 text-text-primary">Discard your unsaved changes?</span>
+          <Button
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={() => setConfirmingClose(false)}
+          >
+            Keep editing
+          </Button>
+          <Button variant="danger" className="h-7 px-2 text-xs" onClick={onClose}>
+            Discard
+          </Button>
+        </div>
+      )}
+      {(error || saveError) && (
         <p role="alert" className="px-4 py-2 text-xs text-danger select-text">
-          {error}
+          {saveError ?? error}
         </p>
       )}
       {footer && history.length === 1 && (
