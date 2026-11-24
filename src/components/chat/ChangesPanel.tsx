@@ -6,6 +6,7 @@ import { AgentId } from "../../types";
 import { joinPath } from "../../platform";
 import { DiffLayout, DiffThreadsUpdate, FileDiffView } from "./FileDiffView";
 import { diffCommentCount, diffKeyOf, DiffThread, removeDiffThread } from "./diffComments";
+import { readDiffLayout, saveDiffLayout } from "./diffLayoutPreference";
 
 export type ChangesScope = "conversation" | number;
 
@@ -189,7 +190,7 @@ export function ChangesPanel({
 }) {
   const [scope, setScope] = useState<ChangesScope>(initialScope);
   const [view, setView] = useState<ChangesView>("changes");
-  const [layout, setLayout] = useState<DiffLayout>("unified");
+  const [layout, setLayoutState] = useState<DiffLayout>(readDiffLayout);
   const [hideFormatting, setHideFormatting] = useState(false);
   const changeSet = changeSetOf(changes, scope, view);
   const files = useMemo(() => changeSet?.files ?? [], [changeSet]);
@@ -213,6 +214,11 @@ export function ChangesPanel({
     } finally {
       setSending(false);
     }
+  };
+
+  const setLayout = (next: DiffLayout) => {
+    setLayoutState(next);
+    saveDiffLayout(next);
   };
 
   useEffect(() => panelRef.current?.focus(), []);
