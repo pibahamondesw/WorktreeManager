@@ -427,6 +427,10 @@ impl Publisher {
     }
 
     fn render(&self, scope: &PublishScope, template: &str) -> Result<String, String> {
+        render(template, &self.variables(scope))
+    }
+
+    fn variables(&self, scope: &PublishScope) -> Vec<(String, String)> {
         let task = self.task.iter().flat_map(|(task, _)| {
             [
                 ("task.id".to_string(), task.id.clone()),
@@ -443,7 +447,7 @@ impl Publisher {
             };
             variables.push((name.to_string(), value));
         }
-        render(template, &variables)
+        variables
     }
 
     fn push(
@@ -771,6 +775,11 @@ impl Publisher {
             "id": scope.task.id,
             "agent": agent,
             "message": self.render(scope, &chat.message)?,
+            "variables": self
+                .variables(scope)
+                .into_iter()
+                .map(|(name, value)| (name, Value::String(value)))
+                .collect::<serde_json::Map<_, _>>(),
         });
         let name = chat
             .name

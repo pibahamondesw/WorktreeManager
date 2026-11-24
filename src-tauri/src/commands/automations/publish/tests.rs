@@ -1182,16 +1182,18 @@ fn chat_open_opens_the_task_chat_once_per_step_and_records_its_conversation() {
     assert_eq!(effects[0].status, EffectStatus::Executed);
     assert_eq!(effects[0].detail.as_deref(), Some("Opened a claude chat"));
     assert_eq!(effects[0].reference.as_deref(), Some("claude:c1"));
+    let (method, mut params) = bridge.calls().remove(0);
+    let variables = params.as_object_mut().unwrap().remove("variables").unwrap();
+    assert_eq!(method, "task.chat");
     assert_eq!(
-        bridge.calls(),
-        [(
-            "task.chat".into(),
-            json!({
-                "id": "t1", "agent": "claude", "message": "Look at wtm/demo/1",
-                "model": "opus", "effort": "high", "name": "Review routine",
-            })
-        )]
+        params,
+        json!({
+            "id": "t1", "agent": "claude", "message": "Look at wtm/demo/1",
+            "model": "opus", "effort": "high", "name": "Review routine",
+        })
     );
+    assert_eq!(variables["task.branch"], "wtm/demo/1");
+    assert_eq!(variables["item.id"], "routine");
 
     run.chats = vec!["codex:c0".into(), "claude:c1".into()];
     let (_, effects) = run.publish(&mut publisher(&forge, &bridge), 2, vec![named]);
@@ -1209,10 +1211,9 @@ fn chat_open_opens_the_task_chat_once_per_step_and_records_its_conversation() {
         effects[0].detail.as_deref(),
         Some("Sent the message to the codex chat running in the task")
     );
-    assert_eq!(
-        bridge.calls()[1].1,
-        json!({ "id": "t1", "agent": "codex", "message": "Go on" })
-    );
+    let params = &bridge.calls()[1].1;
+    assert_eq!(params["agent"], "codex");
+    assert_eq!(params["message"], "Go on");
 }
 
 #[test]
