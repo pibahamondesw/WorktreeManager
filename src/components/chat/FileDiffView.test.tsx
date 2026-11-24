@@ -91,6 +91,16 @@ describe("FileDiffView", () => {
     expect(screen.getByText("v0")).toBeInTheDocument();
   });
 
+  it("opens new-side lines from the split layout", async () => {
+    const onOpenLine = vi.fn();
+    show({ before: text("a\nb\n"), after: text("a\nc\n") }, { layout: "split", onOpenLine });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open file at line 2" }));
+
+    expect(onOpenLine).toHaveBeenCalledWith(2);
+    expect(screen.getAllByRole("button", { name: /^Open file at line/ })).toHaveLength(2);
+  });
+
   it("shows the diff without highlighting until the worker answers", async () => {
     const answers: (() => Promise<void>)[] = [];
     mocks.analyzeInWorker.mockImplementation(
