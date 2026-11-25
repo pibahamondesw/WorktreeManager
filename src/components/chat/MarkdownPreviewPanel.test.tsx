@@ -6,12 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 
-import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
+import { FileEdit, MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 
 const PATH = "/wt/a/src/main.ts";
 let onDisk = "const a = 1;\n";
 
-function renderPanel(props: { busy?: boolean } = {}) {
+function renderPanel(
+  props: {
+    busy?: boolean;
+    initialFileEdit?: FileEdit;
+    onUnsavedFileEdit?: (edit: unknown) => void;
+  } = {}
+) {
   const onClose = vi.fn();
   render(
     <MarkdownPreviewPanel
@@ -117,5 +123,77 @@ describe("MarkdownPreviewPanel file editing", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(onDisk).toBe("const a = 1;\n");
+  });
+
+  it("reports an unsaved edit until it is saved or cancelled", async () => {
+    const onUnsavedFileEdit = vi.fn();
+    const { panel } = renderPanel({ onUnsavedFileEdit });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Edit file" }));
+    expect(onUnsavedFileEdit).toHaveBeenLastCalledWith(null);
+
+    fireEvent.change(contents(), { target: { value: "const a = 2;\n" } });
+    expect(onUnsavedFileEdit).toHaveBeenLastCalledWith({
+      base: "const a = 1;\n",
+      text: "const a = 2;\n",
+      source: { kind: "code", path: "src/main.ts", line: 1 },
+    });
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Cancel" }));
+    expect(onUnsavedFileEdit).toHaveBeenLastCalledWith(null);
+
+    await startEditing(panel);
+    fireEvent.click(within(panel).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onDisk).toBe("const a = 2;\n"));
+    expect(onUnsavedFileEdit).toHaveBeenLastCalledWith(null);
+  });
+
+  it("resumes a kept edit and saves it against the text it started from", async () => {
+    const { panel } = renderPanel({
+      initialFileEdit: { base: "const a = 1;\n", text: "const a = 3;\n" },
+    });
+    expect(contents()).toHaveValue("const a = 3;\n");
+
+    fireEvent.click(await within(panel).findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onDisk).toBe("const a = 3;\n"));
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_write_file", {
+      folders: ["/wt/a"],
+      path: PATH,
+      original: "const a = 1;\n",
+      text: "const a = 3;\n",
+    });
+  });
+
+  it("lets a resumed edit be cancelled when the file can no longer be read", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      command === "chat_read_file"
+        ? Promise.reject("File not found in the task repositories: src/main.ts")
+        : Promise.resolve(undefined)
+    );
+    const { panel } = renderPanel({
+      initialFileEdit: { base: "const a = 1;\n", text: "const a = 3;\n" },
+    });
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_read_file", expect.anything())
+    );
+    expect(within(panel).queryByRole("button", { name: "Save" })).toBeNull();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Cancel" }));
+
+    expect(within(panel).queryByRole("textbox", { name: "File contents" })).toBeNull();
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("File not found");
+  });
+
+  it("keeps a resumed edit when the file changed on disk since it started", async () => {
+    onDisk = "const a = 9;\n";
+    const { panel } = renderPanel({
+      initialFileEdit: { base: "const a = 1;\n", text: "const a = 3;\n" },
+    });
+
+    fireEvent.click(await within(panel).findByRole("button", { name: "Save" }));
+
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("changed on disk");
+    expect(contents()).toHaveValue("const a = 3;\n");
+    expect(onDisk).toBe("const a = 9;\n");
   });
 });

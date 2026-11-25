@@ -24,6 +24,18 @@ const OUTLINE_MIN_HEADINGS = 3;
 function withLineEndingsOf(base: string, text: string) {
   return base.includes("\r\n") ? text.replace(/\r?\n/g, "\r\n") : text;
 }
+
+export interface FileEdit {
+  base: string;
+  text: string;
+}
+
+export interface UnsavedFileEdit extends FileEdit {
+  source: MarkdownSource;
+}
+
+const hasUnsavedText = (edit: FileEdit) => withLineEndingsOf(edit.base, edit.text) !== edit.base;
+
 const ACTIVE_HEADING_OFFSET = 96;
 
 interface OutlineEntry {
@@ -63,6 +75,8 @@ export function MarkdownPreviewPanel({
   editable,
   error,
   busy = false,
+  initialFileEdit = null,
+  onUnsavedFileEdit,
   onClose,
 }: {
   request: MarkdownPreviewRequest;
@@ -71,6 +85,8 @@ export function MarkdownPreviewPanel({
   error?: string | null;
   editable?: { text: string; onChange: (text: string) => void; disabled: boolean };
   busy?: boolean;
+  initialFileEdit?: FileEdit | null;
+  onUnsavedFileEdit?: (edit: UnsavedFileEdit | null) => void;
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -86,7 +102,7 @@ export function MarkdownPreviewPanel({
     revision
   );
   const canEdit = editable && history.length === 1;
-  const [fileEdit, setFileEdit] = useState<{ base: string; text: string } | null>(null);
+  const [fileEdit, setFileEdit] = useState<FileEdit | null>(initialFileEdit);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
@@ -94,15 +110,18 @@ export function MarkdownPreviewPanel({
     source.kind === "code" && codeFile.kind === "ready" && codeFile.content.kind === "text"
       ? codeFile.content.text
       : null;
-  const unsaved =
-    fileEdit !== null && withLineEndingsOf(fileEdit.base, fileEdit.text) !== fileEdit.base;
+  const unsaved = fileEdit !== null && hasUnsavedText(fileEdit);
+  const changeFileEdit = (edit: FileEdit | null) => {
+    setFileEdit(edit);
+    onUnsavedFileEdit?.(edit && hasUnsavedText(edit) ? { ...edit, source } : null);
+  };
   const requestClose = () => (unsaved ? setConfirmingClose(true) : onClose());
   const stopEditing = () => {
-    setFileEdit(null);
+    changeFileEdit(null);
     setSaveError(null);
     setConfirmingClose(false);
   };
-  const saveFile = async (edit: { base: string; text: string }, path: string) => {
+  const saveFile = async (edit: FileEdit, path: string) => {
     setSaving(true);
     setSaveError(null);
     try {
@@ -224,25 +243,25 @@ export function MarkdownPreviewPanel({
           <Button
             variant="secondary"
             className="h-7 px-2 text-xs"
-            onClick={() => setFileEdit({ base: editableText, text: editableText })}
+            onClick={() => changeFileEdit({ base: editableText, text: editableText })}
           >
             Edit file
           </Button>
         )}
+        {fileEdit && (
+          <Button variant="ghost" className="h-7 px-2 text-xs" onClick={stopEditing}>
+            Cancel
+          </Button>
+        )}
         {fileEdit && codeFile.kind === "ready" && (
-          <>
-            <Button variant="ghost" className="h-7 px-2 text-xs" onClick={stopEditing}>
-              Cancel
-            </Button>
-            <Button
-              className="h-7 px-2 text-xs"
-              disabled={busy || !unsaved}
-              loading={saving}
-              onClick={() => void saveFile(fileEdit, codeFile.path)}
-            >
-              Save
-            </Button>
-          </>
+          <Button
+            className="h-7 px-2 text-xs"
+            disabled={busy || !unsaved}
+            loading={saving}
+            onClick={() => void saveFile(fileEdit, codeFile.path)}
+          >
+            Save
+          </Button>
         )}
         {source.kind !== "inline" && !fileEdit && (
           <Button
@@ -298,7 +317,7 @@ export function MarkdownPreviewPanel({
             <textarea
               aria-label="File contents"
               value={fileEdit.text}
-              onChange={(e) => setFileEdit({ ...fileEdit, text: e.target.value })}
+              onChange={(e) => changeFileEdit({ ...fileEdit, text: e.target.value })}
               spellCheck={false}
               className="diff-code h-full min-h-64 w-full resize-none bg-bg-primary p-4 text-text-primary outline-none"
             />
