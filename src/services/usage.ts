@@ -25,17 +25,17 @@ export function usageTone(usedPercent: number): UsageTone {
   return "normal";
 }
 
-export function formatReset(resetsAt: number, now = Date.now()): string {
+export function formatReset(resetsAt: number, now = Date.now(), verb = "Resets"): string {
   const date = new Date(resetsAt * 1000);
   const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   const sameDay = new Date(now).toDateString() === date.toDateString();
-  if (sameDay) return `Resets at ${time}`;
+  if (sameDay) return `${verb} at ${time}`;
   const day = date.toLocaleDateString(undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
-  return `Resets ${day}, ${time}`;
+  return `${verb} ${day}, ${time}`;
 }
 
 export function formatPlanName(plan: string): string {

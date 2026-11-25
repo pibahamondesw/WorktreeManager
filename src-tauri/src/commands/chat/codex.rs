@@ -810,6 +810,23 @@ impl CodexProvider {
         self.usage.windows.sort_by(|a, b| a.id.cmp(&b.id));
     }
 
+    /// When the usage limit behind `error` renews: the time the error names, or else the latest
+    /// reset among the windows used up.
+    fn limit_resets_at(&self, error: &Value) -> Option<i64> {
+        let info = &error["codexErrorInfo"];
+        if info != "usageLimitExceeded" && info.get("usageLimitExceeded").is_none() {
+            return None;
+        }
+        info["usageLimitExceeded"]["resetsAt"].as_i64().or_else(|| {
+            self.usage
+                .windows
+                .iter()
+                .filter(|window| window.used_percent >= 100.0)
+                .filter_map(|window| window.resets_at)
+                .max()
+        })
+    }
+
     fn publish_usage(&mut self, out: &mut ProviderOutput) {
         self.controls.usage = Some(self.usage.clone());
         out.controls(&self.controls);
@@ -844,8 +861,11 @@ impl CodexProvider {
                 out.interrupted = params["turn"]["status"] == "interrupted";
                 self.turn_id = None;
                 self.busy = false;
-                if let Some(message) = params["turn"]["error"]["message"].as_str() {
-                    let item = self.error_item(message);
+                let error = &params["turn"]["error"];
+                if let Some(message) = error["message"].as_str() {
+                    let item = self
+                        .error_item(message)
+                        .with_limit_resets_at(self.limit_resets_at(error));
                     out.upsert(item);
                 }
                 if let Some(marker) = interrupted_marker(&params["turn"]) {
@@ -940,7 +960,9 @@ impl CodexProvider {
                     .as_str()
                     .unwrap_or("Codex reported an error")
                     .to_string();
-                let item = self.error_item(message);
+                let item = self
+                    .error_item(message)
+                    .with_limit_resets_at(self.limit_resets_at(&params["error"]));
                 out.upsert(item);
             }
             _ => {}
@@ -3501,6 +3523,61 @@ mod tests {
             .map(|w| (w.label.as_str(), w.used_percent))
             .collect();
         assert_eq!(windows, [("5-hour limit", 30.0), ("Weekly limit", 44.0)]);
+    }
+
+    #[test]
+    fn a_turn_the_usage_limit_stopped_ends_with_when_it_renews() {
+        let (mut provider, mut snapshot) = resumed();
+        let resets_at = |snapshot: &ChatSnapshot| snapshot.items.last().unwrap().limit_resets_at;
+        let completed = |info: Value| {
+            json!({ "method": "turn/completed", "params": { "threadId": "th1", "turn": {
+            "id": "t1", "status": "failed", "error": { "message": "You've hit your usage limit", "codexErrorInfo": info },
+        } } })
+        };
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            completed(json!({ "usageLimitExceeded": { "resetsAt": 1_790_000_000 } })),
+        );
+        assert_eq!(resets_at(&snapshot), Some(1_790_000_000));
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            completed(json!("usageLimitExceeded")),
+        );
+        assert_eq!(resets_at(&snapshot), None);
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "account/rateLimits/updated", "params": { "rateLimits": {
+                "primary": { "usedPercent": 100, "windowDurationMins": 300, "resetsAt": 1_790_000_000 },
+                "secondary": { "usedPercent": 100, "windowDurationMins": 10080, "resetsAt": 1_791_000_000 },
+            } } }),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            completed(json!("usageLimitExceeded")),
+        );
+        assert_eq!(resets_at(&snapshot), Some(1_791_000_000));
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            completed(json!("serverOverloaded")),
+        );
+        assert_eq!(resets_at(&snapshot), None);
+
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "method": "error", "params": { "threadId": "th1", "willRetry": false, "error": {
+                "message": "You've hit your usage limit", "codexErrorInfo": "usageLimitExceeded",
+            } } }),
+        );
+        assert_eq!(resets_at(&snapshot), Some(1_791_000_000));
     }
 
     #[test]

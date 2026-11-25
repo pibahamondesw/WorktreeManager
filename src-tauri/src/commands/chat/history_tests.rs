@@ -562,6 +562,7 @@ fn edits_during_a_fork_abort_restoration_and_keep_the_new_user_contents() {
         });
         fixture.wait_for_file("fork-entered");
         assert!(chat_send(
+            fixture.app.handle().clone(),
             fixture.app.state(),
             "task".into(),
             "codex".into(),
@@ -762,6 +763,7 @@ fn commands_refuse_missing_sessions_missing_checkpoints_and_unknown_agents() {
     .contains("No chat session"));
     fixture.open("codex", OpenMode::Restart).unwrap();
     chat_send(
+        fixture.app.handle().clone(),
         fixture.app.state(),
         "task".into(),
         "codex".into(),
@@ -2092,6 +2094,37 @@ fn launched_with(fixture: &Fixture, flag: &str) -> Vec<bool> {
         .filter(|argv| !argv.to_string().contains("--version"))
         .map(|argv| argv.as_array().unwrap().contains(&json!(flag)))
         .collect()
+}
+
+#[test]
+fn a_due_resume_after_a_restart_continues_the_conversation_in_its_tab() {
+    let fixture = Fixture::new();
+    let store = resume::ResumeStore::new(&fixture.app.path().app_data_dir().unwrap());
+    store
+        .schedule(resume::ScheduledResume {
+            task_id: "task".into(),
+            agent: "claude".into(),
+            tab: None,
+            folders: fixture.repositories.folders.clone(),
+            conversation_id: "parent".into(),
+            resume_at: 10,
+        })
+        .unwrap();
+
+    resume::resume_due(fixture.app.handle(), 10);
+
+    let sent = |message: &Value| {
+        message["type"] == "user"
+            && message["message"]
+                .to_string()
+                .contains(resume::RESUME_MESSAGE)
+    };
+    wait_until("the conversation was not continued", || {
+        fixture.logged("requests.jsonl").iter().any(sent)
+    });
+    let argv = fixture.logged("argv.jsonl").pop().unwrap();
+    assert!(argv.to_string().contains(r#""--resume","parent""#));
+    assert_eq!(store.find("task", "claude", None), None);
 }
 
 #[test]

@@ -46,6 +46,8 @@ export interface ChatItem {
   /** The subagent run (an `agent` item's id) this item is a step of. */
   parent?: string;
   questions?: AskedQuestion[];
+  /** When the usage limit that stopped the turn renews, in unix seconds. */
+  limitResetsAt?: number;
 }
 
 export interface ChatQuestion {
@@ -492,6 +494,41 @@ export const chatReview = (taskId: string, agent: AgentId, target: ReviewTarget,
 
 export const chatRefreshUsage = (taskId: string, agent: AgentId, tab?: string) =>
   invoke<void>("chat_refresh_usage", { taskId, agent, tab });
+
+export interface ScheduledResume {
+  taskId: string;
+  agent: AgentId;
+  tab?: string;
+  folders: string[];
+  conversationId: string;
+  /** Unix seconds. */
+  resumeAt: number;
+}
+
+export const chatResumeSchedule = (
+  taskId: string,
+  agent: AgentId,
+  folders: string[],
+  resumeAt: number,
+  tab?: string
+) => invoke<ScheduledResume>("chat_resume_schedule", { taskId, agent, folders, resumeAt, tab });
+
+export const chatResumeScheduled = (taskId: string, agent: AgentId, tab?: string) =>
+  invoke<ScheduledResume | null>("chat_resume_scheduled", { taskId, agent, tab });
+
+export const chatResumeCancel = (taskId: string, agent: AgentId, tab?: string) =>
+  invoke<void>("chat_resume_cancel", { taskId, agent, tab });
+
+/** When the usage limit that stopped the latest prompt renews, while its error is the latest. */
+export function limitResetsAt(items: ChatItem[]): number | null {
+  const latest = [...items]
+    .reverse()
+    .find(
+      (item) =>
+        !item.origin && (item.kind === "user" || item.kind === "error" || item.kind === "handoff")
+    );
+  return latest?.kind === "error" ? (latest.limitResetsAt ?? null) : null;
+}
 
 export const chatFileSearch = (folders: string[], query: string) =>
   invoke<FileMatch[]>("chat_file_search", { folders, query });

@@ -23,5 +23,7 @@ describe("usage", () => {
     const later = new Date(2026, 9, 4, 10, 0).getTime() / 1000;
     expect(formatReset(today, now)).toMatch(/^Resets at /);
     expect(formatReset(later, now)).toMatch(/^Resets \w+, /);
+    expect(formatReset(today, now, "Continues")).toMatch(/^Continues at /);
+    expect(formatReset(later, now, "Continues")).toMatch(/^Continues \w+, /);
   });
 });

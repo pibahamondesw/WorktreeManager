@@ -20,6 +20,7 @@ import { ApprovalDraft } from "./approval";
 import { PendingRequestCard } from "./PendingRequestCard";
 import { TodoPanel } from "./TodoPanel";
 import { UsageDialog } from "./UsageDialog";
+import { UsageLimitBanner } from "./UsageLimitBanner";
 import { HooksDialog } from "./HooksDialog";
 import { HistoryDialog } from "./HistoryDialog";
 import { HandoffChoice, HandoffDialog } from "./HandoffDialog";
@@ -45,6 +46,7 @@ import {
   PendingRequest,
   HistoryAction,
   isLive,
+  limitResetsAt,
   QueuedEdit,
   totals,
 } from "../../services/chat";
@@ -531,6 +533,17 @@ export function ChatPane({
             <p role="alert" className="max-w-3xl mx-auto mb-1.5 text-xs text-danger select-text">
               {actionError}
             </p>
+          )}
+          {!readOnly && (
+            <UsageLimitBanner
+              taskId={taskId}
+              agent={agent}
+              agentLabel={agentLabel}
+              tab={tab}
+              folders={folders}
+              resetsAt={limitResetsAt(mainItems)}
+              prompts={users}
+            />
           )}
           {readOnly ? (
             readOnly.footer

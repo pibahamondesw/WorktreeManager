@@ -75,6 +75,9 @@ pub struct ChatItem {
     pub parent: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub questions: Vec<AskedQuestion>,
+    /// When the usage limit that stopped the turn renews, in unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_resets_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -101,6 +104,7 @@ impl ChatItem {
             origin: None,
             parent: None,
             questions: Vec::new(),
+            limit_resets_at: None,
         }
     }
 
@@ -121,6 +125,11 @@ impl ChatItem {
 
     pub fn with_status(mut self, status: impl Into<String>) -> Self {
         self.status = Some(status.into());
+        self
+    }
+
+    pub fn with_limit_resets_at(mut self, resets_at: Option<i64>) -> Self {
+        self.limit_resets_at = resets_at;
         self
     }
 
