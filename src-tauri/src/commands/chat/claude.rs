@@ -53,6 +53,8 @@ pub struct ClaudeProvider {
     usage: PlanUsage,
     usage_in_flight: bool,
     last_event_usage_request: Option<Instant>,
+    /// When the usage limit that refused the turn in progress renews, in unix seconds.
+    limit_resets_at: Option<i64>,
     /// Background subagents still run, per the last `background_tasks_changed`.
     background_agents: bool,
     /// The Agent tool call that launched each subagent task, by task id.
@@ -174,6 +176,7 @@ impl ClaudeProvider {
             usage: PlanUsage::default(),
             usage_in_flight: false,
             last_event_usage_request: None,
+            limit_resets_at: None,
             background_agents: false,
             agent_calls: HashMap::new(),
             handoff: None,
@@ -746,9 +749,12 @@ impl ChatProvider for ClaudeProvider {
                     out.event(ChatEvent::Resolved { id: id.to_string() });
                 }
             }
-            Some("rate_limit_event") if self.should_refresh_usage_for_event() => {
-                self.last_event_usage_request = Some(Instant::now());
-                self.request_usage(out)
+            Some("rate_limit_event") => {
+                self.limit_resets_at = rejected_until(&message["rate_limit_info"]);
+                if self.should_refresh_usage_for_event() {
+                    self.last_event_usage_request = Some(Instant::now());
+                    self.request_usage(out)
+                }
             }
             Some("result") => {
                 let interrupted = interrupted_result(&message);
@@ -757,6 +763,9 @@ impl ChatProvider for ClaudeProvider {
                 out.denials.extend(permission_denials(&message));
                 out.background_agents = Some(self.background_agents);
                 self.turns = self.turns.saturating_sub(1);
+                let limit_resets_at =
+                    rejected_until(&message["api_error_params"]["rate_limit_info"])
+                        .or(self.limit_resets_at.take());
                 if let Some(item) = structured_reply(&message) {
                     out.upsert(item);
                 }
@@ -781,7 +790,7 @@ impl ChatProvider for ClaudeProvider {
                         })
                         .filter(|text| !text.is_empty())
                         .unwrap_or_else(|| "Claude stopped with an error".to_string());
-                    let item = self.error_item(text);
+                    let item = self.error_item(text).with_limit_resets_at(limit_resets_at);
                     out.upsert(item);
                 }
                 self.control(
@@ -1135,6 +1144,14 @@ const USAGE_WINDOWS: [(&str, &str); 4] = [
     ("seven_day_opus", "Weekly limit (Opus)"),
     ("seven_day_sonnet", "Weekly limit (Sonnet)"),
 ];
+
+/// When the usage limit that refused a request renews, from the `rate_limit_info` reporting it.
+fn rejected_until(info: &Value) -> Option<i64> {
+    match info["status"].as_str() {
+        Some("rejected") => info["resetsAt"].as_i64(),
+        _ => None,
+    }
+}
 
 pub(crate) fn usage_windows(rate_limits: &Value) -> Vec<UsageWindow> {
     USAGE_WINDOWS
@@ -2883,6 +2900,35 @@ mod tests {
             snapshot.items.last().unwrap().text,
             "Claude stopped with an error"
         );
+    }
+
+    #[test]
+    fn a_turn_the_usage_limit_refused_ends_with_when_it_renews() {
+        let (mut provider, mut snapshot) = started();
+        let limited = |status: &str| json!({ "type": "rate_limit_event", "rate_limit_info": { "status": status, "resetsAt": 1_790_809_800 } });
+        let failed =
+            json!({ "type": "result", "is_error": true, "result": "You've hit your limit" });
+        let resets_at = |snapshot: &ChatSnapshot| snapshot.items.last().unwrap().limit_resets_at;
+
+        feed(&mut provider, &mut snapshot, limited("rejected"));
+        feed(&mut provider, &mut snapshot, failed.clone());
+        assert_eq!(resets_at(&snapshot), Some(1_790_809_800));
+
+        feed(&mut provider, &mut snapshot, failed.clone());
+        assert_eq!(resets_at(&snapshot), None);
+
+        feed(&mut provider, &mut snapshot, limited("rejected"));
+        feed(&mut provider, &mut snapshot, limited("allowed"));
+        feed(&mut provider, &mut snapshot, failed);
+        assert_eq!(resets_at(&snapshot), None);
+
+        let reported = json!({
+            "type": "result", "is_error": true, "result": "You've hit your limit",
+            "api_error": "usage_limit_reached",
+            "api_error_params": { "rate_limit_info": { "status": "rejected", "resetsAt": 1_790_900_000 } },
+        });
+        feed(&mut provider, &mut snapshot, reported);
+        assert_eq!(resets_at(&snapshot), Some(1_790_900_000));
     }
 
     #[test]

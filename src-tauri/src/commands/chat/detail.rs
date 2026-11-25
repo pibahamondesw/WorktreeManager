@@ -77,6 +77,7 @@ fn without_detail(item: &ChatItem) -> ChatItem {
         origin: item.origin.clone(),
         parent: item.parent.clone(),
         questions: item.questions.clone(),
+        limit_resets_at: item.limit_resets_at,
     }
 }
 
