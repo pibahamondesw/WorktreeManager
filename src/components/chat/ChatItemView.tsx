@@ -16,6 +16,7 @@ import { SubagentSteps } from "./chatEntries";
 import { splitMarkdownBlocks } from "./markdownBlocks";
 import { LruCache } from "./lruCache";
 import { rehypeCachedHighlight } from "./rehypeCachedHighlight";
+import { rehypeHtmlPreview } from "./htmlPreviewPage";
 import { useExpandedDetail } from "./itemDetailContext";
 import { formatSize } from "./formatSize";
 import { summarizeWork, toolCategory } from "./toolCategory";
@@ -45,7 +46,7 @@ const REMARK_PLUGINS: Options["remarkPlugins"] = [
   [remarkMath, { singleDollarTextMath: false }],
   remarkLatexDelimiters,
 ];
-const REHYPE_PLUGINS: Options["rehypePlugins"] = [rehypeCachedHighlight];
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [rehypeHtmlPreview, rehypeCachedHighlight];
 const MAX_RENDERED_BLOCKS = 1_000;
 const MAX_RENDERED_CHARACTERS = 200_000;
 
