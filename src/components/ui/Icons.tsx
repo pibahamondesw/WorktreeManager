@@ -1,6 +1,7 @@
 import {
   ArrowUpRight,
   Bell,
+  BookOpen,
   Bot,
   Check,
   ChevronDown,
@@ -16,6 +17,7 @@ import {
   FileArchive,
   FileBraces,
   FileCode,
+  FilePenLine,
   FileCog,
   FileDatabase,
   FileImage,
@@ -32,6 +34,7 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
+  Globe,
   GripVertical,
   Maximize2,
   Notebook,
@@ -45,6 +48,7 @@ import {
   Search,
   Settings,
   SquareCode,
+  SquareTerminal,
   Sun,
   Trash,
   TriangleExclamationPoint,
@@ -108,6 +112,10 @@ export const FitIcon = libraryIcon(Scan, 14);
 export const DownloadIcon = libraryIcon(Download, 14);
 export const DocumentIcon = libraryIcon(FileText, 16);
 export const BotIcon = libraryIcon(Bot, 14);
+export const TerminalIcon = libraryIcon(SquareTerminal, 12);
+export const FileEditIcon = libraryIcon(FilePenLine, 12);
+export const ReadIcon = libraryIcon(BookOpen, 12);
+export const GlobeIcon = libraryIcon(Globe, 12);
 
 export function SpinnerIcon({ size = 16, className = "" }: IconProps) {
   return (

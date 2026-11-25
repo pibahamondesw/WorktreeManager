@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ChatItemView, MarkdownText } from "./ChatItemView";
+import { ChatItemView, MarkdownText, WorkGroup } from "./ChatItemView";
 import { ItemDetailContext } from "./itemDetailContext";
 import { renderMermaid } from "./mermaid";
 import { saveDiagramPng } from "./diagramExport";
@@ -462,4 +462,30 @@ it("asks for a command's output while its row is expanded and marks a partial on
 it("keeps a row without output collapsed", () => {
   render(<ChatItemView item={{ id: "c1", kind: "command", text: "", title: "true" }} />);
   expect(screen.getByRole("button", { name: /true/ })).toBeDisabled();
+});
+
+it("summarizes a work group and counts its time only while it runs", () => {
+  const items = [
+    { id: "r1", kind: "tool" as const, text: "", title: "Read" },
+    { id: "c1", kind: "command" as const, text: "", title: "make test", status: "failed" },
+  ];
+  const { rerender } = render(<WorkGroup items={items} running />);
+  const toggle = screen.getByRole("button", { name: "Read 1 file · Ran 1 command · 1 failed" });
+  expect(toggle).toHaveTextContent(/0s$/);
+
+  rerender(<WorkGroup items={items} running={false} />);
+  expect(toggle).not.toHaveTextContent(/\ds$/);
+
+  fireEvent.click(toggle);
+  expect(screen.getByRole("button", { name: /make test/ }).querySelector("svg")).toBeVisible();
+});
+
+it("counts a subagent's time while it runs", () => {
+  const item = { id: "a1", kind: "agent" as const, text: "", title: "Look", status: "inProgress" };
+  const { rerender } = render(<ChatItemView item={item} />);
+  const card = screen.getByRole("region", { name: "Subagent: Look" });
+  expect(card).toHaveTextContent("0s");
+
+  rerender(<ChatItemView item={{ ...item, status: "completed" }} />);
+  expect(card).not.toHaveTextContent("0s");
 });
