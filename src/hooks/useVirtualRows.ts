@@ -165,10 +165,10 @@ export function useVirtualRows(keys: readonly string[]) {
     if (!scroller.clientHeight) return;
     const movedUp = scroller.scrollTop < lastScrollTopRef.current;
     lastScrollTopRef.current = scroller.scrollTop;
-    const nearBottom =
-      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <
-      STICK_TO_BOTTOM_THRESHOLD_PX;
-    const atBottom = nearBottom || (stuckRef.current && !movedUp);
+    const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    const clampedToBottom = distanceFromBottom < 1;
+    const nearBottom = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX;
+    const atBottom = clampedToBottom || (!movedUp && (nearBottom || stuckRef.current));
     changeStuck(atBottom);
     if (focusKey !== null && !sectionRef.current?.contains(document.activeElement)) {
       setFocusKey(null);
