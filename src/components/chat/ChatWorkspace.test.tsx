@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import type { InvokeArgs } from "@tauri-apps/api/core";
+import { EditorView } from "@codemirror/view";
+import { StrictMode } from "react";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: InvokeArgs) => Promise<unknown>>(),
@@ -597,4 +599,169 @@ it("closes the automation tab when the step paused before its agent had a conver
   await waitFor(() => expect(tabTitles()).toEqual(["New conversation"]));
   expect(screen.getByRole("tab")).toHaveAttribute("aria-selected", "true");
   expect(mocks.invoke).not.toHaveBeenCalledWith("chat_tab_open", expect.anything());
+});
+
+const SIDE_REPLY = {
+  ...IDLE_CHAT,
+  items: [
+    { id: "q", kind: "user", text: "What does run do?" },
+    { id: "r", kind: "assistant", text: "It runs.\n\nTwice." },
+  ],
+};
+
+function sideBackend() {
+  backend([
+    { id: "main", agent: "claude", conversationId: "c1" },
+    { id: "a1", agent: "claude", conversationId: "c2" },
+  ]);
+  const fallback = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, invoked) => {
+    const tab = (invoked as { tab?: string } | undefined)?.tab ?? "";
+    if (command === "chat_open" && tab.startsWith("side-")) return Promise.resolve(SIDE_REPLY);
+    return fallback(command, invoked);
+  });
+}
+
+const editorOf = (box: HTMLElement) => EditorView.findFromDOM(box)!;
+const composerText = (box: HTMLElement) => editorOf(box).state.doc.toString();
+const typeInto = (box: HTMLElement, value: string) =>
+  act(() =>
+    editorOf(box).dispatch({
+      changes: { from: 0, to: editorOf(box).state.doc.length, insert: value },
+      selection: { anchor: value.length },
+    })
+  );
+
+const mainComposer = () => screen.getAllByRole("textbox", { name: "Message Claude Code" })[0];
+
+const askAside = async (question: string) => {
+  const box = mainComposer();
+  await waitFor(() => expect(box).toHaveAttribute("contenteditable", "true"));
+  await typeInto(box, `/btw ${question}`);
+  fireEvent.keyDown(box, { key: "Enter" });
+  return screen.findByRole("complementary", { name: "Side chat" });
+};
+
+const sideOpens = () =>
+  chatOpens().filter((args) => String((args as { tab?: string }).tab).startsWith("side-")) as {
+    tab: string;
+  }[];
+
+it("asks a side question in a side chat that knows the conversation without writing to it", async () => {
+  sideBackend();
+  renderWorkspace({ taskId: "side-ask" });
+  await screen.findAllByRole("textbox", { name: "Message Claude Code" });
+  await askAside("What does run do?");
+
+  await waitFor(() => expect(sideOpens()).toHaveLength(1));
+  const [opened] = sideOpens();
+  expect(opened).toMatchObject({
+    taskId: "side-ask",
+    agent: "claude",
+    mode: "fresh",
+    asideOf: "main",
+  });
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_send", {
+      taskId: "side-ask",
+      agent: "claude",
+      text: "What does run do?",
+      images: [],
+      tab: opened.tab,
+    })
+  );
+  expect(mocks.invoke).not.toHaveBeenCalledWith(
+    "chat_send",
+    expect.objectContaining({ tab: undefined })
+  );
+  expect(composerText(mainComposer())).toBe("");
+
+  await typeInto(mainComposer(), "Also check this:");
+  fireEvent.click(await screen.findByRole("button", { name: "Add reply to main chat" }));
+  await waitFor(() =>
+    expect(composerText(mainComposer())).toBe("Also check this:\n\n> It runs.\n>\n> Twice.")
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Close side chat" }));
+  expect(screen.queryByRole("complementary", { name: "Side chat" })).toBeNull();
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", {
+      taskId: "side-ask",
+      agent: "claude",
+      tab: opened.tab,
+    })
+  );
+});
+
+it("opens a fresh side chat for each question and stops the one it replaces", async () => {
+  sideBackend();
+  renderWorkspace({ taskId: "side-again" });
+  await screen.findAllByRole("textbox", { name: "Message Claude Code" });
+  await askAside("first");
+  await waitFor(() => expect(sideOpens()).toHaveLength(1));
+  const [first] = sideOpens();
+  await askAside("second");
+  await waitFor(() => expect(sideOpens()).toHaveLength(2));
+  expect(sideOpens()[1].tab).not.toBe(first.tab);
+  expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", {
+    taskId: "side-again",
+    agent: "claude",
+    tab: first.tab,
+  });
+});
+
+it("shows the side chat only beside its conversation and stops it with that tab", async () => {
+  sideBackend();
+  renderWorkspace({ taskId: "side-tabs" });
+  await screen.findAllByRole("textbox", { name: "Message Claude Code" });
+  await askAside("about main");
+  await waitFor(() => expect(sideOpens()).toHaveLength(1));
+  const [opened] = sideOpens();
+
+  fireEvent.click(screen.getAllByRole("tab")[1]);
+  await waitFor(() =>
+    expect(screen.queryByRole("complementary", { name: "Side chat" })).toBeNull()
+  );
+  expect(mocks.invoke).not.toHaveBeenCalledWith("chat_stop", expect.anything());
+  fireEvent.click(screen.getAllByRole("tab")[0]);
+  await screen.findByRole("complementary", { name: "Side chat" });
+
+  fireEvent.click(screen.getAllByRole("button", { name: /^Close conversation/ })[0]);
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", {
+      taskId: "side-tabs",
+      agent: "claude",
+      tab: opened.tab,
+    })
+  );
+  expect(screen.queryByRole("complementary", { name: "Side chat" })).toBeNull();
+});
+
+it("completes /btw from the command menu so the question can follow", async () => {
+  sideBackend();
+  renderWorkspace({ taskId: "side-menu" });
+  const box = (await screen.findAllByRole("textbox", { name: "Message Claude Code" }))[0];
+  await waitFor(() => expect(box).toHaveAttribute("contenteditable", "true"));
+  await typeInto(box, "/bt");
+  fireEvent.keyDown(box, { key: "Tab" });
+  expect(composerText(box)).toBe("/btw ");
+  expect(screen.queryByRole("complementary", { name: "Side chat" })).toBeNull();
+});
+
+it("asks the side question once even when the panel mounts twice while opening", async () => {
+  sideBackend();
+  render(
+    <StrictMode>
+      <ChatWorkspace taskId="side-strict" agent="claude" folders={["/wt/a"]} />
+    </StrictMode>
+  );
+  await screen.findAllByRole("textbox", { name: "Message Claude Code" });
+  await askAside("still asked?");
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "chat_send",
+      expect.objectContaining({ text: "still asked?" })
+    )
+  );
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "chat_send")).toHaveLength(1);
 });

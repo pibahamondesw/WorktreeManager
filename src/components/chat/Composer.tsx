@@ -26,6 +26,7 @@ import {
   insertMention,
   insertPaths,
   localCommand,
+  withAsideCommand,
   menuTrigger,
   promptMemory,
   REVIEW_CHOICES,
@@ -70,6 +71,7 @@ interface ComposerActions {
   showUsage: () => void;
   showHooks: () => void;
   switchAgent?: (agent: AgentId) => void;
+  askAside?: (question: string) => void;
 }
 
 /** A queued message open in the composer; the draft returns when the edit ends. */
@@ -81,10 +83,11 @@ export interface QueuedMessageEdit {
   finish: (edit: QueuedEdit) => Promise<void>;
 }
 
-/** Text for an empty composer; a new key offers it again, even with the same text. */
+/** Text for an empty composer, or added to the draft with `append`; a new key offers it again. */
 export interface ComposerSeed {
   key: string;
   text: string;
+  append?: boolean;
 }
 
 /** Quotes of the agent's replies, sent before the message. */
@@ -163,9 +166,10 @@ export function Composer({
   const [offeredSeedKey, setOfferedSeedKey] = useState<string | null>(null);
   if (seed && seed.key !== offeredSeedKey) {
     setOfferedSeedKey(seed.key);
-    if (!text.trim() && !queuedEdit) {
-      setText(seed.text);
-      setCaret(seed.text.length);
+    const seeded = seed.append && text.trim() ? `${text.trimEnd()}\n\n${seed.text}` : seed.text;
+    if ((seed.append || !text.trim()) && !queuedEdit) {
+      setText(seeded);
+      setCaret(seeded.length);
     }
   }
   if (editId !== shownEditId) {
@@ -184,6 +188,9 @@ export function Composer({
   const busy = status.kind === "busy";
   const ready = status.kind === "idle" || busy;
   const efforts = effortsFor(controls);
+  const commandControls = actions.askAside
+    ? { ...controls, commands: withAsideCommand(controls.commands) }
+    : controls;
   const canAttach = ready && !queuedEdit && acceptsImages(controls);
   const attached = canAttach ? images : [];
   const canAttachText = ready && !queuedEdit;
@@ -224,7 +231,7 @@ export function Composer({
 
   const slashCommands =
     trigger?.kind === "slash"
-      ? matchSlashCommands(controls.commands, trigger.start, trigger.query)
+      ? matchSlashCommands(commandControls.commands, trigger.start, trigger.query)
       : [];
   const midMessageSlashWithoutMatches =
     trigger?.kind === "slash" && trigger.start > 0 && !slashCommands.length;
@@ -283,6 +290,7 @@ export function Composer({
   const runCommand = (command: CommandOption) => {
     const action = command.action;
     if (action.kind === "insert") return update(action.text);
+    if (action.kind === "aside") return update(`/${command.name} `);
     update("");
     if (action.kind === "model" || action.kind === "effort") openPicker(action.kind);
     else if (action.kind === "mode") void configure("mode", action.mode);
@@ -402,7 +410,7 @@ export function Composer({
     const local =
       attached.length || attachedTexts.length || quoted.length
         ? null
-        : localCommand(message, controls);
+        : localCommand(message, commandControls);
     if (local) {
       update("");
       if (local.kind === "picker") openPicker(local.picker);
@@ -412,6 +420,7 @@ export function Composer({
       else if (local.kind === "review") void run(() => actions.review(local.target));
       else if (local.kind === "status") actions.showUsage();
       else if (local.kind === "hooks") actions.showHooks();
+      else if (local.kind === "aside") actions.askAside?.(local.question);
       else void run(actions.startFresh);
       return;
     }

@@ -82,7 +82,21 @@ export type LocalCommand =
   | { kind: "reviewPicker" }
   | { kind: "clear" }
   | { kind: "hooks" }
-  | { kind: "status" };
+  | { kind: "status" }
+  | { kind: "aside"; question: string };
+
+export const ASIDE_COMMAND: CommandOption = {
+  name: "btw",
+  description: "Ask a side question that stays out of this conversation",
+  argumentHint: "<question>",
+  action: { kind: "aside" },
+};
+
+/** The agent's commands plus `/btw`, which takes the place of any agent command of that name. */
+export const withAsideCommand = (commands: CommandOption[]) => [
+  ASIDE_COMMAND,
+  ...commands.filter((command) => command.name !== ASIDE_COMMAND.name),
+];
 
 export const REVIEW_CHOICES = [
   {
@@ -111,14 +125,17 @@ export function reviewTarget(argument: string): ReviewTarget | null {
 
 /**
  * A submitted message that the chat handles itself instead of sending: `/model sonnet`,
- * `/effort high`, `/plan`, `/compact`, `/clear`, `/status`. Unknown arguments open the picker.
+ * `/effort high`, `/plan`, `/compact`, `/clear`, `/status`, `/btw <question>`. Unknown arguments
+ * open the picker.
  */
 export function localCommand(text: string, controls: ChatControls): LocalCommand | null {
-  const review = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
-  if (review && controls.commands.find((c) => c.name === review[1])?.action.kind === "review") {
-    const target = reviewTarget(review[2] ?? "");
+  const [, commandName = "", rest = ""] = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim()) ?? [];
+  const withRest = controls.commands.find((c) => c.name === commandName)?.action.kind;
+  if (withRest === "review") {
+    const target = reviewTarget(rest);
     return target ? { kind: "review", target } : { kind: "reviewPicker" };
   }
+  if (withRest === "aside") return { kind: "aside", question: rest };
   const match = /^\/(\S+)(?:\s+(\S+))?\s*$/.exec(text.trim());
   if (!match) return null;
   const [, name, argument] = match;
@@ -147,6 +164,7 @@ export function localCommand(text: string, controls: ChatControls): LocalCommand
     case "hooks":
       return { kind: "hooks" };
     case "insert":
+    case "aside":
       return null;
   }
 }
