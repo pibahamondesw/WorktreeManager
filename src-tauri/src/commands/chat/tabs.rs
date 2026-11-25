@@ -15,11 +15,17 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use super::{conversation_store, primary_folder, ChatRegistry};
 
 pub const MAIN_TAB: &str = "main";
+const SIDE_TAB_PREFIX: &str = "side-";
 const TABS_EVENT: &str = "chat-tabs";
 
 /// A tab other than the main one.
 pub fn extra_tab(tab: Option<&str>) -> Option<&str> {
     tab.filter(|tab| !tab.is_empty() && *tab != MAIN_TAB)
+}
+
+/// A side chat's tab: never recorded among the task's tabs, and its conversation is not kept.
+pub fn is_side_tab(tab: Option<&str>) -> bool {
+    tab.is_some_and(|tab| tab.starts_with(SIDE_TAB_PREFIX))
 }
 
 /// Where a tab's agent session and conversation are kept: the agent for the main tab,
@@ -292,6 +298,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wm-chat-tabs-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         TabStore::new(&dir)
+    }
+
+    #[test]
+    fn only_side_tabs_are_side_chats() {
+        assert!(is_side_tab(Some("side-1a2b")));
+        assert!(!is_side_tab(Some("a1b2")));
+        assert!(!is_side_tab(Some(MAIN_TAB)));
+        assert!(!is_side_tab(None));
     }
 
     #[test]
