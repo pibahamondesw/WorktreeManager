@@ -21,6 +21,7 @@ import {
   surfaceTurnInProgress,
 } from "../services/agentActivity";
 import { sessionRegistry } from "../embedded/sessionTransports";
+import { isSideTab } from "../services/chat";
 import { onOpenCodeActivity } from "../services/opencode";
 import { TerminalStatus } from "../services/terminal";
 import { loadAgentAlerts, persist } from "../services/store";
@@ -118,6 +119,7 @@ export function useAgentActivity({
   useEffect(
     () =>
       sessionRegistry.onSessionEvent("chat", (chat, previous) => {
+        if (isSideTab(chat.tab)) return;
         const event = chatActivityEvent(previous, chat, Date.now());
         if (event === "end")
           setActivities((current) => {

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { PlusIcon } from "../ui/Icons";
 import { ChatPane } from "./ChatPane";
+import { ComposerSeed } from "./Composer";
+import { SideChatPanel } from "./SideChatPanel";
+import { quotedReply } from "./sideChat";
 import { ChatTabBar, ChatTabView } from "./ChatTabBar";
 import { SessionList } from "./SessionList";
 import { tabIndicator, useChatTabs } from "../../hooks/useChatTabs";
@@ -15,6 +18,7 @@ import { describeAgent } from "../../services/agents";
 import {
   ChatOpenIntent,
   chatSessionRename,
+  newSideTab,
   chatStop,
   ChatTab,
   chatTabClose,
@@ -38,6 +42,15 @@ interface ChatWorkspaceProps {
 
 /** The tab each task showed last, so coming back to a task shows it again. */
 const activeTabs = new Map<string, string>();
+
+/** The side chat open in each task, shown beside the tab it asks about while that tab is active. */
+interface SideChat {
+  tab: string;
+  agent: AgentId;
+  source: string;
+}
+
+const sideChats = new Map<string, SideChat>();
 
 /** Automation tabs the owner closed, by task; closing one leaves its session running. */
 const closedAutomationTabs = new Map<string, ReadonlySet<string>>();
@@ -91,6 +104,8 @@ export function ChatWorkspace({
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [toolbar, setToolbar] = useState<HTMLElement | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [side, setSide] = useState(() => sideChats.get(taskId) ?? null);
+  const [insertion, setInsertion] = useState<ComposerSeed | null>(null);
   const intents = useRef(new Map<string, ChatOpenIntent>());
   const latestTabs = useRef(tabs);
   useEffect(() => {
@@ -182,17 +197,64 @@ export function ChatWorkspace({
     if (loaded && !activeId && !showingAutomation) onStatusChange?.({ kind: "exited", code: null });
   }, [loaded, activeId, showingAutomation, onStatusChange]);
 
-  const takeOpenIntent = useCallback(() => {
-    if (!activeId) return null;
-    const intent = intents.current.get(activeId) ?? null;
-    intents.current.delete(activeId);
+  const takeIntent = useCallback((tab: string | null) => {
+    if (!tab) return null;
+    const intent = intents.current.get(tab) ?? null;
+    intents.current.delete(tab);
     return intent;
-  }, [activeId]);
+  }, []);
+  const takeOpenIntent = useCallback(() => takeIntent(activeId), [takeIntent, activeId]);
+  const sideTab = side?.tab ?? null;
+  const takeSideIntent = useCallback(() => takeIntent(sideTab), [takeIntent, sideTab]);
+
+  const showSide = useCallback(
+    (next: SideChat | null) => {
+      if (next) sideChats.set(taskId, next);
+      else sideChats.delete(taskId);
+      setSide(next);
+    },
+    [taskId]
+  );
+
+  const stopSide = async (closing: SideChat | null) => {
+    if (closing) await chatStop(taskId, closing.agent, closing.tab);
+  };
+
+  const closeSide = () =>
+    run(async () => {
+      showSide(null);
+      await stopSide(side);
+    });
+
+  /** Each question opens a fresh side chat, so it knows the conversation as it is now. */
+  const askAside = (about: ChatTab, question: string) =>
+    void run(async () => {
+      const next = { tab: newSideTab(), agent: about.agent, source: about.id };
+      intents.current.set(next.tab, {
+        agent: next.agent,
+        mode: "fresh",
+        asideOf: next.source,
+        prompt: question.trim() || undefined,
+      });
+      showSide(next);
+      await stopSide(side);
+    });
+
+  const bringBack = useCallback(
+    (reply: string) =>
+      setInsertion({ key: crypto.randomUUID(), text: quotedReply(reply), append: true }),
+    []
+  );
+  const inserted = useCallback(() => setInsertion(null), []);
 
   const closeTab = (tab: ChatTab) =>
     run(async () => {
       const index = tabs?.findIndex((entry) => entry.id === tab.id) ?? -1;
       await chatTabClose(taskId, agent, tab.id);
+      if (side?.source === tab.id) {
+        showSide(null);
+        await stopSide(side);
+      }
       const rest = (tabs ?? []).filter((entry) => entry.id !== tab.id);
       setTabs(rest);
       if (tab.id === activeId && rest.length > 0)
@@ -331,17 +393,36 @@ export function ChatWorkspace({
           }}
         />
       ) : active ? (
-        <ChatPane
-          key={`${active.id}:${active.agent}:${revisions[active.id] ?? 0}`}
-          taskId={taskId}
-          agent={active.agent}
-          tab={paneTab(active.id)}
-          folders={folders}
-          toolbar={toolbar}
-          onStatusChange={onStatusChange}
-          onSwitchAgent={(intent) => void switchAgent(active, intent)}
-          takeOpenIntent={takeOpenIntent}
-        />
+        <div className="flex-1 min-h-0 flex">
+          <div className="flex-1 min-w-0 flex flex-col">
+            <ChatPane
+              key={`${active.id}:${active.agent}:${revisions[active.id] ?? 0}`}
+              taskId={taskId}
+              agent={active.agent}
+              tab={paneTab(active.id)}
+              folders={folders}
+              toolbar={toolbar}
+              onStatusChange={onStatusChange}
+              onSwitchAgent={(intent) => void switchAgent(active, intent)}
+              takeOpenIntent={takeOpenIntent}
+              onAskAside={(question) => askAside(active, question)}
+              insertion={side?.source === active.id ? insertion : null}
+              onInserted={inserted}
+            />
+          </div>
+          {side?.source === active.id && (
+            <SideChatPanel
+              key={side.tab}
+              taskId={taskId}
+              agent={side.agent}
+              tab={side.tab}
+              folders={folders}
+              takeOpenIntent={takeSideIntent}
+              onBringBack={bringBack}
+              onClose={() => void closeSide()}
+            />
+          )}
+        </div>
       ) : (
         loaded && (
           <div className="flex-1 flex flex-col items-center justify-center gap-3">

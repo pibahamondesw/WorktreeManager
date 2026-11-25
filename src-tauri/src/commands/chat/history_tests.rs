@@ -260,6 +260,7 @@ impl Fixture {
             None,
             Channel::new(|_| Ok(())),
             None,
+            None,
         ))?;
         let mut started = None;
         wait_until("test agent did not initialize", || {
@@ -1529,6 +1530,7 @@ fn continuing_in_another_agent_seeds_it_and_keeps_the_earlier_items_read_only() 
             None,
             Channel::new(|_| Ok(())),
             None,
+            None,
         ))
     };
     assert!(open(OpenMode::Fresh, Some("codex"))
@@ -1650,6 +1652,7 @@ fn rewinding_a_continuation_keeps_its_source_and_a_pending_fork_can_be_continued
         None,
         Channel::new(|_| Ok(())),
         None,
+        None,
     ))
     .unwrap();
     fixture.settings(json!({ "fail_method": "thread/read" }));
@@ -1694,6 +1697,7 @@ fn attaching_reuses_the_live_primary_that_detach_then_releases() {
         None,
         None,
         Channel::new(|_| Ok(())),
+        None,
         None,
     ))
     .unwrap();
@@ -1799,6 +1803,7 @@ fn attach_to(fixture: &Fixture, agent: &str, session_id: &str) -> Result<OpenedC
         None,
         Some(session_id.into()),
         Channel::new(|_| Ok(())),
+        None,
         None,
     ))
 }
@@ -2183,6 +2188,7 @@ fn a_hand_over_starts_the_named_chat_in_a_new_tab_that_opening_it_attaches_to() 
         None,
         Channel::new(|_| Ok(())),
         Some(opened.tab.clone()),
+        None,
     ))
     .unwrap();
     assert_eq!(attached.session_id, opened.session_id);
@@ -2250,6 +2256,7 @@ fn a_hand_over_held_to_a_schema_replies_with_its_json_and_closes_for_a_clean_res
         None,
         Channel::new(|_| Ok(())),
         Some(opened.tab),
+        None,
     ))
     .unwrap();
     wait_until("the conversation did not reopen", || {
@@ -2374,6 +2381,7 @@ fn chat_tab_commands_list_open_and_close_tabs_and_reach_a_tab_session() {
         None,
         Channel::new(|_| Ok(())),
         tab.clone(),
+        None,
     ))
     .unwrap();
     let slot = tabs::slot("codex", tab.as_deref());
@@ -2418,4 +2426,143 @@ fn chat_tab_commands_list_open_and_close_tabs_and_reach_a_tab_session() {
     let left = serde_json::to_value(listed(None)).unwrap();
     assert_eq!(left[0]["id"], "main");
     assert_eq!(left.as_array().unwrap().len(), 1);
+}
+
+fn open_side(
+    fixture: &Fixture,
+    mode: OpenMode,
+    tab: &str,
+    aside_of: &str,
+) -> Result<OpenedChat, String> {
+    tauri::async_runtime::block_on(chat_open(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        "task".into(),
+        "codex".into(),
+        fixture.repositories.folders.clone(),
+        mode,
+        None,
+        None,
+        None,
+        Channel::new(|_| Ok(())),
+        Some(tab.into()),
+        Some(aside_of.into()),
+    ))
+}
+
+#[test]
+fn a_side_chat_opens_fresh_beside_an_open_conversation() {
+    let fixture = Fixture::new();
+    assert_eq!(
+        open_side(&fixture, OpenMode::Fresh, "side-1", tabs::MAIN_TAB).map(|_| ()),
+        Err("Open the conversation before asking aside".into())
+    );
+    fixture.open("codex", OpenMode::Restart).unwrap();
+    assert_eq!(
+        open_side(&fixture, OpenMode::Attach, "side-1", tabs::MAIN_TAB).map(|_| ()),
+        Err("A side chat opens fresh in a side tab".into())
+    );
+    assert_eq!(
+        open_side(&fixture, OpenMode::Fresh, "a1b2", tabs::MAIN_TAB).map(|_| ()),
+        Err("A side chat opens fresh in a side tab".into())
+    );
+}
+
+#[test]
+fn a_side_chat_is_seeded_with_the_conversation_and_keeps_nothing() {
+    let fixture = Fixture::new();
+    let main = fixture.open("codex", OpenMode::Restart).unwrap();
+    let first = main
+        .items
+        .iter()
+        .find(|item| item.kind == ItemKind::User)
+        .unwrap()
+        .text
+        .clone();
+    let opened = open_side(&fixture, OpenMode::Fresh, "side-1", tabs::MAIN_TAB).unwrap();
+    let slot = tabs::slot("codex", Some("side-1"));
+    let registry = fixture.app.state::<ChatRegistry>();
+    let side_status = || {
+        registry
+            .with_session("task", &slot, |session| Ok(session.status()))
+            .unwrap()
+    };
+    wait_until("the side chat did not start", || {
+        side_status() == ChatStatus::Idle
+    });
+    assert_ne!(opened.session_id, "");
+    let inject = fixture
+        .logged("requests.jsonl")
+        .into_iter()
+        .find(|request| request["method"] == "thread/inject_items")
+        .unwrap();
+    let digest = inject["params"]["items"][0]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(digest.starts_with("<main_conversation from=\"Codex\">"));
+    assert!(digest.contains(&format!("[User]\n{first}")));
+    assert!(fixture.snapshot("codex").items == main.items);
+    let store = conversation_store(fixture.app.handle()).unwrap();
+    assert_eq!(
+        store.get("task", &slot, &fixture.repositories.folders[0]),
+        None
+    );
+    assert!(registry
+        .live_conversations()
+        .iter()
+        .all(|session| session.tab.is_none()));
+
+    let side = || {
+        tauri::async_runtime::block_on(chat_open(
+            fixture.app.handle().clone(),
+            fixture.app.state(),
+            "task".into(),
+            "codex".into(),
+            fixture.repositories.folders.clone(),
+            OpenMode::Attach,
+            None,
+            None,
+            None,
+            Channel::new(|_| Ok(())),
+            Some("side-1".into()),
+            None,
+        ))
+    };
+    assert_eq!(side().unwrap().session_id, opened.session_id);
+    let stale = registry.remove("task", &slot).unwrap();
+    stale.stop();
+    registry.sessions.lock().unwrap().insert(
+        opened.session_id.clone(),
+        ChatOwner::user("task", "codex", Some("side-1")),
+        stale,
+    );
+    assert_eq!(side().map(|_| ()), Err(SIDE_CHAT_ENDED.into()));
+    assert!(registry.with_session("task", &slot, |_| Ok(())).is_err());
+    assert_eq!(side().map(|_| ()), Err(SIDE_CHAT_ENDED.into()));
+    assert_eq!(
+        open_side(&fixture, OpenMode::Restart, "side-1", tabs::MAIN_TAB).map(|_| ()),
+        Err("A side chat opens fresh in a side tab".into())
+    );
+}
+
+#[test]
+fn a_side_chat_is_never_restarted_or_started_over() {
+    let fixture = Fixture::new();
+    for mode in [OpenMode::Restart, OpenMode::Fresh] {
+        let reopened = tauri::async_runtime::block_on(chat_open(
+            fixture.app.handle().clone(),
+            fixture.app.state(),
+            "task".into(),
+            "codex".into(),
+            fixture.repositories.folders.clone(),
+            mode,
+            None,
+            None,
+            None,
+            Channel::new(|_| Ok(())),
+            Some("side-1".into()),
+            None,
+        ));
+        assert_eq!(reopened.map(|_| ()), Err(SIDE_CHAT_ENDED.into()));
+    }
 }

@@ -129,6 +129,10 @@ impl ChatOwner {
         }
     }
 
+    fn is_side(&self) -> bool {
+        tabs::is_side_tab(self.tab.as_deref())
+    }
+
     /// The user session of `slot` (see [`tabs::slot`]) in the task.
     fn is_primary_of(&self, task_id: &str, slot: &str) -> bool {
         self.origin == ChatOrigin::User
@@ -1057,7 +1061,7 @@ impl ChatRegistry {
             .unwrap()
             .sessions()
             .filter(|(owner, session)| {
-                owner.origin == ChatOrigin::User && session.status().is_live()
+                owner.origin == ChatOrigin::User && !owner.is_side() && session.status().is_live()
             })
             .filter_map(|(owner, session)| {
                 Some(interrupted::InterruptedSession {
@@ -1171,7 +1175,7 @@ fn session_setup<R: Runtime>(
         turns: turns::TurnTracker::new(checkpoints, target.folders.clone(), expected_conversation),
         remember: remember_conversation(&app_data, target, handoff_link),
         notify: broadcast_activity(app, target),
-        idle_compaction: (target.owner.origin == ChatOrigin::User)
+        idle_compaction: (target.owner.origin == ChatOrigin::User && !target.owner.is_side())
             .then(|| idle_compaction::enabled_by(app)),
         pending_resolution,
         questions: Some(questions::QuestionLog::new(&app_data)),
@@ -1179,7 +1183,7 @@ fn session_setup<R: Runtime>(
 }
 
 /// Keeps the conversation for its task to resume. A session outside any task, as an automation
-/// step without one, has nothing to resume it, so nothing is kept.
+/// step without one, and a side chat have nothing to resume them, so nothing is kept.
 fn remember_conversation(
     app_data: &std::path::Path,
     target: &SessionTarget,
@@ -1195,7 +1199,7 @@ fn remember_conversation(
         target.cwd().to_string(),
     );
     let slot = target.owner.conversation_slot(&target.session_id);
-    if task_id.is_empty() {
+    if task_id.is_empty() || target.owner.is_side() {
         return Arc::new(|_| {});
     }
     Arc::new(move |conversation_id| {
@@ -1267,6 +1271,7 @@ pub async fn chat_open<R: Runtime>(
     session_id: Option<String>,
     on_event: Channel<LiveBatch>,
     tab: Option<String>,
+    aside_of: Option<String>,
 ) -> Result<OpenedChat, String> {
     if let Some(session_id) = session_id {
         return registry
@@ -1281,6 +1286,14 @@ pub async fn chat_open<R: Runtime>(
         return Err("A conversation already continues in its own agent".into());
     }
     let tab = tabs::extra_tab(tab.as_deref());
+    let reopening_side = tabs::is_side_tab(tab) && aside_of.is_none();
+    if reopening_side && mode != OpenMode::Attach {
+        return Err(SIDE_CHAT_ENDED.into());
+    }
+    let aside = match aside_of {
+        Some(source) => aside_context(&registry, &task_id, &agent, tab, mode, &source)?,
+        None => None,
+    };
     let slot = tabs::slot(&agent, tab);
     let key = (task_id.clone(), slot.clone());
     let open_lock = registry.open_lock(&key);
@@ -1292,6 +1305,12 @@ pub async fn chat_open<R: Runtime>(
         .claim_primary(&task_id, &slot, mode, &on_event);
     let (session_id, stale) = match claim {
         PrimaryClaim::Attached(opened) => return Ok(*opened),
+        PrimaryClaim::Replace { stale, .. } if reopening_side => {
+            if let Some(stale) = stale {
+                tauri::async_runtime::spawn_blocking(move || stale.terminate());
+            }
+            return Err(SIDE_CHAT_ENDED.into());
+        }
         PrimaryClaim::Replace { session_id, stale } => (session_id, stale),
     };
     let owner = ChatOwner::user(&task_id, &agent, tab);
@@ -1363,7 +1382,10 @@ pub async fn chat_open<R: Runtime>(
                 resume,
                 pinned,
                 fork,
-                handoff: handoff.as_ref().map(|handoff| handoff.digest.clone()),
+                handoff: handoff
+                    .as_ref()
+                    .map(|handoff| handoff.digest.clone())
+                    .or(aside),
                 permission,
                 output_schema: None,
                 name: None,
@@ -1405,6 +1427,29 @@ pub async fn chat_open<R: Runtime>(
         session_id,
         snapshot,
     })
+}
+
+/// A side chat lives only as long as its session; it never resumes or starts over.
+const SIDE_CHAT_ENDED: &str = "This side chat has ended. Ask again with /btw.";
+
+/// What a side chat opening fresh in `tab` knows of the conversation open in the `source` tab.
+fn aside_context(
+    registry: &ChatRegistry,
+    task_id: &str,
+    agent: &str,
+    tab: Option<&str>,
+    mode: OpenMode,
+    source: &str,
+) -> Result<Option<String>, String> {
+    if !tabs::is_side_tab(tab) || mode != OpenMode::Fresh {
+        return Err("A side chat opens fresh in a side tab".into());
+    }
+    registry
+        .with_session(task_id, &tabs::slot(agent, Some(source)), |session| {
+            let state = session.shared.lock().unwrap();
+            Ok(handoff::aside_digest(agent, &state.snapshot.items))
+        })
+        .map_err(|_| "Open the conversation before asking aside".to_string())
 }
 
 #[tauri::command(async)]

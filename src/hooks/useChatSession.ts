@@ -64,9 +64,7 @@ export function useChatSession(
   const [snapshot, setSnapshot] = useState<ChatSnapshot>(CONNECTING);
   const [error, setError] = useState<string | null>(null);
   const [attachment, setAttachment] = useState<Attachment | null>(null);
-  const openRef = useRef<(mode: ChatOpenMode, conversation?: string) => Promise<void>>(
-    async () => undefined
-  );
+  const openRef = useRef<(mode: ChatOpenMode) => Promise<void>>(async () => undefined);
   const foldersKey = folders.join("\n");
 
   useEffect(() => {
@@ -75,7 +73,7 @@ export function useChatSession(
     let attachedSession = "";
     let opening = 0;
 
-    const open = async (mode: ChatOpenMode, conversation?: string, handoffFrom?: AgentId) => {
+    const open = async (mode: ChatOpenMode, intent?: ChatOpenIntent) => {
       if (disposed) throw new Error("The chat pane is no longer active");
       const version = ++opening;
       const early: { generation: number; apply: (s: ChatSnapshot) => ChatSnapshot }[] = [];
@@ -88,10 +86,11 @@ export function useChatSession(
           agent,
           folders: foldersKey.split("\n"),
           mode,
-          conversation,
-          handoffFrom,
+          conversation: intent?.conversation,
+          handoffFrom: intent?.handoffFrom,
           tab,
           sessionId,
+          asideOf: intent?.asideOf,
           onEvents: (eventGeneration, events) => {
             if (disposed || version !== opening) return;
             const apply = (s: ChatSnapshot) =>
@@ -100,6 +99,8 @@ export function useChatSession(
             else if (eventGeneration === generation) setSnapshot(apply);
           },
         });
+        if (intent?.prompt)
+          void chatSend(taskId, agent, intent.prompt, [], tab).catch(() => undefined);
         if (disposed || version !== opening) {
           throw new Error("The conversation changed before it was ready");
         }
@@ -122,9 +123,7 @@ export function useChatSession(
     openRef.current = open;
     const taken = takeIntent?.();
     const intent = taken?.agent === agent ? taken : undefined;
-    void open(intent?.mode ?? "attach", intent?.conversation, intent?.handoffFrom).catch(
-      () => undefined
-    );
+    void open(intent?.mode ?? "attach", intent).catch(() => undefined);
 
     return () => {
       disposed = true;

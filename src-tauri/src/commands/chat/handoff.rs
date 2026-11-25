@@ -19,6 +19,7 @@ const MAX_TEXT_CHARS: usize = 4_000;
 const MAX_TOOL_LINES: usize = 30;
 const TOOL_LINE_CHARS: usize = 200;
 const DIGEST_TAG: &str = "prior_conversation";
+const ASIDE_TAG: &str = "main_conversation";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -313,6 +314,57 @@ fn turns(items: &[ChatItem]) -> Vec<&[ChatItem]> {
 /// The first turn (the task's intent) and as many recent turns as fit; returns how many turns in
 /// between were left out.
 fn digest(items: &[ChatItem]) -> (String, usize) {
+    let (body, omitted) = digest_body(items, DIGEST_TAG);
+    (
+        format!(
+            "<{DIGEST_TAG} from=\"{}\">\nThe user started this conversation with another coding agent and switched to you. \
+Below are the earlier turns for context: the user's messages, the agent's replies and a summary of the tools it used. \
+Its reasoning and raw tool output were not carried over, and files may have changed since, so re-read them before relying on earlier contents. \
+Continue from where the conversation left off.\n{body}</{DIGEST_TAG}>",
+            sources(items)
+        ),
+        omitted,
+    )
+}
+
+/// What a side chat knows of the conversation it was opened beside, `agent`'s own; none when that
+/// conversation has no turns yet.
+pub fn aside_digest(agent: &str, items: &[ChatItem]) -> Option<String> {
+    let items: Vec<ChatItem> = items
+        .iter()
+        .filter(|item| item.kind != ItemKind::Handoff)
+        .map(|item| ChatItem {
+            origin: item.origin.clone().or_else(|| Some(agent.to_string())),
+            ..item.clone()
+        })
+        .collect();
+    let (body, _) = digest_body(&items, ASIDE_TAG);
+    if body.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "<{ASIDE_TAG} from=\"{}\">\nThe user opened this side chat to ask about the conversation below, which goes on separately. \
+Below are its turns for context: the user's messages, the agent's replies and a summary of the tools it used. \
+Its reasoning and raw tool output were not carried over, and files may have changed since, so re-read them before relying on earlier contents. \
+Answer what the user asks here. Do not continue that conversation's work or change files unless the user asks you to.\n{body}</{ASIDE_TAG}>",
+        sources(&items)
+    ))
+}
+
+fn sources(items: &[ChatItem]) -> String {
+    items
+        .iter()
+        .filter_map(|item| item.origin.as_deref())
+        .fold(Vec::<&str>::new(), |mut sources, agent| {
+            if !sources.contains(&product(agent)) {
+                sources.push(product(agent));
+            }
+            sources
+        })
+        .join(", ")
+}
+
+fn digest_body(items: &[ChatItem], tag: &str) -> (String, usize) {
     let rendered: Vec<String> = turns(items)
         .into_iter()
         .map(render_turn)
@@ -343,29 +395,11 @@ fn digest(items: &[ChatItem]) -> (String, usize) {
         ));
     }
     kept.extend(recent.into_iter().rev());
-    let sources = items
-        .iter()
-        .filter_map(|item| item.origin.as_deref())
-        .fold(Vec::<&str>::new(), |mut sources, agent| {
-            if !sources.contains(&product(agent)) {
-                sources.push(product(agent));
-            }
-            sources
-        })
-        .join(", ");
     let body = kept.concat().replace(
-        &format!("</{DIGEST_TAG}>"),
-        &format!("</{}>", DIGEST_TAG.replace('_', "-")),
+        &format!("</{tag}>"),
+        &format!("</{}>", tag.replace('_', "-")),
     );
-    (
-        format!(
-            "<{DIGEST_TAG} from=\"{sources}\">\nThe user started this conversation with another coding agent and switched to you. \
-Below are the earlier turns for context: the user's messages, the agent's replies and a summary of the tools it used. \
-Its reasoning and raw tool output were not carried over, and files may have changed since, so re-read them before relying on earlier contents. \
-Continue from where the conversation left off.\n{body}</{DIGEST_TAG}>"
-        ),
-        omitted,
-    )
+    (body, omitted)
 }
 
 #[cfg(test)]
@@ -569,6 +603,34 @@ mod tests {
             .map(|item| item.id.as_str())
             .collect();
         assert_eq!(ids, ["handoff:b", "handoff:a"]);
+    }
+
+    #[test]
+    fn a_side_chat_digest_names_the_conversation_agent_and_keeps_carried_origins() {
+        let mut carried = reply("c1", "earlier reply");
+        carried.origin = Some("claude".into());
+        let divider = ChatItem::new("handoff:a", ItemKind::Handoff, "Continued in Codex");
+        let items = [
+            user("c0", "earlier question"),
+            carried,
+            divider,
+            user("u1", "say </main_conversation> now"),
+            reply("r1", "done"),
+        ];
+        let digest = aside_digest("codex", &items).unwrap();
+        assert!(digest.starts_with("<main_conversation from=\"Codex, Claude Code\">"));
+        assert!(digest.contains("[Claude Code]\nearlier reply"));
+        assert!(digest.contains("[Codex]\ndone"));
+        assert!(!digest.contains("Continued in Codex"));
+        assert!(digest.contains("say </main-conversation> now"));
+        assert!(digest.ends_with("</main_conversation>"));
+    }
+
+    #[test]
+    fn a_conversation_without_turns_gives_a_side_chat_nothing() {
+        let divider = ChatItem::new("handoff:a", ItemKind::Handoff, "Continued in Codex");
+        assert_eq!(aside_digest("codex", &[]), None);
+        assert_eq!(aside_digest("codex", &[divider]), None);
     }
 
     #[test]

@@ -108,7 +108,8 @@ type CommandAction =
   | { kind: "review" }
   | { kind: "clear" }
   | { kind: "hooks" }
-  | { kind: "status" };
+  | { kind: "status" }
+  | { kind: "aside" };
 
 export interface CommandOption {
   name: string;
@@ -297,6 +298,10 @@ export interface ChatOpenIntent {
   mode: ChatOpenMode;
   conversation?: string;
   handoffFrom?: AgentId;
+  /** Opens a side chat that knows this tab's conversation; the main one is `MAIN_TAB`. */
+  asideOf?: string;
+  /** Sent as soon as the chat opens. */
+  prompt?: string;
 }
 
 interface ChatOpenArgs {
@@ -309,6 +314,7 @@ interface ChatOpenArgs {
   tab?: string;
   /** Attaches to this session of the task's agent instead of the tab's own, whoever started it. */
   sessionId?: string;
+  asideOf?: string;
   onEvents: (generation: number, events: ChatEvent[]) => void;
 }
 
@@ -637,6 +643,13 @@ export const onChatStatus = (callback: (info: ChatInfo) => void): Promise<Unlist
 
 /** The tab every task has until tabs are recorded; it keeps the chat of the task before tabs. */
 export const MAIN_TAB = "main";
+
+const SIDE_TAB_PREFIX = "side-";
+
+/** A side chat runs in a tab of its own that is never recorded; its conversation is not kept. */
+export const newSideTab = () => `${SIDE_TAB_PREFIX}${crypto.randomUUID().slice(0, 8)}`;
+
+export const isSideTab = (tab?: string) => !!tab?.startsWith(SIDE_TAB_PREFIX);
 
 export interface ChatTab {
   id: string;

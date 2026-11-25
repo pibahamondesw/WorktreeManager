@@ -5,6 +5,8 @@ import {
   insertMention,
   insertPaths,
   localCommand,
+  ASIDE_COMMAND,
+  withAsideCommand,
   menuTrigger,
   promptMemory,
   reviewTarget,
@@ -153,6 +155,26 @@ describe("localCommand", () => {
     expect(localCommand("/review 12", controls)).toBeNull();
     expect(localCommand("/unknown", controls)).toBeNull();
     expect(localCommand("please /model", controls)).toBeNull();
+  });
+});
+
+describe("side questions", () => {
+  const agentBtw = command("btw", "Agent's own", { kind: "insert", text: "/btw " });
+  const asking = { ...controls, commands: withAsideCommand([agentBtw, ...controls.commands]) };
+
+  it("replaces an agent command of the same name with the app's", () => {
+    expect(asking.commands.filter((c) => c.name === "btw")).toEqual([ASIDE_COMMAND]);
+    expect(asking.commands).toHaveLength(controls.commands.length + 1);
+  });
+
+  it("takes everything after /btw as the question, even across lines", () => {
+    expect(localCommand("/btw what does  run() do?\nand why", asking)).toEqual({
+      kind: "aside",
+      question: "what does  run() do?\nand why",
+    });
+    expect(localCommand("/btw", asking)).toEqual({ kind: "aside", question: "" });
+    expect(localCommand("/btw what", controls)).toBeNull();
+    expect(localCommand("ask /btw what", asking)).toBeNull();
   });
 });
 

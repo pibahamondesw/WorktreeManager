@@ -104,7 +104,7 @@ describe("useAgentActivity", () => {
     expect(onOpenTarget).toHaveBeenCalledWith(task, target);
   });
 
-  it("reports finished and waiting agents to the automation engine, except automation sessions", async () => {
+  it("reports finished and waiting agents to the automation engine, except automation sessions and side chats", async () => {
     const { result } = renderHook(() =>
       useAgentActivity({ tasks: [task], sessions: {}, openedTaskId: null, onOpenTarget: vi.fn() })
     );
@@ -137,6 +137,11 @@ describe("useAgentActivity", () => {
     };
     const now = vi.spyOn(Date, "now").mockReturnValue(10);
     act(() => chatListeners.forEach((listener) => listener(chat, undefined)));
+    act(() =>
+      chatListeners.forEach((listener) =>
+        listener({ ...chat, sessionId: "side", origin: "user", tab: "side-1a2b" })
+      )
+    );
     act(() =>
       chatListeners.forEach((listener) => listener({ ...chat, sessionId: "s2", origin: "user" }))
     );

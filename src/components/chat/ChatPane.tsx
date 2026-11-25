@@ -75,6 +75,17 @@ interface ChatPaneProps {
   takeOpenIntent?: () => ChatOpenIntent | null;
   /** Shows another session of the agent without taking part, such as an automation's. */
   readOnly?: ReadOnlySession;
+  /** Opens a side chat about this conversation, asking `question` when there is one. */
+  onAskAside?: (question: string) => void;
+  /** Added to the composer's draft, such as a side chat's reply; taken once. */
+  insertion?: ComposerSeed | null;
+  onInserted?: () => void;
+  /** The pane is a side chat, whose replies can be added to the main chat's draft. */
+  aside?: SideChatRole;
+}
+
+interface SideChatRole {
+  onBringBack: (reply: string) => void;
 }
 
 interface ReadOnlySession {
@@ -133,6 +144,10 @@ export function ChatPane({
   onSwitchAgent,
   takeOpenIntent,
   readOnly,
+  onAskAside,
+  insertion,
+  onInserted,
+  aside,
 }: ChatPaneProps) {
   const session = useChatSession(taskId, agent, folders, takeOpenIntent, tab, readOnly?.sessionId);
   const chatKey = readOnly
@@ -237,7 +252,8 @@ export function ChatPane({
   const earlier = snapshot.earlier ?? 0;
   const firstPrompt = useFirstPrompt();
   const [seed, setSeed] = useState<ComposerSeed | null>(null);
-  const startsEmpty = !readOnly && status.kind === "idle" && items.length === 0 && earlier === 0;
+  const startsEmpty =
+    !readOnly && !aside && status.kind === "idle" && items.length === 0 && earlier === 0;
   useEffect(() => {
     if (!startsEmpty || seededConversations.has(sessionKey)) return;
     let stale = false;
@@ -294,6 +310,14 @@ export function ChatPane({
   };
 
   useEffect(() => onStatusChange?.(sessionStatus(status)), [status, onStatusChange]);
+
+  useEffect(() => {
+    if (insertion) onInserted?.();
+  }, [insertion, onInserted]);
+
+  const latestReply = aside
+    ? [...mainItems].reverse().find((item) => item.kind === "assistant" && item.text.trim())
+    : undefined;
 
   useLayoutEffect(() => stickToBottom(), [snapshot.generation, stickToBottom]);
 
@@ -436,6 +460,17 @@ export function ChatPane({
       )}
       <ToolVisibilitySelect value={toolVisibility} />
       <AgentUsageIndicator agent={agent} />
+      {aside && (
+        <Button
+          variant="ghost"
+          disabled={!latestReply || busy}
+          title="Add the latest reply to the main chat's draft"
+          onClick={() => latestReply && aside.onBringBack(latestReply.text)}
+          className="h-7 px-2 text-xs"
+        >
+          Add reply to main chat
+        </Button>
+      )}
     </>
   );
 
@@ -461,7 +496,9 @@ export function ChatPane({
               <p className="text-sm text-text-muted text-center py-8">
                 {status.kind === "starting"
                   ? `Starting ${agentLabel}…`
-                  : `Ask ${agentLabel} to work on this task.`}
+                  : aside
+                    ? "Ask about the conversation. Nothing here is added to it."
+                    : `Ask ${agentLabel} to work on this task.`}
               </p>
             )}
             {earlier > 0 && (
@@ -494,7 +531,7 @@ export function ChatPane({
                           steps={item.kind === "agent" ? steps : undefined}
                           historyDisabled={historyDisabled}
                           onHistory={
-                            !readOnly && item.kind === "user" && !item.origin
+                            !readOnly && !aside && item.kind === "user" && !item.origin
                               ? pickHistory
                               : undefined
                           }
@@ -580,7 +617,7 @@ export function ChatPane({
                       ? status.message
                       : `Session ended${status.kind === "exited" && status.code !== null ? ` (exit ${status.code})` : ""}`)}
                 </span>
-                {!readOnly && (
+                {!readOnly && !aside && (
                   <Button onClick={() => void restart()} className="h-8 text-xs">
                     Restart chat
                   </Button>
@@ -596,7 +633,7 @@ export function ChatPane({
               {actionError}
             </p>
           )}
-          {!readOnly && (
+          {!readOnly && !aside && (
             <UsageLimitBanner
               taskId={taskId}
               agent={agent}
@@ -612,13 +649,13 @@ export function ChatPane({
           ) : (
             <Composer
               key={`${taskId}:${agent}`}
-              memoryKey={taskId}
+              memoryKey={aside ? chatKey : taskId}
               agent={agent}
               status={status}
               controls={controls}
               folders={folders}
               queuedEdit={queuedEdit}
-              seed={seed}
+              seed={insertion ?? seed}
               quotes={composerQuotes}
               actions={{
                 send,
@@ -630,6 +667,7 @@ export function ChatPane({
                 showUsage: () => setUsageOpen(true),
                 showHooks: () => setHooksSession(sessionKey),
                 switchAgent: onSwitchAgent ? requestAgent : undefined,
+                askAside: onAskAside,
               }}
               onError={setActionError}
             />
