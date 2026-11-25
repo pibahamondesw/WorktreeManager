@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { Button } from "../ui/Button";
 import { ChatItemView, QueuedActions, WorkGroup } from "./ChatItemView";
 import { ChatFindBar } from "./ChatFindBar";
+import { ConversationMinimap } from "./ConversationMinimap";
 import { useChatFind } from "./useChatFind";
 import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
@@ -405,6 +406,7 @@ export function ChatPane({
           className="chat-scroll flex-1 min-h-0 overflow-y-auto"
         >
           <div className="max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
+            <ConversationMinimap rows={rows} timeline={timeline} />
             {items.length === 0 && live && !readOnly && (
               <p className="text-sm text-text-muted text-center py-8">
                 {status.kind === "starting"
