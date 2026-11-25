@@ -185,6 +185,45 @@ it.each(["error", "warning"])("keeps logs with a setup %s visible", (failure) =>
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 });
 
+function finishSetupScript(status: "completed" | "error") {
+  act(() => {
+    planRepoSetup("progress-test", "api", ["script"], "worktreemanager");
+    updateSetupStep("progress-test", "api", "script", "running", []);
+  });
+  act(() => {
+    updateSetupStep("progress-test", "api", "script", status, []);
+    updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, active: false });
+  });
+}
+
+it("auto-dismisses after a setup script completes", () => {
+  startSetup();
+  finishSetupScript("completed");
+  expect(screen.getByRole("status")).toHaveTextContent("Setup completed");
+  expect(screen.getByRole("progressbar")).toBeInTheDocument();
+  void act(() => vi.advanceTimersByTime(5000));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("keeps a failed setup script visible", () => {
+  startSetup();
+  finishSetupScript("error");
+  void act(() => vi.advanceTimersByTime(10000));
+  expect(screen.getByRole("status")).toHaveTextContent("Setup completed with errors");
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+});
+
+it("opening a setup script's output during the countdown requires manual dismissal", () => {
+  startSetup();
+  finishSetupScript("completed");
+  void act(() => vi.advanceTimersByTime(2000));
+  fireEvent.click(screen.getByRole("status").closest("summary")!);
+  fireEvent.click(screen.getByRole("button", { name: /output/i }));
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  void act(() => vi.advanceTimersByTime(10000));
+  expect(screen.getByRole("status")).toBeInTheDocument();
+});
+
 it("cancels an active countdown if an error arrives", () => {
   startSetup();
   completeSetup();
@@ -211,7 +250,6 @@ it("offers retry and detected setup after a repository script finishes", () => {
   });
   expect(screen.getByRole("status")).toHaveTextContent("Setup completed");
   expect(screen.queryByRole("button", { name: "Approve and run" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Use detected setup" }));
   expect(rerun).toHaveBeenCalledWith("progress-test", "api", "detected");
   fireEvent.click(screen.getByRole("button", { name: "Run again" }));
@@ -239,7 +277,6 @@ it("offers stopping a running setup script and keeps finished script results vis
     updateSetupStep("progress-test", "api", "script", "completed", []);
     updateTaskSetup("progress-test", { ...getTaskSetup("progress-test")!, active: false });
   });
-  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Run again" }));
   expect(rerun).toHaveBeenCalledWith("progress-test", "api", "retry");
 });
