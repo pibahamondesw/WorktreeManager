@@ -1437,16 +1437,31 @@ struct TaskNotification<'a> {
 
 fn task_notification(text: &str) -> Option<TaskNotification<'_>> {
     let body = text.trim_start().strip_prefix("<task-notification>")?;
-    let tag = |name: &str| {
-        let start = body.find(&format!("<{name}>"))? + name.len() + 2;
-        let end = body[start..].find(&format!("</{name}>"))? + start;
-        Some(body[start..end].trim())
-    };
+    let tag = |name: &str| tag_text(body, name);
     Some(TaskNotification {
         task: tag("task-id"),
         call: tag("tool-use-id"),
         status: tag("status").unwrap_or_default(),
         report: tag("result").or_else(|| tag("summary")).unwrap_or_default(),
+    })
+}
+
+fn tag_text<'a>(body: &'a str, name: &str) -> Option<&'a str> {
+    let start = body.find(&format!("<{name}>"))? + name.len() + 2;
+    let end = body[start..].find(&format!("</{name}>"))? + start;
+    Some(body[start..end].trim())
+}
+
+/// The prompt a user typed to run a skill or custom slash command, as the transcript records it.
+/// Built-in commands such as `/clear` start with `<command-name>` and stay hidden.
+fn slash_command_prompt(text: &str) -> Option<String> {
+    if !text.starts_with("<command-message>") {
+        return None;
+    }
+    let name = tag_text(text, "command-name")?;
+    Some(match tag_text(text, "command-args") {
+        Some(args) if !args.is_empty() => format!("{name} {args}"),
+        _ => name.to_string(),
     })
 }
 
@@ -1650,7 +1665,15 @@ fn parse_transcript(text: &str, parent: Option<&str>) -> Vec<ChatItem> {
         match entry["type"].as_str() {
             Some("user") => match &message["content"] {
                 Value::String(text) if parent.is_none() && text.starts_with('<') => {
-                    finish_notified_agent(&mut snapshot, &agent_calls, &reports, text)
+                    match slash_command_prompt(text) {
+                        Some(prompt) => snapshot.apply(&ChatEvent::Upsert {
+                            item: transcript_user_item(
+                                entry["uuid"].as_str().unwrap_or_default(),
+                                &prompt,
+                            ),
+                        }),
+                        None => finish_notified_agent(&mut snapshot, &agent_calls, &reports, text),
+                    }
                 }
                 Value::String(text) if parent.is_none() => snapshot.apply(&ChatEvent::Upsert {
                     item: transcript_user_item(entry["uuid"].as_str().unwrap_or_default(), text),
@@ -2881,6 +2904,33 @@ mod tests {
                 tool: "Bash".into(),
                 input: json!({ "command": "gh pr list" }),
             }]
+        );
+    }
+
+    #[test]
+    fn history_shows_a_skill_command_as_the_prompt_the_user_typed() {
+        let lines = [
+            json!({ "type": "user", "uuid": "u1", "message": { "content": "<command-message>review-pr</command-message>\n<command-name>/review-pr</command-name>\n<command-args>42 carefully</command-args>" } }),
+            json!({ "type": "user", "uuid": "u2", "isMeta": true, "message": { "content": [{ "type": "text", "text": "Skill body" }] } }),
+            json!({ "type": "user", "uuid": "u3", "message": { "content": "<command-message>bump</command-message>\n<command-name>/bump</command-name>" } }),
+            json!({ "type": "user", "uuid": "u4", "message": { "content": "<command-message>tidy</command-message>\n<command-name>/tidy</command-name>\n<command-args></command-args>" } }),
+        ];
+        let text = lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let items = parse_history(&text);
+
+        let prompts: Vec<_> = items.iter().map(|i| (i.kind, i.text.as_str())).collect();
+        assert_eq!(
+            prompts,
+            [
+                (ItemKind::User, "/review-pr 42 carefully"),
+                (ItemKind::User, "/bump"),
+                (ItemKind::User, "/tidy")
+            ]
         );
     }
 
