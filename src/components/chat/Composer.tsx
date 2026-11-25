@@ -18,6 +18,7 @@ import {
   textAttachment,
   withTextAttachments,
 } from "./composerPastes";
+import { ChatQuote, quoteExcerpt, withQuotes } from "./chatQuotes";
 import { MenuOption, OptionMenu } from "./OptionMenu";
 import { ComposerEditor, ComposerEditorHandle } from "./ComposerEditor";
 import {
@@ -86,6 +87,14 @@ export interface ComposerSeed {
   text: string;
 }
 
+/** Quotes of the agent's replies, sent before the message. */
+export interface ComposerQuotes {
+  items: ChatQuote[];
+  change: (update: (quotes: ChatQuote[]) => ChatQuote[]) => void;
+  canShow: (quote: ChatQuote) => boolean;
+  show: (quote: ChatQuote) => void;
+}
+
 interface Draft {
   text: string;
   images: ImageAttachment[];
@@ -99,6 +108,7 @@ interface ComposerProps {
   controls: ChatControls;
   folders: string[];
   actions: ComposerActions;
+  quotes: ComposerQuotes;
   queuedEdit?: QueuedMessageEdit;
   /** Fills an empty composer once per key, such as with a new conversation's first prompt. */
   seed?: ComposerSeed | null;
@@ -126,6 +136,7 @@ export function Composer({
   controls,
   folders,
   actions,
+  quotes,
   queuedEdit,
   seed = null,
   onError,
@@ -177,7 +188,8 @@ export function Composer({
   const attached = canAttach ? images : [];
   const canAttachText = ready && !queuedEdit;
   const attachedTexts = canAttachText ? pastes : [];
-  const sendable = Boolean(text.trim() || attached.length || attachedTexts.length);
+  const quoted = canAttachText ? quotes.items : [];
+  const sendable = Boolean(text.trim() || attached.length || attachedTexts.length || quoted.length);
   const trigger = picker || dismissed === text ? null : menuTrigger(text, caret);
   const mentionQuery = trigger?.kind === "mention" ? trigger.query : null;
   const foldersKey = folders.join("\n");
@@ -234,6 +246,13 @@ export function Composer({
 
   const focus = (nextCaret?: number) =>
     requestAnimationFrame(() => editorRef.current?.focus(nextCaret));
+
+  const quoteCount = quotes.items.length;
+  const quoteCountRef = useRef(quoteCount);
+  useEffect(() => {
+    if (quoteCount > quoteCountRef.current) focus();
+    quoteCountRef.current = quoteCount;
+  }, [quoteCount]);
 
   const update = (next: string, nextCaret = next.length) => {
     setText(next);
@@ -380,7 +399,10 @@ export function Composer({
     if (queuedEdit) return saveEdit(false);
     const message = text.trim();
     if (!sendable || !ready) return;
-    const local = attached.length || attachedTexts.length ? null : localCommand(message, controls);
+    const local =
+      attached.length || attachedTexts.length || quoted.length
+        ? null
+        : localCommand(message, controls);
     if (local) {
       update("");
       if (local.kind === "picker") openPicker(local.picker);
@@ -400,16 +422,18 @@ export function Composer({
     if (message) promptMemory.remember(memoryKey, message);
     setImages([]);
     setPastes([]);
+    quotes.change((current) => current.filter((quote) => !quoted.includes(quote)));
     update("");
     try {
       await actions.send(
-        withTextAttachments(message, attachedTexts),
+        withTextAttachments(withQuotes(message, quoted), attachedTexts),
         attached.map(({ mediaType, data }) => ({ mediaType, data }))
       );
     } catch (e) {
       setText((current) => current || draft.text);
       setImages((current) => (current.length ? current : draft.images));
       setPastes((current) => (current.length ? current : draft.pastes));
+      quotes.change((current) => (current.length ? current : quoted));
       onError(String(e));
     } finally {
       sendingRef.current = false;
@@ -561,6 +585,21 @@ export function Composer({
                     <CloseIcon size={8} />
                   </button>
                 </li>
+              ))}
+            </ul>
+          )}
+          {quoted.length > 0 && (
+            <ul aria-label="Quotes" className="flex flex-wrap gap-2 px-3 pt-2">
+              {quoted.map((quote) => (
+                <QuoteChip
+                  key={quote.id}
+                  quote={quote}
+                  canShow={quotes.canShow(quote)}
+                  onShow={() => quotes.show(quote)}
+                  onRemove={() =>
+                    quotes.change((current) => current.filter((q) => q.id !== quote.id))
+                  }
+                />
               ))}
             </ul>
           )}
@@ -734,6 +773,46 @@ function pickerOptions(
     description: mode.description,
     selected: mode.id === controls.mode,
   }));
+}
+
+function QuoteChip({
+  quote,
+  canShow,
+  onShow,
+  onRemove,
+}: {
+  quote: ChatQuote;
+  canShow: boolean;
+  onShow: () => void;
+  onRemove: () => void;
+}) {
+  const excerpt = quoteExcerpt(quote);
+  return (
+    <li className="flex min-w-0 max-w-full items-center gap-1 rounded-md border border-border pl-1.5 pr-1 py-1 text-xs text-text-secondary">
+      <button
+        type="button"
+        aria-label={`Show “${excerpt}” in the conversation`}
+        title={
+          canShow ? "Show in the conversation" : "The quoted reply is no longer in the conversation"
+        }
+        disabled={!canShow}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onShow}
+        className="min-w-0 max-w-80 truncate border-l-2 border-accent pl-1.5 text-left enabled:cursor-pointer enabled:hover:text-text-primary"
+      >
+        {excerpt}
+      </button>
+      <button
+        type="button"
+        aria-label={`Remove quote “${excerpt}”`}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onRemove}
+        className="h-4 w-4 shrink-0 flex items-center justify-center rounded-full text-text-secondary hover:text-text-primary cursor-pointer"
+      >
+        <CloseIcon size={8} />
+      </button>
+    </li>
+  );
 }
 
 function Chip({

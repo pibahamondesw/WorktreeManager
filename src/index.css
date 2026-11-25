@@ -672,3 +672,6 @@ body,
   background-color: color-mix(in srgb, var(--color-warning) 75%, transparent);
   color: var(--color-bg-primary);
 }
+::highlight(chat-quote) {
+  background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
