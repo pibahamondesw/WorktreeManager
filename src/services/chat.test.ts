@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyChatEvent, ChatSnapshot, EMPTY_CONTROLS } from "./chat";
+import { applyChatEvent, ChatItem, ChatSnapshot, EMPTY_CONTROLS, limitResetsAt } from "./chat";
 
 const base: ChatSnapshot = {
   generation: 1,
@@ -51,5 +51,18 @@ describe("applyChatEvent", () => {
     expect(s.pending).toHaveLength(1);
     s = applyChatEvent(s, { type: "status", status: { kind: "failed", message: "x" } });
     expect(s.pending).toEqual([]);
+  });
+});
+
+describe("limitResetsAt", () => {
+  const limit: ChatItem = { id: "e1", kind: "error", text: "Limit", limitResetsAt: 100 };
+  const prompt: ChatItem = { id: "u1", kind: "user", text: "Hi" };
+
+  it("reads the renewal of a usage limit error until the next prompt", () => {
+    expect(limitResetsAt([prompt, limit, { id: "a1", kind: "assistant", text: "" }])).toBe(100);
+    expect(limitResetsAt([limit, prompt])).toBeNull();
+    expect(limitResetsAt([prompt, { ...limit, origin: "codex" }])).toBeNull();
+    expect(limitResetsAt([prompt, { ...limit, limitResetsAt: undefined }])).toBeNull();
+    expect(limitResetsAt([])).toBeNull();
   });
 });
