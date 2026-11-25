@@ -122,13 +122,14 @@ export function TaskHeader({
       )}
       <EditableTaskTitle
         title={task.linearIssueTitle ?? task.branchName}
+        className="shrink-[100]"
         textClassName="text-sm font-semibold text-text-primary"
         titleStyle={{ viewTransitionName: taskTransitionName("title") }}
         onRename={onRename}
         onError={onRenameError}
       />
       <span
-        className="grid grid-flow-col grid-cols-[auto_minmax(4rem,max-content)] auto-cols-max items-center gap-1 shrink-[999] text-xs font-mono text-text-muted whitespace-nowrap"
+        className="grid grid-flow-col grid-cols-[auto_minmax(4rem,max-content)] auto-cols-max items-center gap-1 shrink-[100000] text-xs font-mono text-text-muted whitespace-nowrap"
         style={{ viewTransitionName: taskTransitionName("branch") }}
       >
         <BranchIcon className="flex-shrink-0" />
@@ -151,7 +152,7 @@ export function TaskHeader({
       </span>
       {prs.length > 0 && (
         <span
-          className="flex items-center gap-1.5 text-xs min-w-0 shrink-[0.01] overflow-hidden whitespace-nowrap"
+          className="flex items-center gap-1.5 text-xs min-w-0 shrink overflow-hidden whitespace-nowrap"
           style={{ viewTransitionName: taskTransitionName("prs") }}
         >
           <PullRequestLinks prs={prs} numbersOnly />
