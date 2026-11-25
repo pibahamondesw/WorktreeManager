@@ -116,6 +116,44 @@ describe("useVirtualRows", () => {
     expect(scroller.scrollTop).toBe(101 * ROW_HEIGHT - VIEWPORT);
   });
 
+  it("lets a small scroll up leave the bottom and stop following new rows", () => {
+    const { scroller, rerender } = renderLaidOut(keysUpTo(100));
+    const bottom = 100 * ROW_HEIGHT - VIEWPORT;
+
+    scrollTo(scroller, bottom - 5);
+    expect(scroller.scrollTop).toBe(bottom - 5);
+
+    rerender(<Timeline keys={keysUpTo(101)} />);
+    expect(scroller.scrollTop).toBe(bottom - 5);
+  });
+
+  it("follows new rows again after scrolling back down near the bottom", () => {
+    const { scroller, rerender } = renderLaidOut(keysUpTo(100));
+    const bottom = 100 * ROW_HEIGHT - VIEWPORT;
+    scrollTo(scroller, bottom - 100);
+
+    scrollTo(scroller, bottom - 5);
+    rerender(<Timeline keys={keysUpTo(101)} />);
+
+    expect(scroller.scrollTop).toBe(101 * ROW_HEIGHT - VIEWPORT);
+  });
+
+  it("keeps following new rows when the browser pulls the scroll up because the bottom row shrank", () => {
+    const heights: Record<string, number> = { r99: 420 };
+    const { scroller, rerender } = renderLaidOut(
+      keysUpTo(100),
+      (key) => heights[key] ?? ROW_HEIGHT
+    );
+    expect(scroller.scrollTop).toBe(100 * ROW_HEIGHT + 300 - VIEWPORT);
+
+    heights.r99 = ROW_HEIGHT;
+    scrollTo(scroller, scroller.scrollTop);
+    expect(scroller.scrollTop).toBe(100 * ROW_HEIGHT - VIEWPORT);
+
+    rerender(<Timeline keys={keysUpTo(101)} />);
+    expect(scroller.scrollTop).toBe(101 * ROW_HEIGHT - VIEWPORT);
+  });
+
   it("keeps the first visible row in place when a row above it grows", () => {
     const heights: Record<string, number> = {};
     const { scroller } = renderLaidOut(keysUpTo(100), (key) => heights[key] ?? ROW_HEIGHT);
