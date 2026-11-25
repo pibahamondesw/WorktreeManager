@@ -42,6 +42,8 @@ The embedded VSCode follows the app theme as a default: it recolors its built-in
 
 Enable **Obsidian vault** from the sidebar to create task notes in `~/Documents/worktreemanager-vault`. Removing a task archives its notes; disabling the vault leaves files untouched. For agent setup and vault customization, see the [vault guide](vault-kit/README.md).
 
+Agents can answer in the chat with a page instead of text: ask for a chart, rich table or mockup in a fenced code block whose info string is `html preview`. The chat shows it in an isolated frame with the app theme (its colors as `--color-*` CSS variables), and the expand button opens it full screen with zoom. The page must be self-contained: it runs no scripts, reaches no network, opens no links and loads images and fonts only as `data:` URLs. A plain `html` block stays code.
+
 ## Navigation
 
 Use `↑` / `↓` or `j` / `k` to select tasks, `Enter` to open one, and `⌘[` to return. `⌘K` opens the command palette; `⌘F` searches the current workspace from the task list and the open conversation in a chat. In the embedded editor, use `⌘⌥P` for search. `L` opens the selected issue and `O` its notes.
