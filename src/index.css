@@ -407,6 +407,29 @@ body,
 .chat-mermaid-action:focus-visible {
   outline: 1px solid var(--color-accent);
 }
+.chat-html-preview {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg-secondary);
+}
+.chat-html-preview-frame {
+  display: block;
+  width: 100%;
+  height: min(24rem, 70cqh);
+}
+.chat-html-preview-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.chat-html-preview:hover .chat-html-preview-actions,
+.chat-html-preview-actions:focus-within {
+  opacity: 1;
+}
 .markdown-card-excerpt {
   -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);

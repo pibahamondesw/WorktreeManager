@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { CloseIcon, FitIcon, FitWidthIcon } from "../ui/Icons";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 import { DiagramActions } from "./DiagramActions";
+import { VIEWER_TOOLBAR_BUTTON } from "./viewerToolbar";
 import {
   MAX_SCALE,
   MIN_SCALE,
@@ -193,8 +194,7 @@ export function DiagramViewer({
   };
 
   const zoomPercent = Math.round(view.scale * 100);
-  const toolbarButton =
-    "h-8 min-w-8 px-2 rounded-md flex items-center justify-center text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:opacity-30 disabled:cursor-default cursor-pointer focus-visible:outline focus-visible:outline-accent";
+  const toolbarButton = VIEWER_TOOLBAR_BUTTON;
 
   return createPortal(
     <div

@@ -3,8 +3,10 @@ import { ExtraProps } from "react-markdown";
 import { ExpandIcon } from "../ui/Icons";
 import { DiagramActions } from "./DiagramActions";
 import { DiagramViewer } from "./DiagramViewer";
+import { HtmlPreview } from "./HtmlPreview";
+import { HTML_PREVIEW_PROPERTY } from "./htmlPreviewPage";
 import { RenderedDiagram, renderMermaid } from "./mermaid";
-import { THEME_CHANGE_EVENT } from "../../themes";
+import { useThemeRevision } from "../../hooks/useThemeRevision";
 
 type HastElement = NonNullable<ExtraProps["node"]>;
 type HastChild = HastElement["children"][number];
@@ -41,6 +43,8 @@ export function MarkdownCodeBlock({ node, children }: ComponentProps<"pre"> & Ex
   );
   if (code && language === "mermaid")
     return <MermaidDiagram source={textContent(code)} fallback={block} />;
+  if (code && node?.properties[HTML_PREVIEW_PROPERTY] === "ready")
+    return <HtmlPreview source={textContent(code)} />;
   return block;
 }
 
@@ -49,13 +53,7 @@ function MermaidDiagram({ source, fallback }: { source: string; fallback: ReactN
     null
   );
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [themeRevision, setThemeRevision] = useState(0);
-
-  useEffect(() => {
-    const rerender = () => setThemeRevision((revision) => revision + 1);
-    window.addEventListener(THEME_CHANGE_EVENT, rerender);
-    return () => window.removeEventListener(THEME_CHANGE_EVENT, rerender);
-  }, []);
+  const themeRevision = useThemeRevision();
 
   useEffect(() => {
     let stale = false;
