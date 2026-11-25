@@ -193,15 +193,23 @@ export function useVirtualRows(keys: readonly string[]) {
     [changeStuck, measureViewport]
   );
 
+  /** Scrolls to where the row would start when it is not rendered, so the next render mounts it. */
+  const scrollToRow = useCallback(
+    (key: string) => {
+      const index = keysRef.current.indexOf(key);
+      if (index < 0 || rowElements.current.has(key)) return;
+      scrollTo(sectionTopIn(scrollRef.current!, sectionRef.current) + offsetsRef.current[index]);
+    },
+    [scrollTo]
+  );
+
   /** Keeps the row mounted and scrolls to it if it is not; `null` lets it unmount again. */
   const reveal = useCallback(
     (key: string | null) => {
       setRevealedKey(key);
-      const index = key === null ? -1 : keysRef.current.indexOf(key);
-      if (index < 0 || rowElements.current.has(key!)) return;
-      scrollTo(sectionTopIn(scrollRef.current!, sectionRef.current) + offsetsRef.current[index]);
+      if (key !== null) scrollToRow(key);
     },
-    [scrollTo]
+    [scrollToRow]
   );
 
   const rowRef = useCallback(
@@ -296,6 +304,7 @@ export function useVirtualRows(keys: readonly string[]) {
     onBlur,
     stickToBottom,
     scrollTo,
+    scrollToRow,
     reveal,
   };
 }

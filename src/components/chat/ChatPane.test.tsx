@@ -2420,3 +2420,121 @@ describe("Find in conversation", () => {
     expect(screen.getByText("Message 5")).toBeInTheDocument();
   });
 });
+
+describe("Conversation minimap", () => {
+  const turn = (index: number) => [
+    { id: `u${index}`, kind: "user", text: `Prompt  ${index}\nin detail` },
+    ...Array.from({ length: 8 }, (_, step) => ({
+      id: `a${index}.${step}`,
+      kind: "assistant",
+      text: `Reply ${index}.${step}`,
+    })),
+  ];
+  const conversation = (turns: number) =>
+    Array.from({ length: turns }, (_, index) => turn(index)).flat();
+  const openWith = (items: unknown[]) => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? snapshot({ items }) : undefined)
+    );
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    return screen.findByRole("navigation", { name: "Conversation messages" });
+  };
+  const mark = (position: number) =>
+    screen.getByRole("button", { name: `Jump to message ${position}` });
+
+  it("stays hidden until the conversation has two messages", async () => {
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    await screen.findByText("care");
+    expect(
+      screen.queryByRole("navigation", { name: "Conversation messages" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("previews a message and its last reply on hover or focus", async () => {
+    const nav = await openWith([...turn(0), { id: "u1", kind: "user", text: "Follow up" }]);
+    fireEvent.mouseEnter(mark(1));
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent(/^Prompt 0 in detailReply 0\.7$/);
+    expect(mark(1)).toHaveAttribute("aria-describedby", tooltip.id);
+    fireEvent.mouseLeave(nav);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    act(() => mark(2).focus());
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/^Follow up$/);
+    expect(fireEvent.keyDown(mark(2), { key: "Escape" })).toBe(false);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(fireEvent.keyDown(mark(2), { key: "Escape" })).toBe(true);
+
+    act(() => mark(1).focus());
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    act(() => mark(1).blur());
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("moves between the marks with the arrow keys, Home and End", async () => {
+    const nav = await openWith(conversation(4));
+    expect(mark(4)).toHaveAttribute("aria-current", "location");
+    expect(mark(4)).toHaveAttribute("tabindex", "0");
+    expect(mark(1)).toHaveAttribute("tabindex", "-1");
+
+    act(() => mark(4).focus());
+    fireEvent.keyDown(mark(4), { key: "ArrowUp" });
+    expect(mark(3)).toHaveFocus();
+    fireEvent.keyDown(mark(3), { key: "Home" });
+    fireEvent.keyDown(mark(1), { key: "ArrowUp" });
+    expect(mark(1)).toHaveFocus();
+    fireEvent.keyDown(mark(1), { key: "End" });
+    fireEvent.keyDown(mark(4), { key: "ArrowDown" });
+    fireEvent.keyDown(mark(4), { key: "a" });
+    expect(mark(4)).toHaveFocus();
+
+    act(() => mark(4).blur());
+    fireEvent.keyDown(nav, { key: "ArrowUp" });
+    expect(document.body).toHaveFocus();
+  });
+
+  it("jumps to a message that is not rendered and marks the message in view", async () => {
+    const nav = await openWith(conversation(12));
+    const scroller = nav.closest(".chat-scroll") as HTMLElement;
+    layOutScroller(scroller, 600, () => 120);
+    resize();
+    expect(screen.queryByText("Prompt 2 in detail")).not.toBeInTheDocument();
+
+    fireEvent.click(mark(3));
+    expect(screen.getByText("Prompt 2 in detail")).toBeInTheDocument();
+    expect(scroller.scrollTop).toBe(18 * 120 - 16);
+    fireEvent.scroll(scroller);
+    expect(mark(3)).toHaveAttribute("aria-current", "location");
+
+    scroller.scrollTop = scroller.scrollHeight;
+    fireEvent.scroll(scroller);
+    expect(screen.queryByText("Prompt 2 in detail")).not.toBeInTheDocument();
+    expect(mark(12)).toHaveAttribute("aria-current", "location");
+  });
+
+  it("keeps the current find match mounted after a jump", async () => {
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 0, bottom: 0 }),
+    });
+    try {
+      const nav = await openWith(conversation(12));
+      const scroller = nav.closest(".chat-scroll") as HTMLElement;
+      layOutScroller(scroller, 600, () => 120);
+      resize();
+      const composer = screen.getByRole("textbox");
+      act(() => composer.focus());
+      fireEvent.keyDown(composer, { key: "f", metaKey: true });
+      const input = await screen.findByRole("textbox", { name: "Find in conversation" });
+      fireEvent.change(input, { target: { value: "Reply 1.3" } });
+      expect(screen.getByText("Reply 1.3")).toBeInTheDocument();
+
+      fireEvent.click(mark(12));
+      fireEvent.scroll(scroller);
+      expect(mark(12)).toHaveAttribute("aria-current", "location");
+      expect(screen.getByText("Reply 1.3")).toBeInTheDocument();
+    } finally {
+      delete (Range.prototype as Partial<Range>).getBoundingClientRect;
+    }
+  });
+});
