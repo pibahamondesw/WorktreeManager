@@ -25,10 +25,10 @@ import { HistoryDialog } from "./HistoryDialog";
 import { HandoffChoice, HandoffDialog } from "./HandoffDialog";
 import { ChangeSummaryCard, ChangesPanel, ChangesScope, LineCounts } from "./ChangesPanel";
 import { diffReviewMessage } from "./diffComments";
-import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
+import { MarkdownPreviewPanel, UnsavedFileEdit } from "./MarkdownPreviewPanel";
 import { MarkdownPreviewContext, MarkdownPreviewRequest } from "./markdownPreviewContext";
 import { useFirstPrompt } from "./firstPromptContext";
-import { isPlanItem } from "./markdownDocument";
+import { isPlanItem, MarkdownSource } from "./markdownDocument";
 import { AgentUsageIndicator } from "../usage/AgentUsageIndicator";
 import { useChatSession } from "../../hooks/useChatSession";
 import { useDiffThreads } from "../../hooks/useDiffThreads";
@@ -83,6 +83,12 @@ const seededConversations = new Set<string>();
 
 /** Queued messages held for editing, by chat; the edit outlives the pane so leaving a task never sends it. */
 const openQueuedEdits = new Map<string, { itemId: string; text: string }>();
+
+/** Unsaved file edits from the preview, by chat; they outlive the pane so switching tasks or tabs keeps them. */
+const unsavedFileEdits = new Map<string, UnsavedFileEdit>();
+
+const sameSource = (a: MarkdownSource, b: MarkdownSource) =>
+  JSON.stringify(a) === JSON.stringify(b);
 
 function sessionStatus(status: ChatStatus): SessionStatus {
   if (status.kind === "starting") return { kind: "connecting" };
@@ -146,8 +152,23 @@ export function ChatPane({
   const [changesScope, setChangesScope] = useState<ChangesScope | null>(null);
   const [diffThreads, setDiffThreads] = useDiffThreads(chatKey);
   const [preview, setPreview] = useState<(MarkdownPreviewRequest & { generation: number }) | null>(
-    null
+    () => {
+      const kept = unsavedFileEdits.get(chatKey);
+      return kept ? { source: kept.source, generation: snapshot.generation } : null;
+    }
   );
+  const keepUnsavedFileEdit = (edit: UnsavedFileEdit | null) => {
+    if (edit) unsavedFileEdits.set(chatKey, edit);
+    else unsavedFileEdits.delete(chatKey);
+  };
+  const keptFileEditOf = (source: MarkdownSource) => {
+    const kept = unsavedFileEdits.get(chatKey);
+    return kept && sameSource(kept.source, source) ? { base: kept.base, text: kept.text } : null;
+  };
+  const closePreview = () => {
+    unsavedFileEdits.delete(chatKey);
+    setPreview(null);
+  };
   const previewContext = useMemo(
     () => ({
       folders,
@@ -586,7 +607,9 @@ export function ChatPane({
             folders={folders}
             error={actionError}
             busy={busy}
-            onClose={() => setPreview(null)}
+            initialFileEdit={keptFileEditOf(preview.source)}
+            onUnsavedFileEdit={keepUnsavedFileEdit}
+            onClose={closePreview}
             editable={
               previewRequest?.kind === "approval" && previewRequest.editablePlan
                 ? {

@@ -1826,6 +1826,100 @@ describe("Markdown previews", () => {
     expect(await within(missing).findByRole("alert")).toHaveTextContent("File not found");
   });
 
+  it("brings back an unsaved file edit when the chat is shown again", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    let onDisk = "const a = 1;\n";
+    mocks.invoke.mockImplementation(
+      (command: string, args: { original?: string; text?: string }) => {
+        if (command === "chat_open")
+          return Promise.resolve(
+            snapshot({
+              items: [{ id: "a", kind: "assistant", text: "See [main.ts](src/main.ts)." }],
+            })
+          );
+        if (command === "chat_read_file")
+          return Promise.resolve({
+            path: "/wt/a/src/main.ts",
+            content: { kind: "text", text: onDisk },
+          });
+        if (command === "chat_write_file") {
+          onDisk = args.text!;
+          return Promise.resolve({
+            path: "/wt/a/src/main.ts",
+            content: { kind: "text", text: onDisk },
+          });
+        }
+        return Promise.resolve(undefined);
+      }
+    );
+    const pane = (tab?: string) => (
+      <ChatPane taskId="kept-edit" agent="claude" tab={tab} folders={["/wt/a"]} />
+    );
+    const first = render(pane());
+    fireEvent.click(await screen.findByRole("link", { name: "src/main.ts" }));
+    const panel = await screen.findByRole("region", { name: "Preview of main.ts" });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Edit file" }));
+    fireEvent.change(within(panel).getByRole("textbox", { name: "File contents" }), {
+      target: { value: "const a = 2;\n" },
+    });
+    first.unmount();
+
+    const otherTab = render(pane("other"));
+    await screen.findByRole("link", { name: "src/main.ts" });
+    expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull();
+    otherTab.unmount();
+
+    const second = render(pane());
+    const kept = await screen.findByRole("region", { name: "Preview of main.ts" });
+    expect(within(kept).getByRole("textbox", { name: "File contents" })).toHaveValue(
+      "const a = 2;\n"
+    );
+    fireEvent.click(await within(kept).findByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onDisk).toBe("const a = 2;\n"));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "chat_write_file",
+      expect.objectContaining({ original: "const a = 1;\n", text: "const a = 2;\n" })
+    );
+    second.unmount();
+
+    render(pane());
+    await screen.findByRole("link", { name: "src/main.ts" });
+    expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull();
+  });
+
+  it("forgets an unsaved file edit once it is discarded", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open")
+        return Promise.resolve(
+          snapshot({
+            items: [{ id: "a", kind: "assistant", text: "See [main.ts](src/main.ts)." }],
+          })
+        );
+      if (command === "chat_read_file")
+        return Promise.resolve({
+          path: "/wt/a/src/main.ts",
+          content: { kind: "text", text: "const a = 1;\n" },
+        });
+      return Promise.resolve(undefined);
+    });
+    const pane = () => <ChatPane taskId="discarded-edit" agent="claude" folders={["/wt/a"]} />;
+    const first = render(pane());
+    fireEvent.click(await screen.findByRole("link", { name: "src/main.ts" }));
+    const panel = await screen.findByRole("region", { name: "Preview of main.ts" });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Edit file" }));
+    fireEvent.change(within(panel).getByRole("textbox", { name: "File contents" }), {
+      target: { value: "const a = 2;\n" },
+    });
+    fireEvent.click(within(panel).getByRole("button", { name: "Close preview" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Discard" }));
+    first.unmount();
+
+    render(pane());
+    await screen.findByRole("link", { name: "src/main.ts" });
+    expect(screen.queryByRole("region", { name: /Preview of/ })).toBeNull();
+  });
+
   it("previews a pending plan and approves it from the preview", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_open"
