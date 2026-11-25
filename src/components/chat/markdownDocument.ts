@@ -134,5 +134,27 @@ export function relativeTo(path: string, folders: string[]) {
   return folder ? path.slice(folder.length + 1) : path;
 }
 
+const withLine = (path: string, line?: number) => (line ? `${path}:${line}` : path);
+
+const namesPath = (text: string, path: string) => {
+  const written = text.trim().replace(LINE_NUMBER, "");
+  return written !== "" && (path === written || path.endsWith(`/${written}`));
+};
+
+export const fileLinkLabel = ({ path, line }: FileReference, folders: string[], text: string) =>
+  text.trim() && !namesPath(text, path) ? text : withLine(relativeTo(path, folders), line);
+
+export interface PathCopy {
+  label: string;
+  value: string;
+}
+
+export function fileLinkCopies({ path, line }: FileReference, folders: string[]): PathCopy[] {
+  const relative = relativeTo(path, folders);
+  const asWritten = { label: "Copy path", value: withLine(path, line) };
+  if (relative === path) return [asWritten];
+  return [{ label: "Copy relative path", value: withLine(relative, line) }, asWritten];
+}
+
 export const isPlanItem = (item: ChatItem) =>
   item.kind === "notice" && item.title === "Plan" && item.text.trim() !== "";
