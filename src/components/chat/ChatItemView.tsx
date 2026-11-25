@@ -364,12 +364,23 @@ const sameItems = (a: ChatItem[], b: ChatItem[]) =>
 
 export const WorkGroup = memo(
   WorkGroupView,
-  (prev, next) => prev.running === next.running && sameItems(prev.items, next.items)
+  (prev, next) =>
+    prev.running === next.running &&
+    prev.runKey === next.runKey &&
+    sameItems(prev.items, next.items)
 );
 
-function WorkGroupView({ items, running }: { items: ChatItem[]; running: boolean }) {
+/** `runKey` names the group's run, so its clock keeps counting when its first step is hidden. */
+function WorkGroupView({
+  items,
+  runKey,
+  running,
+}: {
+  items: ChatItem[];
+  runKey: string;
+  running: boolean;
+}) {
   const [open, setOpen] = useState(false);
-  const runKey = items[0].id;
   useForgetRunWhenStopped(runKey, running);
   const steps = items.filter(isVisibleStep);
   const failed = steps.filter(isFailedStep).length;

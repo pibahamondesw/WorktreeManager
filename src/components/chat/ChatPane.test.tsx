@@ -72,6 +72,7 @@ import { describeAgent, loadAgentCatalog } from "../../services/agents";
 import { AGENT_CATALOG } from "../../services/agents.fixture";
 import { resize } from "../../test/fakeObserveResize";
 import { layOutScroller } from "../../test/fakeLayout";
+import { saveToolVisibility } from "./toolVisibilityPreference";
 
 const editorOf = (box: HTMLElement) => EditorView.findFromDOM(box)!;
 const composerText = (box: HTMLElement) => editorOf(box).state.doc.toString();
@@ -2869,5 +2870,98 @@ describe("Quotes", () => {
     emit(3, { type: "remove", id: "a" });
     expect(show).toBeDisabled();
     expect(show.title).toBe("The quoted reply is no longer in the conversation");
+  });
+});
+
+describe("Tool calls in chat", () => {
+  beforeEach(() => {
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 0, bottom: 0 }),
+    });
+  });
+  afterEach(() => {
+    saveToolVisibility("all");
+    delete (Range.prototype as Partial<Range>).getBoundingClientRect;
+  });
+
+  const openConversation = (status = "idle") => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({
+              status: { kind: status },
+              items: [
+                { id: "u", kind: "user", text: "Fix the bug" },
+                { id: "c", kind: "command", text: "grep bug", status: "completed" },
+                { id: "n", kind: "assistant", text: "Looking for the bug" },
+                { id: "e", kind: "error", text: "Network hiccup" },
+                { id: "a", kind: "assistant", text: "The bug is fixed" },
+              ],
+            })
+          : undefined
+      )
+    );
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+  };
+
+  it("shows only prompts, final replies and errors in zen, for every chat", async () => {
+    openConversation();
+    await screen.findByText("Looking for the bug");
+    expect(screen.getByRole("button", { name: /Ran 1 command/ })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Tool calls in chat" }), {
+      target: { value: "zen" },
+    });
+
+    expect(screen.queryByText("Looking for the bug")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Ran 1 command/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Fix the bug")).toBeInTheDocument();
+    expect(screen.getByText("Network hiccup")).toBeInTheDocument();
+    expect(screen.getByText("The bug is fixed")).toBeInTheDocument();
+    expect(localStorage.getItem("worktreemanager.toolVisibility")).toBe("zen");
+  });
+
+  it("shows the in-between replies to find while the find bar is open in zen", async () => {
+    saveToolVisibility("zen");
+    openConversation();
+    await screen.findByText("The bug is fixed");
+    expect(screen.queryByText("Looking for the bug")).not.toBeInTheDocument();
+
+    const composer = screen.getByRole("textbox");
+    act(() => composer.focus());
+    fireEvent.keyDown(composer, { key: "f", metaKey: true });
+    const input = await screen.findByRole("textbox", { name: "Find in conversation" });
+    fireEvent.change(input, { target: { value: "bug" } });
+
+    expect(screen.getByText("Looking for the bug")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Ran 1 command/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("search")).getByRole("status")).toHaveTextContent("3/3");
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByText("Looking for the bug")).not.toBeInTheDocument();
+  });
+
+  it("keeps a running call visible while hiding successful ones", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({
+              status: { kind: "busy" },
+              items: [
+                { id: "u", kind: "user", text: "Fix the bug" },
+                { id: "c", kind: "command", text: "grep bug", status: "completed" },
+                { id: "t", kind: "command", text: "run tests", status: "inProgress" },
+              ],
+            })
+          : undefined
+      )
+    );
+    saveToolVisibility("hideSuccessful");
+    render(<ChatPane taskId="t1" agent="codex" folders={["/wt/a"]} />);
+    const group = await screen.findByRole("button", { name: /Ran 1 command/ });
+    fireEvent.click(group);
+    expect(screen.getByText("run tests")).toBeInTheDocument();
+    expect(screen.queryByText("grep bug")).not.toBeInTheDocument();
   });
 });

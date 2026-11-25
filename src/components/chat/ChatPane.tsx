@@ -15,6 +15,9 @@ import { ConversationMinimap } from "./ConversationMinimap";
 import { useChatFind } from "./useChatFind";
 import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
+import { visibleRows } from "./toolVisibility";
+import { useToolVisibility } from "./toolVisibilityPreference";
+import { ToolVisibilitySelect } from "./ToolVisibilitySelect";
 import { Composer, ComposerQuotes, ComposerSeed, QueuedMessageEdit } from "./Composer";
 import { ChatQuote, chatQuote } from "./chatQuotes";
 import { QuoteSelectionButton } from "./QuoteSelectionButton";
@@ -213,13 +216,20 @@ export function ChatPane({
       ),
     [pending]
   );
+  const toolVisibility = useToolVisibility();
+  const findOpenState = useState(false);
+  const [findOpen] = findOpenState;
   const rows = useMemo(
     () =>
-      entries.filter(
-        (entry) =>
-          !(entry.kind === "item" && isPlanItem(entry.item) && pendingPlans.has(entry.item.text))
+      visibleRows(
+        entries.filter(
+          (entry) =>
+            !(entry.kind === "item" && isPlanItem(entry.item) && pendingPlans.has(entry.item.text))
+        ),
+        findOpen && toolVisibility === "zen" ? "hideAll" : toolVisibility,
+        busy
       ),
-    [entries, pendingPlans]
+    [entries, pendingPlans, findOpen, toolVisibility, busy]
   );
   const rowKeys = useMemo(() => rows.map((row) => row.id), [rows]);
   const timeline = useVirtualRows(rowKeys);
@@ -291,7 +301,7 @@ export function ChatPane({
   useEffect(() => {
     if (timeline.nearTop && earlier > 0) loadEarlier();
   }, [timeline.nearTop, earlier, loadEarlier]);
-  const find = useChatFind(rows, timeline, earlier, loadEarlier);
+  const find = useChatFind(rows, timeline, earlier, loadEarlier, findOpenState);
   const [quotes, setQuotes] = useState<ChatQuote[]>([]);
   const showQuote = useQuoteNavigation(timeline);
   const composerQuotes: ComposerQuotes = {
@@ -424,6 +434,7 @@ export function ChatPane({
           Changes <LineCounts {...totals(conversationFiles)} />
         </Button>
       )}
+      <ToolVisibilitySelect value={toolVisibility} />
       <AgentUsageIndicator agent={agent} />
     </>
   );
@@ -472,7 +483,11 @@ export function ChatPane({
                   const view = (
                     <ItemDetailContext.Provider value={session.expandDetail}>
                       {entry.kind === "work" ? (
-                        <WorkGroup items={entry.items} running={busy && entry === entries.at(-1)} />
+                        <WorkGroup
+                          items={entry.items}
+                          runKey={entry.id}
+                          running={busy && entry.id === entries.at(-1)?.id}
+                        />
                       ) : (
                         <ChatItemView
                           item={item}
