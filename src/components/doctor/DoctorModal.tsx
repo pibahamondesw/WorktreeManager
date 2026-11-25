@@ -21,6 +21,7 @@ interface DoctorModalProps {
 
 const STATUS_LABELS: Record<CheckStatus, string> = {
   ok: "OK",
+  manual: "Configured manually",
   missing: "Not installed",
   broken: "Not working",
   unknown: "Not checked",

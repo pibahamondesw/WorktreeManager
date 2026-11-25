@@ -55,7 +55,7 @@ function check(report: Awaited<ReturnType<typeof runDoctor>>, id: string) {
 }
 
 describe("runDoctor", () => {
-  it.each(["missing", "broken", "unknown", "ok"] as const)(
+  it.each(["missing", "broken", "unknown", "ok", "manual"] as const)(
     "reports %s Codex vault setup separately from the executable",
     async (status) => {
       const vaultAgentProbe = vi.fn().mockResolvedValue({ status, detail: "Global guide status" });
@@ -67,7 +67,7 @@ describe("runDoctor", () => {
       expect(check(report, "codex-vault")).toMatchObject({
         status,
         detail: "Global guide status",
-        severity: status === "ok" ? "ok" : "warning",
+        severity: status === "ok" || status === "manual" ? "ok" : "warning",
         repair: "codex",
       });
     }

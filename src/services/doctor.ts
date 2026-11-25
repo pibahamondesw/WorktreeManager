@@ -43,7 +43,7 @@ export interface ProbeReport {
 
 // ---- Findings ----
 
-export type CheckStatus = "ok" | "missing" | "broken" | "unknown";
+export type CheckStatus = "ok" | "manual" | "missing" | "broken" | "unknown";
 export type CheckSeverity = "ok" | "warning" | "error";
 
 export interface DependencyCheck {
@@ -363,7 +363,8 @@ async function checkVaultAgent(
       };
     }
     const result = await probe(agent, path);
-    return { ...base, ...result, severity: result.status === "ok" ? "ok" : "warning" };
+    const healthy = result.status === "ok" || result.status === "manual";
+    return { ...base, ...result, severity: healthy ? "ok" : "warning" };
   } catch (error) {
     return { ...base, status: "unknown", severity: "warning", detail: String(error) };
   }
