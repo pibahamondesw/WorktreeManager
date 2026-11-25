@@ -23,6 +23,7 @@ import { summarizeWork, toolCategory } from "./toolCategory";
 import { ToolCategoryIcon } from "./ToolCategoryIcon";
 import { LiveElapsed } from "./LiveElapsed";
 import { useForgetRunWhenStopped } from "./runClock";
+import { isFailedStep } from "./toolVisibility";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted motion-pulse-steps",
@@ -356,7 +357,6 @@ function Reasoning({ item }: { item: ChatItem }) {
 
 const isVisibleStep = (item: ChatItem) =>
   item.kind !== "reasoning" || !!item.text || !!item.status || item.durationMs !== undefined;
-const isFailedStep = (item: ChatItem) => item.status === "failed" || item.status === "declined";
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
 const sameItems = (a: ChatItem[], b: ChatItem[]) =>
@@ -364,12 +364,23 @@ const sameItems = (a: ChatItem[], b: ChatItem[]) =>
 
 export const WorkGroup = memo(
   WorkGroupView,
-  (prev, next) => prev.running === next.running && sameItems(prev.items, next.items)
+  (prev, next) =>
+    prev.running === next.running &&
+    prev.runKey === next.runKey &&
+    sameItems(prev.items, next.items)
 );
 
-function WorkGroupView({ items, running }: { items: ChatItem[]; running: boolean }) {
+/** `runKey` names the group's run, so its clock keeps counting when its first step is hidden. */
+function WorkGroupView({
+  items,
+  runKey,
+  running,
+}: {
+  items: ChatItem[];
+  runKey: string;
+  running: boolean;
+}) {
   const [open, setOpen] = useState(false);
-  const runKey = items[0].id;
   useForgetRunWhenStopped(runKey, running);
   const steps = items.filter(isVisibleStep);
   const failed = steps.filter(isFailedStep).length;

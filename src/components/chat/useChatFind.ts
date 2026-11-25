@@ -38,9 +38,9 @@ export function useChatFind(
   rows: readonly ChatEntry[],
   timeline: Timeline,
   earlier: number,
-  loadEarlier: () => void
+  loadEarlier: () => void,
+  [open, setOpen]: [boolean, (open: boolean) => void]
 ) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<FindMatch | null>(null);
   const [focusRequest, setFocusRequest] = useState(0);

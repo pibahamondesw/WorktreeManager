@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChatItemView, MarkdownText, WorkGroup } from "./ChatItemView";
@@ -469,15 +469,32 @@ it("summarizes a work group and counts its time only while it runs", () => {
     { id: "r1", kind: "tool" as const, text: "", title: "Read" },
     { id: "c1", kind: "command" as const, text: "", title: "make test", status: "failed" },
   ];
-  const { rerender } = render(<WorkGroup items={items} running />);
+  const { rerender } = render(<WorkGroup items={items} runKey="r1" running />);
   const toggle = screen.getByRole("button", { name: "Read 1 file · Ran 1 command · 1 failed" });
   expect(toggle).toHaveTextContent(/0s$/);
 
-  rerender(<WorkGroup items={items} running={false} />);
+  rerender(<WorkGroup items={items} runKey="r1" running={false} />);
   expect(toggle).not.toHaveTextContent(/\ds$/);
 
   fireEvent.click(toggle);
   expect(screen.getByRole("button", { name: /make test/ }).querySelector("svg")).toBeVisible();
+});
+
+it("keeps counting a work group's time when its first step is no longer shown", () => {
+  vi.useFakeTimers();
+  try {
+    const read = { id: "r1", kind: "tool" as const, text: "", title: "Read" };
+    const test = { id: "c1", kind: "command" as const, text: "", title: "make test" };
+    const { rerender } = render(<WorkGroup items={[read]} runKey="group" running />);
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    rerender(<WorkGroup items={[test]} runKey="group" running />);
+    expect(screen.getByRole("button", { name: "Ran 1 command" })).toHaveTextContent(/3s$/);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("counts a subagent's time while it runs", () => {
