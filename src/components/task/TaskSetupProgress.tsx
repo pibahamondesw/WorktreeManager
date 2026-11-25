@@ -32,10 +32,8 @@ export function TaskSetupProgress({
   const setup = useSyncExternalStore(subscribeTaskSetup, () => getTaskSetup(taskId));
   const steps = setup?.repos.flatMap((repo) => repo.steps) ?? [];
   const hasErrors = steps.some((step) => step.status === "error");
-  const ranScript = steps.some((step) => isScriptStage(step) && step.status !== "pending");
   const completedSuccessfully = !!setup && !setup.active && !hasErrors && !setup.warnings.length;
-  const autoDismiss =
-    completedSuccessfully && !ranScript && !setup.dismissed && !setup.detailsViewed;
+  const autoDismiss = completedSuccessfully && !setup.dismissed && !setup.detailsViewed;
 
   useEffect(() => {
     if (!autoDismiss) return;
