@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   documentSummary,
+  fileLinkCopies,
+  fileLinkLabel,
   fileReference,
   markdownPath,
   markdownReferences,
@@ -116,4 +118,35 @@ describe("relativeTo", () => {
     expect(relativeTo("/wt/a/docs/plan.md", ["/wt/b", "/wt/a"])).toBe("docs/plan.md");
     expect(relativeTo("/elsewhere/plan.md", ["/wt/a"])).toBe("/elsewhere/plan.md");
   });
+});
+
+describe("fileLinkLabel", () => {
+  it.each([
+    [{ path: "/wt/b/src/x.ts", line: 4 }, "", "src/x.ts:4"],
+    [{ path: "src/x.ts" }, "src/x.ts", "src/x.ts"],
+    [{ path: "/elsewhere/x.ts", line: 1 }, "x.ts:1", "/elsewhere/x.ts:1"],
+    [{ path: "/wt/a/src/x.ts", line: 9 }, " src/x.ts ", "src/x.ts:9"],
+    [{ path: "src/retry.ts", line: 40 }, "the retry guard", "the retry guard"],
+    [{ path: "src/x.ts" }, "rc/x.ts", "rc/x.ts"],
+  ])("labels %o written as %j as %s", (reference, text, label) => {
+    expect(fileLinkLabel(reference, ["/wt/a", "/wt/b"], text)).toBe(label);
+  });
+});
+
+describe("fileLinkCopies", () => {
+  const folders = ["/wt/a"];
+
+  it("offers the relative path and the path as written for files inside a task folder", () => {
+    expect(fileLinkCopies({ path: "/wt/a/src/x.ts", line: 3 }, folders)).toEqual([
+      { label: "Copy relative path", value: "src/x.ts:3" },
+      { label: "Copy path", value: "/wt/a/src/x.ts:3" },
+    ]);
+  });
+
+  it.each(["src/x.ts", "/elsewhere/x.ts", "~/notes/x.md"])(
+    "offers only the path as written for %s",
+    (path) => {
+      expect(fileLinkCopies({ path }, folders)).toEqual([{ label: "Copy path", value: path }]);
+    }
+  );
 });

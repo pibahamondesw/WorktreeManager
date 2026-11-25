@@ -1808,7 +1808,7 @@ describe("Markdown previews", () => {
     });
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
 
-    fireEvent.click(await screen.findByRole("link", { name: "main.ts:2" }));
+    fireEvent.click(await screen.findByRole("link", { name: "src/main.ts:2" }));
     const panel = await screen.findByRole("region", { name: "Preview of main.ts" });
     await waitFor(() => expect(panel).toHaveTextContent("1const a = 1;2export default a;"));
     expect(panel).toHaveTextContent("src/main.ts");
