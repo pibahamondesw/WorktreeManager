@@ -111,9 +111,15 @@ it("shows the full title and branch name on hover", () => {
   expect(screen.getByTitle("A long title")).toHaveClass("truncate");
   expect(screen.getByTitle("feat/x")).toHaveTextContent("feat/x");
   expect(screen.getByTitle("feat/x").parentElement).toHaveClass(
-    "grid-cols-[auto_minmax(4rem,max-content)]",
-    "shrink-[999]"
+    "grid-cols-[auto_minmax(4rem,max-content)]"
   );
+});
+
+it("orders shrink factors branch > title > PR list", () => {
+  renderHeader(linearInfo, null, { ...task, linearIssueTitle: "A long title" });
+  expect(screen.getByTitle("feat/x").parentElement).toHaveClass("shrink-[100000]");
+  expect(screen.getByTitle("A long title").parentElement).toHaveClass("shrink-[100]");
+  expect(screen.getByTitle("#424: First").closest(".overflow-hidden")).toHaveClass("shrink");
 });
 
 it("shows PR numbers without status badges", () => {

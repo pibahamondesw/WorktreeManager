@@ -3,6 +3,7 @@ import { PencilIcon, SpinnerIcon } from "../ui/Icons";
 
 interface EditableTaskTitleProps {
   title: string;
+  className?: string;
   textClassName: string;
   titleStyle?: CSSProperties;
   onRename?: (title: string) => Promise<unknown>;
@@ -13,6 +14,7 @@ const stop = (event: { stopPropagation: () => void }) => event.stopPropagation()
 
 export function EditableTaskTitle({
   title,
+  className = "",
   textClassName,
   titleStyle,
   onRename,
@@ -44,7 +46,7 @@ export function EditableTaskTitle({
 
   if (draft !== null) {
     return (
-      <div className="flex items-center min-w-0 flex-1">
+      <div className={`flex items-center min-w-0 flex-1 ${className}`}>
         <input
           autoFocus
           aria-label="Task title"
@@ -62,7 +64,7 @@ export function EditableTaskTitle({
 
   const shownTitle = savingTitle ?? title;
   return (
-    <div className="group/title flex items-center gap-1 min-w-0">
+    <div className={`group/title flex items-center gap-1 min-w-0 ${className}`}>
       <h3
         data-task-part="title"
         className={`${textClassName} truncate min-w-0 ${savingTitle ? "opacity-60" : ""}`}
