@@ -35,6 +35,7 @@ pub fn run() {
                 )?;
             }
             std::thread::spawn(commands::chat::purge_stale_chat_images);
+            commands::chat::resume::start_resume_timer(app.handle().clone());
             app.manage(circleci::CircleciToken(std::sync::Arc::new(KeychainItem {
                 service: app.config().identifier.clone(),
                 account: CIRCLECI_TOKEN_ACCOUNT,
@@ -184,6 +185,9 @@ pub fn run() {
                 commands::chat::chat_session_archive,
                 commands::chat::interrupted::chat_interrupted_list,
                 commands::chat::interrupted::chat_interrupted_clear,
+                commands::chat::resume::chat_resume_schedule,
+                commands::chat::resume::chat_resume_scheduled,
+                commands::chat::resume::chat_resume_cancel,
                 lifecycle::set_surface_turn_in_progress,
                 commands::code_server::vscode_probe,
                 commands::code_server::vscode_install,

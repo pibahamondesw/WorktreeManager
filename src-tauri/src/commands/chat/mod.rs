@@ -34,6 +34,7 @@ mod model;
 mod preferences;
 mod questions;
 mod reasoning;
+pub mod resume;
 mod sessions;
 #[cfg(test)]
 mod snapshot_budget_tests;
@@ -1407,7 +1408,8 @@ pub async fn chat_open<R: Runtime>(
 }
 
 #[tauri::command(async)]
-pub fn chat_send(
+pub fn chat_send<R: Runtime>(
+    app: AppHandle<R>,
     registry: State<'_, ChatRegistry>,
     task_id: String,
     agent: String,
@@ -1418,7 +1420,9 @@ pub fn chat_send(
     let images = images.unwrap_or_default();
     registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.send(&text, &images)
-    })
+    })?;
+    resume::cancel(&app, &task_id, &agent, tab.as_deref());
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -1784,6 +1788,7 @@ pub async fn chat_close<R: Runtime>(
         }
         tabs::forget_task(tabs::tab_store(&app), &task_id);
         interrupted::forget_task(&app, &task_id);
+        resume::forget_task(&app, &task_id);
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))
