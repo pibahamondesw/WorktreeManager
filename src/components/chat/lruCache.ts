@@ -19,17 +19,17 @@ export class LruCache<V> {
   }
 
   set(key: string, value: V, size: number) {
-    this.remove(key);
+    this.delete(key);
     if (size > this.maxSize) return;
     this.entries.set(key, { value, size });
     this.totalSize += size;
     for (const oldest of this.entries.keys()) {
       if (this.entries.size <= this.maxEntries && this.totalSize <= this.maxSize) break;
-      this.remove(oldest);
+      this.delete(oldest);
     }
   }
 
-  private remove(key: string) {
+  delete(key: string) {
     const entry = this.entries.get(key);
     if (!entry) return;
     this.entries.delete(key);
