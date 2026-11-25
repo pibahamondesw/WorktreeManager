@@ -2632,3 +2632,242 @@ describe("Conversation minimap", () => {
     }
   });
 });
+
+describe("Quotes", () => {
+  const reply = "First paragraph of the plan.\n\nSecond paragraph with details.";
+  const items = [
+    { id: "u", kind: "user", text: "Plan the fix" },
+    { id: "a", kind: "assistant", text: reply },
+  ];
+  const selectText = (node: Node, from: number, to: number) =>
+    act(() => {
+      const range = document.createRange();
+      range.setStart(node, from);
+      range.setEnd(node, to);
+      const selection = document.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+  const textNode = (text: string) => screen.getByText(text).firstChild!;
+  const quoteButton = () => screen.queryByRole("button", { name: "Quote in composer" });
+  const readyComposer = async () => {
+    const box = await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await waitFor(() => expect(box).not.toHaveAttribute("aria-disabled"));
+    return box;
+  };
+  const quoteFrom = async (text: string, from: number, to: number) => {
+    selectText(textNode(text), from, to);
+    fireEvent.click(quoteButton()!);
+  };
+  const sentText = () =>
+    (
+      mocks.invoke.mock.calls.find(([command]) => command === "chat_send")?.[1] as
+        | { text: string }
+        | undefined
+    )?.text;
+
+  let rangeTop = 100;
+  beforeEach(() => {
+    rangeTop = 100;
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: rangeTop, bottom: rangeTop + 20, left: 40, width: 100 }) as DOMRect,
+    });
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [],
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return this.classList.contains("chat-scroll")
+        ? ({ top: 0, bottom: 600 } as DOMRect)
+        : new DOMRect();
+    });
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "chat_open" ? snapshot({ items }) : undefined)
+    );
+  });
+  afterEach(() => {
+    document.getSelection()?.removeAllRanges();
+    delete (Range.prototype as Partial<Range>).getBoundingClientRect;
+    delete (Range.prototype as Partial<Range>).getClientRects;
+  });
+
+  it("quotes text selected in a reply and sends it before the comment", async () => {
+    render(<ChatPane taskId="quote-1" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    expect(quoteButton()).not.toBeInTheDocument();
+
+    selectText(textNode("First paragraph of the plan."), 0, 15);
+    expect(quoteButton()).toHaveStyle({ top: "68px", left: "90px" });
+    expect(fireEvent.mouseDown(quoteButton()!)).toBe(false);
+    fireEvent.click(quoteButton()!);
+    expect(quoteButton()).not.toBeInTheDocument();
+    expect(document.getSelection()!.isCollapsed).toBe(true);
+    const chips = screen.getByRole("list", { name: "Quotes" });
+    expect(chips).toHaveTextContent("First paragraph");
+    await waitFor(() => expect(box).toHaveFocus());
+
+    await typeInto(box, "Why this order?");
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() =>
+      expect(sentText()).toBe("From your earlier reply:\n> First paragraph\n\nWhy this order?")
+    );
+    expect(screen.queryByRole("list", { name: "Quotes" })).not.toBeInTheDocument();
+  });
+
+  it("offers quoting only for the agent's replies", async () => {
+    render(<ChatPane taskId="quote-2" agent="claude" folders={["/wt/a"]} />);
+    await readyComposer();
+    selectText(textNode("Plan the fix"), 0, 4);
+    expect(quoteButton()).not.toBeInTheDocument();
+    selectText(textNode("First paragraph of the plan."), 5, 5);
+    expect(quoteButton()).not.toBeInTheDocument();
+  });
+
+  it("places the button below a selection at the top of the window", async () => {
+    rangeTop = 10;
+    render(<ChatPane taskId="quote-3" agent="claude" folders={["/wt/a"]} />);
+    await readyComposer();
+    selectText(textNode("First paragraph of the plan."), 0, 5);
+    expect(quoteButton()).toHaveStyle({ top: "30px" });
+    rangeTop = 200;
+    act(() => {
+      screen.getByText("Plan the fix").closest(".chat-scroll")!.dispatchEvent(new Event("scroll"));
+    });
+    expect(quoteButton()).toHaveStyle({ top: "168px" });
+    rangeTop = 700;
+    act(() => {
+      screen.getByText("Plan the fix").closest(".chat-scroll")!.dispatchEvent(new Event("scroll"));
+    });
+    expect(quoteButton()).not.toBeInTheDocument();
+  });
+
+  it("attributes a reply carried from another agent to that agent", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({ items: [{ id: "c", kind: "assistant", text: "Old plan", origin: "codex" }] })
+          : undefined
+      )
+    );
+    render(<ChatPane taskId="quote-8" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    await quoteFrom("Old plan", 0, 8);
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() =>
+      expect(sentText()).toBe(`From the earlier ${describeAgent("codex").label} reply:\n> Old plan`)
+    );
+  });
+
+  it("offers quoting only while the composer can take quotes", async () => {
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open" ? snapshot({ items, status: { kind: "starting" } }) : undefined
+      )
+    );
+    render(<ChatPane taskId="quote-9" agent="claude" folders={["/wt/a"]} />);
+    await screen.findByText("Plan the fix");
+    selectText(textNode("First paragraph of the plan."), 0, 5);
+    expect(quoteButton()).not.toBeInTheDocument();
+  });
+
+  it("sends a quote without a comment and removes quotes on request", async () => {
+    render(<ChatPane taskId="quote-4" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    await quoteFrom("First paragraph of the plan.", 0, 5);
+    await quoteFrom("Second paragraph with details.", 0, 6);
+    const remove = screen.getByRole("button", { name: "Remove quote “First”" });
+    expect(fireEvent.mouseDown(remove)).toBe(false);
+    fireEvent.click(remove);
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(sentText()).toBe("From your earlier reply:\n> Second"));
+  });
+
+  it("restores the quotes when sending fails", async () => {
+    mocks.invoke.mockImplementation((command: string) => {
+      if (command === "chat_open") return Promise.resolve(snapshot({ items }));
+      if (command === "chat_send") return Promise.reject("agent is gone");
+      return Promise.resolve(undefined);
+    });
+    render(<ChatPane taskId="quote-5" agent="claude" folders={["/wt/a"]} />);
+    const box = await readyComposer();
+    await quoteFrom("First paragraph of the plan.", 0, 5);
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("agent is gone");
+    expect(screen.getByRole("list", { name: "Quotes" })).toHaveTextContent("First");
+  });
+
+  it("scrolls back to the quoted text and highlights it briefly", async () => {
+    const highlights = new Map<string, Range[]>();
+    vi.stubGlobal("CSS", { highlights });
+    vi.stubGlobal(
+      "Highlight",
+      class {
+        constructor(...ranges: Range[]) {
+          return ranges;
+        }
+      }
+    );
+    const message = (index: number) => ({
+      id: `m${index}`,
+      kind: "assistant",
+      text: `Message ${index}`,
+    });
+    mocks.invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "chat_open"
+          ? snapshot({ items: Array.from({ length: 120 }, (_, index) => message(index)) })
+          : undefined
+      )
+    );
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value(this: Range) {
+        return this.startContainer
+          .parentElement!.closest("[data-row-key]")!
+          .getBoundingClientRect();
+      },
+    });
+    try {
+      render(<ChatPane taskId="quote-6" agent="claude" folders={["/wt/a"]} />);
+      await readyComposer();
+      const scroller = screen.getByText("Message 119").closest(".chat-scroll") as HTMLElement;
+      selectText(textNode("Message 95"), 0, 10);
+      fireEvent.click(quoteButton()!);
+      act(() => void document.dispatchEvent(new Event("selectionchange")));
+      layOutScroller(scroller, 600, () => 120);
+      resize();
+      expect(within(scroller).queryByText("Message 95")).not.toBeInTheDocument();
+
+      vi.useFakeTimers();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Show “Message 95” in the conversation" })
+      );
+      expect(within(scroller).getByText("Message 95")).toBeInTheDocument();
+      expect(scroller.scrollTop).toBe(95 * 120 - 200);
+      expect(highlights.get("chat-quote")?.map((range) => range.toString())).toEqual([
+        "Message 95",
+      ]);
+      act(() => void vi.advanceTimersByTime(2000));
+      expect(highlights.has("chat-quote")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("disables a quote whose reply left the conversation", async () => {
+    render(<ChatPane taskId="quote-7" agent="claude" folders={["/wt/a"]} />);
+    await readyComposer();
+    await quoteFrom("First paragraph of the plan.", 0, 5);
+    const show = screen.getByRole("button", { name: "Show “First” in the conversation" });
+    expect(show).toBeEnabled();
+    expect(fireEvent.mouseDown(show)).toBe(false);
+    emit(3, { type: "remove", id: "a" });
+    expect(show).toBeDisabled();
+    expect(show.title).toBe("The quoted reply is no longer in the conversation");
+  });
+});

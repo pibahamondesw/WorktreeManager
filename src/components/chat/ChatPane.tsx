@@ -15,7 +15,10 @@ import { ConversationMinimap } from "./ConversationMinimap";
 import { useChatFind } from "./useChatFind";
 import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
-import { Composer, ComposerSeed, QueuedMessageEdit } from "./Composer";
+import { Composer, ComposerQuotes, ComposerSeed, QueuedMessageEdit } from "./Composer";
+import { ChatQuote, chatQuote } from "./chatQuotes";
+import { QuoteSelectionButton } from "./QuoteSelectionButton";
+import { useQuoteNavigation } from "./useQuoteNavigation";
 import { ApprovalActions } from "./ApprovalActions";
 import { ApprovalDraft } from "./approval";
 import { PendingRequestCard } from "./PendingRequestCard";
@@ -289,6 +292,19 @@ export function ChatPane({
     if (timeline.nearTop && earlier > 0) loadEarlier();
   }, [timeline.nearTop, earlier, loadEarlier]);
   const find = useChatFind(rows, timeline, earlier, loadEarlier);
+  const [quotes, setQuotes] = useState<ChatQuote[]>([]);
+  const showQuote = useQuoteNavigation(timeline);
+  const composerQuotes: ComposerQuotes = {
+    items: quotes,
+    change: setQuotes,
+    canShow: (quote) => rowKeys.includes(quote.itemId),
+    show: showQuote,
+  };
+  const addQuote = (itemId: string, text: string) => {
+    const origin = mainItems.find((item) => item.id === itemId)?.origin;
+    const author = origin && describeAgent(origin, catalog).label;
+    setQuotes((current) => [...current, chatQuote(itemId, text, author)]);
+  };
 
   const run = useCallback(async (action: () => Promise<void>) => {
     setActionError(null);
@@ -473,6 +489,14 @@ export function ChatPane({
                       )}
                     </ItemDetailContext.Provider>
                   );
+                  const content =
+                    entry.kind === "item" && item.kind === "assistant" ? (
+                      <div data-quote-source={item.id} className="contents">
+                        {view}
+                      </div>
+                    ) : (
+                      view
+                    );
                   return (
                     <div
                       key={entry.id}
@@ -486,10 +510,10 @@ export function ChatPane({
                           title={`From the ${describeAgent(item.origin, catalog).label} conversation`}
                           className="flex flex-col opacity-70"
                         >
-                          {view}
+                          {content}
                         </div>
                       ) : (
-                        view
+                        content
                       )}
                       {turn !== undefined && turnChanges && turnChanges.files.length > 0 && (
                         <ChangeSummaryCard
@@ -580,6 +604,7 @@ export function ChatPane({
               folders={folders}
               queuedEdit={queuedEdit}
               seed={seed}
+              quotes={composerQuotes}
               actions={{
                 send,
                 interrupt: session.interrupt,
@@ -595,6 +620,13 @@ export function ChatPane({
             />
           )}
         </div>
+        {!readOnly && (status.kind === "idle" || busy) && !editedId && (
+          <QuoteSelectionButton
+            sectionRef={timeline.sectionRef}
+            scrollRef={timeline.scrollRef}
+            onQuote={addQuote}
+          />
+        )}
         {changesScope !== null && changes && (
           <ChangesPanel
             taskId={taskId}

@@ -6,7 +6,7 @@ import { FindMatch, findMatches, sameMatch, textRanges } from "./chatFind";
 const MATCH_HIGHLIGHT = "chat-find";
 const CURRENT_HIGHLIGHT = "chat-find-current";
 
-interface Timeline {
+export interface Timeline {
   scrollRef: RefObject<HTMLDivElement | null>;
   scrollTo: (top: number) => void;
   reveal: (key: string | null) => void;
@@ -22,10 +22,10 @@ function paintHighlights(matches: Range[], current: Range | undefined) {
 
 const clearHighlights = () => paintHighlights([], undefined);
 
-/** The scroll position that brings `range` to the upper third of `scroller`, or null when it is in view. */
-function scrollTopShowing(scroller: HTMLElement, range: Range): number | null {
+/** The scroll position that brings `target` to the upper third of `scroller`, or null when it is in view. */
+export function scrollTopShowing(scroller: HTMLElement, target: Range | Element): number | null {
   const box = scroller.getBoundingClientRect();
-  const rect = range.getBoundingClientRect();
+  const rect = target.getBoundingClientRect();
   if (rect.top >= box.top && rect.bottom <= box.bottom) return null;
   return scroller.scrollTop + rect.top - box.top - scroller.clientHeight / 3;
 }
