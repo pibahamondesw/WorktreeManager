@@ -257,7 +257,7 @@ describe("ChatPane", () => {
     );
     expect(screen.getByText("care").tagName).toBe("STRONG");
     expect(screen.queryByRole("button", { name: /Edited 1 file/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Worked · 1 step" }));
+    fireEvent.click(screen.getByRole("button", { name: "Made 1 edit" }));
     fireEvent.click(screen.getByRole("button", { name: /Edited 1 file/ }));
     expect(screen.getByText("+added")).toHaveClass("text-success");
   });
@@ -353,7 +353,7 @@ describe("ChatPane", () => {
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
     await screen.findByText("Main reply");
     expect(screen.queryByText("Sub reply one")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Working/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Ran 1 command/ })).not.toBeInTheDocument();
 
     const first = screen.getByRole("region", { name: "Subagent: Find the bug" });
     fireEvent.click(within(first).getAllByRole("button")[0]);
@@ -393,7 +393,7 @@ describe("ChatPane", () => {
     fireEvent.click(screen.getByRole("button", { name: "Thought for 5s" }));
     expect(screen.getByText("Checking options")).toBeVisible();
     expect(screen.queryByText("ls")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Worked · 2 steps · 1 failed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ran 1 command · Used 1 tool · 1 failed" }));
     expect(screen.getByText("ls")).toBeVisible();
     expect(screen.getByText("Read file")).toBeVisible();
   });

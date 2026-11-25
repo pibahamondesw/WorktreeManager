@@ -18,6 +18,10 @@ import { LruCache } from "./lruCache";
 import { rehypeCachedHighlight } from "./rehypeCachedHighlight";
 import { useExpandedDetail } from "./itemDetailContext";
 import { formatSize } from "./formatSize";
+import { summarizeWork, toolCategory } from "./toolCategory";
+import { ToolCategoryIcon } from "./ToolCategoryIcon";
+import { LiveElapsed } from "./LiveElapsed";
+import { useForgetRunWhenStopped } from "./runClock";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted motion-pulse-steps",
@@ -156,6 +160,8 @@ const NO_STEPS: ChatItem[] = [];
 function SubagentCard({ item, steps }: { item: ChatItem; steps?: SubagentSteps }) {
   const [open, setOpen] = useState(false);
   const runSteps = (steps?.get(item.id) ?? NO_STEPS).filter(isVisibleStep);
+  const running = item.status === "inProgress";
+  useForgetRunWhenStopped(item.id, running);
   return (
     <section
       aria-label={`Subagent: ${item.title ?? "Subagent"}`}
@@ -173,6 +179,11 @@ function SubagentCard({ item, steps }: { item: ChatItem; steps?: SubagentSteps }
         </span>
         {runSteps.length > 0 && (
           <span className="text-text-muted">{plural(runSteps.length, "step")}</span>
+        )}
+        {running && (
+          <span className="text-text-muted">
+            <LiveElapsed runKey={item.id} />
+          </span>
         )}
         <StatusLabel status={item.status} />
         <ChevronDownIcon
@@ -219,9 +230,7 @@ function Activity({ item }: { item: ChatItem }) {
         aria-expanded={open}
         className="w-full flex items-center gap-2 px-3 py-1.5 text-left cursor-pointer disabled:cursor-default"
       >
-        <span className="text-text-muted">
-          {item.kind === "command" ? "$" : item.kind === "fileChange" ? "±" : "⚙"}
-        </span>
+        <ToolCategoryIcon category={toolCategory(item)} />
         <span className="flex-1 min-w-0 truncate font-mono text-text-secondary select-text">
           {label}
         </span>
@@ -359,6 +368,8 @@ export const WorkGroup = memo(
 
 function WorkGroupView({ items, running }: { items: ChatItem[]; running: boolean }) {
   const [open, setOpen] = useState(false);
+  const runKey = items[0].id;
+  useForgetRunWhenStopped(runKey, running);
   const steps = items.filter(isVisibleStep);
   const failed = steps.filter(isFailedStep).length;
   if (steps.length === 0) return null;
@@ -371,7 +382,7 @@ function WorkGroupView({ items, running }: { items: ChatItem[]; running: boolean
         className="self-start flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary cursor-pointer"
       >
         <span className={running ? "motion-pulse-steps" : undefined}>
-          {running ? "Working" : "Worked"} · {plural(steps.length, "step")}
+          {summarizeWork(steps)}
           {failed > 0 && (
             <>
               {" · "}
@@ -379,6 +390,12 @@ function WorkGroupView({ items, running }: { items: ChatItem[]; running: boolean
             </>
           )}
         </span>
+        {running && (
+          <>
+            <span aria-hidden="true">·</span>
+            <LiveElapsed runKey={runKey} />
+          </>
+        )}
         <ChevronDownIcon
           className={`opacity-50 transition-transform ${open ? "rotate-180" : ""}`}
         />
