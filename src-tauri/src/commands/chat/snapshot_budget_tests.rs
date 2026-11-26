@@ -2,7 +2,7 @@
 //! that sends more of the conversation on reopen fails here.
 //!
 //! Reopening sends only the latest page of history (see [`super::window`]), so `MAX_ITEMS` is the
-//! ten turns a page holds. It sent 61,797 bytes when `MAX_BYTES` was set: to change it on purpose,
+//! three turns a page holds. It sent 18,684 bytes when `MAX_BYTES` was set: to change it on purpose,
 //! lower it to 1 and run this module to read the current size from the failure message, set it
 //! about 20% above that and explain the change in the pull request.
 
@@ -15,8 +15,8 @@ use super::tests::spawn;
 
 const TURNS: usize = 200;
 const ITEMS_PER_TURN: usize = 11;
-const MAX_ITEMS: usize = 10 * ITEMS_PER_TURN;
-const MAX_BYTES: usize = 75_000;
+const MAX_ITEMS: usize = 3 * ITEMS_PER_TURN;
+const MAX_BYTES: usize = 22_500;
 
 fn text(label: &str, bytes: usize) -> String {
     let line = format!("{label}: lorem ipsum dolor sit amet, consectetur adipiscing elit\n");

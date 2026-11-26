@@ -16,9 +16,9 @@ pub(super) struct PageLimits {
 impl Default for PageLimits {
     fn default() -> Self {
         Self {
-            turns: 10,
-            rows: 500,
-            bytes: 1024 * 1024,
+            turns: 3,
+            rows: 150,
+            bytes: 256 * 1024,
         }
     }
 }
