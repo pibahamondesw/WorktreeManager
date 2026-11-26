@@ -272,6 +272,17 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     expect(malformed.automationId).toBeUndefined();
   });
 
+  it("keeps when a task moved to Finished and drops malformed instants", () => {
+    const [shelved, active, malformed] = normalizeTasks([
+      { id: "a", workspaceId: "w1", shelvedAt: "2026-02-01T00:00:00.000Z" },
+      { id: "b", workspaceId: "w1" },
+      { id: "c", workspaceId: "w1", shelvedAt: "yesterday" },
+    ]);
+    expect(shelved.shelvedAt).toBe("2026-02-01T00:00:00.000Z");
+    expect(active.shelvedAt).toBeUndefined();
+    expect(malformed.shelvedAt).toBeUndefined();
+  });
+
   it("returns empty arrays for nullish input", () => {
     expect(normalizeWorkspaces(undefined)).toEqual([]);
     expect(normalizeTasks(null)).toEqual([]);

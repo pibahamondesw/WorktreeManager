@@ -749,6 +749,7 @@ describe("shared operations", () => {
     for (const attempt of [
       operations.deleteTask("t1", { deleteWorktrees: true }),
       operations.setTaskAgent("t1", "codex"),
+      operations.setTaskShelved("t1", true),
       operations.deleteWorkspace("w1", { deleteWorktrees: false }),
     ])
       await expect(attempt).rejects.toMatchObject({ code: "task_deleting" });
@@ -1408,6 +1409,21 @@ describe("pinned tasks", () => {
     expect(operations.getState().tasks.map((item) => item.id)).toEqual(["t1", "t2", "other"]);
     expect(operations.task("t1").pinOrder).toBeUndefined();
     expect(save).toHaveBeenCalled();
+  });
+
+  it("moves a task to Finished and back keeping its pin", async () => {
+    const { operations } = fixture([{ ...task, pinOrder: 0 }]);
+    await operations.setTaskShelved("t1", true);
+    const [shelved] = normalizeTasks(operations.getState().tasks);
+    expect(Date.parse(shelved.shelvedAt!)).not.toBeNaN();
+    expect(shelved.pinOrder).toBe(0);
+    await operations.setTaskShelved("t1", true);
+    expect(operations.task("t1").shelvedAt).toBe(shelved.shelvedAt);
+    await operations.setTaskShelved("t1", false);
+    expect(operations.task("t1")).toMatchObject({ shelvedAt: undefined, pinOrder: 0 });
+    await expect(operations.setTaskShelved("missing", true)).rejects.toMatchObject({
+      code: "not_found",
+    });
   });
 
   it("remembers the task's agent and skips the write when it is unchanged", async () => {

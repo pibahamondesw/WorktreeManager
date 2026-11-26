@@ -487,6 +487,15 @@ export class Operations {
     });
   }
 
+  setTaskShelved(id: string, shelved: boolean) {
+    return this.change((state) => {
+      const task = this.liveTask(id);
+      if ((task.shelvedAt !== undefined) === shelved) return {};
+      const shelvedAt = shelved ? new Date().toISOString() : undefined;
+      return { tasks: state.tasks.map((item) => (item.id === id ? { ...item, shelvedAt } : item)) };
+    });
+  }
+
   setTaskAgent(id: string, agent: AgentId) {
     return this.enqueue(async () => {
       if (this.liveTask(id).agent === agent) return;

@@ -57,6 +57,8 @@ export interface Task {
   noteFolder?: string;
   noteFileName?: string;
   pinOrder?: number;
+  /** When the task moved to the Finished section; absent while it is active. */
+  shelvedAt?: string;
   /** Agent the task's chat or terminal last used; reopening the task picks it again. */
   agent?: AgentId;
   /** Automation that created the task; the task list can hide such tasks. */

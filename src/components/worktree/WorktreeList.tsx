@@ -1,5 +1,7 @@
 import { ProjectFilter } from "../ui/ProjectFilter";
 import { EmptyState } from "../ui/EmptyState";
+import { CollapsibleSectionHeader } from "../ui/CollapsibleSectionHeader";
+import { isTaskActive } from "../../utils";
 import { matchesProject } from "../../search/projects";
 import {
   ReactNode,
@@ -59,6 +61,7 @@ export interface TaskActions {
   ) => Promise<OperationResult<Task>>;
   delete: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
   setPinned: (id: string, pinned: boolean) => Promise<void>;
+  setShelved: (id: string, shelved: boolean) => Promise<void>;
   reorderPinned: (id: string, targetId: string) => Promise<void>;
   linkIssue: (taskId: string, issue: string) => Promise<Task>;
   rename: (taskId: string, title: string) => Promise<Task>;
@@ -162,6 +165,14 @@ function listedTasks(tasks: Task[], showAutomationTasks: boolean) {
   return showAutomationTasks ? tasks : tasks.filter((task) => !task.automationId);
 }
 
+/** Tasks keyboard navigation walks: active ones, then Finished ones while that section is open. */
+function navigableTasks(tasks: Task[], finishedExpanded: boolean) {
+  const active = tasks.filter(isTaskActive);
+  return finishedExpanded ? [...active, ...tasks.filter((task) => !isTaskActive(task))] : active;
+}
+
+const FINISHED_SECTION_ID = "finished-tasks";
+
 export function WorktreeList({
   tasks: allTasks,
   agentSessions = {},
@@ -189,6 +200,7 @@ export function WorktreeList({
     create: onTaskCreated,
     delete: onTaskDeleted,
     setPinned: onTaskPinned,
+    setShelved: onTaskShelved,
     reorderPinned: onPinnedTasksReordered,
     linkIssue: onTaskIssueLinked,
     rename: onTaskRenamed,
@@ -212,7 +224,8 @@ export function WorktreeList({
   } = useShowAutomationTasks();
   const automationTaskCount = allTasks.filter((task) => task.automationId).length;
   const revealing = !!revealTaskId && allTasks.some((task) => task.id === revealTaskId);
-  const tasks = useMemo(
+  const [finishedExpanded, setFinishedExpanded] = useState(false);
+  const shownTasks = useMemo(
     () =>
       revealing
         ? allTasks
@@ -221,6 +234,16 @@ export function WorktreeList({
           ),
     [allTasks, project, revealing, showAutomationTasks]
   );
+  const tasks = useMemo(
+    () => navigableTasks(shownTasks, finishedExpanded),
+    [shownTasks, finishedExpanded]
+  );
+  const finishedCount = shownTasks.length - shownTasks.filter(isTaskActive).length;
+  const toggleFinished = () => {
+    setFinishedExpanded((expanded) => !expanded);
+    setSelectedIndex(-1);
+    setDeleteRequested(false);
+  };
   const changeShowAutomationTasks = (show: boolean) => {
     chooseShowAutomationTasks(show);
     setSelectedIndex(-1);
@@ -232,7 +255,7 @@ export function WorktreeList({
     setDeleteRequested(false);
   };
   const [linkTaskId, setLinkTaskId] = useState<string | null>(null);
-  const linkTask = tasks.find((task) => task.id === linkTaskId && !task.linearIssueId);
+  const linkTask = shownTasks.find((task) => task.id === linkTaskId && !task.linearIssueId);
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
@@ -272,19 +295,24 @@ export function WorktreeList({
   // same commit: the task may only appear in `tasks` after that switch.
   useEffect(() => {
     if (!revealTaskId) return;
-    const task = tasks.find((t) => t.id === revealTaskId);
+    const task = shownTasks.find((t) => t.id === revealTaskId);
     if (!task) return;
     const showAutomation = showAutomationTasks || !!task.automationId;
+    const expandFinished = finishedExpanded || !isTaskActive(task);
     setProjectFilter({ workspaceId: workspace?.id, value: "" });
     if (task.automationId) revealAutomationTasks();
-    setSelectedIndex(listedTasks(allTasks, showAutomation).indexOf(task));
+    setFinishedExpanded(expandFinished);
+    setSelectedIndex(
+      navigableTasks(listedTasks(allTasks, showAutomation), expandFinished).indexOf(task)
+    );
     setRevealNonce((n) => n + 1);
     if (!openedTask) ringTask(revealTaskId);
     onRevealHandled();
   }, [
     revealTaskId,
-    tasks,
+    shownTasks,
     allTasks,
+    finishedExpanded,
     showAutomationTasks,
     revealAutomationTasks,
     onRevealHandled,
@@ -353,9 +381,13 @@ export function WorktreeList({
   const handleCloseTask = () => {
     if (openTask) {
       const showAutomation = showAutomationTasks || !!openTask.automationId;
+      const expandFinished = finishedExpanded || !isTaskActive(openTask);
       setProjectFilter({ workspaceId: workspace?.id, value: "" });
       if (openTask.automationId) revealAutomationTasks();
-      setSelectedIndex(listedTasks(allTasks, showAutomation).indexOf(openTask));
+      setFinishedExpanded(expandFinished);
+      setSelectedIndex(
+        navigableTasks(listedTasks(allTasks, showAutomation), expandFinished).indexOf(openTask)
+      );
       setRevealNonce((n) => n + 1);
     }
     onCloseTask();
@@ -384,6 +416,7 @@ export function WorktreeList({
   const latest = useRef({
     deleteTask,
     onTaskPinned,
+    onTaskShelved,
     onTaskRenamed,
     onPrReady,
     onOpenTask,
@@ -394,6 +427,7 @@ export function WorktreeList({
     latest.current = {
       deleteTask,
       onTaskPinned,
+      onTaskShelved,
       onTaskRenamed,
       onPrReady,
       onOpenTask,
@@ -413,6 +447,12 @@ export function WorktreeList({
       togglePin: (task) => {
         void latest.current
           .onTaskPinned(task.id, task.pinOrder === undefined)
+          .then(() => setSelectedIndex(-1))
+          .catch((error) => latest.current.showToast(String(error)));
+      },
+      toggleShelved: (task) => {
+        void latest.current
+          .onTaskShelved(task.id, isTaskActive(task))
           .then(() => setSelectedIndex(-1))
           .catch((error) => latest.current.showToast(String(error)));
       },
@@ -444,6 +484,42 @@ export function WorktreeList({
       requestDelete={i >= 0 && i === selectedIndex && deleteRequested}
     />
   );
+
+  const rows = withExits(tasks, exits);
+  const activeRows = rows.filter((row) => isTaskActive(row.task));
+  const finishedRows = rows.filter((row) => !isTaskActive(row.task));
+
+  const renderRow = ({ task, exit }: (typeof rows)[number]) =>
+    exit?.phase === "departing" ? (
+      <DepartingCard key={task.id} gap={CARD_GAP} taskId={task.id} onDeparted={finishDeparture}>
+        {renderCard(task, -1)}
+      </DepartingCard>
+    ) : (
+      <div
+        key={task.id}
+        {...reorder.itemProps(task.id, task.pinOrder !== undefined && isTaskActive(task) && !exit)}
+        inert={!!exit}
+        className={`offscreen-lazy [contain-intrinsic-size:auto_7rem] relative transition-opacity ${
+          exit ? "opacity-50 saturate-50" : ""
+        } ${
+          reorder.over === task.id && reorder.dragging !== task.id
+            ? "rounded-xl outline outline-2 outline-accent"
+            : ""
+        } ${reorder.dragging === task.id ? "opacity-50" : ""}`}
+      >
+        {ring?.taskId === task.id && (
+          <span
+            key={ring.nonce}
+            data-testid="reveal-ring"
+            data-overflows-row
+            aria-hidden="true"
+            className="motion-reveal-ring rounded-xl z-10"
+            onAnimationEnd={clearRing}
+          />
+        )}
+        {renderCard(task, tasks.indexOf(task))}
+      </div>
+    );
 
   const taskOpen = openTask !== null && openedTask !== null;
 
@@ -477,7 +553,7 @@ export function WorktreeList({
         <div className="contents" hidden={taskOpen}>
           <WorktreeListHeader
             workspaceName={workspace.name}
-            taskCount={tasks.length}
+            taskCount={shownTasks.length - finishedCount}
             repoCount={workspace.repos.length}
             projectFilter={
               allTasks.length > 0 && (
@@ -518,7 +594,7 @@ export function WorktreeList({
                   <WorktreeCardSkeleton key={i} index={i} />
                 ))}
               </div>
-            ) : tasks.length === 0 && exits.size === 0 ? (
+            ) : shownTasks.length === 0 && exits.size === 0 ? (
               allTasks.length > 0 ? (
                 <EmptyState
                   className="py-10"
@@ -529,45 +605,24 @@ export function WorktreeList({
               )
             ) : (
               <div key="tasks" className="grid gap-3 motion-rise">
-                <ProgressiveRows rows={withExits(tasks, exits)}>
-                  {({ task, exit }) =>
-                    exit?.phase === "departing" ? (
-                      <DepartingCard
-                        key={task.id}
-                        gap={CARD_GAP}
-                        taskId={task.id}
-                        onDeparted={finishDeparture}
+                <ProgressiveRows rows={activeRows}>{renderRow}</ProgressiveRows>
+                {(finishedCount > 0 || finishedRows.length > 0) && (
+                  <section className="grid gap-3">
+                    <h3>
+                      <CollapsibleSectionHeader
+                        expanded={finishedExpanded}
+                        onToggle={toggleFinished}
+                        controls={FINISHED_SECTION_ID}
                       >
-                        {renderCard(task, -1)}
-                      </DepartingCard>
-                    ) : (
-                      <div
-                        key={task.id}
-                        {...reorder.itemProps(task.id, task.pinOrder !== undefined && !exit)}
-                        inert={!!exit}
-                        className={`offscreen-lazy [contain-intrinsic-size:auto_7rem] relative transition-opacity ${
-                          exit ? "opacity-50 saturate-50" : ""
-                        } ${
-                          reorder.over === task.id && reorder.dragging !== task.id
-                            ? "rounded-xl outline outline-2 outline-accent"
-                            : ""
-                        } ${reorder.dragging === task.id ? "opacity-50" : ""}`}
-                      >
-                        {ring?.taskId === task.id && (
-                          <span
-                            key={ring.nonce}
-                            data-testid="reveal-ring"
-                            data-overflows-row
-                            aria-hidden="true"
-                            className="motion-reveal-ring rounded-xl z-10"
-                            onAnimationEnd={clearRing}
-                          />
-                        )}
-                        {renderCard(task, tasks.indexOf(task))}
-                      </div>
-                    )
-                  }
-                </ProgressiveRows>
+                        Finished
+                        <span className="text-xs font-normal text-text-muted">{finishedCount}</span>
+                      </CollapsibleSectionHeader>
+                    </h3>
+                    <div id={FINISHED_SECTION_ID} hidden={!finishedExpanded} className="grid gap-3">
+                      <ProgressiveRows rows={finishedRows}>{renderRow}</ProgressiveRows>
+                    </div>
+                  </section>
+                )}
               </div>
             )}
           </div>
