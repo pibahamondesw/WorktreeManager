@@ -154,17 +154,25 @@ type NodesResponse = Record<string, { nodes: { id: string }[] }>;
 
 // ---- GraphQL queries ----
 
+const MARKED_ISSUE_FIELDS = `
+  id identifier url branchName title
+  state { id name }
+  labels(first: 250) { nodes { id } }
+  projectMilestone { id }
+  team { id key states(first: 250) { nodes { id name } } }
+`;
+
 const MARKED_ISSUE_QUERY = `
   query MarkedIssue($marker: String!) {
     issues(filter: { description: { contains: $marker } }, first: 1) {
-      nodes {
-        id identifier url branchName title
-        state { id name }
-        labels(first: 250) { nodes { id } }
-        projectMilestone { id }
-        team { id key states(first: 250) { nodes { id name } } }
-      }
+      nodes { ${MARKED_ISSUE_FIELDS} }
     }
+  }
+`;
+
+const KNOWN_ISSUE_QUERY = `
+  query KnownIssue($id: String!) {
+    issue(id: $id) { ${MARKED_ISSUE_FIELDS} }
   }
 `;
 
@@ -513,6 +521,15 @@ export class LinearService {
     return res.data!.issues.nodes[0] ?? null;
   }
 
+  /** The issue with id or identifier `issue`, which unlike the marker search sees it right away. */
+  private async knownIssue(issue: string): Promise<MarkedIssueNode | null> {
+    const res = await this.gql.rawRequest<
+      { issue: MarkedIssueNode | null },
+      Record<string, unknown>
+    >(KNOWN_ISSUE_QUERY, { id: issue });
+    return res.data!.issue;
+  }
+
   private async updateMarkedIssue(id: string, input: Record<string, unknown>): Promise<void> {
     const res = await this.gql.rawRequest<
       { issueUpdate: { success: boolean } },
@@ -643,12 +660,17 @@ export class LinearService {
     };
   }
 
-  /** Moves the issue whose description carries the marker to the team's state named `state`. */
+  /**
+   * Moves the `known` issue, or else the one whose description carries the marker, to the team's
+   * state named `state`.
+   */
   async moveMarkedIssue(
     marker: string,
-    state: string
+    state: string,
+    known?: string
   ): Promise<{ identifier: string; changed: boolean }> {
-    const issue = await this.markedIssue(marker);
+    const knownIssue = known ? await this.knownIssue(known).catch(() => null) : null;
+    const issue = knownIssue ?? (await this.markedIssue(marker));
     if (!issue) throw new Error(`No Linear issue carries the marker ${marker}`);
     const named = (candidate: { name: string } | null) =>
       candidate?.name.toLowerCase() === state.toLowerCase();

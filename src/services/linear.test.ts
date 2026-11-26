@@ -643,6 +643,36 @@ describe("marked issues", () => {
       `No Linear issue carries the marker ${marker}`
     );
   });
+
+  it("moves the known issue without the marker search, which misses a just-created one", async () => {
+    const issue = marked("t").issues.nodes[0];
+    const known = service({ issue }, { issueUpdate: { success: true } });
+    await expect(known.linear.moveMarkedIssue(marker, "In Review", "ENG-9")).resolves.toEqual({
+      identifier: "ENG-9",
+      changed: true,
+    });
+    expect(known.request.mock.calls[0][1]).toEqual({ id: "ENG-9" });
+    expect(known.request.mock.calls[1][1]).toEqual({ id: "issue", input: { stateId: "s-review" } });
+    expect(known.request).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the marker search when the known issue does not resolve", async () => {
+    const gone = service({ issue: null }, marked("t", "In Review"));
+    await expect(gone.linear.moveMarkedIssue(marker, "In Review", "ENG-1")).resolves.toEqual({
+      identifier: "ENG-9",
+      changed: false,
+    });
+    expect(gone.request.mock.calls[1][1]).toEqual({ marker });
+
+    const failing = service(marked("t", "In Review"));
+    failing.request.mockReset();
+    failing.request
+      .mockRejectedValueOnce(new Error("Entity not found"))
+      .mockResolvedValueOnce({ data: { issues: { nodes: [] } } });
+    await expect(failing.linear.moveMarkedIssue(marker, "Done", "ENG-1")).rejects.toThrow(
+      `No Linear issue carries the marker ${marker}`
+    );
+  });
 });
 
 describe("Linear requests", () => {

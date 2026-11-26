@@ -445,7 +445,7 @@ export async function dispatchCliBridge(
         "labels",
         "milestone",
       ],
-      "linear.issue-state": ["workspaceId", "marker", "state"],
+      "linear.issue-state": ["workspaceId", "marker", "state", "issue"],
       "task.log-append": ["id", "entry", "key"],
     };
     if (
@@ -674,7 +674,8 @@ export async function dispatchCliBridge(
         result = await operations.moveMarkedIssue(
           text(params.workspaceId),
           text(params.marker),
-          text(params.state)
+          text(params.state),
+          params.issue == null ? undefined : text(params.issue)
         );
         break;
       case "task.log-append":
