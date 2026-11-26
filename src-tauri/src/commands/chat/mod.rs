@@ -1237,6 +1237,21 @@ pub(crate) struct Launch {
     pub history: Vec<model::ChatItem>,
 }
 
+fn restore_model_selection<R: Runtime>(
+    app: &AppHandle<R>,
+    agent: &str,
+    provider: &mut dyn ChatProvider,
+) {
+    match preferences::load(app, agent) {
+        Ok(Some(selection)) => provider.restore_selection(selection),
+        Ok(None) => {}
+        Err(error) => {
+            let message = format!("could not load chat model selection: {error}");
+            log::warn!("{message}");
+        }
+    }
+}
+
 /// Attach to the running session, restart it on the same conversation, or start a fresh one.
 /// A fresh one may continue the current conversation of `handoff_from`, another agent. An open
 /// naming a session attaches to it as it is, whatever its mode.
@@ -1395,13 +1410,7 @@ pub async fn chat_open<R: Runtime>(
         .await
         .map_err(|e| format!("Task failed: {e}"))??
     };
-    if agent == "codex" {
-        match preferences::load(&app) {
-            Ok(Some(selection)) => launch.provider.restore_selection(selection),
-            Ok(None) => {}
-            Err(error) => log::warn!("could not load chat model selection: {error}"),
-        }
-    }
+    restore_model_selection(&app, &agent, launch.provider.as_mut());
     let setup = session_setup(
         &app,
         &registry,
@@ -1481,9 +1490,9 @@ pub fn chat_configure<R: Runtime>(
 ) -> Result<(), String> {
     registry.with_session(&task_id, &tabs::slot(&agent, tab.as_deref()), |session| {
         session.with_provider(|provider, _, out| provider.configure(&setting, out))?;
-        if agent == "codex" && matches!(setting, ChatSetting::Model(_) | ChatSetting::Effort(_)) {
+        if matches!(setting, ChatSetting::Model(_) | ChatSetting::Effort(_)) {
             let state = session.shared.lock().unwrap();
-            preferences::save(&app, &state.snapshot.controls)
+            preferences::save(&app, &agent, &state.snapshot.controls)
                 .map_err(|error| format!("Could not remember the model selection: {error}"))?;
         }
         Ok(())
