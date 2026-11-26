@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { SettingsModal, SettingsSection } from "./SettingsModal";
+import { saveToolVisibility } from "../chat/toolVisibilityPreference";
 import { DEFAULT_AGENT_ALERTS } from "../../services/agentActivity";
 import { defaultTypography } from "../../appearance";
 import { invokeWithAgentCatalog } from "../../services/agents.fixture";
@@ -16,6 +17,7 @@ vi.mock("@tauri-apps/api/path", () => ({ homeDir: vi.fn().mockResolvedValue("/Us
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 afterEach(() => {
+  saveToolVisibility("all");
   cleanup();
   vi.clearAllMocks();
   vi.restoreAllMocks();
@@ -238,7 +240,17 @@ describe("SettingsModal", () => {
   });
 });
 
-it("places keyboard shortcuts last in settings navigation", () => {
+it("places preferences last in settings navigation", () => {
   renderSettings();
-  expect(screen.getAllByRole("tab").at(-1)).toHaveTextContent("Keyboard shortcuts");
+  expect(screen.getAllByRole("tab").at(-1)).toHaveTextContent("Preferences");
+});
+
+it("saves which tool calls every chat shows from preferences", () => {
+  renderSettings();
+  fireEvent.click(screen.getByRole("tab", { name: "Preferences" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Tool calls in chat" }), {
+    target: { value: "zen" },
+  });
+  expect(screen.getByRole("combobox", { name: "Tool calls in chat" })).toHaveValue("zen");
+  expect(localStorage.getItem("worktreemanager.toolVisibility")).toBe("zen");
 });
