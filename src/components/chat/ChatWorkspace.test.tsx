@@ -610,16 +610,18 @@ const SIDE_REPLY = {
 };
 
 function sideBackend() {
-  backend([
+  const tabs: Tab[] = [
     { id: "main", agent: "claude", conversationId: "c1" },
     { id: "a1", agent: "claude", conversationId: "c2" },
-  ]);
+  ];
+  backend(tabs);
   const fallback = mocks.invoke.getMockImplementation()!;
   mocks.invoke.mockImplementation((command, invoked) => {
     const tab = (invoked as { tab?: string } | undefined)?.tab ?? "";
     if (command === "chat_open" && tab.startsWith("side-")) return Promise.resolve(SIDE_REPLY);
     return fallback(command, invoked);
   });
+  return tabs;
 }
 
 const editorOf = (box: HTMLElement) => EditorView.findFromDOM(box)!;
@@ -710,6 +712,49 @@ it("opens a fresh side chat for each question and stops the one it replaces", as
   });
 });
 
+it("blocks adding a side reply until the queued edit is finished", async () => {
+  sideBackend();
+  const fallback = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, args) => {
+    const tab = (args as { tab?: string } | undefined)?.tab;
+    if (command === "chat_open" && !tab) {
+      return Promise.resolve({
+        ...IDLE_CHAT,
+        status: { kind: "busy" },
+        items: [{ id: "q", kind: "user", text: "Queued note", status: "queued" }],
+      });
+    }
+    if (command === "chat_hold_queued") return Promise.resolve("Queued note");
+    return fallback(command, args);
+  });
+  renderWorkspace({ taskId: "side-queued-edit" });
+  await screen.findByRole("textbox", { name: "Message Claude Code" });
+  await askAside("about main");
+  const addReply = await screen.findByRole("button", { name: "Add reply to main chat" });
+  await waitFor(() => expect(addReply).toBeEnabled());
+  await typeInto(mainComposer(), "Keep this draft");
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit queued message" }));
+  const edit = await screen.findByRole("textbox", { name: "Queued message" });
+  expect(addReply).toBeDisabled();
+  expect(
+    screen.getByText("Finish editing the queued message before adding the reply.")
+  ).toBeVisible();
+  fireEvent.click(addReply);
+  expect(composerText(edit)).toBe("Queued note");
+
+  fireEvent.keyDown(edit, { key: "Escape" });
+  await waitFor(() => expect(addReply).toBeEnabled());
+  expect(
+    screen.queryByText("Finish editing the queued message before adding the reply.")
+  ).not.toBeInTheDocument();
+  expect(composerText(mainComposer())).toBe("Keep this draft");
+  fireEvent.click(addReply);
+  await waitFor(() =>
+    expect(composerText(mainComposer())).toBe("Keep this draft\n\n> It runs.\n>\n> Twice.")
+  );
+});
+
 it("shows the side chat only beside its conversation and stops it with that tab", async () => {
   sideBackend();
   renderWorkspace({ taskId: "side-tabs" });
@@ -735,6 +780,78 @@ it("shows the side chat only beside its conversation and stops it with that tab"
     })
   );
   expect(screen.queryByRole("complementary", { name: "Side chat" })).toBeNull();
+});
+
+it("stops the side chat when a tab reload confirms its source was closed from outside", async () => {
+  const tabs = sideBackend();
+  const fallback = mocks.invoke.getMockImplementation()!;
+  let tabsUnavailable = false;
+  mocks.invoke.mockImplementation((command, args) => {
+    if (command === "chat_tabs") {
+      return tabsUnavailable ? Promise.reject("Could not load tabs") : Promise.resolve([...tabs]);
+    }
+    return fallback(command, args);
+  });
+  const view = renderWorkspace({ taskId: "side-external-close" });
+  await screen.findByRole("textbox", { name: "Message Claude Code" });
+  fireEvent.click(screen.getAllByRole("tab")[1]);
+  await askAside("about the other tab");
+  await waitFor(() => expect(sideOpens()).toHaveLength(1));
+  const [opened] = sideOpens();
+
+  tabs.pop();
+  tabsUnavailable = true;
+  emit("chat-tabs", { taskId: "side-external-close" });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not load tabs");
+  expect(screen.getByRole("complementary", { name: "Side chat" })).toBeInTheDocument();
+  expect(mocks.invoke).not.toHaveBeenCalledWith("chat_stop", expect.anything());
+
+  view.unmount();
+  renderWorkspace({ taskId: "side-external-close" });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not load tabs");
+  expect(screen.getByRole("tab")).toHaveAttribute("data-tab", "main");
+  expect(mocks.invoke).not.toHaveBeenCalledWith("chat_stop", expect.anything());
+
+  tabsUnavailable = false;
+  emit("chat-tabs", { taskId: "side-external-close" });
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", {
+      taskId: "side-external-close",
+      agent: "claude",
+      tab: opened.tab,
+    })
+  );
+  expect(mocks.invoke.mock.calls.filter(([command]) => command === "chat_stop")).toHaveLength(1);
+  expect(screen.queryByRole("complementary", { name: "Side chat" })).toBeNull();
+  expect(screen.getByRole("tab")).toHaveAttribute("data-tab", "main");
+});
+
+it("keeps a side chat opened in a new tab while another tab closes", async () => {
+  sideBackend();
+  let finishClose!: () => void;
+  const closing = new Promise<void>((resolve) => {
+    finishClose = resolve;
+  });
+  const fallback = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, args) =>
+    command === "chat_tab_close" ? closing : fallback(command, args)
+  );
+
+  renderWorkspace({ taskId: "side-concurrent-close" });
+  const [main] = await screen.findAllByRole("tab");
+  fireEvent.click(main);
+  fireEvent.click(screen.getAllByRole("button", { name: /^Close conversation/ })[1]);
+  fireEvent.click(screen.getByRole("button", { name: "New Claude Code conversation" }));
+  await screen.findByRole("tab", { name: "New conversation", selected: true });
+  await askAside("about the new tab");
+  await act(async () => finishClose());
+
+  expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-tab"))).toEqual([
+    "main",
+    "new1",
+  ]);
+  expect(screen.getByRole("complementary", { name: "Side chat" })).toBeInTheDocument();
+  expect(mocks.invoke).not.toHaveBeenCalledWith("chat_stop", expect.anything());
 });
 
 it("completes /btw from the command menu so the question can follow", async () => {

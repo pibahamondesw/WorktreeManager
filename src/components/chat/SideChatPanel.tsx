@@ -11,6 +11,7 @@ interface SideChatPanelProps {
   folders: string[];
   takeOpenIntent: () => ChatOpenIntent | null;
   onBringBack: (reply: string) => void;
+  bringBackBlocked?: boolean;
   onClose: () => void;
 }
 
@@ -22,6 +23,7 @@ export function SideChatPanel({
   folders,
   takeOpenIntent,
   onBringBack,
+  bringBackBlocked = false,
   onClose,
 }: SideChatPanelProps) {
   const [toolbar, setToolbar] = useState<HTMLElement | null>(null);
@@ -43,6 +45,11 @@ export function SideChatPanel({
           <CloseIcon size={12} />
         </button>
       </div>
+      {bringBackBlocked && (
+        <p role="status" className="px-3 py-1.5 text-xs text-text-muted">
+          Finish editing the queued message before adding the reply.
+        </p>
+      )}
       <ChatPane
         taskId={taskId}
         agent={agent}
@@ -50,7 +57,7 @@ export function SideChatPanel({
         folders={folders}
         toolbar={toolbar}
         takeOpenIntent={takeOpenIntent}
-        aside={{ onBringBack }}
+        aside={{ onBringBack, bringBackBlocked }}
       />
     </aside>
   );
