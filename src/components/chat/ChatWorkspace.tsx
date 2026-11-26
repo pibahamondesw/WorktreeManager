@@ -106,6 +106,7 @@ export function ChatWorkspace({
   const [actionError, setActionError] = useState<string | null>(null);
   const [side, setSide] = useState(() => sideChats.get(taskId) ?? null);
   const [insertion, setInsertion] = useState<ComposerSeed | null>(null);
+  const [editingQueued, setEditingQueued] = useState(false);
   const intents = useRef(new Map<string, ChatOpenIntent>());
   const latestTabs = useRef(tabs);
   useEffect(() => {
@@ -408,6 +409,7 @@ export function ChatWorkspace({
               onAskAside={(question) => askAside(active, question)}
               insertion={side?.source === active.id ? insertion : null}
               onInserted={inserted}
+              onQueuedEditChange={setEditingQueued}
             />
           </div>
           {side?.source === active.id && (
@@ -420,6 +422,7 @@ export function ChatWorkspace({
               takeOpenIntent={takeSideIntent}
               onBringBack={bringBack}
               onClose={() => void closeSide()}
+              bringBackBlocked={editingQueued}
             />
           )}
         </div>

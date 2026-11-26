@@ -79,12 +79,14 @@ interface ChatPaneProps {
   /** Added to the composer's draft, such as a side chat's reply; taken once. */
   insertion?: ComposerSeed | null;
   onInserted?: () => void;
+  onQueuedEditChange?: (editing: boolean) => void;
   /** The pane is a side chat, whose replies can be added to the main chat's draft. */
   aside?: SideChatRole;
 }
 
 interface SideChatRole {
   onBringBack: (reply: string) => void;
+  bringBackBlocked: boolean;
 }
 
 interface ReadOnlySession {
@@ -146,6 +148,7 @@ export function ChatPane({
   onAskAside,
   insertion,
   onInserted,
+  onQueuedEditChange,
   aside,
 }: ChatPaneProps) {
   const session = useChatSession(taskId, agent, folders, takeOpenIntent, tab, readOnly?.sessionId);
@@ -355,6 +358,7 @@ export function ChatPane({
     held && items.some((item) => item.id === held.itemId && item.status === "queued")
       ? held.itemId
       : null;
+  useLayoutEffect(() => onQueuedEditChange?.(editedId !== null), [editedId, onQueuedEditChange]);
   const editQueued = useCallback(
     (itemId: string) =>
       void run(async () => {
@@ -461,7 +465,7 @@ export function ChatPane({
       {aside && (
         <Button
           variant="ghost"
-          disabled={!latestReply || busy}
+          disabled={!latestReply || busy || aside.bringBackBlocked}
           title="Add the latest reply to the main chat's draft"
           onClick={() => latestReply && aside.onBringBack(latestReply.text)}
           className="h-7 px-2 text-xs"

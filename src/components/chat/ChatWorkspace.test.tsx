@@ -710,6 +710,49 @@ it("opens a fresh side chat for each question and stops the one it replaces", as
   });
 });
 
+it("blocks adding a side reply until the queued edit is finished", async () => {
+  sideBackend();
+  const fallback = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, args) => {
+    const tab = (args as { tab?: string } | undefined)?.tab;
+    if (command === "chat_open" && !tab) {
+      return Promise.resolve({
+        ...IDLE_CHAT,
+        status: { kind: "busy" },
+        items: [{ id: "q", kind: "user", text: "Queued note", status: "queued" }],
+      });
+    }
+    if (command === "chat_hold_queued") return Promise.resolve("Queued note");
+    return fallback(command, args);
+  });
+  renderWorkspace({ taskId: "side-queued-edit" });
+  await screen.findByRole("textbox", { name: "Message Claude Code" });
+  await askAside("about main");
+  const addReply = await screen.findByRole("button", { name: "Add reply to main chat" });
+  await waitFor(() => expect(addReply).toBeEnabled());
+  await typeInto(mainComposer(), "Keep this draft");
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit queued message" }));
+  const edit = await screen.findByRole("textbox", { name: "Queued message" });
+  expect(addReply).toBeDisabled();
+  expect(
+    screen.getByText("Finish editing the queued message before adding the reply.")
+  ).toBeVisible();
+  fireEvent.click(addReply);
+  expect(composerText(edit)).toBe("Queued note");
+
+  fireEvent.keyDown(edit, { key: "Escape" });
+  await waitFor(() => expect(addReply).toBeEnabled());
+  expect(
+    screen.queryByText("Finish editing the queued message before adding the reply.")
+  ).not.toBeInTheDocument();
+  expect(composerText(mainComposer())).toBe("Keep this draft");
+  fireEvent.click(addReply);
+  await waitFor(() =>
+    expect(composerText(mainComposer())).toBe("Keep this draft\n\n> It runs.\n>\n> Twice.")
+  );
+});
+
 it("shows the side chat only beside its conversation and stops it with that tab", async () => {
   sideBackend();
   renderWorkspace({ taskId: "side-tabs" });
