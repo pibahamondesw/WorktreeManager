@@ -28,7 +28,7 @@ wtm task list [--workspace <id>]         # tasks with branch, issue and member p
 wtm task get <id> --git                  # plus ahead/behind/dirty per member repository
 wtm task create --input task.json        # or --input - for stdin
 wtm task link-issue <id> --issue WOR-123
-wtm task chat <id> --agent claude --message @prompt.md [--name <n>] [--tab <tab>] [--wait]   # new chat tab for the user, or continue --tab
+wtm task chat <id> --agent claude --message @prompt.md [--name <n>] [--tab <tab>] [--wait]   # main tab if unused, else a new tab, or continue --tab
 wtm task tabs <id>                       # open chat tabs: id, agent, conversation
 wtm task tab-close <id> <tab>            # close a tab; its conversation stays in Conversations
 wtm task delete <id> --keep-worktrees|--delete-worktrees [--force] [--skip-teardown]

@@ -33,10 +33,12 @@ task link-issue <id> --issue <identifier>
 task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
           [--name <name>] [--tab <tab>] [--schema <file> --wait] [--wait]
                                      Sends the message to the task's chat as you would
-                                     type it: in a new chat tab with a new conversation,
-                                     named with --name (agents that cannot name one
-                                     leave it unnamed), or in the tab --tab names,
-                                     continuing its chat if it is still running.
+                                     type it: in a new conversation, named with --name
+                                     (agents that cannot name one leave it unnamed), in
+                                     the task's main tab while it has no conversation
+                                     nor running chat, else in a new chat tab; or in
+                                     the tab --tab names, continuing its chat if it is
+                                     still running.
                                      Without --tab, the message follows the
                                      first-prompt template, when one is set.
                                      Prints the tab, session and conversation ids once
