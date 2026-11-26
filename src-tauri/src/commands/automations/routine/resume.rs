@@ -11,7 +11,7 @@ use super::super::pipeline::RunLog;
 use super::super::scheduler::RunRequest;
 use super::super::store::events::{ItemStatus, LoggedEvent, RunEvent, RunStatus, StepStatus};
 use super::commands::Item;
-use super::prompt::PriorStep;
+use super::prompt::{Briefing, PriorStep};
 use super::takeover::HUMAN_TAKEOVER;
 use super::{
     per_run_branch, run_deadline, ItemDrive, ItemSteps, ResolvedTask, RoutineExecutor, TaskFailure,
@@ -159,6 +159,8 @@ impl ItemSteps<'_> {
     /// and the conversations its agent steps held.
     pub(super) fn resume_from(&mut self, history: &[LoggedEvent]) {
         let mut taken_over = None;
+        let mut defined = None;
+        let mut definition = self.request.definition_hash.clone();
         for logged in history {
             match &logged.event {
                 RunEvent::SessionStarted {
@@ -169,7 +171,22 @@ impl ItemSteps<'_> {
                     ..
                 } if *item == self.item.id => {
                     self.handback_note = None;
-                    self.held_conversation(step, *attempt, conversation);
+                    let worked_item = defined.as_ref().unwrap_or(self.item);
+                    let briefing = Briefing::new(self.prior.len(), worked_item, &definition, None);
+                    self.held_conversation(step, *attempt, conversation, briefing);
+                }
+                RunEvent::ItemRetried {
+                    definition_hash, ..
+                }
+                | RunEvent::DefinitionAdopted {
+                    definition_hash, ..
+                } => definition = definition_hash.clone(),
+                RunEvent::ItemDefined {
+                    item,
+                    defined: item_defined,
+                    ..
+                } if *item == self.item.id => {
+                    defined = Some(Item::from(item_defined));
                 }
                 RunEvent::SessionStarted { item, .. } if *item == self.item.id => {
                     self.handback_note = None;
@@ -240,13 +257,20 @@ impl ItemSteps<'_> {
         }
     }
 
-    fn held_conversation(&mut self, step_id: &str, attempt: u32, conversation: &str) {
+    fn held_conversation(
+        &mut self,
+        step_id: &str,
+        attempt: u32,
+        conversation: &str,
+        briefing: Briefing,
+    ) {
         if let Some(step) = agent_step(self.definition, step_id) {
             if step.fresh_session {
                 self.interrupted_conversation =
                     Some((step_id.to_string(), attempt, conversation.to_string()));
             } else {
                 self.shared_conversation = Some((step.agent.id.clone(), conversation.to_string()));
+                self.briefing = Some(briefing);
             }
         }
     }

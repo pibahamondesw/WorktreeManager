@@ -64,7 +64,7 @@ use commands::{Item, TaskCommands};
 pub use leases::LeasePools;
 use leases::{item_pools_before, NoLeasePools, Quotas, StepLeases};
 pub use live_turns::LiveTurns;
-use prompt::{PriorStep, PromptInput};
+use prompt::{Briefing, PriorStep, PromptInput};
 use takeover::Takeovers;
 pub use takeover::HUMAN_TAKEOVER;
 pub(super) use waits::is_waiting_routine;
@@ -646,6 +646,7 @@ impl RoutineExecutor {
             takeovers: &self.takeovers,
             key,
             handback_note: None,
+            briefing: None,
             executor: self,
         };
         steps.resume_from(history);
@@ -838,6 +839,8 @@ struct ItemSteps<'a> {
     key: &'a DrivenItem,
     /// What the owner wrote handing the item back, for its next agent step.
     handback_note: Option<String>,
+    /// What the shared conversation was last sent.
+    briefing: Option<Briefing>,
     /// Starts the runs `call` steps wait on.
     executor: &'a RoutineExecutor,
 }
@@ -1005,6 +1008,7 @@ impl<'a> ItemSteps<'a> {
         };
         let conversation = self.record_session(request, &session_id);
         let handback_note = self.handback_note.take();
+        let briefing = self.briefing.clone().filter(|_| !step.fresh_session);
         let prompt = prompt::agent_prompt(&PromptInput {
             definition: self.definition,
             step,
@@ -1017,13 +1021,23 @@ impl<'a> ItemSteps<'a> {
             outputs: self.commands.context().outputs(),
             decisions: &decisions,
             handback_note: handback_note.as_deref(),
+            briefing: briefing.as_ref(),
         });
+        let sent = Briefing::new(
+            self.prior.len(),
+            self.worked_item(),
+            &self.definition.hash,
+            Some(&decisions),
+        );
         let item_turn = self.takeovers.running(self.key, &session_id);
         let live = self
             .live_turns
             .running(&session_id, &self.request.automation, &step.agent.id);
         let end = self.sessions.run_turn(&session_id, &prompt, timeout);
         drop((live, item_turn));
+        if !step.fresh_session && matches!(end, TurnEnd::Completed { .. }) {
+            self.briefing = Some(sent);
+        }
         if conversation.is_none() && self.sessions.conversation(&session_id).is_some() {
             self.record_session(request, &session_id);
         }
@@ -1114,6 +1128,7 @@ impl<'a> ItemSteps<'a> {
     }
 
     fn leave_conversations(&mut self) {
+        self.briefing = None;
         self.shared_session = None;
         self.shared_conversation = None;
         self.interrupted_conversation = None;
@@ -1234,6 +1249,9 @@ impl<'a> ItemSteps<'a> {
                 .filter(|(agent, _)| *agent == launch.agent.id)
                 .map(|(_, conversation)| conversation),
         };
+        if resume.is_none() {
+            self.briefing = None;
+        }
         let session_id = self.open(
             workplace,
             &SessionLaunch {
