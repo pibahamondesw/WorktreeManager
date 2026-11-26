@@ -1560,6 +1560,10 @@ fn continuing_in_another_agent_seeds_it_and_keeps_the_earlier_items_read_only() 
     assert!(open(OpenMode::Fresh, Some("codex"))
         .unwrap_err()
         .contains("its own agent"));
+    assert_eq!(
+        open(OpenMode::Fresh, Some("missing")).unwrap_err(),
+        "There is no conversation to continue"
+    );
     open(OpenMode::Fresh, Some("claude")).unwrap();
     wait_until("codex did not take the handoff", || {
         fixture.snapshot("codex").status == ChatStatus::Idle
@@ -1956,6 +1960,100 @@ fn start_codex_headless(
         .unwrap()
 }
 
+fn remember_codex_selection(fixture: &Fixture) {
+    preferences::save(
+        fixture.app.handle(),
+        "codex",
+        &model::ChatControls {
+            model: Some("economical".into()),
+            effort: Some("low".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}
+
+fn remember_codex_handoff(fixture: &Fixture) {
+    remember_codex_selection(fixture);
+    handoff_store(fixture.app.handle()).unwrap().link(
+        "task",
+        "codex",
+        "parent",
+        &HandoffLink {
+            agent: "claude".into(),
+            conversation_id: "parent".into(),
+        },
+    );
+}
+
+#[test]
+fn a_due_codex_resume_restores_the_users_selection_and_handoff_history() {
+    let fixture = Fixture::new();
+    remember_codex_handoff(&fixture);
+    resume::ResumeStore::new(&fixture.app.path().app_data_dir().unwrap())
+        .schedule(resume::ScheduledResume {
+            task_id: "task".into(),
+            agent: "codex".into(),
+            tab: None,
+            folders: fixture.repositories.folders.clone(),
+            conversation_id: "parent".into(),
+            resume_at: 10,
+        })
+        .unwrap();
+    resume::resume_due(fixture.app.handle(), 10);
+    wait_until("the resumed turn did not finish", || {
+        fixture.snapshot("codex").status == ChatStatus::Idle
+    });
+    let turn = fixture
+        .logged("requests.jsonl")
+        .into_iter()
+        .find(|request| request["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(turn["params"]["threadId"], "parent");
+    assert_eq!(turn["params"]["model"], "economical");
+    assert_eq!(turn["params"]["effort"], "low");
+    let snapshot = fixture.open("codex", OpenMode::Attach).unwrap();
+    assert_eq!(snapshot.controls.model.as_deref(), Some("economical"));
+    assert_eq!(snapshot.controls.effort.as_deref(), Some("low"));
+    assert_eq!(snapshot.items[0].origin.as_deref(), Some("claude"));
+    assert_eq!(snapshot.items[0].text, "first");
+    assert_eq!(snapshot.items[3].text, "Continued in Codex");
+    assert!(!fixture
+        .logged("requests.jsonl")
+        .iter()
+        .any(|request| request["method"] == "thread/inject_items"));
+}
+
+#[test]
+fn an_automation_resume_uses_its_own_codex_selection_and_history() {
+    let fixture = Fixture::new();
+    remember_codex_handoff(&fixture);
+    let session_id = fixture
+        .app
+        .state::<ChatRegistry>()
+        .start_headless(
+            fixture.app.handle(),
+            "task",
+            "codex",
+            HeadlessRequest {
+                folders: fixture.repositories.folders.clone(),
+                resume: Some("parent".into()),
+                output_schema: None,
+                env: Vec::new(),
+                name: None,
+            },
+            PermissionPolicy::Unattended(UnattendedPolicy::default()),
+        )
+        .unwrap();
+    let snapshot = wait_for_headless(&fixture, &session_id, |snapshot| {
+        snapshot.status == ChatStatus::Idle
+    });
+    assert_eq!(snapshot.controls.model, None);
+    assert_eq!(snapshot.controls.effort, None);
+    assert_eq!(snapshot.items[0].text, "message 1");
+    assert!(snapshot.items.iter().all(|item| item.origin.is_none()));
+}
+
 /// Runs a turn as an automation step does, right after the start, while Codex holds back its new
 /// thread; returns the `turn/start` Codex received.
 fn codex_headless_runs_its_first_turn(output_schema: Option<Value>, read_only: bool) -> Value {
@@ -2128,6 +2226,16 @@ fn launched_with(fixture: &Fixture, flag: &str) -> Vec<bool> {
 #[test]
 fn a_due_resume_after_a_restart_continues_the_conversation_in_its_tab() {
     let fixture = Fixture::new();
+    preferences::save(
+        fixture.app.handle(),
+        "claude",
+        &model::ChatControls {
+            model: Some("sonnet".into()),
+            effort: Some("high".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let store = resume::ResumeStore::new(&fixture.app.path().app_data_dir().unwrap());
     store
         .schedule(resume::ScheduledResume {
@@ -2153,6 +2261,9 @@ fn a_due_resume_after_a_restart_continues_the_conversation_in_its_tab() {
     });
     let argv = fixture.logged("argv.jsonl").pop().unwrap();
     assert!(argv.to_string().contains(r#""--resume","parent""#));
+    let snapshot = fixture.snapshot("claude");
+    assert_eq!(snapshot.controls.model.as_deref(), Some("sonnet"));
+    assert_eq!(snapshot.controls.effort.as_deref(), Some("high"));
     assert_eq!(store.find("task", "claude", None), None);
 }
 
@@ -2292,6 +2403,7 @@ fn a_hand_over_held_to_a_schema_replies_with_its_json_and_closes_for_a_clean_res
 #[test]
 fn codex_hand_overs_stay_unnamed_and_a_busy_chat_or_a_running_one_with_a_schema_is_refused() {
     let fixture = Fixture::new();
+    remember_codex_selection(&fixture);
     let opened = hand_over(
         &fixture,
         json!({ "agent": "codex", "name": "Review #12", "model": "gpt-5", "effort": "high" }),
@@ -2307,6 +2419,13 @@ fn codex_hand_overs_stay_unnamed_and_a_busy_chat_or_a_running_one_with_a_schema_
     let controls = fixture.snapshot(&slot).controls;
     assert_eq!(controls.model.as_deref(), Some("gpt-5"));
     assert_eq!(controls.effort.as_deref(), Some("high"));
+    let turn = fixture
+        .logged("requests.jsonl")
+        .into_iter()
+        .find(|request| request["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(turn["params"]["model"], "gpt-5");
+    assert_eq!(turn["params"]["effort"], "high");
 
     let tab = opened.tab.clone();
     let schema = json!({ "agent": "codex", "tab": tab, "schema": { "type": "object" } });
@@ -2330,6 +2449,9 @@ fn codex_hand_overs_stay_unnamed_and_a_busy_chat_or_a_running_one_with_a_schema_
     assert!(!replacement.continued);
     assert_eq!(replacement.tab, opened.tab);
     assert_ne!(replacement.session_id, opened.session_id);
+    let controls = fixture.snapshot(&slot).controls;
+    assert_eq!(controls.model.as_deref(), Some("economical"));
+    assert_eq!(controls.effort.as_deref(), Some("low"));
     assert_eq!(chat_list(fixture.app.state()).len(), 1);
     let tabs_before = tabs::tab_store(fixture.app.handle())
         .unwrap()

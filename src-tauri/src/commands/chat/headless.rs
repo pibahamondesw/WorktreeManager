@@ -9,7 +9,8 @@ use tauri::{AppHandle, Runtime};
 
 use super::model::{ChatImage, ChatSetting, ChatSnapshot, ChatStatus, ItemKind, PendingKind};
 use super::{
-    session_setup, start_session, ChatOrigin, ChatOwner, ChatRegistry, ChatSession, SessionTarget,
+    prepare_launch, session_setup, start_session, ChatOrigin, ChatOwner, ChatRegistry, ChatSession,
+    SessionTarget,
 };
 use crate::commands::agents::permission::{PendingDefault, PermissionPolicy};
 use crate::commands::agents::{Agents, ChatRequest};
@@ -121,20 +122,24 @@ impl ChatRegistry {
         let session_id = uuid::Uuid::new_v4().to_string();
         let target = SessionTarget::new(session_id.clone(), owner, &request.folders)?;
         let pending_resolution = policy.pending_resolution();
-        let mut launch = adapter.chat_launch(ChatRequest {
+        let resume = request.resume;
+        let chat = ChatRequest {
             cwd: target.cwd().to_string(),
             extra_dirs: target.extra_dirs().to_vec(),
-            pinned: request.resume.is_some(),
-            resume: request.resume.clone(),
+            pinned: resume.is_some(),
+            resume: resume.clone(),
             fork: None,
             handoff: None,
             permission: policy,
             output_schema: request.output_schema,
             name: request.name,
-        })?;
+        };
+        let (mut launch, handoff) =
+            prepare_launch(app, adapter.as_ref(), &target.owner, chat, None)?;
         launch.command.envs(request.env);
-        let setup = session_setup(app, self, &target, pending_resolution, None, request.resume)?;
-        let session = start_session(&target.owner.task_id, launch, None, setup)?;
+        let handoff_link = handoff.as_ref().map(|handoff| handoff.link.clone());
+        let setup = session_setup(app, self, &target, pending_resolution, handoff_link, resume)?;
+        let session = start_session(&target.owner.task_id, launch, handoff, setup)?;
         let replaced =
             self.sessions
                 .lock()

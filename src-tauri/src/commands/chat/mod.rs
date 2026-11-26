@@ -69,7 +69,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use super::agent_alerts;
 use super::agents::permission::{PendingResolution, PermissionPolicy};
-use super::agents::{Agents, ChatRequest};
+use super::agents::{AgentAdapter, Agents, ChatRequest};
 use super::process::OwnedProcess;
 use conversations::{Conversation, ConversationStore};
 use detail::DetailView;
@@ -1252,6 +1252,60 @@ fn restore_model_selection<R: Runtime>(
     }
 }
 
+fn prepare_launch<R: Runtime>(
+    app: &AppHandle<R>,
+    adapter: &dyn AgentAdapter,
+    owner: &ChatOwner,
+    mut request: ChatRequest,
+    handoff_from: Option<String>,
+) -> Result<(Launch, Option<Handoff>), String> {
+    if owner.origin != ChatOrigin::User {
+        return Ok((adapter.chat_launch(request)?, None));
+    }
+    let task_id = &owner.task_id;
+    let agent = &owner.agent;
+    let cwd = &request.cwd;
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let store = ConversationStore::new(&app_data);
+    let handoffs = HandoffStore::new(&app_data);
+    let link = match handoff_from {
+        Some(source) => Some(HandoffLink {
+            conversation_id: store
+                .get(task_id, &tabs::slot(&source, owner.tab.as_deref()), cwd)
+                .ok_or("There is no conversation to continue")?,
+            agent: source,
+        }),
+        None => request
+            .resume
+            .as_deref()
+            .and_then(|id| handoffs.source(task_id, agent, id)),
+    };
+    let handoff = link.map(|link| {
+        let pending_fork = store
+            .entry(task_id, &tabs::slot(&link.agent, owner.tab.as_deref()), cwd)
+            .filter(|entry| entry.conversation_id == link.conversation_id)
+            .and_then(|entry| entry.fork);
+        let questions = questions::QuestionLog::new(&app_data);
+        let agents = Agents::of(app);
+        let first = link.clone();
+        handoff::resolve(&handoffs, task_id, agent, link, |source| {
+            let fork = pending_fork.as_ref().filter(|_| *source == first);
+            let mut items =
+                agents
+                    .get(&source.agent)?
+                    .history(cwd, &source.conversation_id, fork)?;
+            questions.restore(&source.conversation_id, None, &mut items);
+            Ok(items)
+        })
+    });
+    if let Some(handoff) = &handoff {
+        request.handoff = Some(handoff.digest.clone());
+    }
+    let mut launch = adapter.chat_launch(request)?;
+    restore_model_selection(app, agent, launch.provider.as_mut());
+    Ok((launch, handoff))
+}
+
 /// Attach to the running session, restart it on the same conversation, or start a fresh one.
 /// A fresh one may continue the current conversation of `handoff_from`, another agent. An open
 /// naming a session attaches to it as it is, whatever its mode.
@@ -1341,23 +1395,11 @@ pub async fn chat_open<R: Runtime>(
     let cwd = target.cwd().to_string();
     let extra_dirs = target.extra_dirs().to_vec();
     let store = conversation_store(&app)?;
-    let handoffs = handoff_store(&app)?;
     let pinned = mode != OpenMode::Fresh && conversation.is_some();
     let resume = match (mode, conversation) {
         (OpenMode::Fresh, _) => None,
         (_, Some(conversation)) => Some(conversation),
         _ => store.get(&task_id, &slot, &cwd),
-    };
-    let link = match handoff_from {
-        Some(source) => Some(HandoffLink {
-            conversation_id: store
-                .get(&task_id, &tabs::slot(&source, tab), &cwd)
-                .ok_or("There is no conversation to continue")?,
-            agent: source,
-        }),
-        None => resume
-            .as_deref()
-            .and_then(|id| handoffs.source(&task_id, &agent, id)),
     };
     let fork = store
         .entry(&task_id, &slot, &cwd)
@@ -1365,52 +1407,25 @@ pub async fn chat_open<R: Runtime>(
         .and_then(|entry| entry.fork);
     let expected_conversation = resume.clone();
 
-    let pending_fork = link.as_ref().and_then(|link| {
-        store
-            .entry(&task_id, &tabs::slot(&link.agent, tab), &cwd)
-            .filter(|entry| entry.conversation_id == link.conversation_id)
-            .and_then(|entry| entry.fork)
-    });
-    let kept_questions = questions::QuestionLog::new(
-        &app.path()
-            .app_data_dir()
-            .map_err(|e| format!("app data dir: {e}"))?,
-    );
-    let (handoff, mut launch) = {
-        let (task_id, agent) = (task_id.clone(), agent.clone());
+    let (launch, handoff) = {
+        let (app, owner) = (app.clone(), target.owner.clone());
         tauri::async_runtime::spawn_blocking(move || {
-            let handoff = link.map(|link| {
-                let first = link.clone();
-                handoff::resolve(&handoffs, &task_id, &agent, link, |source| {
-                    let fork = pending_fork.as_ref().filter(|_| *source == first);
-                    let mut items =
-                        agents
-                            .get(&source.agent)?
-                            .history(&cwd, &source.conversation_id, fork)?;
-                    kept_questions.restore(&source.conversation_id, None, &mut items);
-                    Ok(items)
-                })
-            });
             let request = ChatRequest {
                 cwd,
                 extra_dirs,
                 resume,
                 pinned,
                 fork,
-                handoff: handoff
-                    .as_ref()
-                    .map(|handoff| handoff.digest.clone())
-                    .or(aside),
+                handoff: aside,
                 permission,
                 output_schema: None,
                 name: None,
             };
-            adapter.chat_launch(request).map(|launch| (handoff, launch))
+            prepare_launch(&app, adapter.as_ref(), &owner, request, handoff_from)
         })
         .await
         .map_err(|e| format!("Task failed: {e}"))??
     };
-    restore_model_selection(&app, &agent, launch.provider.as_mut());
     let setup = session_setup(
         &app,
         &registry,
