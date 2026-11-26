@@ -13,6 +13,7 @@ import {
   DeleteOptions,
   CreateTaskInput,
   TaskChatInput,
+  ChatTabRef,
 } from "./operations";
 import {
   AGENT_ACTIVITY_STATES,
@@ -239,6 +240,9 @@ async function taskChatInput(params: Record<string, unknown>): Promise<TaskChatI
     throw new OperationError("invalid_params", "wait must be a boolean.");
   if (params.withTemplate !== undefined && typeof params.withTemplate !== "boolean")
     throw new OperationError("invalid_params", "withTemplate must be a boolean.");
+  if (params.subagent !== undefined && typeof params.subagent !== "boolean")
+    throw new OperationError("invalid_params", "subagent must be a boolean.");
+  const parent = chatTabRef(params.parent);
   const schema = params.schema as Record<string, unknown> | undefined;
   if (schema !== undefined && (!schema || typeof schema !== "object" || Array.isArray(schema)))
     throw new OperationError("invalid_params", "schema must be a JSON object.");
@@ -255,7 +259,17 @@ async function taskChatInput(params: Record<string, unknown>): Promise<TaskChatI
     tab: optionalText(params.tab),
     variables: chatVariables(params.variables),
     withTemplate: params.withTemplate,
+    subagent: params.subagent,
+    parent,
   };
+}
+
+function chatTabRef(value: unknown): ChatTabRef | undefined {
+  if (value === undefined) return undefined;
+  const ref = (value && typeof value === "object" ? value : {}) as Record<string, unknown>;
+  if (![ref.taskId, ref.agent, ref.tab].every((field) => typeof field === "string" && field))
+    throw new OperationError("invalid_params", "parent must name a task, agent and tab.");
+  return ref as unknown as ChatTabRef;
 }
 
 function chatVariables(value: unknown): Record<string, string> | undefined {
@@ -400,6 +414,8 @@ export async function dispatchCliBridge(
         "tab",
         "variables",
         "withTemplate",
+        "subagent",
+        "parent",
       ],
       "task.tabs": ["id"],
       "task.tab-close": ["id", "tab"],

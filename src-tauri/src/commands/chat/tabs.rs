@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
+use super::subagents::{subagent_store, ParentChat};
 use super::{conversation_store, primary_folder, ChatRegistry};
 
 pub const MAIN_TAB: &str = "main";
@@ -50,6 +51,9 @@ pub struct ChatTabInfo {
     #[serde(flatten)]
     tab: ChatTab,
     conversation_id: Option<String>,
+    /// The chat that started the tab's conversation with `wtm task chat --subagent`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launched_by: Option<ParentChat>,
 }
 
 #[derive(Clone, Serialize)]
@@ -236,17 +240,22 @@ pub async fn chat_tabs<R: Runtime>(
 ) -> Result<Vec<ChatTabInfo>, String> {
     let cwd = primary_folder(&folders)?;
     let (tabs, conversations) = (tab_store(&app)?, conversation_store(&app)?);
+    let subagents = subagent_store(&app)?;
     super::blocking(move || {
         Ok(tabs
             .list(&task_id, main_agent.as_deref())?
             .into_iter()
-            .map(|tab| ChatTabInfo {
-                conversation_id: conversations.get(
-                    &task_id,
-                    &slot(&tab.agent, Some(&tab.id)),
-                    &cwd,
-                ),
-                tab,
+            .map(|tab| {
+                let conversation_id =
+                    conversations.get(&task_id, &slot(&tab.agent, Some(&tab.id)), &cwd);
+                let launched_by = conversation_id.as_ref().and_then(|conversation| {
+                    subagents.parent_of(&task_id, &tab.agent, conversation)
+                });
+                ChatTabInfo {
+                    conversation_id,
+                    launched_by,
+                    tab,
+                }
             })
             .collect())
     })

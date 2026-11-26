@@ -24,6 +24,9 @@ pub const NOTIFICATION_OPEN_EVENT: &str = "agent-notification-open";
 /// Set on every embedded agent process so its hooks report the task and surface directly.
 pub const TASK_ENV: &str = "WTM_TASK_ID";
 pub const SURFACE_ENV: &str = "WTM_SURFACE";
+/// Set on the owner's chat sessions, so `wtm task chat --subagent` names the chat launching it.
+pub const CHAT_AGENT_ENV: &str = "WTM_CHAT_AGENT";
+pub const CHAT_TAB_ENV: &str = "WTM_CHAT_TAB";
 
 pub(crate) struct HookSpec {
     pub event: &'static str,

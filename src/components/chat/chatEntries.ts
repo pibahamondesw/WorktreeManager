@@ -8,7 +8,7 @@ export type ChatEntry =
 
 export type SubagentSteps = ReadonlyMap<string, ChatItem[]>;
 
-const isWorkItem = (item: ChatItem) => WORK_KINDS.has(item.kind);
+const isWorkItem = (item: ChatItem) => WORK_KINDS.has(item.kind) && !item.subagentLaunch;
 
 export const isMainItem = (item: ChatItem) => !item.parent;
 

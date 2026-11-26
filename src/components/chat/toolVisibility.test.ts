@@ -118,3 +118,22 @@ it("drops hidden rows that come before anything shown", () => {
   const rows = chatEntries([item("c", "command", { status: "completed" }), item("u", "user")]);
   expect(rowIds(visibleRows(rows, "hideAll", false))).toEqual(["u"]);
 });
+
+it("keeps a subagent launch apart from other commands and always shows it", () => {
+  const subagentLaunch = {
+    taskId: "t2",
+    agent: "codex" as const,
+    tab: "a1",
+    conversationId: "th1",
+  };
+  const rows = chatEntries([
+    item("u", "user"),
+    item("ls", "command", { status: "completed" }),
+    item("launch", "command", { status: "completed", subagentLaunch }),
+    item("pwd", "command", { status: "completed" }),
+    item("reply", "assistant"),
+  ]);
+  expect(rows.map((row) => row.kind)).toEqual(["item", "work", "item", "work", "item"]);
+  for (const visibility of ["hideSuccessful", "hideAll", "zen"] as const)
+    expect(rowIds(visibleRows(rows, visibility, false))).toContain("launch");
+});

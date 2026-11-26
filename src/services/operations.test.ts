@@ -1027,10 +1027,36 @@ describe("openTaskChat", () => {
         schema: null,
         tab: null,
         mainAgent: "claude",
+        parent: null,
       },
     });
     expect(operations.task("t1").agent).toBe("claude");
     expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("launches a subagent linked back to the parent chat tab, and says so", async () => {
+    const { operations } = fixture([task]);
+    vi.mocked(invoke).mockResolvedValue(started);
+    const parent = { taskId: "t0", agent: "claude" as const, tab: "main" };
+    const chat = await operations.openTaskChat("t1", {
+      agent: "codex",
+      message: "Implement",
+      name: "WOR-1",
+      subagent: true,
+      parent,
+    });
+    expect(chat).toEqual({
+      taskId: "t1",
+      agent: "codex",
+      ...started,
+      subagent: true,
+      name: "WOR-1",
+    });
+    expect(vi.mocked(invoke).mock.calls[0][1]).toMatchObject({
+      request: { agent: "codex", parent },
+    });
+    await operations.openTaskChat("t1", { agent: "codex", message: "Implement", parent });
+    expect(vi.mocked(invoke).mock.calls[1][1]).toMatchObject({ request: { parent: null } });
   });
 
   it("continues a named tab, its main tab running the task's chat agent", async () => {

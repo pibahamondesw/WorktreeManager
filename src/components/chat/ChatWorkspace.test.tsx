@@ -31,6 +31,8 @@ vi.mock("@tauri-apps/api/webview", () => ({
 vi.mock("../../observeResize", () => import("../../test/fakeObserveResize"));
 
 import { ChatWorkspace } from "./ChatWorkspace";
+import { TaskConversationsContext } from "./taskConversationContext";
+import type { TabConversation } from "../../services/chat";
 import { invokeWithAgentCatalog } from "../../services/agents.fixture";
 
 const IDLE_CHAT = {
@@ -50,7 +52,12 @@ const IDLE_CHAT = {
   },
 };
 
-type Tab = { id: string; agent: string; conversationId: string | null };
+type Tab = {
+  id: string;
+  agent: string;
+  conversationId: string | null;
+  launchedBy?: TabConversation;
+};
 type Sessions = Record<string, { id: string; title: string }[] | string>;
 
 function backend(tabs: Tab[], sessions: Sessions = {}) {
@@ -224,6 +231,42 @@ it("lists only conversations not open in tabs, and opens a picked one in a new t
     )
   );
   expect(screen.queryByRole("dialog", { name: "Conversations" })).toBeNull();
+});
+
+it("leads a subagent's conversation back to the chat that launched it", async () => {
+  const parent = { taskId: "t0", agent: "codex" as const, tab: "main", conversationId: "th0" };
+  backend([
+    { id: "main", agent: "claude", conversationId: "c1" },
+    { id: "a1", agent: "claude", conversationId: "c2", launchedBy: parent },
+  ]);
+  const open = vi.fn(() => true);
+  const label = (taskId: string) => (taskId === "t0" ? "WOR-0" : null);
+  render(
+    <TaskConversationsContext.Provider value={{ label, open }}>
+      <ChatWorkspace taskId="t1" agent="claude" folders={["/wt/a"]} />
+    </TaskConversationsContext.Provider>
+  );
+  const tabs = await screen.findAllByRole("tab");
+  expect(screen.queryByText(/Subagent of/)).toBeNull();
+  fireEvent.click(tabs[1]);
+  const back = await screen.findByRole("button", { name: "Open parent conversation" });
+  const bar = back.parentElement!;
+  expect(bar).toHaveTextContent(/Subagent of\s*WOR-0/);
+  expect(bar.querySelector("svg.agent-logo-openai")).not.toBeNull();
+  fireEvent.click(back);
+  expect(open).toHaveBeenCalledWith(parent);
+});
+
+it("drops the way back once the launching task is gone", async () => {
+  const parent = { taskId: "gone", agent: "codex" as const, tab: "main", conversationId: "th0" };
+  backend([{ id: "main", agent: "claude", conversationId: "c1", launchedBy: parent }]);
+  render(
+    <TaskConversationsContext.Provider value={{ label: () => null, open: vi.fn() }}>
+      <ChatWorkspace taskId="t1" agent="claude" folders={["/wt/a"]} />
+    </TaskConversationsContext.Provider>
+  );
+  await screen.findByRole("tab");
+  expect(screen.queryByText(/Subagent of/)).toBeNull();
 });
 
 it("reloads its tabs when the backend reports them changed", async () => {

@@ -139,7 +139,7 @@ impl ChatRegistry {
         launch.command.envs(request.env);
         let handoff_link = handoff.as_ref().map(|handoff| handoff.link.clone());
         let setup = session_setup(app, self, &target, pending_resolution, handoff_link, resume)?;
-        let session = start_session(&target.owner.task_id, launch, handoff, setup)?;
+        let session = start_session(&target.owner, launch, handoff, setup)?;
         let replaced =
             self.sessions
                 .lock()

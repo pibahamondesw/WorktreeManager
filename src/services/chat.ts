@@ -49,6 +49,20 @@ export interface ChatItem {
   questions?: AskedQuestion[];
   /** When the usage limit that stopped the turn renews, in unix seconds. */
   limitResetsAt?: number;
+  /** The chat a `wtm task chat --subagent` command started. */
+  subagentLaunch?: SubagentLaunch;
+}
+
+/** A conversation running in a task's chat tab. */
+export interface TabConversation {
+  taskId: string;
+  agent: AgentId;
+  tab: string;
+  conversationId: string;
+}
+
+export interface SubagentLaunch extends TabConversation {
+  name?: string;
 }
 
 export interface ChatQuestion {
@@ -656,6 +670,8 @@ export interface ChatTab {
   id: string;
   agent: AgentId;
   conversationId: string | null;
+  /** The chat that started the tab's conversation with `wtm task chat --subagent`. */
+  launchedBy?: TabConversation;
 }
 
 /** A task's open chat tabs, in order; `mainAgent` runs its main tab until tabs are recorded. */

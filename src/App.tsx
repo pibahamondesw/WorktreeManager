@@ -45,6 +45,10 @@ import {
 } from "./services/automationInbox";
 import { TakenOverTasksContext } from "./components/automations/automationTasks";
 import { requestChatIntent } from "./embedded/chatIntents";
+import {
+  taskConversations,
+  TaskConversationsContext,
+} from "./components/chat/taskConversationContext";
 
 function App() {
   const {
@@ -283,11 +287,10 @@ function App() {
     },
     [openTask, openTaskSurface]
   );
-  const openAutomationConversation = useCallback(
+  const openConversation = useCallback(
     (target: ConversationTarget) => {
       const task = state.tasks.find((t) => t.id === target.taskId);
       if (!task) return false;
-      setAutomationsOpen(false);
       if (!target.agent) {
         void openTask(task);
         return true;
@@ -302,6 +305,18 @@ function App() {
       return true;
     },
     [state.tasks, openTask, openTaskSurface]
+  );
+  const openAutomationConversation = useCallback(
+    (target: ConversationTarget) => {
+      const opened = openConversation(target);
+      if (opened) setAutomationsOpen(false);
+      return opened;
+    },
+    [openConversation]
+  );
+  const conversationLinks = useMemo(
+    () => taskConversations(state.tasks, openConversation),
+    [state.tasks, openConversation]
   );
   const [focusedInboxEntry, setFocusedInboxEntry] = useState<string | null>(null);
   const openInboxEntry = useCallback(
@@ -591,32 +606,34 @@ function App() {
         </ErrorBoundary>
         <ErrorBoundary fallbackClassName="flex-1">
           <TakenOverTasksContext.Provider value={takenOverTasks}>
-            <FirstPromptContext.Provider value={firstPrompt}>
-              <WorktreeList
-                tasks={selectedTasks}
-                agentSessions={agentSessions}
-                agentActivities={agentActivity.activities}
-                workspace={selectedWorkspace}
-                vault={state.vault}
-                taskActions={taskActions}
-                navigation={listNavigation}
-                setupControls={setupControls}
-                editorApp={editorApp}
-                onEditorChange={changeEditorApp}
-                workspaceSwitching={workspaceSwitching}
-                onWorkspaceReady={clearWorkspaceSwitching}
-                searchOpen={search.open}
-                revealTaskId={revealTaskId}
-                onRevealHandled={clearRevealTask}
-                openedTask={openedTask}
-                onOpenTask={openTask}
-                onCloseTask={closeTask}
-                onSwitchSurface={switchTaskSurface}
-                requestNewTask={newTaskRequested}
-                onRequestNewTaskHandled={clearNewTaskRequest}
-                autoShelve={autoShelve}
-              />
-            </FirstPromptContext.Provider>
+            <TaskConversationsContext.Provider value={conversationLinks}>
+              <FirstPromptContext.Provider value={firstPrompt}>
+                <WorktreeList
+                  tasks={selectedTasks}
+                  agentSessions={agentSessions}
+                  agentActivities={agentActivity.activities}
+                  workspace={selectedWorkspace}
+                  vault={state.vault}
+                  taskActions={taskActions}
+                  navigation={listNavigation}
+                  setupControls={setupControls}
+                  editorApp={editorApp}
+                  onEditorChange={changeEditorApp}
+                  workspaceSwitching={workspaceSwitching}
+                  onWorkspaceReady={clearWorkspaceSwitching}
+                  searchOpen={search.open}
+                  revealTaskId={revealTaskId}
+                  onRevealHandled={clearRevealTask}
+                  openedTask={openedTask}
+                  onOpenTask={openTask}
+                  onCloseTask={closeTask}
+                  onSwitchSurface={switchTaskSurface}
+                  requestNewTask={newTaskRequested}
+                  onRequestNewTaskHandled={clearNewTaskRequest}
+                  autoShelve={autoShelve}
+                />
+              </FirstPromptContext.Provider>
+            </TaskConversationsContext.Provider>
           </TakenOverTasksContext.Provider>
         </ErrorBoundary>
       </div>
