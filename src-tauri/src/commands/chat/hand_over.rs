@@ -1,16 +1,19 @@
 //! A chat started on the owner's behalf by `wtm task chat` or an automation's `wtm.chat_open`. It
-//! opens in a new chat tab of the task, or continues the tab it names, and is sent the message as
-//! the owner would type it, so opening the task shows it. A live tab is continued, not replaced.
+//! opens in the task's main tab while unused, else in a new chat tab, or continues the tab it
+//! names, and is sent the message as the owner would type it, so opening the task shows it. A live
+//! tab is continued, not replaced.
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime, State};
+use tokio::sync::OwnedMutexGuard;
 
+use super::conversations::ConversationStore;
 use super::headless::HeadlessRequest;
 use super::model::ChatStatus;
-use super::tabs::{self, announce, tab_store};
-use super::{ChatOwner, ChatRegistry, ChatSession, TurnEnd};
+use super::tabs::{self, announce, tab_store, ChatTab, TabStore, MAIN_TAB};
+use super::{conversation_store, primary_folder, ChatOwner, ChatRegistry, ChatSession, TurnEnd};
 use crate::commands::agents::permission::PermissionPolicy;
 use crate::commands::agents::{AgentDescriptor, Agents};
 
@@ -125,6 +128,55 @@ impl ChatRegistry {
         self.send(&session_id, &request.message, &[])?;
         Ok((session_id, continued))
     }
+
+    async fn lock_tab(&self, task_id: &str, agent: &str, tab: &str) -> OwnedMutexGuard<()> {
+        let key = (task_id.to_string(), tabs::slot(agent, Some(tab)));
+        self.open_lock(&key).lock_owned().await
+    }
+
+    /// The main tab runs the agent and has neither a remembered conversation nor a live chat.
+    fn main_tab_unused(
+        &self,
+        open: &[ChatTab],
+        conversations: &ConversationStore,
+        request: &HandOver,
+    ) -> Result<bool, String> {
+        let (task_id, agent) = (&request.task_id, &request.agent);
+        let runs_agent = open
+            .iter()
+            .any(|tab| tab.id == MAIN_TAB && tab.agent == *agent);
+        let cwd = primary_folder(&request.folders)?;
+        let remembered = conversations.get(task_id, agent, &cwd).is_some();
+        let live = self
+            .sessions
+            .lock()
+            .unwrap()
+            .primary(task_id, agent)
+            .is_some_and(|(_, session)| session.status().is_live());
+        Ok(runs_agent && !remembered && !live)
+    }
+
+    /// The tab a hand-over naming none goes to, the main one while unused, and whether it was
+    /// opened for it. Its open lock is held, so a concurrent hand-over finds the main tab taken.
+    async fn claim_tab<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        store: &TabStore,
+        request: &HandOver,
+        main_agent: &str,
+    ) -> Result<(String, bool, OwnedMutexGuard<()>), String> {
+        let (task_id, agent) = (&request.task_id, &request.agent);
+        let main = self.lock_tab(task_id, agent, MAIN_TAB).await;
+        let open = store.list(task_id, Some(main_agent))?;
+        if self.main_tab_unused(&open, &conversation_store(app)?, request)? {
+            return Ok((MAIN_TAB.to_string(), false, main));
+        }
+        drop(main);
+        let tab = store.open(task_id, main_agent, agent)?;
+        announce(app, task_id);
+        let opening = self.lock_tab(task_id, agent, &tab.id).await;
+        Ok((tab.id, true, opening))
+    }
 }
 
 /// The reply that ended the turn: the JSON it produced when held to a schema.
@@ -160,25 +212,26 @@ pub async fn chat_hand_over<R: Runtime>(
         .clone()
         .unwrap_or_else(|| request.agent.clone());
     let store = tab_store(&app)?;
-    let (tab, opened) = match &request.tab {
+    let (tab, opened, _opening) = match &request.tab {
         Some(tab) => {
             existing_tab(
                 &store.list(&request.task_id, Some(&main_agent))?,
                 tab,
                 &request.agent,
             )?;
-            (tab.clone(), false)
+            let opening = registry
+                .lock_tab(&request.task_id, &request.agent, tab)
+                .await;
+            (tab.clone(), false, opening)
         }
         None => {
-            let tab = store.open(&request.task_id, &main_agent, &request.agent)?;
-            announce(&app, &request.task_id);
-            (tab.id, true)
+            registry
+                .claim_tab(&app, &store, &request, &main_agent)
+                .await?
         }
     };
-    let slot = tabs::slot(&request.agent, Some(&tab));
-    let open_lock = registry.open_lock(&(request.task_id.clone(), slot));
-    let _opening = open_lock.lock().await;
-    let task_id = request.task_id.clone();
+    let took_main = request.tab.is_none() && tab == MAIN_TAB;
+    let (task_id, agent) = (request.task_id.clone(), request.agent.clone());
     let handed = {
         let (app, tab) = (app.clone(), tab.clone());
         tauri::async_runtime::spawn_blocking(move || {
@@ -200,11 +253,25 @@ pub async fn chat_hand_over<R: Runtime>(
     if handed.is_err() && opened {
         let _ = tabs::close_tab(&app, &registry, &task_id, &main_agent, &tab).await;
     }
+    if handed.is_err() && took_main {
+        stop_main_chat(&registry, &task_id, &agent).await;
+    }
     handed
 }
 
+/// Stops the chat a failed hand-over started in the main tab; the tab stays for the owner.
+async fn stop_main_chat(registry: &ChatRegistry, task_id: &str, agent: &str) {
+    if let Some(session) = registry.remove(task_id, agent) {
+        let _ = super::blocking(move || {
+            session.stop();
+            Ok(())
+        })
+        .await;
+    }
+}
+
 /// The tab to continue must be open in the task and run the requested agent.
-fn existing_tab(open: &[tabs::ChatTab], tab: &str, agent: &str) -> Result<(), String> {
+fn existing_tab(open: &[ChatTab], tab: &str, agent: &str) -> Result<(), String> {
     match open.iter().find(|entry| entry.id == tab) {
         None => Err(format!("No chat tab {tab} is open in this task")),
         Some(entry) if entry.agent != agent => {
@@ -236,8 +303,150 @@ pub async fn chat_await_reply<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::conversations::Conversation;
+    use super::super::tests::spawn;
     use super::*;
+    use crate::commands::agents::codex::Codex;
+    use crate::commands::login_shell::remember_availability;
     use serde_json::json;
+    use std::sync::Arc;
+    use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
+
+    const EXITING_AGENT: &str = "/usr/bin/false";
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("wm-hand-over-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn app_with(agents: Agents) -> tauri::App<MockRuntime> {
+        let mut context = mock_context(noop_assets());
+        context.config_mut().identifier = temp_dir().to_string_lossy().into_owned();
+        mock_builder()
+            .manage(ChatRegistry::default())
+            .manage(agents)
+            .build(context)
+            .unwrap()
+    }
+
+    fn app() -> tauri::App<MockRuntime> {
+        app_with(Agents::missing())
+    }
+
+    fn hand_over(app: &tauri::App<MockRuntime>, request: HandOver) -> Result<HandedOver, String> {
+        let (handle, registry) = (app.handle().clone(), app.state::<ChatRegistry>());
+        tauri::async_runtime::block_on(chat_hand_over(handle, registry, request))
+    }
+
+    fn remember_main_conversation(app: &tauri::App<MockRuntime>) {
+        let conversation = Conversation {
+            conversation_id: "c1".into(),
+            cwd: primary_folder(&request().folders).unwrap(),
+            fork: None,
+        };
+        conversation_store(app.handle())
+            .unwrap()
+            .remember("task", "claude", conversation)
+            .unwrap();
+    }
+
+    fn start_main_chat(app: &tauri::App<MockRuntime>) {
+        let session = spawn("cat > /dev/null", Arc::default(), Arc::default());
+        app.state::<ChatRegistry>().sessions.lock().unwrap().insert(
+            "task:claude".into(),
+            ChatOwner::user("task", "claude", None),
+            session,
+        );
+    }
+
+    fn claim(app: &tauri::App<MockRuntime>) -> (String, bool) {
+        let store = tab_store(app.handle()).unwrap();
+        let (registry, request) = (app.state::<ChatRegistry>(), request());
+        let claim = registry.claim_tab(app.handle(), &store, &request, "claude");
+        let (tab, opened, _opening) = tauri::async_runtime::block_on(claim).unwrap();
+        (tab, opened)
+    }
+
+    fn open_tabs(app: &tauri::App<MockRuntime>) -> Vec<String> {
+        let tabs = tab_store(app.handle()).unwrap().list("task", None).unwrap();
+        tabs.into_iter().map(|tab| tab.id).collect()
+    }
+
+    #[test]
+    fn an_unused_main_tab_takes_the_chat() {
+        let app = app();
+        assert_eq!(claim(&app), (MAIN_TAB.to_string(), false));
+        assert_eq!(open_tabs(&app), [MAIN_TAB]);
+    }
+
+    #[test]
+    fn a_main_tab_with_a_conversation_leaves_the_chat_to_a_new_tab() {
+        let app = app();
+        remember_main_conversation(&app);
+        let (tab, opened) = claim(&app);
+        assert!(opened);
+        assert_eq!(open_tabs(&app), [MAIN_TAB, tab.as_str()]);
+    }
+
+    #[test]
+    fn a_main_tab_with_a_live_chat_leaves_the_chat_to_a_new_tab() {
+        let app = app();
+        start_main_chat(&app);
+        let (tab, opened) = claim(&app);
+        assert!(opened);
+        assert_ne!(tab, MAIN_TAB);
+    }
+
+    #[test]
+    fn a_main_tab_running_another_agent_leaves_the_chat_to_a_new_tab() {
+        let app = app();
+        tab_store(app.handle())
+            .unwrap()
+            .list("task", Some("codex"))
+            .unwrap();
+        let (tab, opened) = claim(&app);
+        assert!(opened);
+        assert_ne!(tab, MAIN_TAB);
+    }
+
+    #[test]
+    fn a_failed_hand_over_keeps_the_main_tab_and_closes_the_tab_it_opened() {
+        let app = app();
+        let not_installed = Err("Claude Code is not installed".to_string());
+        assert_eq!(hand_over(&app, request()), not_installed);
+        assert_eq!(open_tabs(&app), [MAIN_TAB]);
+        remember_main_conversation(&app);
+        assert_eq!(hand_over(&app, request()), not_installed);
+        assert_eq!(open_tabs(&app), [MAIN_TAB]);
+        let named = HandOver {
+            tab: Some(MAIN_TAB.into()),
+            ..request()
+        };
+        assert_eq!(hand_over(&app, named), not_installed);
+    }
+
+    #[test]
+    fn a_failed_hand_over_stops_the_chat_it_started_in_the_main_tab() {
+        remember_availability(EXITING_AGENT, true);
+        let codex = Codex::new(EXITING_AGENT, Some(temp_dir()), Some(temp_dir()));
+        let app = app_with(Agents::with_adapters(vec![Arc::new(codex)]));
+        let request = HandOver {
+            agent: "codex".into(),
+            folders: vec![temp_dir().to_string_lossy().into_owned()],
+            ..request()
+        };
+        let result = hand_over(&app, request);
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(open_tabs(&app), [MAIN_TAB]);
+        let registry = app.state::<ChatRegistry>();
+        assert!(registry
+            .sessions
+            .lock()
+            .unwrap()
+            .primary("task", "codex")
+            .is_none());
+    }
 
     fn request() -> HandOver {
         HandOver {
@@ -315,7 +524,7 @@ mod tests {
 
     #[test]
     fn a_continued_tab_must_be_open_and_run_the_agent() {
-        let open = [tabs::ChatTab {
+        let open = [ChatTab {
             id: "a1".into(),
             agent: "claude".into(),
         }];
