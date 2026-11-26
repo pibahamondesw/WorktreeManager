@@ -492,7 +492,27 @@ export class Operations {
       const task = this.liveTask(id);
       if ((task.shelvedAt !== undefined) === shelved) return {};
       const shelvedAt = shelved ? new Date().toISOString() : undefined;
-      return { tasks: state.tasks.map((item) => (item.id === id ? { ...item, shelvedAt } : item)) };
+      const snoozedUntil = shelved ? undefined : task.snoozedUntil;
+      return {
+        tasks: state.tasks.map((item) =>
+          item.id === id ? { ...item, shelvedAt, snoozedUntil } : item
+        ),
+      };
+    });
+  }
+
+  snoozeTask(id: string, until: string | null) {
+    if (until !== null && Number.isNaN(Date.parse(until)))
+      return Promise.reject(new OperationError("invalid_params", "Snooze needs a valid date."));
+    return this.change((state) => {
+      const task = this.liveTask(id);
+      const snoozedUntil = until ?? undefined;
+      const shelvedAt = until === null ? task.shelvedAt : undefined;
+      return {
+        tasks: state.tasks.map((item) =>
+          item.id === id ? { ...item, snoozedUntil, shelvedAt } : item
+        ),
+      };
     });
   }
 

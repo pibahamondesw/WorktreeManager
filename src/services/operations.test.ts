@@ -750,6 +750,7 @@ describe("shared operations", () => {
       operations.deleteTask("t1", { deleteWorktrees: true }),
       operations.setTaskAgent("t1", "codex"),
       operations.setTaskShelved("t1", true),
+      operations.snoozeTask("t1", null),
       operations.deleteWorkspace("w1", { deleteWorktrees: false }),
     ])
       await expect(attempt).rejects.toMatchObject({ code: "task_deleting" });
@@ -1409,6 +1410,41 @@ describe("pinned tasks", () => {
     expect(operations.getState().tasks.map((item) => item.id)).toEqual(["t1", "t2", "other"]);
     expect(operations.task("t1").pinOrder).toBeUndefined();
     expect(save).toHaveBeenCalled();
+  });
+
+  it("snoozes a task until an instant and unsnoozes it keeping its pin", async () => {
+    const { operations } = fixture([{ ...task, pinOrder: 0 }]);
+    await operations.snoozeTask("t1", "2026-02-02T15:30:00.000Z");
+    expect(normalizeTasks(operations.getState().tasks)[0]).toMatchObject({
+      snoozedUntil: "2026-02-02T15:30:00.000Z",
+      pinOrder: 0,
+    });
+    await operations.snoozeTask("t1", null);
+    expect(operations.task("t1")).toMatchObject({ snoozedUntil: undefined, pinOrder: 0 });
+  });
+
+  it("returns a finished task to the active ones when its snooze ends", async () => {
+    const { operations } = fixture([{ ...task, shelvedAt: "2026-02-01T00:00:00.000Z" }]);
+    await operations.snoozeTask("t1", "2026-02-02T00:00:00.000Z");
+    expect(operations.task("t1")).toMatchObject({
+      shelvedAt: undefined,
+      snoozedUntil: "2026-02-02T00:00:00.000Z",
+    });
+  });
+
+  it("ends the snooze of a task moved to Finished", async () => {
+    const { operations } = fixture([{ ...task, snoozedUntil: "2099-01-01T00:00:00.000Z" }]);
+    await operations.setTaskShelved("t1", true);
+    expect(operations.task("t1").snoozedUntil).toBeUndefined();
+    expect(operations.task("t1").shelvedAt).toBeDefined();
+  });
+
+  it("rejects snoozing until an invalid date without saving", async () => {
+    const { operations, save } = fixture([task]);
+    await expect(operations.snoozeTask("t1", "someday")).rejects.toMatchObject({
+      code: "invalid_params",
+    });
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("moves a task to Finished and back keeping its pin", async () => {

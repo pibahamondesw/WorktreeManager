@@ -59,6 +59,8 @@ export interface Task {
   pinOrder?: number;
   /** When the task moved to the Finished section; absent while it is active. */
   shelvedAt?: string;
+  /** Instant until which the task stays in the Snoozed section. */
+  snoozedUntil?: string;
   /** Agent the task's chat or terminal last used; reopening the task picks it again. */
   agent?: AgentId;
   /** Automation that created the task; the task list can hide such tasks. */
