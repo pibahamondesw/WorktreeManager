@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use super::model::*;
+use super::preferences::ModelSelection;
 use crate::commands::agents::permission::PendingDefault;
 
 const ASK_USER_TOOL: &str = "AskUserQuestion";
@@ -24,6 +25,11 @@ pub(crate) const FORWARD_SUBAGENT_TEXT_ENV: &str = "CLAUDE_CODE_FORWARD_SUBAGENT
 enum Control {
     Initialize,
     Settings,
+    RestoreModel {
+        model: String,
+        effort: Option<String>,
+    },
+    RestoreEffort(String),
     Mode(String),
     Rename,
     ContextUsage,
@@ -41,6 +47,7 @@ pub struct ClaudeProvider {
     queued: VecDeque<QueuedMessage>,
     interrupting: bool,
     controls: ChatControls,
+    initial_selection: Option<(String, Option<String>)>,
     calls: HashMap<String, Control>,
     blocks: HashMap<u64, String>,
     block_counts: BlockCounts,
@@ -166,6 +173,7 @@ impl ClaudeProvider {
             queued: VecDeque::new(),
             interrupting: false,
             controls: ChatControls::default(),
+            initial_selection: None,
             calls: HashMap::new(),
             blocks: HashMap::new(),
             block_counts: BlockCounts::default(),
@@ -236,6 +244,34 @@ impl ClaudeProvider {
         out.write(json!({ "type": "control_request", "request_id": id, "request": request }));
     }
 
+    fn restoring_selection(&self) -> bool {
+        self.initial_selection.is_some()
+            || self.calls.values().any(|call| {
+                matches!(
+                    call,
+                    Control::RestoreModel { .. } | Control::RestoreEffort(_)
+                )
+            })
+    }
+
+    fn read_initial_settings(&mut self, out: &mut ProviderOutput) {
+        self.control(out, Control::Settings, json!({ "subtype": "get_settings" }));
+        self.control(
+            out,
+            Control::ContextUsage,
+            json!({ "subtype": "get_context_usage", "detail": "summary" }),
+        );
+    }
+
+    fn finish_restoring_selection(&mut self, out: &mut ProviderOutput) {
+        self.read_initial_settings(out);
+        if self.fork_start {
+            out.history_result = Some(Ok(()));
+        }
+        out.controls(&self.controls);
+        out.status(ChatStatus::Idle);
+    }
+
     fn handle_control_response(&mut self, response: &Value, out: &mut ProviderOutput) {
         let Some(call) = response["request_id"]
             .as_str()
@@ -252,6 +288,20 @@ impl ClaudeProvider {
                 out.history_result = Some(Err(message.clone()));
                 out.status(ChatStatus::Failed { message });
                 return;
+            }
+            if matches!(
+                call,
+                Control::RestoreModel { .. } | Control::RestoreEffort(_)
+            ) {
+                let message = response["error"]
+                    .as_str()
+                    .unwrap_or("Claude could not restore the saved model selection");
+                out.upsert(self.error_item(message));
+                self.finish_restoring_selection(out);
+                return;
+            }
+            if matches!(call, Control::Initialize) && self.initial_selection.take().is_some() {
+                self.finish_restoring_selection(out);
             }
             if let Control::Interrupt = call {
                 self.interrupting = false;
@@ -284,9 +334,13 @@ impl ClaudeProvider {
         let body = &response["response"];
         match call {
             Control::Initialize => {
-                if self.fork_start {
+                if self.fork_start && self.initial_selection.is_none() {
                     out.status(ChatStatus::Idle);
                     out.history_result = Some(Ok(()));
+                }
+                if let Some((model, effort)) = self.initial_selection.take() {
+                    let request = json!({ "subtype": "set_model", "model": model });
+                    self.control(out, Control::RestoreModel { model, effort }, request);
                 }
                 self.controls.models = body["models"]
                     .as_array()
@@ -353,16 +407,29 @@ impl ClaudeProvider {
                     self.publish_usage(out);
                 }
             }
+            Control::RestoreModel { model, effort } => {
+                self.controls.model = Some(model);
+                if let Some(effort) = effort {
+                    let request = json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": effort } });
+                    self.control(out, Control::RestoreEffort(effort), request);
+                } else {
+                    self.finish_restoring_selection(out);
+                }
+            }
+            Control::RestoreEffort(effort) => {
+                self.controls.effort = Some(effort);
+                self.finish_restoring_selection(out);
+            }
             Control::Settings => {
                 let applied = &body["applied"];
-                if let Some(model) = body["effective"]["model"]
-                    .as_str()
-                    .or(applied["model"].as_str())
-                {
-                    self.controls.model = Some(self.model_option(model));
+                if self.controls.model.is_none() {
+                    self.controls.model = body["effective"]["model"]
+                        .as_str()
+                        .or(applied["model"].as_str())
+                        .map(|model| self.model_option(model));
                 }
-                if let Some(effort) = applied["effort"].as_str() {
-                    self.controls.effort = Some(effort.to_string());
+                if self.controls.effort.is_none() {
+                    self.controls.effort = applied["effort"].as_str().map(String::from);
                 }
                 out.controls(&self.controls);
             }
@@ -666,18 +733,19 @@ impl ClaudeProvider {
 }
 
 impl ChatProvider for ClaudeProvider {
+    fn restore_selection(&mut self, selection: ModelSelection) {
+        self.initial_selection = selection.model.map(|model| (model, selection.effort));
+    }
+
     fn start(&mut self, out: &mut ProviderOutput) {
         if !self.fork_start {
             out.conversation = Some(self.session_id.clone());
         }
         self.control(out, Control::Initialize, json!({ "subtype": "initialize" }));
-        self.control(out, Control::Settings, json!({ "subtype": "get_settings" }));
-        self.control(
-            out,
-            Control::ContextUsage,
-            json!({ "subtype": "get_context_usage", "detail": "summary" }),
-        );
-        out.status(if self.fork_start {
+        if self.initial_selection.is_none() {
+            self.read_initial_settings(out);
+        }
+        out.status(if self.fork_start || self.initial_selection.is_some() {
             ChatStatus::Starting
         } else {
             ChatStatus::Idle
@@ -815,6 +883,9 @@ impl ChatProvider for ClaudeProvider {
         images: &[ChatImage],
         out: &mut ProviderOutput,
     ) -> Result<(), String> {
+        if self.restoring_selection() {
+            return Err("Claude is restoring the saved model selection".into());
+        }
         let message = self.message(text, images);
         if self.turns > 0 {
             out.upsert(message.item.clone().with_status(QUEUED));
@@ -882,6 +953,11 @@ impl ChatProvider for ClaudeProvider {
     }
 
     fn configure(&mut self, setting: &ChatSetting, out: &mut ProviderOutput) -> Result<(), String> {
+        if matches!(setting, ChatSetting::Model(_) | ChatSetting::Effort(_))
+            && self.restoring_selection()
+        {
+            return Err("Claude is restoring the saved model selection".into());
+        }
         match setting {
             ChatSetting::Hooks | ChatSetting::Hook(_) => {
                 return Err("Hook management is only available for Codex".into());
@@ -1870,15 +1946,139 @@ fn structured_reply(result: &Value) -> Option<ChatItem> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn codex_model_selection_does_not_change_claude_controls() {
-        let mut provider = ClaudeProvider::new("session".into());
-        let controls = provider.controls.clone();
-        provider.restore_selection(super::super::preferences::ModelSelection {
-            model: Some("codex-model".into()),
-            effort: Some("low".into()),
+    fn start_with_selection(
+        mut provider: ClaudeProvider,
+        effort: Option<&str>,
+    ) -> (ClaudeProvider, ChatSnapshot) {
+        provider.restore_selection(ModelSelection {
+            model: Some("sonnet".into()),
+            effort: effort.map(String::from),
         });
-        assert_eq!(provider.controls, controls);
+        let mut out = ProviderOutput::default();
+        provider.start(&mut out);
+        let mut snapshot = ChatSnapshot::new(1);
+        for event in &out.events {
+            snapshot.apply(event);
+        }
+        assert_eq!(snapshot.status, ChatStatus::Starting);
+        assert_eq!(written(&out).len(), 1);
+        (provider, snapshot)
+    }
+
+    fn confirm_startup_control(
+        provider: &mut ClaudeProvider,
+        snapshot: &mut ChatSnapshot,
+        request_id: &str,
+        response: Value,
+    ) -> ProviderOutput {
+        feed(
+            provider,
+            snapshot,
+            json!({ "type": "control_response", "response": {
+                "subtype": "success", "request_id": request_id, "response": response,
+            } }),
+        )
+    }
+
+    #[test]
+    fn restored_selection_is_applied_before_claude_accepts_a_message() {
+        let (mut provider, mut snapshot) =
+            start_with_selection(ClaudeProvider::new("session".into()), Some("low"));
+        let mut message = ProviderOutput::default();
+        assert!(provider.send("First message", &[], &mut message).is_err());
+        let model = confirm_startup_control(&mut provider, &mut snapshot, "wm-1", json!({}));
+        assert_eq!(
+            written(&model)[0]["request"],
+            json!({ "subtype": "set_model", "model": "sonnet" })
+        );
+        assert!(provider
+            .configure(&ChatSetting::Model("opus".into()), &mut message)
+            .is_err());
+        let effort = confirm_startup_control(&mut provider, &mut snapshot, "wm-2", json!({}));
+        assert_eq!(
+            written(&effort)[0]["request"],
+            json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": "low" } })
+        );
+        assert!(provider.send("First message", &[], &mut message).is_err());
+        assert_eq!(snapshot.status, ChatStatus::Starting);
+
+        let settings = confirm_startup_control(&mut provider, &mut snapshot, "wm-3", json!({}));
+        assert_eq!(written(&settings)[0]["request"]["subtype"], "get_settings");
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        assert_eq!(snapshot.controls.model.as_deref(), Some("sonnet"));
+        assert_eq!(snapshot.controls.effort.as_deref(), Some("low"));
+
+        provider.send("First message", &[], &mut message).unwrap();
+        assert_eq!(written(&message)[0]["type"], "user");
+        confirm_startup_control(
+            &mut provider,
+            &mut snapshot,
+            "wm-4",
+            json!({ "effective": { "model": "opus" }, "applied": { "effort": "high" } }),
+        );
+        assert_eq!(snapshot.controls.model.as_deref(), Some("sonnet"));
+        assert_eq!(snapshot.controls.effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn a_fork_with_only_a_saved_model_reads_that_models_default_effort() {
+        let (mut provider, mut snapshot) =
+            start_with_selection(ClaudeProvider::new("session".into()).forking(), None);
+        let initialized = confirm_startup_control(&mut provider, &mut snapshot, "wm-1", json!({}));
+        assert!(initialized.history_result.is_none());
+        let restored = confirm_startup_control(&mut provider, &mut snapshot, "wm-2", json!({}));
+        assert_eq!(restored.history_result, Some(Ok(())));
+        assert_eq!(written(&restored)[0]["request"]["subtype"], "get_settings");
+
+        confirm_startup_control(
+            &mut provider,
+            &mut snapshot,
+            "wm-3",
+            json!({ "effective": { "model": "sonnet" }, "applied": { "effort": "medium" } }),
+        );
+        assert_eq!(snapshot.controls.model.as_deref(), Some("sonnet"));
+        assert_eq!(snapshot.controls.effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn a_rejected_saved_model_falls_back_to_claudes_effective_selection() {
+        let (mut provider, mut snapshot) =
+            start_with_selection(ClaudeProvider::new("session".into()), Some("low"));
+        confirm_startup_control(&mut provider, &mut snapshot, "wm-1", json!({}));
+        let rejected = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": {
+                "subtype": "error", "request_id": "wm-2", "error": "Model switch rejected",
+            } }),
+        );
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        assert_eq!(snapshot.items.last().unwrap().text, "Model switch rejected");
+        assert_eq!(written(&rejected)[0]["request"]["subtype"], "get_settings");
+
+        confirm_startup_control(
+            &mut provider,
+            &mut snapshot,
+            "wm-3",
+            json!({ "effective": { "model": "opus" }, "applied": { "effort": "high" } }),
+        );
+        assert_eq!(snapshot.controls.model.as_deref(), Some("opus"));
+        assert_eq!(snapshot.controls.effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn initialization_failure_does_not_leave_a_saved_selection_waiting() {
+        let (mut provider, mut snapshot) =
+            start_with_selection(ClaudeProvider::new("session".into()), Some("low"));
+        let rejected = feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "control_response", "response": {
+                "subtype": "error", "request_id": "wm-1", "error": "Initialize rejected",
+            } }),
+        );
+        assert_eq!(snapshot.status, ChatStatus::Idle);
+        assert_eq!(written(&rejected)[0]["request"]["subtype"], "get_settings");
     }
 
     #[test]

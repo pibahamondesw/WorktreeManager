@@ -1109,7 +1109,9 @@ fn task_close_retains_a_mapping_if_the_auxiliary_cleanup_cannot_be_written() {
 #[test]
 fn codex_model_selection_survives_fresh_sessions_and_is_persisted_on_disk() {
     let fixture = Fixture::new();
-    assert!(preferences::load(fixture.app.handle()).unwrap().is_none());
+    assert!(preferences::load(fixture.app.handle(), "codex")
+        .unwrap()
+        .is_none());
     fixture.open("codex", OpenMode::Fresh).unwrap();
     for setting in [
         ChatSetting::Model("economical".into()),
@@ -1140,24 +1142,44 @@ fn codex_model_selection_survives_fresh_sessions_and_is_persisted_on_disk() {
     assert_eq!(snapshot.controls.model.as_deref(), Some("economical"));
     assert_eq!(snapshot.controls.effort.as_deref(), Some("low"));
     assert_eq!(snapshot.controls.mode.as_deref(), Some("auto"));
-    fixture.open("claude", OpenMode::Fresh).unwrap();
-    chat_configure(
-        fixture.app.handle().clone(),
-        fixture.app.state(),
-        "task".into(),
-        "claude".into(),
-        ChatSetting::Model("haiku".into()),
-        None,
+}
+
+#[test]
+fn claude_remembers_its_own_model_and_effort_between_chats() {
+    let fixture = Fixture::new();
+    preferences::save(
+        fixture.app.handle(),
+        "codex",
+        &model::ChatControls {
+            model: Some("economical".into()),
+            ..Default::default()
+        },
     )
     .unwrap();
-    assert_eq!(
-        preferences::load(fixture.app.handle())
-            .unwrap()
-            .unwrap()
-            .model
-            .as_deref(),
-        Some("economical")
-    );
+    let snapshot = fixture.open("claude", OpenMode::Fresh).unwrap();
+    assert_eq!(snapshot.controls.model, None);
+
+    for setting in [
+        ChatSetting::Model("sonnet".into()),
+        ChatSetting::Effort("low".into()),
+    ] {
+        chat_configure(
+            fixture.app.handle().clone(),
+            fixture.app.state(),
+            "task".into(),
+            "claude".into(),
+            setting,
+            None,
+        )
+        .unwrap();
+    }
+
+    let snapshot = fixture.open("claude", OpenMode::Fresh).unwrap();
+    assert_eq!(snapshot.controls.model.as_deref(), Some("sonnet"));
+    assert_eq!(snapshot.controls.effort.as_deref(), Some("low"));
+    let codex = fixture.open("codex", OpenMode::Fresh).unwrap();
+    assert_eq!(codex.controls.model.as_deref(), Some("economical"));
+    assert_eq!(codex.controls.effort, None);
 }
 
 #[test]
@@ -1178,7 +1200,9 @@ fn codex_model_selection_ignores_malformed_values_and_reports_save_failures() {
         json!({ "model": 42 }),
     ] {
         store.set("codex", malformed);
-        assert!(preferences::load(fixture.app.handle()).unwrap().is_none());
+        assert!(preferences::load(fixture.app.handle(), "codex")
+            .unwrap()
+            .is_none());
     }
     fixture.open("codex", OpenMode::Fresh).unwrap();
     let path = fixture
@@ -1229,7 +1253,7 @@ fn codex_model_selection_load_failure_does_not_prevent_opening_a_chat() {
         .unwrap();
     resources.take::<Store<MockRuntime>>(id).unwrap();
     drop(resources);
-    assert!(preferences::load(fixture.app.handle()).is_err());
+    assert!(preferences::load(fixture.app.handle(), "codex").is_err());
     assert_eq!(
         fixture.open("codex", OpenMode::Fresh).unwrap().status,
         ChatStatus::Idle
