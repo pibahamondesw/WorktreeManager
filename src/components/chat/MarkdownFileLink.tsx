@@ -12,13 +12,18 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { FileTypeIcon } from "../ui/Icons";
-import { FileReference, fileLinkCopies, fileLinkLabel, PathCopy } from "./markdownDocument";
+import { FileReference, fileLinkCopies, fileLinkLabel } from "./markdownDocument";
 
 const VIEWPORT_MARGIN = 8;
 
 interface MenuPosition {
   top: number;
   left: number;
+}
+
+interface FileAction {
+  label: string;
+  run: () => Promise<void>;
 }
 
 function plainText(node: ReactNode): string {
@@ -31,18 +36,18 @@ function plainText(node: ReactNode): string {
 const withinViewport = (start: number, size: number, viewport: number) =>
   Math.max(VIEWPORT_MARGIN, Math.min(start, viewport - size - VIEWPORT_MARGIN));
 
-function PathCopyMenu({
+function FilePathMenu({
   id,
   position,
-  copies,
+  actions,
   onPick,
   onDismiss,
   onClose,
 }: {
   id: string;
   position: MenuPosition;
-  copies: PathCopy[];
-  onPick: (value: string) => void;
+  actions: FileAction[];
+  onPick: (action: FileAction) => void;
   onDismiss: () => void;
   onClose: () => void;
 }) {
@@ -102,15 +107,16 @@ function PathCopyMenu({
       style={placed}
       className="fixed z-50 rounded-lg border border-border bg-bg-secondary p-1 shadow-xl"
     >
-      {copies.map((copy) => (
+      {actions.map((action) => (
         <button
-          key={copy.label}
+          key={action.label}
           role="menuitem"
           type="button"
-          onClick={() => onPick(copy.value)}
+          title={action.label}
+          onClick={() => onPick(action)}
           className="block w-full rounded-md px-3 py-1.5 text-left text-xs text-text-primary hover:bg-bg-hover focus:bg-bg-hover focus:outline-none cursor-pointer"
         >
-          {copy.label}
+          {action.label}
         </button>
       ))}
     </div>,
@@ -124,15 +130,17 @@ export function MarkdownFileLink({
   folders,
   children,
   onOpen,
+  editorAction,
 }: {
   href?: string;
   children?: ReactNode;
   reference: FileReference;
   folders: string[];
   onOpen: () => void;
+  editorAction?: FileAction;
 }) {
   const [menuAt, setMenuAt] = useState<MenuPosition | null>(null);
-  const [copyError, setCopyError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const linkRef = useRef<HTMLAnchorElement>(null);
   const menuId = useId();
   const dismissMenu = useCallback(() => setMenuAt(null), []);
@@ -157,10 +165,26 @@ export function MarkdownFileLink({
     event.preventDefault();
     showMenuBelowLink();
   };
-  const copy = (value: string) => {
+  const actions = fileLinkCopies(reference, folders).map(({ label, value }) => ({
+    label,
+    run: async () => {
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch {
+        throw new Error("Could not copy the path");
+      }
+    },
+  }));
+  if (editorAction) actions.push(editorAction);
+
+  const pick = async ({ run }: FileAction) => {
     closeMenu();
-    setCopyError(null);
-    navigator.clipboard.writeText(value).catch(() => setCopyError("Could not copy the path"));
+    setActionError(null);
+    try {
+      await run();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   return (
@@ -184,19 +208,19 @@ export function MarkdownFileLink({
         <span className="truncate">{fileLinkLabel(reference, folders, plainText(children))}</span>
       </a>
       {menuAt && (
-        <PathCopyMenu
+        <FilePathMenu
           id={menuId}
           position={menuAt}
-          copies={fileLinkCopies(reference, folders)}
-          onPick={copy}
+          actions={actions}
+          onPick={(action) => void pick(action)}
           onDismiss={dismissMenu}
           onClose={closeMenu}
         />
       )}
-      {copyError && (
+      {actionError && (
         <span role="alert" className="text-danger">
           {" "}
-          {copyError}
+          {actionError}
         </span>
       )}
     </>

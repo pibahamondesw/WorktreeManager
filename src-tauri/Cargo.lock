@@ -6622,6 +6622,7 @@ dependencies = [
  "base64 0.22.1",
  "block2",
  "croner",
+ "dunce",
  "jiff",
  "jsonc-parser",
  "jsonschema",

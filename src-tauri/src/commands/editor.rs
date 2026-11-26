@@ -1,9 +1,12 @@
+use std::io;
 use std::path::Path;
 #[cfg(not(windows))]
 use std::process::Command;
+use std::process::Output;
 
 use super::agents::Agents;
 use super::login_shell::{cli_available, LoginShell};
+use super::validation::{is_markdown_path, resolve_markdown_file, resolve_worktree_file};
 use super::workspace::TaskWorkspaceFiles;
 
 #[cfg(all(not(test), not(windows)))]
@@ -93,6 +96,91 @@ fn open_editor_blocking(
     }
 }
 
+#[tauri::command]
+pub async fn open_editor_file(
+    editor: String,
+    folders: Vec<String>,
+    base: Option<String>,
+    path: String,
+    line: Option<u32>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = std::env::home_dir();
+        let resolve = if is_markdown_path(Path::new(&path)) {
+            resolve_markdown_file
+        } else {
+            resolve_worktree_file
+        };
+        let file = resolve(&folders, base.as_deref(), &path, home.as_deref())?;
+        open_file(&editor, &file.to_string_lossy(), line, find_file_cli)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?
+}
+
+fn editor_file_args(cli: &str, file: &str, line: u32) -> Vec<String> {
+    let file = dunce::simplified(Path::new(file)).display();
+    let location = format!("{file}:{line}");
+    if cli == "zed" {
+        vec![location]
+    } else {
+        vec!["-g".into(), location]
+    }
+}
+
+fn file_cli_candidates(_app: &str, cli: &str) -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let bundled = if cli == "zed" {
+            "/Applications/Zed.app/Contents/MacOS/cli".into()
+        } else {
+            format!("/Applications/{_app}.app/Contents/Resources/app/bin/{cli}")
+        };
+        vec![bundled, cli.into()]
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        vec![cli.into()]
+    }
+}
+
+fn find_file_cli(app: &str, cli: &str) -> Option<String> {
+    file_cli_candidates(app, cli)
+        .into_iter()
+        .find(|program| cli_available(program))
+}
+
+fn file_cli_result(app: &str, output: io::Result<Output>) -> Result<(), String> {
+    let output = output.map_err(|error| format!("Failed to open {app}: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!("Failed to open {app}: {}", stderr.trim()))
+}
+
+fn open_file(
+    editor: &str,
+    file: &str,
+    line: Option<u32>,
+    find_cli: impl FnOnce(&str, &str) -> Option<String>,
+) -> Result<(), String> {
+    let (app, cli) = match editor {
+        "cursor" => ("Cursor", "cursor"),
+        "vscode-web" => (VSCODE_APP, "code"),
+        "zed" => ("Zed", "zed"),
+        _ => return Err(format!("Unknown file editor: {editor}")),
+    };
+    if let Some(line) = line.filter(|&line| line > 0) {
+        if let Some(program) = find_cli(app, cli) {
+            let output = LoginShell::program(&program, editor_file_args(cli, file, line)).output();
+            return file_cli_result(app, output);
+        }
+    }
+    let file = dunce::simplified(Path::new(file)).to_string_lossy();
+    open_gui_editor(app, &file).map(|_| ())
+}
+
 /// One-line hint listing folders an editor without multi-root support could not open.
 fn dropped_folders_hint(extra: &[String], editor: &str) -> String {
     let names: Vec<String> = extra
@@ -156,7 +244,6 @@ pub fn check_app_installed(editor: String) -> Result<bool, String> {
     }
 }
 
-#[cfg(windows)]
 const VSCODE_APP: &str = "Visual Studio Code";
 
 /// The command-line launcher a Windows GUI editor installs on `PATH`.
@@ -272,6 +359,179 @@ fn escape_applescript_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_command_resolves_files_in_peer_repositories() {
+        let folder = std::env::temp_dir();
+        let path = folder.join(format!("wtm-editor-{}.txt", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "hello").unwrap();
+        let result = tauri::async_runtime::block_on(open_editor_file(
+            "cursor".into(),
+            vec![
+                path.join("missing").to_string_lossy().into_owned(),
+                folder.to_string_lossy().into_owned(),
+            ],
+            None,
+            path.file_name().unwrap().to_string_lossy().into_owned(),
+            None,
+        ));
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn file_command_refuses_missing_files() {
+        let error = tauri::async_runtime::block_on(open_editor_file(
+            "zed".into(),
+            vec![],
+            None,
+            "missing.txt".into(),
+            Some(12),
+        ));
+        assert_eq!(
+            error,
+            Err("File not found in the task repositories: missing.txt".into())
+        );
+    }
+
+    #[test]
+    fn file_command_cannot_open_code_from_a_document_directory_outside_the_task() {
+        let folder = std::env::temp_dir();
+        let path = folder.join(format!("wtm-editor-{}.txt", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "hello").unwrap();
+        let relative = path.file_name().unwrap().to_string_lossy().into_owned();
+        let result = tauri::async_runtime::block_on(open_editor_file(
+            "cursor".into(),
+            vec![],
+            Some(folder.to_string_lossy().into_owned()),
+            relative.clone(),
+            None,
+        ));
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(
+            result,
+            Err(format!(
+                "File not found in the task repositories: {relative}"
+            ))
+        );
+    }
+
+    #[test]
+    fn file_command_opens_markdown_beside_a_document_outside_the_task() {
+        let folder = std::env::temp_dir();
+        let path = folder.join(format!("wtm-editor-{}.md", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "# Hello").unwrap();
+        let result = tauri::async_runtime::block_on(open_editor_file(
+            "cursor".into(),
+            vec![],
+            Some(folder.to_string_lossy().into_owned()),
+            path.file_name().unwrap().to_string_lossy().into_owned(),
+            None,
+        ));
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn known_file_editors_receive_their_goto_arguments() {
+        let file = "/tmp/space and 'quote'.txt";
+        let location = "/tmp/space and 'quote'.txt:12";
+        assert_eq!(editor_file_args("code", file, 12), ["-g", location]);
+        assert_eq!(editor_file_args("cursor", file, 12), ["-g", location]);
+        assert_eq!(editor_file_args("zed", file, 12), [location]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn goto_receives_a_compatible_windows_drive_path() {
+        let file = r"\\?\C:\Projects\sample\src\app.ts";
+        assert_eq!(
+            editor_file_args("code", file, 12),
+            ["-g", r"C:\Projects\sample\src\app.ts:12"]
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn checks_bundled_clis_before_resolving_commands_from_the_shell() {
+        assert_eq!(
+            file_cli_candidates("Zed", "zed"),
+            ["/Applications/Zed.app/Contents/MacOS/cli", "zed"]
+        );
+        assert_eq!(
+            file_cli_candidates(VSCODE_APP, "code"),
+            [
+                "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+                "code",
+            ]
+        );
+        assert_eq!(
+            file_cli_candidates("Cursor", "cursor"),
+            [
+                "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+                "cursor",
+            ]
+        );
+    }
+
+    #[test]
+    fn file_launch_falls_back_to_the_gui_when_the_cli_is_missing() {
+        for (editor, expected_cli) in [("vscode-web", "code"), ("zed", "zed")] {
+            assert_eq!(
+                open_file(editor, "/tmp/a.txt", Some(12), |_, cli| {
+                    assert_eq!(cli, expected_cli);
+                    None
+                }),
+                Ok(())
+            );
+        }
+    }
+
+    #[test]
+    fn file_launch_rejects_options_that_are_not_file_editors() {
+        assert_eq!(
+            open_file("codex", "/tmp/a.txt", Some(12), |_, _| unreachable!()),
+            Err("Unknown file editor: codex".into())
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn file_launch_uses_the_login_shell_for_the_available_cli() {
+        let result = open_file("cursor", "/tmp/a.txt", Some(12), |app, cli| {
+            assert_eq!((app, cli), ("Cursor", "cursor"));
+            find_file_cli(app, "/usr/bin/true")
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            find_file_cli("Uninstalled Editor", "/nonexistent-wtm-file-editor"),
+            None
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn file_launch_reports_the_cli_failure() {
+        let program = std::env::temp_dir().join(format!("wtm-editor-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&program, "#!/bin/sh\necho 'cannot open file' >&2\nexit 1\n").unwrap();
+        crate::platform::set_mode(&program, 0o700).unwrap();
+
+        let result = open_file("zed", "/tmp/a.txt", Some(12), |_, _| {
+            Some(program.to_string_lossy().into_owned())
+        });
+
+        std::fs::remove_file(program).unwrap();
+        assert_eq!(result, Err("Failed to open Zed: cannot open file".into()));
+    }
+
+    #[test]
+    fn file_launch_reports_process_start_errors() {
+        let error = io::Error::new(io::ErrorKind::NotFound, "missing shell");
+        assert_eq!(
+            file_cli_result("Cursor", Err(error)),
+            Err("Failed to open Cursor: missing shell".into())
+        );
+    }
 
     #[test]
     fn editor_command_forwards_success_and_failure_from_the_blocking_launcher() {

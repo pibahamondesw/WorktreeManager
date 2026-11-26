@@ -157,6 +157,7 @@ export function MarkdownPreviewPanel({
   const nested = useMemo(
     () => ({
       folders,
+      base: path ? directoryOf(path) : undefined,
       open: ({ source: next }: MarkdownPreviewRequest) => {
         const base = path ? [directoryOf(path), ...folders] : folders;
         const resolved =

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { chatReadMarkdown, MarkdownDocument } from "../../services/chat";
 import { MarkdownSource } from "./markdownDocument";
 import { LruCache } from "./lruCache";
+import { EditorApp } from "../../types";
 
 export interface MarkdownPreviewRequest {
   source: MarkdownSource;
@@ -10,8 +11,11 @@ export interface MarkdownPreviewRequest {
 
 interface MarkdownPreviewContextValue {
   folders: string[];
+  base?: string;
   open: (request: MarkdownPreviewRequest) => void;
 }
+
+export const TaskEditorContext = createContext<EditorApp | null>(null);
 
 export const MarkdownPreviewContext = createContext<MarkdownPreviewContextValue | null>(null);
 

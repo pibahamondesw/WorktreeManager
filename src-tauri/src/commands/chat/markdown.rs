@@ -2,12 +2,13 @@
 //! paths resolve against the task repositories in order; only Markdown files are served.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Serialize;
 
+use crate::commands::validation::resolve_markdown_file;
+
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
-const EXTENSIONS: [&str; 3] = ["md", "markdown", "mdx"];
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,41 +17,12 @@ pub struct MarkdownDocument {
     pub text: String,
 }
 
-fn is_markdown(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
-}
-
-pub(super) fn candidates(folders: &[String], path: &str, home: Option<&Path>) -> Vec<PathBuf> {
-    if let Some(rest) = path.strip_prefix("~/") {
-        return home.map(|home| home.join(rest)).into_iter().collect();
-    }
-    let path = Path::new(path);
-    if path.is_absolute() {
-        return vec![path.to_path_buf()];
-    }
-    folders
-        .iter()
-        .map(|folder| Path::new(folder).join(path))
-        .collect()
-}
-
 pub fn read(
     folders: &[String],
     path: &str,
     home: Option<&Path>,
 ) -> Result<MarkdownDocument, String> {
-    if !is_markdown(Path::new(path)) {
-        return Err(format!("Not a Markdown file: {path}"));
-    }
-    let found = candidates(folders, path, home)
-        .into_iter()
-        .find_map(|candidate| candidate.canonicalize().ok().filter(|real| real.is_file()))
-        .ok_or_else(|| format!("File not found: {path}"))?;
-    if !is_markdown(&found) {
-        return Err(format!("Not a Markdown file: {path}"));
-    }
+    let found = resolve_markdown_file(folders, None, path, home)?;
     let size = fs::metadata(&found).map_err(|e| e.to_string())?.len();
     if size > MAX_BYTES {
         return Err(format!("File is too large to preview: {path}"));
@@ -65,6 +37,7 @@ pub fn read(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     struct Scratch(PathBuf);
 
