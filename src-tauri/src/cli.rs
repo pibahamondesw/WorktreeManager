@@ -31,7 +31,7 @@ task get <id> [--git]
 task create --input <file|->
 task link-issue <id> --issue <identifier>
 task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
-          [--name <name>] [--tab <tab>] [--schema <file> --wait] [--wait]
+          [--name <name>] [--tab <tab>] [--with-template] [--schema <file> --wait] [--wait]
                                      Sends the message to the task's chat as you would
                                      type it: in a new conversation, named with --name
                                      (agents that cannot name one leave it unnamed), in
@@ -39,8 +39,9 @@ task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
                                      nor running chat, else in a new chat tab; or in
                                      the tab --tab names, continuing its chat if it is
                                      still running.
-                                     Without --tab, the message follows the
-                                     first-prompt template, when one is set.
+                                     Sends only the message by default. --with-template
+                                     prepends the first-prompt template when one is
+                                     set; ignored with --tab.
                                      Prints the tab, session and conversation ids once
                                      the turn starts; --wait also waits for the reply,
                                      which --schema holds to a JSON schema (the chat
@@ -204,6 +205,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
             "--schema" if !params.contains_key("schema") => {
                 params.insert("schema".into(), schema(args.next())?);
             }
+            "--with-template" if !params.contains_key("withTemplate") => {
+                params.insert("withTemplate".into(), json!(true));
+            }
             "--wait" if !params.contains_key("wait") => {
                 params.insert("wait".into(), json!(true));
             }
@@ -313,7 +317,15 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
             &["id"],
             false,
             &[
-                "agent", "model", "effort", "name", "message", "schema", "wait", "tab",
+                "agent",
+                "model",
+                "effort",
+                "name",
+                "message",
+                "schema",
+                "wait",
+                "tab",
+                "withTemplate",
             ],
         ),
         "task.tabs" => (&["id"], false, &[]),
@@ -1463,6 +1475,25 @@ mod tests {
             parse(&fire.map(String::from)).err(),
             Some(format!("Cannot read {}", path.display()))
         );
+    }
+
+    #[test]
+    fn task_chat_template_is_opt_in() {
+        let plain = "task chat t1 --agent claude --message /review-pr";
+        assert_eq!(
+            Value::Object(parse(&args(plain)).unwrap().params),
+            json!({ "id": "t1", "agent": "claude", "message": "/review-pr" })
+        );
+        assert_eq!(
+            Value::Object(
+                parse(&args(&format!("{plain} --with-template")))
+                    .unwrap()
+                    .params
+            ),
+            json!({ "id": "t1", "agent": "claude", "message": "/review-pr", "withTemplate": true })
+        );
+        assert!(parse(&args(&format!("{plain} --with-template --with-template"))).is_err());
+        assert!(parse(&args("task get t1 --with-template")).is_err());
     }
 
     #[test]

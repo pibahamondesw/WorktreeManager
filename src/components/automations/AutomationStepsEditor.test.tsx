@@ -14,7 +14,13 @@ const STEPS: WrittenStep[] = [
   { id: "verify", command: ["scripts/verify"], on_fail: { goto: "implement", max: 3 } },
   { id: "approve", approval: { title: "Ship?" } },
   { id: "checks", wait: { event: { watcher: "pr_checks" } } },
-  { id: "ship", publish: ["git.push"] },
+  {
+    id: "ship",
+    publish: [
+      "git.push",
+      { "wtm.chat_open": { agent: "claude", message: "Review", with_template: true } },
+    ],
+  },
 ];
 
 type Saver = (args: { name: string; hash: string; steps: StepEdit[] }) => unknown;
@@ -86,6 +92,7 @@ it("configures an agent step and saves every step with its source", async () => 
     },
   });
   expect(savedSteps().map((step) => step.source)).toEqual([0, 1, 2, 3, 4]);
+  expect(savedSteps()[4]).toEqual({ source: 4, value: STEPS[4] });
   expect(vi.mocked(invoke)).toHaveBeenCalledWith(
     "automation_steps_save",
     expect.objectContaining({ name: "demo", hash: "h1" })

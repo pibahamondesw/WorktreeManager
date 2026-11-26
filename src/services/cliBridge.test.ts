@@ -333,10 +333,25 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
     agent: "claude",
     message: "Review",
     variables: { "run.id": "r-1" },
+    withTemplate: true,
   });
   expect(invokeCommand.mock.lastCall).toMatchObject([
     "chat_hand_over",
     { request: { message: "Run r-1 on feature\n\nReview" } },
+  ]);
+  await operations.updateWorkspace("w1", { firstPromptTemplate: "Implement {task.branch}" });
+  const review = "/review-pr https://github.com/acme/api/pull/12";
+  expect(await call("task.chat", { id: "t1", agent: "claude", message: review })).toMatchObject({
+    ok: true,
+  });
+  expect(invokeCommand.mock.lastCall).toMatchObject([
+    "chat_hand_over",
+    { request: { message: review, tab: null } },
+  ]);
+  await call("task.chat", { id: "t1", agent: "claude", message: review, withTemplate: false });
+  expect(invokeCommand.mock.lastCall).toMatchObject([
+    "chat_hand_over",
+    { request: { message: review, tab: null } },
   ]);
   invokeCommand.mockResolvedValueOnce([{ id: "a1", agent: "codex", conversationId: "c1" }]);
   expect(await call("task.tabs", { id: "t1" })).toMatchObject({
@@ -356,6 +371,7 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
     { id: "t1", agent: "claude" },
     { id: "t1", agent: "claude", message: " " },
     { id: "t1", agent: "claude", message: "Hi", wait: "yes" },
+    { id: "t1", agent: "claude", message: "Hi", withTemplate: "yes" },
     { id: "t1", agent: "claude", message: "Hi", schema: [], wait: true },
     { id: "t1", agent: "claude", message: "Hi", schema },
     { id: "t1", agent: "claude", message: "Hi", name: " " },

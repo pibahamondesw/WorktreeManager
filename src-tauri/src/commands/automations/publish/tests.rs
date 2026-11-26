@@ -1160,6 +1160,7 @@ fn chat_open(message: &str) -> ChatOpenEffect {
         effort: None,
         name: None,
         message: message.into(),
+        with_template: None,
     }
 }
 
@@ -1175,6 +1176,7 @@ fn chat_open_opens_the_task_chat_once_per_step_and_records_its_conversation() {
         model: Some("opus".into()),
         effort: Some("high".into()),
         name: Some("Review {item.id}".into()),
+        with_template: Some(true),
         ..chat_open("Look at {task.branch}")
     });
     let (report, effects) = run.publish(&mut publisher(&forge, &bridge), 1, vec![named.clone()]);
@@ -1189,7 +1191,7 @@ fn chat_open_opens_the_task_chat_once_per_step_and_records_its_conversation() {
         params,
         json!({
             "id": "t1", "agent": "claude", "message": "Look at wtm/demo/1",
-            "model": "opus", "effort": "high", "name": "Review routine",
+            "model": "opus", "effort": "high", "name": "Review routine", "withTemplate": true,
         })
     );
     assert_eq!(variables["task.branch"], "wtm/demo/1");
@@ -1214,6 +1216,7 @@ fn chat_open_opens_the_task_chat_once_per_step_and_records_its_conversation() {
     let params = &bridge.calls()[1].1;
     assert_eq!(params["agent"], "codex");
     assert_eq!(params["message"], "Go on");
+    assert!(params.get("withTemplate").is_none());
 }
 
 #[test]

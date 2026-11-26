@@ -795,6 +795,9 @@ impl Publisher {
                 params[key] = json!(value);
             }
         }
+        if let Some(with_template) = chat.with_template {
+            params["withTemplate"] = json!(with_template);
+        }
         let opened = operation(self.bridge.call("task.chat", params))?;
         let detail = if opened["continued"] == true {
             format!("Sent the message to the {agent} chat running in the task")
