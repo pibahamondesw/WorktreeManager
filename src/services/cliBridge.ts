@@ -237,6 +237,8 @@ async function taskChatInput(params: Record<string, unknown>): Promise<TaskChatI
     throw new OperationError("invalid_params", "Provide the message to send.");
   if (params.wait !== undefined && typeof params.wait !== "boolean")
     throw new OperationError("invalid_params", "wait must be a boolean.");
+  if (params.withTemplate !== undefined && typeof params.withTemplate !== "boolean")
+    throw new OperationError("invalid_params", "withTemplate must be a boolean.");
   const schema = params.schema as Record<string, unknown> | undefined;
   if (schema !== undefined && (!schema || typeof schema !== "object" || Array.isArray(schema)))
     throw new OperationError("invalid_params", "schema must be a JSON object.");
@@ -252,6 +254,7 @@ async function taskChatInput(params: Record<string, unknown>): Promise<TaskChatI
     wait: params.wait === true,
     tab: optionalText(params.tab),
     variables: chatVariables(params.variables),
+    withTemplate: params.withTemplate,
   };
 }
 
@@ -396,6 +399,7 @@ export async function dispatchCliBridge(
         "wait",
         "tab",
         "variables",
+        "withTemplate",
       ],
       "task.tabs": ["id"],
       "task.tab-close": ["id", "tab"],

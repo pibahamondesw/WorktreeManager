@@ -1159,7 +1159,24 @@ describe("first prompt", () => {
     expect(save).not.toHaveBeenCalled();
   });
 
-  it("seeds a new conversation's first message with the template and its variables", async () => {
+  it.each([undefined, false])(
+    "sends only the message with withTemplate=%s",
+    async (withTemplate) => {
+      const { operations } = fixture([linked]);
+      await operations.updateFirstPromptTemplate("Global {task.branch}");
+      await operations.updateWorkspace("w1", {
+        firstPromptTemplate: "Implement {issue.description}",
+      });
+      const firstPrompt = vi.spyOn(operations, "firstPrompt");
+      vi.mocked(invoke).mockClear().mockResolvedValueOnce(started);
+      const message = "/review-pr https://github.com/acme/api/pull/12\n";
+      await operations.openTaskChat("t1", { agent: "claude", message, withTemplate });
+      expect(sentMessage()).toBe(message);
+      expect(firstPrompt).not.toHaveBeenCalled();
+    }
+  );
+
+  it("opts into the global template and its variables for a new conversation", async () => {
     const { operations } = fixture([task]);
     await operations.updateFirstPromptTemplate("Branch {task.branch}\nItem {item.id}");
     vi.mocked(invoke).mockClear().mockResolvedValueOnce(started);
@@ -1167,15 +1184,37 @@ describe("first prompt", () => {
       agent: "claude",
       message: "Review",
       variables: { "item.id": "ENG-9" },
+      withTemplate: true,
     });
     expect(sentMessage()).toBe("Branch feature\nItem ENG-9\n\nReview");
+  });
+
+  it("opts into the workspace template before the global one", async () => {
+    const { operations } = fixture([task]);
+    await operations.updateFirstPromptTemplate("Global {task.branch}");
+    await operations.updateWorkspace("w1", { firstPromptTemplate: "Workspace {task.branch}" });
+    vi.mocked(invoke).mockClear().mockResolvedValueOnce(started);
+    await operations.openTaskChat("t1", { agent: "claude", message: "Review", withTemplate: true });
+    expect(sentMessage()).toBe("Workspace feature\n\nReview");
+  });
+
+  it("sends only the message when opting in without a configured template", async () => {
+    const { operations } = fixture([task]);
+    vi.mocked(invoke).mockClear().mockResolvedValueOnce(started);
+    await operations.openTaskChat("t1", { agent: "claude", message: "Review", withTemplate: true });
+    expect(sentMessage()).toBe("Review");
   });
 
   it("leaves a message to an existing tab as written", async () => {
     const { operations } = fixture([task]);
     await operations.updateFirstPromptTemplate("Branch {task.branch}");
     vi.mocked(invoke).mockClear().mockResolvedValueOnce(started);
-    await operations.openTaskChat("t1", { agent: "claude", message: "Go on", tab: "a1" });
+    await operations.openTaskChat("t1", {
+      agent: "claude",
+      message: "Go on",
+      tab: "a1",
+      withTemplate: true,
+    });
     expect(sentMessage()).toBe("Go on");
   });
 });

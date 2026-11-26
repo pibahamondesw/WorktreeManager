@@ -586,6 +586,8 @@ pub struct ChatOpenEffect {
     pub name: Option<String>,
     /// Template of the message.
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub with_template: Option<bool>,
 }
 
 /// `wtm.task_create`: templates of what the task works on, rendered when the effect runs. Without

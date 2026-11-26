@@ -135,6 +135,7 @@ export interface TaskChatInput {
   tab?: string;
   /** Values for the first-prompt template beyond the task's own, such as an automation's. */
   variables?: Record<string, string>;
+  withTemplate?: boolean;
 }
 
 export interface TaskChat {
@@ -1144,7 +1145,8 @@ export class Operations {
     const chatFailure = (error: unknown) => {
       throw new OperationError("chat_failed", String(error));
     };
-    const seed = input.tab ? null : await this.firstPrompt(id, input.variables);
+    const seed =
+      input.withTemplate && !input.tab ? await this.firstPrompt(id, input.variables) : null;
     const started = await invoke<Omit<TaskChat, "taskId" | "agent">>("chat_hand_over", {
       request: {
         taskId: id,

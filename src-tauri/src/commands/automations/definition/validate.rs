@@ -2138,12 +2138,14 @@ fn chat_open(
     let effort = fields.optional(report, "effort", string);
     let name = fields.optional(report, "name", template);
     let message = fields.require(report, "message", template);
+    let with_template = fields.optional(report, "with_template", boolean);
     let effect = ChatOpenEffect {
         agent: agent?,
         model: model?,
         effort: effort?,
         name: name?,
         message: message?,
+        with_template: with_template?,
     };
     let descriptor = env.agents.iter().find(|agent| agent.id == effect.agent)?;
     let capabilities = descriptor.capabilities;

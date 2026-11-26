@@ -2279,7 +2279,7 @@ fn publish_steps_list_effects_with_their_params() {
       - wtm.task_create: null
       - wtm.task_log: {{ entry: \"Opened {{pr.url}}\" }}
       - wtm.task_delete_clean: {{}}
-      - wtm.chat_open: {{ agent: codex, model: gpt-5, effort: high, name: \"Review {{item.id}}\", message: \"Look at {{item.data.url}}\" }}
+      - wtm.chat_open: {{ agent: codex, model: gpt-5, effort: high, name: \"Review {{item.id}}\", message: \"Look at {{item.data.url}}\", with_template: true }}
 "
     ));
     let entry = load_with(&frontmatter, BODY, |folder| {
@@ -2312,7 +2312,7 @@ fn publish_steps_list_effects_with_their_params() {
             { "effect": "wtm.task_log", "entry": "Opened {pr.url}" },
             { "effect": "wtm.task_delete_clean" },
             { "effect": "wtm.chat_open", "agent": "codex", "model": "gpt-5", "effort": "high",
-              "name": "Review {item.id}", "message": "Look at {item.data.url}" },
+              "name": "Review {item.id}", "message": "Look at {item.data.url}", "withTemplate": true },
         ] })
     );
     assert_issue(
@@ -2531,6 +2531,31 @@ fn publish_steps_report_malformed_effects() {
 }
 
 #[test]
+fn chat_open_omits_the_template_option_by_default() {
+    let entry = load(&routine(&format!(
+        "{ALL_VERBS}steps:\n  - id: hand\n    publish: {{ wtm.chat_open: {{ agent: claude, message: hi }} }}\n"
+    )));
+    assert!(entry.errors.is_empty(), "{:?}", entry.errors);
+    let definition = entry.definition.unwrap();
+    assert!(kind(only_step(&definition))["publish"][0]
+        .get("withTemplate")
+        .is_none());
+}
+
+#[test]
+fn chat_open_accepts_explicitly_disabling_the_template() {
+    let entry = load(&routine(&format!(
+        "{ALL_VERBS}steps:\n  - id: hand\n    publish: {{ wtm.chat_open: {{ agent: claude, message: hi, with_template: false }} }}\n"
+    )));
+    assert!(entry.errors.is_empty(), "{:?}", entry.errors);
+    let definition = entry.definition.unwrap();
+    assert_eq!(
+        kind(only_step(&definition))["publish"][0]["withTemplate"],
+        false
+    );
+}
+
+#[test]
 fn chat_open_effects_need_a_message_and_an_agent_able_to_run_it() {
     let publish = |effect: &str| {
         load(&routine(&format!(
@@ -2553,6 +2578,15 @@ fn chat_open_effects_need_a_message_and_an_agent_able_to_run_it() {
     assert_eq!(
         issues(&publish("{ agent: basic, model: default, message: hi }")),
         [(format!("{field}.agent").as_str(), IssueKind::Capability)]
+    );
+    assert_eq!(
+        issues(&publish(
+            "{ agent: claude, message: hi, with_template: 'true' }"
+        )),
+        [(
+            format!("{field}.with_template").as_str(),
+            IssueKind::Invalid
+        )]
     );
     let limited = publish("{ agent: basic, model: big, effort: high, message: hi }");
     let messages: Vec<_> = limited

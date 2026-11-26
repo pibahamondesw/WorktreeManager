@@ -42,7 +42,7 @@ export function FirstPromptSettings({ template, onSave }: FirstPromptSettingsPro
     <form onSubmit={(event) => void handleSubmit(event)} className="px-6 pt-3 pb-6 space-y-3">
       <p className="text-xs text-text-muted">
         A new agent conversation in a task starts with this message in the composer, ready to edit.
-        Chats opened with wtm task chat or an automation send it ahead of their message. A workspace
+        Chats opened with wtm task chat or an automation include it only when requested. A workspace
         can replace it in its settings. Leave it empty to start conversations blank.
       </p>
       <FirstPromptTemplateField

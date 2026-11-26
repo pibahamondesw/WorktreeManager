@@ -28,7 +28,7 @@ wtm task list [--workspace <id>]         # tasks with branch, issue and member p
 wtm task get <id> --git                  # plus ahead/behind/dirty per member repository
 wtm task create --input task.json        # or --input - for stdin
 wtm task link-issue <id> --issue WOR-123
-wtm task chat <id> --agent claude --message @prompt.md [--name <n>] [--tab <tab>] [--wait]   # main tab if unused, else a new tab, or continue --tab
+wtm task chat <id> --agent claude --message @prompt.md [--name <n>] [--tab <tab>] [--with-template] [--wait]   # main tab if unused, else a new tab, or continue --tab
 wtm task tabs <id>                       # open chat tabs: id, agent, conversation
 wtm task tab-close <id> <tab>            # close a tab; its conversation stays in Conversations
 wtm task delete <id> --keep-worktrees|--delete-worktrees [--force] [--skip-teardown]
@@ -40,7 +40,7 @@ wtm automation status <name> <run_id>    # one run: status, items and step attem
 
 Task input: `{"workspaceId":"…","branchName":"…","repoIds":["…"],"linearIssue":{"id":"<uuid>","identifier":"WOR-80","title":"…"}}`. Omit `repoIds` to include every repository. With `linearIssue`, pass Linear's exact `branchName`.
 
-`wtm task chat` without `--tab` starts the conversation with the user's first-prompt template, when they set one, ahead of `--message`. It may already carry the issue, branch and repositories; don't repeat them.
+`wtm task chat` sends `--message` without a prefix by default. Include the context the agent needs in the message, or pass `--with-template` to prepend the user's configured first-prompt template. Add that flag to callers that relied on the previous default. With `--tab`, the template is never prepended, even with `--with-template`. Manual UI chats still prefill the composer.
 
 ## Find the current task
 
