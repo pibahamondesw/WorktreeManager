@@ -11,17 +11,26 @@ import { observeResize } from "../observeResize";
 
 const ESTIMATED_ROW_HEIGHT = 120;
 const INITIAL_ROWS = 30;
-const STICK_TO_BOTTOM_THRESHOLD_PX = 40;
+const AT_BOTTOM_TOLERANCE_PX = 2;
+const MIN_CORRECTION_PX = 1;
 
+/** The viewport starts `fromKey` pixels past where row `key` starts, so rows inserted or resized above that row move it along. */
 interface Viewport {
-  top: number;
+  key: string | undefined;
+  fromKey: number;
   height: number;
 }
 
-interface Anchor {
+interface VisibleRow {
   key: string;
   offset: number;
-  scrollTop: number;
+  element: Element;
+}
+
+/** The row the view stays on, with how much content sits below its top. Only content below it changing moves it on screen, and this distance changes with it but not with scrolling. */
+interface Anchor {
+  key: string;
+  below: number;
 }
 
 export interface RowSpan {
@@ -47,11 +56,21 @@ function rowOffsets(keys: readonly string[], heights: ReadonlyMap<string, number
   return offsets;
 }
 
-function visibleSpan(offsets: readonly number[], viewport: Viewport | null, stuck: boolean) {
+function viewportTop(offsets: readonly number[], keys: readonly string[], viewport: Viewport) {
+  const index = viewport.key === undefined ? -1 : keys.indexOf(viewport.key);
+  return (index > 0 ? offsets[index] : 0) + viewport.fromKey;
+}
+
+function visibleSpan(
+  offsets: readonly number[],
+  keys: readonly string[],
+  viewport: Viewport | null,
+  stuck: boolean
+) {
   const count = offsets.length - 1;
   if (!viewport) return { start: Math.max(0, count - INITIAL_ROWS), end: count };
   const total = offsets[count];
-  const top = stuck ? total - viewport.height : viewport.top;
+  const top = stuck ? total - viewport.height : viewportTop(offsets, keys, viewport);
   return rowsBetween(offsets, top - viewport.height, top + viewport.height * 2);
 }
 
@@ -66,24 +85,37 @@ function includePins(span: RowSpan, keys: readonly string[], pins: readonly (str
   return { start, end };
 }
 
+/** The scroller lays its content out from the bottom, so `scrollTop` runs from minus the overflow up to 0 at the bottom; this is the same position counted from the top of the content. */
+const scrolledFromTop = (scroller: HTMLElement) =>
+  scroller.scrollHeight - scroller.clientHeight + scroller.scrollTop;
+
+const scrollTopAt = (scroller: HTMLElement, fromTop: number) =>
+  fromTop - (scroller.scrollHeight - scroller.clientHeight);
+
 const sectionTopIn = (scroller: HTMLElement, section: HTMLElement | null) =>
-  section ? section.offsetTop - scroller.offsetTop : 0;
+  section
+    ? section.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scrolledFromTop(scroller)
+    : 0;
 
 const sameKeys = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((key, index) => key === b[index]);
 
 /**
- * Renders only the rows near the viewport of a bottom-anchored scroller. Rows are measured as they
- * mount; the scroller stays at the bottom while it is there, and otherwise keeps the first visible
- * row in place when rows above it mount or change height. Rows holding the text selection or the
- * focus stay mounted.
+ * Renders only the rows near the viewport of a scroller that lays its content out from the bottom
+ * (`flex-direction: column-reverse`). The browser keeps the bottom in place, so the scroller
+ * follows new rows while it is at the bottom, and rows above the viewport can mount, change height
+ * or be prepended without moving what is on screen. When content below the first visible row
+ * changes instead, the row is put back where it was. That row, and rows holding the text selection
+ * or the focus, stay mounted. The viewport is measured only when the user scrolls or the scroller
+ * resizes, never in response to the hook's own renders; rows that change above it carry it along.
  */
 export function useVirtualRows(keys: readonly string[]) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sectionRef = useRef<HTMLDivElement>(null);
   const keysRef = useRef(keys);
   const offsetsRef = useRef<readonly number[]>([0]);
-  const lastScrollTopRef = useRef(0);
   const rowElements = useRef(new Map<string, HTMLElement>());
   const anchorRef = useRef<Anchor | null>(null);
   const stuckRef = useRef(true);
@@ -93,12 +125,14 @@ export function useVirtualRows(keys: readonly string[]) {
   const [selectionKeys, setSelectionKeys] = useState<readonly string[]>([]);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [anchorKey, setAnchorKey] = useState<string | null>(null);
 
   const offsets = useMemo(() => rowOffsets(keys, heights), [keys, heights]);
-  const { start, end } = includePins(visibleSpan(offsets, viewport, stuck), keys, [
+  const { start, end } = includePins(visibleSpan(offsets, keys, viewport, stuck), keys, [
     ...selectionKeys,
     focusKey,
     revealedKey,
+    anchorKey,
   ]);
 
   const changeStuck = useCallback((value: boolean) => {
@@ -107,7 +141,25 @@ export function useVirtualRows(keys: readonly string[]) {
     setStuck(value);
   }, []);
 
-  const firstVisibleRow = useCallback((): Anchor | null => {
+  const contentBelow = useCallback(
+    (row: Element) =>
+      scrollRef.current!.firstElementChild!.getBoundingClientRect().bottom -
+      row.getBoundingClientRect().top,
+    []
+  );
+
+  /** Anchors the view to `row` and keeps it mounted until the next scroll picks another. */
+  const changeAnchor = useCallback(
+    (row: VisibleRow | null) => {
+      const key = row?.key ?? null;
+      if (key === null && anchorRef.current === null) return;
+      anchorRef.current = row && { key: row.key, below: contentBelow(row.element) };
+      setAnchorKey(key);
+    },
+    [contentBelow]
+  );
+
+  const firstVisibleRow = useCallback((): VisibleRow | null => {
     const scroller = scrollRef.current!;
     const viewportTop = scroller.getBoundingClientRect().top;
     const viewportBottom = viewportTop + scroller.clientHeight;
@@ -115,82 +167,90 @@ export function useVirtualRows(keys: readonly string[]) {
       const key = (row as HTMLElement).dataset.rowKey;
       const { top, bottom } = row.getBoundingClientRect();
       if (key && bottom > viewportTop && top < viewportBottom) {
-        return { key, offset: top - viewportTop, scrollTop: scroller.scrollTop };
+        return { key, offset: top - viewportTop, element: row };
       }
     }
     return null;
   }, []);
 
+  /** Where the viewport starts, relative to the first visible row so rows that mounted but are not measured yet do not shift it; with no row in view, relative to the first row. */
+  const scrolledPastRow = useCallback(
+    (scroller: HTMLElement) => {
+      const visible = firstVisibleRow();
+      const index = visible ? keysRef.current.indexOf(visible.key) : -1;
+      return visible && index >= 0
+        ? {
+            key: visible.key,
+            rowTop: offsetsRef.current[index],
+            top: offsetsRef.current[index] - visible.offset,
+          }
+        : {
+            key: keysRef.current[0],
+            rowTop: 0,
+            top: scrolledFromTop(scroller) - sectionTopIn(scroller, sectionRef.current),
+          };
+    },
+    [firstVisibleRow]
+  );
+
   const measureViewport = useCallback(() => {
     const scroller = scrollRef.current;
-    const section = sectionRef.current;
     if (!scroller?.clientHeight) return;
     const height = scroller.clientHeight;
-    const sectionTop = sectionTopIn(scroller, section);
     const step = height / 2;
-    const top = Math.floor((scroller.scrollTop - sectionTop) / step) * step;
+    const { key, rowTop, top } = scrolledPastRow(scroller);
+    const steppedTop = Math.floor(top / step) * step;
+    const fromKey = steppedTop - rowTop;
     setViewport((current) =>
-      current?.top === top && current.height === height ? current : { top, height }
+      current?.height === height && current.key === key && current.fromKey === fromKey
+        ? current
+        : { key, fromKey, height }
     );
-  }, []);
+  }, [scrolledPastRow]);
 
+  /** Puts the anchored row back where it was when the content below it changed height. */
   const keepPosition = useCallback(() => {
     const scroller = scrollRef.current!;
-    if (!scroller.clientHeight) return;
-    if (stuckRef.current) {
-      scroller.scrollTop = scroller.scrollHeight;
-      lastScrollTopRef.current = scroller.scrollTop;
-      return;
-    }
+    if (!scroller.clientHeight || stuckRef.current) return;
     const anchor = anchorRef.current;
-    const index = anchor ? keysRef.current.indexOf(anchor.key) : -1;
-    if (!anchor || index < 0 || anchor.scrollTop !== scroller.scrollTop) {
-      anchorRef.current = firstVisibleRow();
+    const row = anchor && rowElements.current.get(anchor.key);
+    if (!anchor || !row) {
+      changeAnchor(firstVisibleRow());
+      measureViewport();
       return;
     }
-    const row = rowElements.current.get(anchor.key);
-    if (row) {
-      const offset = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      if (offset !== anchor.offset) scroller.scrollTop += offset - anchor.offset;
-    } else {
-      const rowTop = sectionTopIn(scroller, sectionRef.current) + offsetsRef.current[index];
-      scroller.scrollTop = rowTop - anchor.offset;
-      measureViewport();
-    }
-    anchor.scrollTop = scroller.scrollTop;
-  }, [firstVisibleRow, measureViewport]);
+    const below = contentBelow(row);
+    if (Math.abs(below - anchor.below) < MIN_CORRECTION_PX) return;
+    scroller.scrollTop -= below - anchor.below;
+    anchorRef.current = { key: anchor.key, below };
+  }, [firstVisibleRow, changeAnchor, contentBelow, measureViewport]);
 
   const onScroll = () => {
     const scroller = scrollRef.current!;
     if (!scroller.clientHeight) return;
-    const movedUp = scroller.scrollTop < lastScrollTopRef.current;
-    lastScrollTopRef.current = scroller.scrollTop;
-    const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    const clampedToBottom = distanceFromBottom < 1;
-    const nearBottom = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX;
-    const atBottom = clampedToBottom || (!movedUp && (nearBottom || stuckRef.current));
+    const atBottom = scroller.scrollTop > -AT_BOTTOM_TOLERANCE_PX;
     changeStuck(atBottom);
     if (focusKey !== null && !sectionRef.current?.contains(document.activeElement)) {
       setFocusKey(null);
     }
-    anchorRef.current = atBottom ? null : firstVisibleRow();
+    changeAnchor(atBottom ? null : firstVisibleRow());
     measureViewport();
-    if (atBottom) keepPosition();
   };
 
   const stickToBottom = useCallback(() => {
-    anchorRef.current = null;
+    changeAnchor(null);
     changeStuck(true);
-  }, [changeStuck]);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [changeAnchor, changeStuck]);
 
   const scrollTo = useCallback(
     (top: number) => {
-      anchorRef.current = null;
+      changeAnchor(null);
       changeStuck(false);
       scrollRef.current!.scrollTop = top;
       measureViewport();
     },
-    [changeStuck, measureViewport]
+    [changeAnchor, changeStuck, measureViewport]
   );
 
   /** Scrolls to where the row would start when it is not rendered, so the next render mounts it. */
@@ -198,7 +258,9 @@ export function useVirtualRows(keys: readonly string[]) {
     (key: string) => {
       const index = keysRef.current.indexOf(key);
       if (index < 0 || rowElements.current.has(key)) return;
-      scrollTo(sectionTopIn(scrollRef.current!, sectionRef.current) + offsetsRef.current[index]);
+      const scroller = scrollRef.current!;
+      const rowTop = sectionTopIn(scroller, sectionRef.current) + offsetsRef.current[index];
+      scrollTo(scrollTopAt(scroller, rowTop));
     },
     [scrollTo]
   );
@@ -218,7 +280,7 @@ export function useVirtualRows(keys: readonly string[]) {
       const key = row.dataset.rowKey!;
       rowElements.current.set(key, row);
       const stop = observeResize(row, () => {
-        const height = row.offsetHeight;
+        const height = row.getBoundingClientRect().height;
         if (height > 0) {
           setHeights((current) =>
             current.get(key) === height ? current : new Map(current).set(key, height)

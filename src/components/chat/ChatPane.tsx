@@ -486,9 +486,9 @@ export function ChatPane({
         <div
           ref={timeline.scrollRef}
           onScroll={timeline.onScroll}
-          className="chat-scroll flex-1 min-h-0 overflow-y-auto"
+          className="chat-scroll flex-1 min-h-0 overflow-y-auto flex flex-col-reverse"
         >
-          <div className="max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3">
+          <div className="w-full max-w-3xl mx-auto px-4 py-4 flex flex-col gap-3 grow shrink-0">
             <ConversationMinimap rows={rows} timeline={timeline} />
             {items.length === 0 && live && !readOnly && (
               <p className="text-sm text-text-muted text-center py-8">

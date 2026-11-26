@@ -71,7 +71,7 @@ import { FirstPromptContext } from "./firstPromptContext";
 import { describeAgent, loadAgentCatalog } from "../../services/agents";
 import { AGENT_CATALOG } from "../../services/agents.fixture";
 import { resize } from "../../test/fakeObserveResize";
-import { layOutScroller } from "../../test/fakeLayout";
+import { layOutScroller, placeAt, positionOf } from "../../test/fakeLayout";
 import { saveToolVisibility } from "./toolVisibilityPreference";
 
 const editorOf = (box: HTMLElement) => EditorView.findFromDOM(box)!;
@@ -282,22 +282,22 @@ describe("ChatPane", () => {
     resize();
     expect(screen.getByText("Message 110")).toBeInTheDocument();
     expect(screen.queryByText("Message 109")).not.toBeInTheDocument();
-    expect(scroller.scrollTop).toBe(120 * 120 - 600);
+    expect(positionOf(scroller)).toBe(120 * 120 - 600);
 
-    scroller.scrollTop = 0;
+    placeAt(scroller, 0);
     fireEvent.scroll(scroller);
     expect(screen.getByText("Message 0")).toBeInTheDocument();
     expect(screen.queryByText("Message 119")).not.toBeInTheDocument();
 
     emit(3, { type: "upsert", item: { id: "m120", kind: "assistant", text: "Message 120" } });
-    expect(scroller.scrollTop).toBe(0);
+    expect(positionOf(scroller)).toBe(0);
     expect(screen.queryByText("Message 120")).not.toBeInTheDocument();
 
-    scroller.scrollTop = scroller.scrollHeight;
+    placeAt(scroller, scroller.scrollHeight);
     fireEvent.scroll(scroller);
     emit(3, { type: "upsert", item: { id: "m121", kind: "assistant", text: "Message 121" } });
     expect(screen.getByText("Message 121")).toBeInTheDocument();
-    expect(scroller.scrollTop).toBe(122 * 120 - 600);
+    expect(positionOf(scroller)).toBe(122 * 120 - 600);
   });
 
   it("loads earlier history at the top and keeps the first visible message in place", async () => {
@@ -325,12 +325,12 @@ describe("ChatPane", () => {
     expect(screen.getByText("Loading earlier messages…")).toBeInTheDocument();
     expect(loads()).toEqual([]);
 
-    scroller.scrollTop = 0;
+    placeAt(scroller, 0);
     fireEvent.scroll(scroller);
     expect(loads()).toEqual([["chat_load_earlier", { sessionId: "s1", generation: 3 }]]);
 
     emit(3, { type: "earlier", items: range(0, 10), earlier: 0 });
-    expect(scroller.scrollTop).toBe(10 * 120);
+    expect(positionOf(scroller)).toBe(10 * 120);
     expect(screen.getByText("Message 10")).toBeInTheDocument();
     expect(screen.queryByText("Loading earlier messages…")).not.toBeInTheDocument();
     expect(loads()).toHaveLength(1);
@@ -2508,7 +2508,7 @@ describe("Find in conversation", () => {
     fireEvent.change(input, { target: { value: "message 5" } });
     expect(status()).toHaveTextContent("11/11");
     expect(screen.getByText("Message 59")).toBeInTheDocument();
-    expect(scroller.scrollTop).toBe(59 * 120 - 200);
+    expect(positionOf(scroller)).toBe(59 * 120);
 
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(status()).toHaveTextContent("1/11");
@@ -2597,11 +2597,11 @@ describe("Conversation minimap", () => {
 
     fireEvent.click(mark(3));
     expect(screen.getByText("Prompt 2 in detail")).toBeInTheDocument();
-    expect(scroller.scrollTop).toBe(18 * 120 - 16);
+    expect(positionOf(scroller)).toBe(18 * 120 - 16);
     fireEvent.scroll(scroller);
     expect(mark(3)).toHaveAttribute("aria-current", "location");
 
-    scroller.scrollTop = scroller.scrollHeight;
+    placeAt(scroller, scroller.scrollHeight);
     fireEvent.scroll(scroller);
     expect(screen.queryByText("Prompt 2 in detail")).not.toBeInTheDocument();
     expect(mark(12)).toHaveAttribute("aria-current", "location");
@@ -2848,7 +2848,7 @@ describe("Quotes", () => {
         screen.getByRole("button", { name: "Show “Message 95” in the conversation" })
       );
       expect(within(scroller).getByText("Message 95")).toBeInTheDocument();
-      expect(scroller.scrollTop).toBe(95 * 120 - 200);
+      expect(positionOf(scroller)).toBe(95 * 120);
       expect(highlights.get("chat-quote")?.map((range) => range.toString())).toEqual([
         "Message 95",
       ]);
