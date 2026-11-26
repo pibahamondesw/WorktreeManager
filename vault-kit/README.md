@@ -59,7 +59,7 @@ This is plain Markdown, so it works with any agent that supports global instruct
 
 ### WorktreeManager skills
 
-[`skills/`](skills/) teaches agents to work through WorktreeManager and the vault instead of ad hoc worktrees and notes. The vault's `AGENTS.md` maps each trigger to its skill, so agents read the skill on demand and propose it when the trigger appears, even if the user did not ask.
+[`skills/`](skills/) teaches agents to work through WorktreeManager and the vault. The vault's [agent guide](vault/AGENTS.md) maps each trigger to its skill so agents can read it on demand.
 
 | Skill | Use |
 | --- | --- |
@@ -72,6 +72,7 @@ This is plain Markdown, so it works with any agent that supports global instruct
 | [`wtm-finish-task`](skills/wtm-finish-task/SKILL.md) | After merge: keep what matters, then delete the task. |
 | [`wtm-repo-setup`](skills/wtm-repo-setup/SKILL.md) | Workspaces, `.worktreemanager.toml` and `.worktreeinclude`. |
 | [`wtm-automation`](skills/wtm-automation/SKILL.md) | Create, edit, validate and test automations, with a condensed spec reference. |
+| [`wtm-html-preview`](skills/wtm-html-preview/SKILL.md) | Answer with an inline HTML preview when a static chart, rich table, or mockup helps explain the answer. |
 
 They are plain Markdown with `SKILL.md` frontmatter, so any agent can read them. To also get slash commands in Claude Code, copy a skill folder into `~/.claude/skills/`.
 
