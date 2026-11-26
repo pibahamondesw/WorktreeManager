@@ -217,15 +217,27 @@ export function ChatWorkspace({
     [taskId]
   );
 
-  const stopSide = async (closing: SideChat | null) => {
-    if (closing) await chatStop(taskId, closing.agent, closing.tab);
-  };
+  const stopSide = useCallback(
+    async (closing: SideChat | null) => {
+      if (closing) await chatStop(taskId, closing.agent, closing.tab);
+    },
+    [taskId]
+  );
 
-  const closeSide = () =>
-    run(async () => {
-      showSide(null);
-      await stopSide(side);
-    });
+  const closeSide = useCallback(
+    (closing: SideChat) => {
+      if (sideChats.get(taskId) !== closing) return;
+      void run(async () => {
+        showSide(null);
+        await stopSide(closing);
+      });
+    },
+    [run, showSide, stopSide, taskId]
+  );
+
+  useEffect(() => {
+    if (side && tabs && !error && !tabs.some((tab) => tab.id === side.source)) closeSide(side);
+  }, [side, tabs, error, closeSide]);
 
   /** Each question opens a fresh side chat, so it knows the conversation as it is now. */
   const askAside = (about: ChatTab, question: string) =>
@@ -252,12 +264,10 @@ export function ChatWorkspace({
     run(async () => {
       const index = tabs?.findIndex((entry) => entry.id === tab.id) ?? -1;
       await chatTabClose(taskId, agent, tab.id);
-      if (side?.source === tab.id) {
-        showSide(null);
-        await stopSide(side);
-      }
+      const closingSide = sideChats.get(taskId);
+      if (closingSide?.source === tab.id) closeSide(closingSide);
+      setTabs((current) => (current ?? []).filter((entry) => entry.id !== tab.id));
       const rest = (tabs ?? []).filter((entry) => entry.id !== tab.id);
-      setTabs(rest);
       if (tab.id === activeId && rest.length > 0)
         activate(rest[Math.min(index, rest.length - 1)].id);
     });
@@ -421,8 +431,8 @@ export function ChatWorkspace({
               folders={folders}
               takeOpenIntent={takeSideIntent}
               onBringBack={bringBack}
-              onClose={() => void closeSide()}
               bringBackBlocked={editingQueued}
+              onClose={() => closeSide(side)}
             />
           )}
         </div>
