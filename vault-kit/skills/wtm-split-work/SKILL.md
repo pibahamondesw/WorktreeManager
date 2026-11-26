@@ -31,7 +31,7 @@ A cross-repository change that must merge together stays as **one** task with se
    wtm task chat <new task id> --agent <your agent> --name "<ISSUE-2>" --message @brief.md
    ```
 
-   The brief stands alone: the sub-issue and its parent, the unit's scope and what stays out, decisions already made and why, the relevant files, and any commits to bring over. The chat opens in a new tab of that task, where the user drives it; don't pass `--wait`. Keep working on the original task in the current session.
+   The brief stands alone: the sub-issue and its parent, the unit's scope and what stays out, decisions already made and why, the relevant files, and any commits to bring over. The chat opens in that task's main tab, or a new tab when the main one is in use, where the user drives it; don't pass `--wait`. Keep working on the original task in the current session.
 
 6. Record the split as a decision: in the vault project if there is one (`wtm-vault-project`), otherwise in the original task's log.
 
