@@ -1,7 +1,8 @@
 import { ProjectFilter } from "../ui/ProjectFilter";
 import { EmptyState } from "../ui/EmptyState";
 import { CollapsibleSectionHeader } from "../ui/CollapsibleSectionHeader";
-import { isTaskActive } from "../../utils";
+import { isTaskSnoozed } from "../../utils";
+import { useNow } from "../../hooks/useNow";
 import { matchesProject } from "../../search/projects";
 import {
   ReactNode,
@@ -30,6 +31,7 @@ import { WorktreeListKeyboardHints } from "./WorktreeListKeyboardHints";
 import { WorktreeListToast } from "./WorktreeListToast";
 import { DepartingCard } from "./DepartingCard";
 import { LinkIssueModal } from "./LinkIssueModal";
+import { SnoozeTaskModal } from "./SnoozeTaskModal";
 import { NewWorktreeModal } from "./NewWorktreeModal";
 import {
   PullRequestInfo,
@@ -62,6 +64,7 @@ export interface TaskActions {
   delete: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
   setPinned: (id: string, pinned: boolean) => Promise<void>;
   setShelved: (id: string, shelved: boolean) => Promise<void>;
+  snooze: (id: string, until: string | null) => Promise<void>;
   reorderPinned: (id: string, targetId: string) => Promise<void>;
   linkIssue: (taskId: string, issue: string) => Promise<Task>;
   rename: (taskId: string, title: string) => Promise<Task>;
@@ -165,13 +168,38 @@ function listedTasks(tasks: Task[], showAutomationTasks: boolean) {
   return showAutomationTasks ? tasks : tasks.filter((task) => !task.automationId);
 }
 
-/** Tasks keyboard navigation walks: active ones, then Finished ones while that section is open. */
-function navigableTasks(tasks: Task[], finishedExpanded: boolean) {
-  const active = tasks.filter(isTaskActive);
-  return finishedExpanded ? [...active, ...tasks.filter((task) => !isTaskActive(task))] : active;
+type CollapsibleSection = "snoozed" | "finished";
+type TaskSection = "active" | CollapsibleSection;
+
+const COLLAPSIBLE_SECTIONS: { id: CollapsibleSection; label: string }[] = [
+  { id: "snoozed", label: "Snoozed" },
+  { id: "finished", label: "Finished" },
+];
+
+const SNOOZE_REFRESH_MS = 60_000;
+
+function taskSection(task: Task, now: number): TaskSection {
+  if (isTaskSnoozed(task, now)) return "snoozed";
+  return task.shelvedAt === undefined ? "active" : "finished";
 }
 
-const FINISHED_SECTION_ID = "finished-tasks";
+/** Tasks keyboard navigation walks: active ones, then those of each expanded section. */
+function navigableTasks(tasks: Task[], expanded: ReadonlySet<CollapsibleSection>, now: number) {
+  const sections: TaskSection[] = [
+    "active",
+    ...COLLAPSIBLE_SECTIONS.map((section) => section.id).filter((id) => expanded.has(id)),
+  ];
+  return sections.flatMap((section) => tasks.filter((task) => taskSection(task, now) === section));
+}
+
+function withSectionOf(
+  expanded: ReadonlySet<CollapsibleSection>,
+  task: Task,
+  now: number
+): ReadonlySet<CollapsibleSection> {
+  const section = taskSection(task, now);
+  return section === "active" || expanded.has(section) ? expanded : new Set([...expanded, section]);
+}
 
 export function WorktreeList({
   tasks: allTasks,
@@ -201,6 +229,7 @@ export function WorktreeList({
     delete: onTaskDeleted,
     setPinned: onTaskPinned,
     setShelved: onTaskShelved,
+    snooze: onTaskSnoozed,
     reorderPinned: onPinnedTasksReordered,
     linkIssue: onTaskIssueLinked,
     rename: onTaskRenamed,
@@ -224,7 +253,10 @@ export function WorktreeList({
   } = useShowAutomationTasks();
   const automationTaskCount = allTasks.filter((task) => task.automationId).length;
   const revealing = !!revealTaskId && allTasks.some((task) => task.id === revealTaskId);
-  const [finishedExpanded, setFinishedExpanded] = useState(false);
+  const now = useNow(SNOOZE_REFRESH_MS);
+  const [expandedSections, setExpandedSections] = useState<ReadonlySet<CollapsibleSection>>(
+    new Set()
+  );
   const shownTasks = useMemo(
     () =>
       revealing
@@ -235,12 +267,17 @@ export function WorktreeList({
     [allTasks, project, revealing, showAutomationTasks]
   );
   const tasks = useMemo(
-    () => navigableTasks(shownTasks, finishedExpanded),
-    [shownTasks, finishedExpanded]
+    () => navigableTasks(shownTasks, expandedSections, now),
+    [shownTasks, expandedSections, now]
   );
-  const finishedCount = shownTasks.length - shownTasks.filter(isTaskActive).length;
-  const toggleFinished = () => {
-    setFinishedExpanded((expanded) => !expanded);
+  const sectionCount = (section: TaskSection) =>
+    shownTasks.filter((task) => taskSection(task, now) === section).length;
+  const toggleSection = (section: CollapsibleSection) => {
+    setExpandedSections((expanded) => {
+      const next = new Set(expanded);
+      if (!next.delete(section)) next.add(section);
+      return next;
+    });
     setSelectedIndex(-1);
     setDeleteRequested(false);
   };
@@ -256,6 +293,8 @@ export function WorktreeList({
   };
   const [linkTaskId, setLinkTaskId] = useState<string | null>(null);
   const linkTask = shownTasks.find((task) => task.id === linkTaskId && !task.linearIssueId);
+  const [snoozeTaskId, setSnoozeTaskId] = useState<string | null>(null);
+  const snoozeTask = shownTasks.find((task) => task.id === snoozeTaskId);
   const [showNew, setShowNew] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [deleteRequested, setDeleteRequested] = useState(false);
@@ -298,12 +337,12 @@ export function WorktreeList({
     const task = shownTasks.find((t) => t.id === revealTaskId);
     if (!task) return;
     const showAutomation = showAutomationTasks || !!task.automationId;
-    const expandFinished = finishedExpanded || !isTaskActive(task);
+    const expanded = withSectionOf(expandedSections, task, now);
     setProjectFilter({ workspaceId: workspace?.id, value: "" });
     if (task.automationId) revealAutomationTasks();
-    setFinishedExpanded(expandFinished);
+    setExpandedSections(expanded);
     setSelectedIndex(
-      navigableTasks(listedTasks(allTasks, showAutomation), expandFinished).indexOf(task)
+      navigableTasks(listedTasks(allTasks, showAutomation), expanded, now).indexOf(task)
     );
     setRevealNonce((n) => n + 1);
     if (!openedTask) ringTask(revealTaskId);
@@ -312,7 +351,8 @@ export function WorktreeList({
     revealTaskId,
     shownTasks,
     allTasks,
-    finishedExpanded,
+    expandedSections,
+    now,
     showAutomationTasks,
     revealAutomationTasks,
     onRevealHandled,
@@ -381,12 +421,12 @@ export function WorktreeList({
   const handleCloseTask = () => {
     if (openTask) {
       const showAutomation = showAutomationTasks || !!openTask.automationId;
-      const expandFinished = finishedExpanded || !isTaskActive(openTask);
+      const expanded = withSectionOf(expandedSections, openTask, now);
       setProjectFilter({ workspaceId: workspace?.id, value: "" });
       if (openTask.automationId) revealAutomationTasks();
-      setFinishedExpanded(expandFinished);
+      setExpandedSections(expanded);
       setSelectedIndex(
-        navigableTasks(listedTasks(allTasks, showAutomation), expandFinished).indexOf(openTask)
+        navigableTasks(listedTasks(allTasks, showAutomation), expanded, now).indexOf(openTask)
       );
       setRevealNonce((n) => n + 1);
     }
@@ -417,6 +457,7 @@ export function WorktreeList({
     deleteTask,
     onTaskPinned,
     onTaskShelved,
+    onTaskSnoozed,
     onTaskRenamed,
     onPrReady,
     onOpenTask,
@@ -428,6 +469,7 @@ export function WorktreeList({
       deleteTask,
       onTaskPinned,
       onTaskShelved,
+      onTaskSnoozed,
       onTaskRenamed,
       onPrReady,
       onOpenTask,
@@ -452,10 +494,17 @@ export function WorktreeList({
       },
       toggleShelved: (task) => {
         void latest.current
-          .onTaskShelved(task.id, isTaskActive(task))
+          .onTaskShelved(task.id, task.shelvedAt === undefined)
           .then(() => setSelectedIndex(-1))
           .catch((error) => latest.current.showToast(String(error)));
       },
+      snooze: (task, until) => {
+        void latest.current
+          .onTaskSnoozed(task.id, until)
+          .then(() => setSelectedIndex(-1))
+          .catch((error) => latest.current.showToast(String(error)));
+      },
+      pickSnoozeDate: (task) => setSnoozeTaskId(task.id),
       linkIssue: setLinkTaskId,
       rename: (id, title) => latest.current.onTaskRenamed(id, title),
       markPrReady: hasPrReady ? (id, pr) => latest.current.onPrReady!(id, pr) : undefined,
@@ -482,12 +531,13 @@ export function WorktreeList({
       agentActivity={agentActivities[task.id]}
       repoSlugs={taskLinearStore.repoSlugs(task.members)}
       requestDelete={i >= 0 && i === selectedIndex && deleteRequested}
+      snoozed={taskSection(task, now) === "snoozed"}
     />
   );
 
   const rows = withExits(tasks, exits);
-  const activeRows = rows.filter((row) => isTaskActive(row.task));
-  const finishedRows = rows.filter((row) => !isTaskActive(row.task));
+  const rowsIn = (section: TaskSection) =>
+    rows.filter((row) => taskSection(row.task, now) === section);
 
   const renderRow = ({ task, exit }: (typeof rows)[number]) =>
     exit?.phase === "departing" ? (
@@ -497,7 +547,10 @@ export function WorktreeList({
     ) : (
       <div
         key={task.id}
-        {...reorder.itemProps(task.id, task.pinOrder !== undefined && isTaskActive(task) && !exit)}
+        {...reorder.itemProps(
+          task.id,
+          task.pinOrder !== undefined && taskSection(task, now) === "active" && !exit
+        )}
         inert={!!exit}
         className={`offscreen-lazy [contain-intrinsic-size:auto_7rem] relative transition-opacity ${
           exit ? "opacity-50 saturate-50" : ""
@@ -553,7 +606,7 @@ export function WorktreeList({
         <div className="contents" hidden={taskOpen}>
           <WorktreeListHeader
             workspaceName={workspace.name}
-            taskCount={shownTasks.length - finishedCount}
+            taskCount={sectionCount("active")}
             repoCount={workspace.repos.length}
             projectFilter={
               allTasks.length > 0 && (
@@ -605,24 +658,30 @@ export function WorktreeList({
               )
             ) : (
               <div key="tasks" className="grid gap-3 motion-rise">
-                <ProgressiveRows rows={activeRows}>{renderRow}</ProgressiveRows>
-                {(finishedCount > 0 || finishedRows.length > 0) && (
-                  <section className="grid gap-3">
-                    <h3>
-                      <CollapsibleSectionHeader
-                        expanded={finishedExpanded}
-                        onToggle={toggleFinished}
-                        controls={FINISHED_SECTION_ID}
-                      >
-                        Finished
-                        <span className="text-xs font-normal text-text-muted">{finishedCount}</span>
-                      </CollapsibleSectionHeader>
-                    </h3>
-                    <div id={FINISHED_SECTION_ID} hidden={!finishedExpanded} className="grid gap-3">
-                      <ProgressiveRows rows={finishedRows}>{renderRow}</ProgressiveRows>
-                    </div>
-                  </section>
-                )}
+                <ProgressiveRows rows={rowsIn("active")}>{renderRow}</ProgressiveRows>
+                {COLLAPSIBLE_SECTIONS.map(({ id, label }) => {
+                  const count = sectionCount(id);
+                  const sectionRows = rowsIn(id);
+                  if (count === 0 && sectionRows.length === 0) return null;
+                  const expanded = expandedSections.has(id);
+                  return (
+                    <section key={id} className="grid gap-3">
+                      <h3>
+                        <CollapsibleSectionHeader
+                          expanded={expanded}
+                          onToggle={() => toggleSection(id)}
+                          controls={`${id}-tasks`}
+                        >
+                          {label}
+                          <span className="text-xs font-normal text-text-muted">{count}</span>
+                        </CollapsibleSectionHeader>
+                      </h3>
+                      <div id={`${id}-tasks`} hidden={!expanded} className="grid gap-3">
+                        <ProgressiveRows rows={sectionRows}>{renderRow}</ProgressiveRows>
+                      </div>
+                    </section>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -632,6 +691,13 @@ export function WorktreeList({
 
         {toast && <WorktreeListToast message={toast} />}
 
+        {snoozeTask && (
+          <SnoozeTaskModal
+            key={snoozeTask.id}
+            onSnooze={(until) => onTaskSnoozed(snoozeTask.id, until)}
+            onClose={() => setSnoozeTaskId(null)}
+          />
+        )}
         {linkTask && (
           <LinkIssueModal
             key={linkTask.id}

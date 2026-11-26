@@ -61,9 +61,13 @@ vi.mock("./WorktreeCard", () => ({
         delete {task.id}
       </button>
       <button onClick={() => actions.toggleShelved?.(task)}>shelve {task.id}</button>
+      <button onClick={() => actions.snooze?.(task, LATER)}>snooze {task.id}</button>
+      <button onClick={() => actions.pickSnoozeDate?.(task)}>pick snooze {task.id}</button>
     </>
   ),
 }));
+
+const LATER = "2099-01-01T00:00:00.000Z";
 
 beforeEach(() => {
   vi.mocked(loadShowAutomationTasks).mockReset().mockResolvedValue(true);
@@ -97,6 +101,7 @@ function fixture({
 } = {}) {
   const onTaskPinned = vi.fn().mockResolvedValue(undefined);
   const onTaskShelved = vi.fn().mockResolvedValue(undefined);
+  const onTaskSnoozed = vi.fn().mockResolvedValue(undefined);
   const onPinnedTasksReordered = vi.fn().mockResolvedValue(undefined);
   const listProps = (tasks: Task[], workspaceId = "w1") => (
     <WorktreeList
@@ -110,6 +115,7 @@ function fixture({
         rename: vi.fn(),
         setPinned: onTaskPinned,
         setShelved: onTaskShelved,
+        snooze: onTaskSnoozed,
         reorderPinned: onPinnedTasksReordered,
       }}
       editorApp="cursor"
@@ -138,7 +144,14 @@ function fixture({
   const setTasks = (tasks: Task[]) => view.rerender(listProps(tasks));
   const switchWorkspace = (workspaceId: string, tasks: Task[]) =>
     view.rerender(listProps(tasks, workspaceId));
-  return { onTaskPinned, onTaskShelved, onPinnedTasksReordered, setTasks, switchWorkspace };
+  return {
+    onTaskPinned,
+    onTaskShelved,
+    onTaskSnoozed,
+    onPinnedTasksReordered,
+    setTasks,
+    switchWorkspace,
+  };
 }
 
 it("routes pin toggles and only allows pinned tasks to be dragged", async () => {
@@ -523,4 +536,66 @@ it("keeps the Finished section for the last finished card's exit", async () => {
   } finally {
     delete (Element.prototype as Partial<Element>).animate;
   }
+});
+
+function withSnoozed(until: string, ...ids: string[]) {
+  return TASKS.map((task) => (ids.includes(task.id) ? { ...task, snoozedUntil: until } : task));
+}
+
+function section(name: "Snoozed" | "Finished") {
+  return screen.getByRole("button", { name: new RegExp(name) });
+}
+
+it("keeps snoozed tasks in their own collapsed section until the snooze ends", () => {
+  fixture({ tasks: withSnoozed(LATER, "first") });
+  expect(section("Snoozed")).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("first")).not.toBeInTheDocument();
+  expect(keyboardTaskIds()).toEqual(["second", "unpinned"]);
+});
+
+it("lists a task whose snooze ended among the active ones", () => {
+  fixture({ tasks: withSnoozed("2000-01-01T00:00:00.000Z", "first") });
+  expect(screen.queryByRole("button", { name: /Snoozed/ })).not.toBeInTheDocument();
+  expect(keyboardTaskIds()).toEqual(["first", "second", "unpinned"]);
+});
+
+it("walks active, snoozed and finished tasks in that order once expanded", () => {
+  fixture({
+    tasks: withSnoozed(LATER, "first").map((task) =>
+      task.id === "second" ? { ...task, shelvedAt: SHELVED_AT } : task
+    ),
+  });
+  fireEvent.click(section("Finished"));
+  fireEvent.click(section("Snoozed"));
+  expect(keyboardTaskIds()).toEqual(["unpinned", "first", "second"]);
+});
+
+it("expands the Snoozed section to reveal a snoozed task", () => {
+  fixture({ tasks: withSnoozed(LATER, "second"), revealTaskId: "second" });
+  expect(section("Snoozed")).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("second")).toHaveAttribute("data-selected", "true");
+});
+
+it("snoozes a task from its card", async () => {
+  const { onTaskSnoozed } = fixture();
+  fireEvent.click(screen.getByText("snooze first"));
+  await waitFor(() => expect(onTaskSnoozed).toHaveBeenCalledWith("first", LATER));
+});
+
+it("shows persistence errors from snoozing a task", async () => {
+  const { onTaskSnoozed } = fixture();
+  onTaskSnoozed.mockRejectedValue(new Error("Could not save changes"));
+  fireEvent.click(screen.getByText("snooze first"));
+  expect(await screen.findByText("Error: Could not save changes")).toBeInTheDocument();
+});
+
+it("snoozes a task until the date picked in the dialog", async () => {
+  const { onTaskSnoozed } = fixture();
+  fireEvent.click(screen.getByText("pick snooze first"));
+  fireEvent.change(screen.getByLabelText("Snooze until"), { target: { value: "2099-03-04" } });
+  fireEvent.click(screen.getByRole("button", { name: "Snooze" }));
+  await waitFor(() =>
+    expect(onTaskSnoozed).toHaveBeenCalledWith("first", new Date(2099, 2, 4).toISOString())
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });

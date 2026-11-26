@@ -172,7 +172,11 @@ it("counts only active tasks per workspace", () => {
   render(
     <WorkspaceList
       workspaces={workspaces}
-      tasks={[task, { ...task, id: "finished", shelvedAt: "2026-09-22T00:00:00Z" }]}
+      tasks={[
+        task,
+        { ...task, id: "finished", shelvedAt: "2026-09-22T00:00:00Z" },
+        { ...task, id: "snoozed", snoozedUntil: "2099-01-01T00:00:00Z" },
+      ]}
       selectedWorkspaceId="ws-active"
       onSelect={vi.fn()}
       onAdd={vi.fn()}

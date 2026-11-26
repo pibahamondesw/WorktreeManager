@@ -218,6 +218,7 @@ function App() {
       delete: removeTask,
       setPinned: (id, pinned) => operations.setTaskPinned(id, pinned),
       setShelved: (id, shelved) => operations.setTaskShelved(id, shelved),
+      snooze: (id, until) => operations.snoozeTask(id, until),
       reorderPinned: (id, targetId) => operations.reorderPinnedTasks(id, targetId),
       linkIssue: (id, issue) => operations.linkTaskIssue(id, issue),
       rename: (id, title) => operations.renameTask(id, title),

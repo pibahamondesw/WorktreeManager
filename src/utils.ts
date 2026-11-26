@@ -244,6 +244,7 @@ export function normalizeTasks(raw: unknown): Task[] {
           ? t.pinOrder
           : undefined,
       shelvedAt: persistedInstant(t.shelvedAt),
+      snoozedUntil: persistedInstant(t.snoozedUntil),
       agent: typeof t.agent === "string" && t.agent ? t.agent : undefined,
       automationId:
         typeof t.automationId === "string" && t.automationId ? t.automationId : undefined,
@@ -322,8 +323,17 @@ export function migrateLegacyToWorkspaces(
   return { workspaces, tasks };
 }
 
-export function isTaskActive(task: Task): boolean {
-  return task.shelvedAt === undefined;
+export function isTaskSnoozed(task: Task, now: number): boolean {
+  return task.snoozedUntil !== undefined && Date.parse(task.snoozedUntil) > now;
+}
+
+export function isTaskActive(task: Task, now: number): boolean {
+  return task.shelvedAt === undefined && !isTaskSnoozed(task, now);
+}
+
+export function startOfLocalDay(now: number, daysAhead = 0): Date {
+  const day = new Date(now);
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate() + daysAhead);
 }
 
 export function compareTaskPins(a: Task, b: Task): number {

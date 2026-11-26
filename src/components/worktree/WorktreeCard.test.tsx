@@ -44,6 +44,8 @@ type CardProps = Omit<ComponentProps<typeof WorktreeCard>, "actions"> & {
   onLinkIssue?: () => void;
   onTogglePin?: () => void;
   onToggleShelved?: () => void;
+  onSnooze?: (until: string | null) => void;
+  onPickSnoozeDate?: () => void;
 };
 
 function Card({
@@ -54,6 +56,8 @@ function Card({
   onLinkIssue,
   onTogglePin,
   onToggleShelved,
+  onSnooze,
+  onPickSnoozeDate,
   ...props
 }: CardProps) {
   const actions: TaskCardActions = {
@@ -65,6 +69,8 @@ function Card({
     linkIssue: onLinkIssue && (() => onLinkIssue()),
     togglePin: onTogglePin && (() => onTogglePin()),
     toggleShelved: onToggleShelved && (() => onToggleShelved()),
+    snooze: onSnooze && ((_task, until) => onSnooze(until)),
+    pickSnoozeDate: onPickSnoozeDate && (() => onPickSnoozeDate()),
   };
   return <WorktreeCard {...props} actions={actions} />;
 }
@@ -618,5 +624,59 @@ describe("WorktreeCard Finished menu entry", () => {
     expect(onToggleShelved).toHaveBeenCalledOnce();
     expect(screen.queryByText(item)).not.toBeInTheDocument();
     expect(onOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorktreeCard snooze", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function renderSnoozeCard(props: Partial<CardProps> = {}) {
+    const onSnooze = vi.fn();
+    const onPickSnoozeDate = vi.fn();
+    render(
+      <Card
+        task={task}
+        workspace={workspace}
+        vault={vault}
+        onDelete={vi.fn()}
+        repoSlugs={{}}
+        onSnooze={onSnooze}
+        onPickSnoozeDate={onPickSnoozeDate}
+        {...props}
+      />
+    );
+    fireEvent.click(screen.getByTitle("More actions"));
+    return { onSnooze, onPickSnoozeDate };
+  }
+
+  it.each([
+    { item: "Snooze until tomorrow", until: new Date(2026, 1, 2) },
+    { item: "Snooze until next week", until: new Date(2026, 1, 8) },
+  ])("runs $item from the menu and closes it", ({ item, until }) => {
+    vi.useFakeTimers({ now: new Date(2026, 1, 1, 15, 30), toFake: ["Date"] });
+    const { onSnooze } = renderSnoozeCard();
+    fireEvent.click(screen.getByText(item));
+    expect(onSnooze).toHaveBeenCalledWith(until.toISOString());
+    expect(screen.queryByText(item)).not.toBeInTheDocument();
+  });
+
+  it("opens the date picker from the menu", () => {
+    const { onPickSnoozeDate } = renderSnoozeCard();
+    fireEvent.click(screen.getByText("Snooze until…"));
+    expect(onPickSnoozeDate).toHaveBeenCalledOnce();
+    expect(screen.queryByText("Snooze until…")).not.toBeInTheDocument();
+  });
+
+  it("shows until when a snoozed task returns and offers to unsnooze it", () => {
+    const until = new Date(2026, 1, 8).toISOString();
+    const { onSnooze } = renderSnoozeCard({
+      task: { ...task, snoozedUntil: until },
+      snoozed: true,
+    });
+    expect(screen.getByText(/^Snoozed until /)).toBeInTheDocument();
+    expect(screen.queryByText("Snooze until tomorrow")).not.toBeInTheDocument();
+    expect(screen.queryByText("Snooze until…")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Unsnooze"));
+    expect(onSnooze).toHaveBeenCalledWith(null);
   });
 });

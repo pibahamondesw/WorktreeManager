@@ -2,6 +2,9 @@ import { githubSlugFromRemote } from "./utils";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   timeAgo,
+  isTaskActive,
+  isTaskSnoozed,
+  startOfLocalDay,
   linearIssueUrl,
   collectSecrets,
   hasSecrets,
@@ -283,6 +286,15 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     expect(malformed.shelvedAt).toBeUndefined();
   });
 
+  it("keeps until when a task is snoozed and drops malformed instants", () => {
+    const [snoozed, malformed] = normalizeTasks([
+      { id: "a", workspaceId: "w1", snoozedUntil: "2026-02-01T00:00:00.000Z" },
+      { id: "b", workspaceId: "w1", snoozedUntil: 3 },
+    ]);
+    expect(snoozed.snoozedUntil).toBe("2026-02-01T00:00:00.000Z");
+    expect(malformed.snoozedUntil).toBeUndefined();
+  });
+
   it("returns empty arrays for nullish input", () => {
     expect(normalizeWorkspaces(undefined)).toEqual([]);
     expect(normalizeTasks(null)).toEqual([]);
@@ -502,4 +514,29 @@ it("normalizes GitHub SSH and HTTPS remotes and rejects other hosts", () => {
   expect(githubSlugFromRemote("https://github.com/acme/web")).toBe("acme/web");
   expect(githubSlugFromRemote("https://github.com/acme/acme.js")).toBe("acme/acme.js");
   expect(githubSlugFromRemote("https://gitlab.com/x/y")).toBeNull();
+});
+
+describe("task sections", () => {
+  const base = { id: "t", workspaceId: "w", branchName: "b", members: [], createdAt: "" };
+  const now = Date.parse("2026-02-01T12:00:00.000Z");
+
+  it("keeps a task snoozed only until its instant", () => {
+    const task = { ...base, snoozedUntil: "2026-02-02T00:00:00.000Z" };
+    expect(isTaskSnoozed(task, now)).toBe(true);
+    expect(isTaskActive(task, now)).toBe(false);
+    expect(isTaskSnoozed(task, Date.parse(task.snoozedUntil))).toBe(false);
+    expect(isTaskActive(task, Date.parse(task.snoozedUntil))).toBe(true);
+  });
+
+  it("keeps finished tasks out of the active ones", () => {
+    expect(isTaskActive({ ...base, shelvedAt: "2026-01-01T00:00:00.000Z" }, now)).toBe(false);
+    expect(isTaskActive(base, now)).toBe(true);
+  });
+
+  it("starts days at local midnight", () => {
+    const local = new Date(2026, 1, 1, 15, 30);
+    expect(startOfLocalDay(local.getTime(), 1)).toEqual(new Date(2026, 1, 2));
+    expect(startOfLocalDay(local.getTime(), 7)).toEqual(new Date(2026, 1, 8));
+    expect(startOfLocalDay(new Date(2026, 0, 31, 23).getTime(), 1)).toEqual(new Date(2026, 1, 1));
+  });
 });

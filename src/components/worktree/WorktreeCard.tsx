@@ -25,7 +25,7 @@ import { PullRequestLinks } from "./PullRequestLinks";
 import { runTaskAction, TaskActionId } from "../../services/taskActions";
 import { groupTaskPrs } from "../../services/taskLinear";
 import { openCreatePr } from "../../services/pullRequest";
-import { timeAgo } from "../../utils";
+import { startOfLocalDay, timeAgo } from "../../utils";
 import { TerminalStatus } from "../../services/terminal";
 import { AgentActivity, taskIndicator } from "../../services/agentActivity";
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
@@ -50,6 +50,7 @@ interface WorktreeCardProps {
   agentActivity?: AgentActivity;
   repoSlugs: Record<string, string> | null;
   requestDelete?: boolean;
+  snoozed?: boolean;
 }
 
 export interface TaskCardActions {
@@ -57,6 +58,8 @@ export interface TaskCardActions {
   delete: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
   togglePin?: (task: Task) => void;
   toggleShelved?: (task: Task) => void;
+  snooze?: (task: Task, until: string | null) => void;
+  pickSnoozeDate?: (task: Task) => void;
   linkIssue?: (taskId: string) => void;
   rename?: (taskId: string, title: string) => Promise<unknown>;
   markPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
@@ -98,6 +101,7 @@ export const WorktreeCard = memo(function WorktreeCard({
   agentActivity,
   repoSlugs,
   requestDelete,
+  snoozed = false,
 }: WorktreeCardProps) {
   const onToast = actions.toast;
   const onOpenError = actions.reportError;
@@ -177,6 +181,14 @@ export const WorktreeCard = memo(function WorktreeCard({
 
   const runAction = (action: TaskActionId) =>
     void runTaskAction(action, { task, workspace, vault }, (message) => onToast(message));
+
+  const snoozeFromMenu = (daysAhead: number | null) => {
+    setMenuOpen(false);
+    actions.snooze!(
+      task,
+      daysAhead === null ? null : startOfLocalDay(Date.now(), daysAhead).toISOString()
+    );
+  };
 
   const handleMenuAction = (action: TaskActionId) => {
     setMenuOpen(false);
@@ -273,6 +285,9 @@ export const WorktreeCard = memo(function WorktreeCard({
             {agentActivity?.state === "waiting" && <Badge variant="warning">Needs input</Badge>}
             {agentActivity?.state === "done" && agentActivity.unread && (
               <Badge variant="success">Done</Badge>
+            )}
+            {snoozed && task.snoozedUntil && (
+              <Badge>{`Snoozed until ${snoozeDateLabel(task.snoozedUntil)}`}</Badge>
             )}
             {age && age.label && (
               <span
@@ -478,6 +493,29 @@ export const WorktreeCard = memo(function WorktreeCard({
                     {task.shelvedAt === undefined ? "Move to Finished" : "Move to active"}
                   </MenuButton>
                 )}
+                {actions.snooze &&
+                  (snoozed ? (
+                    <MenuButton onClick={() => snoozeFromMenu(null)}>Unsnooze</MenuButton>
+                  ) : (
+                    <>
+                      <MenuButton onClick={() => snoozeFromMenu(1)}>
+                        Snooze until tomorrow
+                      </MenuButton>
+                      <MenuButton onClick={() => snoozeFromMenu(7)}>
+                        Snooze until next week
+                      </MenuButton>
+                    </>
+                  ))}
+                {actions.pickSnoozeDate && !snoozed && (
+                  <MenuButton
+                    onClick={() => {
+                      setMenuOpen(false);
+                      actions.pickSnoozeDate!(task);
+                    }}
+                  >
+                    Snooze until…
+                  </MenuButton>
+                )}
                 {vault.enabled && (
                   <MenuButton
                     label={shortcutLabel("list.note")}
@@ -584,4 +622,8 @@ function MenuButton({
       {label && <span className="text-text-muted font-mono text-[0.625rem]">{label}</span>}
     </button>
   );
+}
+
+function snoozeDateLabel(until: string) {
+  return new Date(until).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
