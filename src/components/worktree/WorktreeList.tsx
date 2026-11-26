@@ -39,6 +39,7 @@ import {
   GitStatus,
 } from "../../types";
 import { TaskView } from "../task/TaskView";
+import { TaskEditorContext } from "../chat/markdownPreviewContext";
 import type { SetupControls } from "../task/TaskSetupProgress";
 import { OpenedTask, OpenTaskOptions } from "../../hooks/useOpenTask";
 import {
@@ -450,24 +451,26 @@ export function WorktreeList({
     <LinearProvider apiKey={workspace.linearApiKey ?? null}>
       <div className="flex-1 flex flex-col min-h-0 min-w-0 relative">
         {openTask && openedTask && (
-          <TaskView
-            key={openTask.id}
-            task={openTask}
-            surface={openedTask.surface}
-            linearInfo={openTask.linearIssueId ? linearInfo[openTask.linearIssueId] : undefined}
-            linearOrgUrlKey={workspace.linearOrgUrlKey}
-            gitStatus={aggregateTaskStatus(openTask, gitStatuses)}
-            sidebarCollapsed={sidebarCollapsed}
-            onExpandSidebar={onExpandSidebar}
-            onBack={handleCloseTask}
-            onSwitchSurface={(surface) => onSwitchSurface(openTask.id, surface)}
-            agentActivity={agentActivities[openTask.id]}
-            onRename={
-              openTask.linearIssueId ? (title) => onTaskRenamed(openTask.id, title) : undefined
-            }
-            onRenameError={showToast}
-            setupControls={setupControls}
-          />
+          <TaskEditorContext.Provider value={editorApp}>
+            <TaskView
+              key={openTask.id}
+              task={openTask}
+              surface={openedTask.surface}
+              linearInfo={openTask.linearIssueId ? linearInfo[openTask.linearIssueId] : undefined}
+              linearOrgUrlKey={workspace.linearOrgUrlKey}
+              gitStatus={aggregateTaskStatus(openTask, gitStatuses)}
+              sidebarCollapsed={sidebarCollapsed}
+              onExpandSidebar={onExpandSidebar}
+              onBack={handleCloseTask}
+              onSwitchSurface={(surface) => onSwitchSurface(openTask.id, surface)}
+              agentActivity={agentActivities[openTask.id]}
+              onRename={
+                openTask.linearIssueId ? (title) => onTaskRenamed(openTask.id, title) : undefined
+              }
+              onRenameError={showToast}
+              setupControls={setupControls}
+            />
+          </TaskEditorContext.Provider>
         )}
         {/* The grid stays mounted while a task is open so returning is instant (no re-probing of
             editors, no card remounts). */}

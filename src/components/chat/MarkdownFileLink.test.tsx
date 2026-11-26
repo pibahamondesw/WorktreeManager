@@ -4,10 +4,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
+import { EditorApp } from "../../types";
 import { MarkdownLink } from "./MarkdownLink";
-import { MarkdownPreviewContext, MarkdownPreviewRequest } from "./markdownPreviewContext";
+import {
+  MarkdownPreviewContext,
+  MarkdownPreviewRequest,
+  TaskEditorContext,
+} from "./markdownPreviewContext";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 
 const open = vi.fn<(request: MarkdownPreviewRequest) => void>();
 const writeText = vi.fn<(text: string) => Promise<void>>();
@@ -22,11 +29,18 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderLink(href: string, text?: ReactNode) {
+function renderLink(
+  href: string,
+  text?: ReactNode,
+  editor: EditorApp | null = null,
+  base?: string
+) {
   return render(
-    <MarkdownPreviewContext.Provider value={{ folders: ["/wt/api", "/wt/web"], open }}>
-      <MarkdownLink href={href}>{text}</MarkdownLink>
-    </MarkdownPreviewContext.Provider>
+    <TaskEditorContext.Provider value={editor}>
+      <MarkdownPreviewContext.Provider value={{ folders: ["/wt/api", "/wt/web"], base, open }}>
+        <MarkdownLink href={href}>{text}</MarkdownLink>
+      </MarkdownPreviewContext.Provider>
+    </TaskEditorContext.Provider>
   );
 }
 
@@ -120,6 +134,59 @@ it("reports when the path cannot be copied", async () => {
   fireEvent.click(screen.getByRole("menuitem", { name: "Copy path" }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not copy the path");
+});
+
+it("opens a chip in the selected editor at its line", () => {
+  renderLink("src/app.ts#L12", undefined, "cursor");
+  fireEvent.contextMenu(screen.getByRole("link"));
+  const action = screen.getByRole("menuitem", { name: "Open in Cursor" });
+  expect(action).toHaveAttribute("title", "Open in Cursor");
+
+  fireEvent.click(action);
+
+  expect(invoke).toHaveBeenCalledWith("open_editor_file", {
+    editor: "cursor",
+    folders: ["/wt/api", "/wt/web"],
+    path: "src/app.ts",
+    line: 12,
+    base: undefined,
+  });
+  expect(open).not.toHaveBeenCalled();
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("link")).toHaveFocus();
+});
+
+it("passes the enclosing document's directory separately from the repositories", () => {
+  renderLink("details.md", undefined, "zed", "/wt/web/docs");
+  fireEvent.contextMenu(screen.getByRole("link"));
+
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open in Zed" }));
+
+  expect(invoke).toHaveBeenCalledWith("open_editor_file", {
+    editor: "zed",
+    folders: ["/wt/api", "/wt/web"],
+    path: "details.md",
+    line: undefined,
+    base: "/wt/web/docs",
+  });
+});
+
+it("shows the editor launch error on the chip", async () => {
+  vi.mocked(invoke).mockRejectedValueOnce("File not found: missing.ts");
+  renderLink("missing.ts", undefined, "vscode-web");
+  fireEvent.contextMenu(screen.getByRole("link"));
+
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open in VS Code Desktop" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("File not found: missing.ts");
+});
+
+it("keeps copy actions available when the selection is an agent", () => {
+  renderLink("src/app.ts", undefined, "codex");
+  fireEvent.contextMenu(screen.getByRole("link"));
+
+  expect(screen.getByRole("menuitem", { name: "Copy path" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: /Open in/ })).toBeNull();
 });
 
 it.each([{ key: "ContextMenu" }, { key: "F10", shiftKey: true }])(

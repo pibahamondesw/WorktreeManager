@@ -8,8 +8,8 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::changes::{content, image_mime, FileContent, MAX_IMAGE_BYTES};
-use super::markdown::candidates;
 use crate::commands::user_file::UserFile;
+use crate::commands::validation::{is_inside_any, resolve_worktree_file};
 
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
@@ -18,13 +18,6 @@ const MAX_TEXT_BYTES: usize = 1024 * 1024;
 pub struct PreviewFile {
     pub path: String,
     pub content: FileContent,
-}
-
-fn is_inside_any(folders: &[String], path: &Path) -> bool {
-    folders
-        .iter()
-        .filter_map(|folder| Path::new(folder).canonicalize().ok())
-        .any(|folder| path.starts_with(folder))
 }
 
 fn size_limit(path: &str) -> usize {
@@ -41,16 +34,7 @@ pub fn read(
     path: &str,
     home: Option<&Path>,
 ) -> Result<PreviewFile, String> {
-    let roots: Vec<String> = base
-        .map(String::from)
-        .into_iter()
-        .chain(folders.iter().cloned())
-        .collect();
-    let found = candidates(&roots, path, home)
-        .into_iter()
-        .filter_map(|candidate| candidate.canonicalize().ok())
-        .find(|real| real.is_file() && is_inside_any(folders, real))
-        .ok_or_else(|| format!("File not found in the task repositories: {path}"))?;
+    let found = resolve_worktree_file(folders, base, path, home)?;
     let size = fs::metadata(&found).map_err(|e| e.to_string())?.len() as usize;
     let found_path = found.to_string_lossy().to_string();
     if size > size_limit(&found_path) {

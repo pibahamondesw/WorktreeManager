@@ -1,20 +1,41 @@
-import { ComponentProps, MouseEvent, useState } from "react";
+import { ComponentProps, MouseEvent, useContext, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { openFileInEditor } from "../../services/openEditor";
 import { fileReference, markdownPath } from "./markdownDocument";
 import { MarkdownFileLink } from "./MarkdownFileLink";
-import { useMarkdownPreview } from "./markdownPreviewContext";
+import { TaskEditorContext, useMarkdownPreview } from "./markdownPreviewContext";
+
+const FILE_EDITOR_LABELS = {
+  cursor: "Open in Cursor",
+  "vscode-web": "Open in VS Code Desktop",
+  zed: "Open in Zed",
+} as const;
 
 export function MarkdownLink({ href, children, title }: ComponentProps<"a">) {
   const [linkError, setLinkError] = useState<string | null>(null);
   const preview = useMarkdownPreview();
+  const editor = useContext(TaskEditorContext);
   const file = preview ? fileReference(href) : null;
   if (preview && file) {
     const documentPath = markdownPath(href);
+    const editorLabel =
+      editor === "cursor" || editor === "vscode-web" || editor === "zed"
+        ? FILE_EDITOR_LABELS[editor]
+        : null;
     return (
       <MarkdownFileLink
         href={href}
         reference={file}
         folders={preview.folders}
+        editorAction={
+          editor && editorLabel
+            ? {
+                label: editorLabel,
+                run: () =>
+                  openFileInEditor(editor, preview.folders, file.path, file.line, preview.base),
+              }
+            : undefined
+        }
         onOpen={() =>
           preview.open({
             source: documentPath ? { kind: "file", path: documentPath } : { kind: "code", ...file },

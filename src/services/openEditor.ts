@@ -14,6 +14,14 @@ export interface OpenEditorResult {
   workspaceFile: string | null;
 }
 
+export const openFileInEditor = (
+  editor: EditorApp,
+  folders: string[],
+  path: string,
+  line?: number,
+  base?: string
+) => invoke<void>("open_editor_file", { editor, folders, path, line, base });
+
 /**
  * Open a task's folders in the given editor via the `open_editor` Tauri command.
  *

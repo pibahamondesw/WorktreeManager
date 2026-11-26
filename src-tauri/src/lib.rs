@@ -84,6 +84,7 @@ pub fn run() {
                 commands::detected_setup::prepare_detected_setup,
                 commands::detected_setup::run_detected_setup,
                 commands::editor::open_editor,
+                commands::editor::open_editor_file,
                 commands::editor::check_app_installed,
                 commands::export::save_png,
                 commands::workspace::remove_task_workspace,

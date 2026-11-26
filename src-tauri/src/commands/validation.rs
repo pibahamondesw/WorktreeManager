@@ -4,6 +4,72 @@ use serde::{Deserialize, Serialize};
 
 use super::git::{git_command, git_worktree_list};
 
+fn file_candidates(
+    folders: &[String],
+    base: Option<&str>,
+    path: &str,
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
+    if let Some(rest) = path.strip_prefix("~/") {
+        return home.map(|home| home.join(rest)).into_iter().collect();
+    }
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return vec![path.to_path_buf()];
+    }
+    base.into_iter()
+        .chain(folders.iter().map(String::as_str))
+        .map(|folder| Path::new(folder).join(path))
+        .collect()
+}
+
+pub(crate) fn is_inside_any(folders: &[String], path: &Path) -> bool {
+    folders
+        .iter()
+        .filter_map(|folder| Path::new(folder).canonicalize().ok())
+        .any(|folder| path.starts_with(folder))
+}
+
+pub(crate) fn resolve_worktree_file(
+    folders: &[String],
+    base: Option<&str>,
+    path: &str,
+    home: Option<&Path>,
+) -> Result<PathBuf, String> {
+    file_candidates(folders, base, path, home)
+        .into_iter()
+        .filter_map(|candidate| candidate.canonicalize().ok())
+        .find(|real| real.is_file() && is_inside_any(folders, real))
+        .ok_or_else(|| format!("File not found in the task repositories: {path}"))
+}
+
+pub(crate) fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["md", "markdown", "mdx"].contains(&extension.to_ascii_lowercase().as_str())
+        })
+}
+
+pub(crate) fn resolve_markdown_file(
+    folders: &[String],
+    base: Option<&str>,
+    path: &str,
+    home: Option<&Path>,
+) -> Result<PathBuf, String> {
+    if !is_markdown_path(Path::new(path)) {
+        return Err(format!("Not a Markdown file: {path}"));
+    }
+    let found = file_candidates(folders, base, path, home)
+        .into_iter()
+        .find_map(|candidate| candidate.canonicalize().ok().filter(|real| real.is_file()))
+        .ok_or_else(|| format!("File not found: {path}"))?;
+    if !is_markdown_path(&found) {
+        return Err(format!("Not a Markdown file: {path}"));
+    }
+    Ok(found)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Repository {
