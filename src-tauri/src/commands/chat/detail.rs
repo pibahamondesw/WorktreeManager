@@ -71,6 +71,7 @@ fn without_detail(item: &ChatItem) -> ChatItem {
         title: item.title.clone(),
         detail: None,
         detail_length: None,
+        command_activity: item.command_activity.clone(),
         status: item.status.clone(),
         checkpoint: item.checkpoint.clone(),
         duration_ms: item.duration_ms,
@@ -100,6 +101,7 @@ fn ending(text: &str, max_bytes: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::chat::model::CommandActivity;
 
     const LIMITS: DetailLimits = DetailLimits {
         tail: 4,
@@ -120,6 +122,17 @@ mod tests {
         assert_eq!(shown.detail_length, Some(13));
         assert_eq!(shown.title.as_deref(), Some("make test"));
         assert_eq!(shown.status.as_deref(), Some("inProgress"));
+    }
+
+    #[test]
+    fn a_collapsed_command_row_keeps_its_activity() {
+        let mut item = command("file contents");
+        item.command_activity = Some(CommandActivity::Read {
+            paths: vec!["/wt/a.txt".into()],
+        });
+        let shown = for_pane(&item, None, LIMITS);
+        assert_eq!(shown.command_activity, item.command_activity);
+        assert_eq!(shown.detail, None);
     }
 
     #[test]

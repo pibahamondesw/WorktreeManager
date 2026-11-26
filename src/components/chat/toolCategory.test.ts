@@ -2,12 +2,20 @@ import { expect, it } from "vitest";
 import { ChatItem } from "../../services/chat";
 import { summarizeWork, toolCategory } from "./toolCategory";
 
-const command = (id: string): ChatItem => ({ id, kind: "command", text: "", title: "ls" });
+const command = (id: string, commandActivity?: ChatItem["commandActivity"]): ChatItem => ({
+  id,
+  kind: "command",
+  text: "",
+  title: "ls",
+  commandActivity,
+});
 const edit = (id: string): ChatItem => ({ id, kind: "fileChange", text: "", title: "Edit a.ts" });
 const tool = (id: string, title?: string): ChatItem => ({ id, kind: "tool", text: "", title });
 
 it.each([
   [command("c"), "command"],
+  [command("r", { kind: "read", paths: ["/a.ts"] }), "read"],
+  [command("s", { kind: "search" }), "search"],
   [edit("e"), "edit"],
   [tool("r", "Read"), "read"],
   [tool("g", "Grep"), "search"],
@@ -47,6 +55,17 @@ it("counts a file read in several parts once", () => {
   ];
 
   expect(summarizeWork(steps)).toBe("Read 3 files");
+});
+
+it("summarizes Codex exploration like Claude and counts distinct paths without command output", () => {
+  const steps = [
+    command("r1", { kind: "read", paths: ["/a.ts", "/b.ts"] }),
+    { ...command("r2", { kind: "read", paths: ["/a.ts"] }), detail: "file contents" },
+    { ...tool("r3", "Read"), detail: "/b.ts" },
+    command("s", { kind: "search" }),
+  ];
+
+  expect(summarizeWork(steps)).toBe("Read 2 files · Searched once");
 });
 
 it("counts repeated web and code searches", () => {

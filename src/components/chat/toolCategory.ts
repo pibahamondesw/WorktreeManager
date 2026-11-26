@@ -38,13 +38,19 @@ const SUMMARIZED_CATEGORIES = 2;
 
 export function toolCategory(item: ChatItem): ToolCategory {
   if (item.kind === "fileChange") return "edit";
-  if (item.kind === "command") return "command";
+  if (item.kind === "command") return item.commandActivity?.kind ?? "command";
   return CATEGORY_BY_TOOL.get(item.title ?? "") ?? "other";
 }
 
 /** Distinct files read; a read whose path isn't known counts on its own. */
 const readFiles = (reads: ChatItem[]) =>
-  new Set(reads.map((read) => read.detail?.split("\n", 1)[0] ?? read.id)).size;
+  new Set(
+    reads.flatMap((read) =>
+      read.commandActivity?.kind === "read"
+        ? read.commandActivity.paths
+        : [read.detail?.split("\n", 1)[0] ?? read.id]
+    )
+  ).size;
 
 /** Names the two most telling kinds of step, edits and commands first, and counts the rest. */
 export function summarizeWork(steps: ChatItem[]): string {
