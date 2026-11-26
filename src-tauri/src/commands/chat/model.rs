@@ -49,6 +49,13 @@ pub enum ItemKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CommandActivity {
+    Read { paths: Vec<String> },
+    Search,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatItem {
     pub id: String,
@@ -61,6 +68,8 @@ pub struct ChatItem {
     /// Bytes in the full `detail` when the pane receives only its end, or none of it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail_length: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_activity: Option<CommandActivity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,6 +107,7 @@ impl ChatItem {
             title: None,
             detail: None,
             detail_length: None,
+            command_activity: None,
             status: None,
             checkpoint: None,
             duration_ms: None,

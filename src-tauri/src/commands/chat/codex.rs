@@ -1862,6 +1862,33 @@ fn interrupted_marker(turn: &Value) -> Option<ChatItem> {
     Some(ChatItem::interrupted(format!("interrupted-{id}")))
 }
 
+fn command_activity(item: &Value) -> Option<CommandActivity> {
+    let actions = item["commandActions"].as_array()?;
+    match actions.first()?["type"].as_str()? {
+        "read" => actions
+            .iter()
+            .map(|action| {
+                if action["type"] != "read" {
+                    return None;
+                }
+                action["path"]
+                    .as_str()
+                    .filter(|path| !path.is_empty())
+                    .map(String::from)
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(|paths| CommandActivity::Read { paths }),
+        "search" | "listFiles"
+            if actions
+                .iter()
+                .all(|action| matches!(action["type"].as_str(), Some("search" | "listFiles"))) =>
+        {
+            Some(CommandActivity::Search)
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
     let id = item["id"].as_str()?;
     let text = |key: &str| item[key].as_str().unwrap_or_default().to_string();
@@ -1895,10 +1922,14 @@ pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
             ChatItem::new(id, ItemKind::Reasoning, summary)
         }
         "plan" => ChatItem::new(id, ItemKind::Notice, text("text")).titled("Plan"),
-        "commandExecution" => ChatItem::new(id, ItemKind::Command, "")
-            .titled(text("command"))
-            .with_detail(item["aggregatedOutput"].as_str().map(String::from))
-            .with_status(status_of(item)),
+        "commandExecution" => {
+            let mut command = ChatItem::new(id, ItemKind::Command, "")
+                .titled(text("command"))
+                .with_detail(item["aggregatedOutput"].as_str().map(String::from))
+                .with_status(status_of(item));
+            command.command_activity = command_activity(item);
+            command
+        }
         "fileChange" => {
             let changes = item["changes"].as_array().cloned().unwrap_or_default();
             let paths = changes
@@ -1952,6 +1983,95 @@ pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_reads_keep_paths_in_live_and_restored_items() {
+        let (mut provider, mut snapshot) = ready(None);
+        provider.thread_id = Some("th1".into());
+        let mut item = json!({
+            "id": "read",
+            "type": "commandExecution",
+            "command": "cat a.txt && cat b.txt",
+            "status": "inProgress",
+            "commandActions": [
+                {"type": "read", "command": "cat a.txt", "path": "/wt/a.txt", "name": "a.txt"},
+                {"type": "read", "command": "cat b.txt", "path": "/wt/b.txt", "name": "b.txt"}
+            ]
+        });
+        let activity = json!({"kind": "read", "paths": ["/wt/a.txt", "/wt/b.txt"]});
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({"method": "item/started", "params": {"threadId": "th1", "item": item}}),
+        );
+        let started = serde_json::to_value(&snapshot.items[0]).unwrap();
+        assert_eq!(started["kind"], "command");
+        assert_eq!(started["commandActivity"], activity);
+
+        item["status"] = json!("completed");
+        item["aggregatedOutput"] = json!("file contents");
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({"method": "item/completed", "params": {"threadId": "th1", "item": item}}),
+        );
+        let restored = thread_items(&json!({"turns": [{"items": [item]}]}));
+        assert_eq!(restored, snapshot.items);
+        let completed = serde_json::to_value(&restored[0]).unwrap();
+        assert_eq!(completed["commandActivity"], activity);
+        assert_eq!(completed["detail"], "file contents");
+    }
+
+    #[test]
+    fn searches_and_file_listings_have_search_activity() {
+        for actions in [
+            json!([{"type": "search", "command": "rg pattern", "query": "pattern"}]),
+            json!([{"type": "listFiles", "command": "rg --files"}]),
+            json!([{"type": "listFiles"}, {"type": "search"}]),
+        ] {
+            let item = map_item(&json!({
+                "id": "search", "type": "commandExecution", "commandActions": actions
+            }))
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(item).unwrap()["commandActivity"],
+                json!({"kind": "search"})
+            );
+        }
+    }
+
+    #[test]
+    fn old_commands_without_action_metadata_keep_their_serialized_shape() {
+        let item = json!({
+            "id": "old", "type": "commandExecution", "command": "cat a.txt", "status": "completed"
+        });
+        let restored = thread_items(&json!({"turns": [{"items": [item]}]}));
+        assert_eq!(
+            serde_json::to_value(&restored[0]).unwrap(),
+            json!({"id": "old", "kind": "command", "text": "", "title": "cat a.txt", "status": "completed"})
+        );
+    }
+
+    #[test]
+    fn incomplete_or_mixed_action_metadata_leaves_a_generic_command() {
+        for actions in [
+            json!({"type": "read"}),
+            json!([]),
+            json!([null]),
+            json!([{"type": "unknown"}]),
+            json!([{"type": "read"}]),
+            json!([{"type": "read", "path": ""}]),
+            json!([{"type": "read", "path": "/wt/a.txt"}, {"type": "unknown"}]),
+            json!([{"type": "search"}, {"type": "read", "path": "/wt/a.txt"}]),
+        ] {
+            let item = map_item(&json!({
+                "id": "generic", "type": "commandExecution", "commandActions": actions
+            }))
+            .unwrap();
+            assert_eq!(item.kind, ItemKind::Command);
+            assert_eq!(item.command_activity, None, "{actions}");
+        }
+    }
 
     pub(super) fn feed(
         provider: &mut CodexProvider,
