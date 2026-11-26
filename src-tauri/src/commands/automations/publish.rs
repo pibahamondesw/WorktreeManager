@@ -712,9 +712,20 @@ impl Publisher {
         Ok((marker, name.to_string()))
     }
 
+    /// `{tracker.issue}`, which Linear finds right away, while its marker search may not see a
+    /// just-created issue yet.
+    fn known_issue(&self, scope: &PublishScope) -> Option<String> {
+        let known = self.values.get("tracker.issue");
+        known.or_else(|| published(scope, "tracker.issue")).cloned()
+    }
+
     fn move_issue(&mut self, scope: &PublishScope, state: &str) -> Result<Outcome, String> {
         let (marker, name) = self.state_target(scope, state)?;
-        let params = json!({ "workspaceId": scope.workspace_id, "marker": marker, "state": name });
+        let mut params =
+            json!({ "workspaceId": scope.workspace_id, "marker": marker, "state": name });
+        if let Some(known) = self.known_issue(scope) {
+            params["issue"] = json!(known);
+        }
         let issue = operation(self.bridge.call("linear.issue-state", params))?;
         let identifier = text(&issue, "identifier")?;
         self.values.insert("tracker.issue", identifier.clone());

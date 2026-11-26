@@ -934,7 +934,12 @@ fn linear_upsert_merges_the_tracker_and_names_the_issue_for_later_effects() {
     );
     assert_eq!(
         calls[1].1,
-        json!({ "workspaceId": "w1", "marker": "custom:routine", "state": "In Review" })
+        json!({
+            "workspaceId": "w1",
+            "marker": "custom:routine",
+            "state": "In Review",
+            "issue": "ENG-9",
+        })
     );
     assert!(forge.calls()[1].contains("title: \"[ENG-9] Lint\""));
 }
@@ -1058,6 +1063,34 @@ fn linear_state_finds_the_issue_by_the_tracker_marker_without_an_upsert() {
     assert_eq!(
         bridge.calls()[0].1,
         json!({ "workspaceId": "w1", "marker": "lint:routine", "state": "started" })
+    );
+}
+
+#[test]
+fn linear_state_moves_the_issue_an_earlier_step_published_without_the_marker_search() {
+    let forge = Arc::new(FakeForge::at("abc"));
+    let bridge = Arc::new(linear_bridge(false, false, true));
+    let mut run = Run::all();
+    run.published = vec![("tracker.issue", "ENG-4".into())];
+
+    let (report, effects) = run.publish(
+        &mut publisher(&forge, &bridge),
+        1,
+        vec![Effect::LinearState {
+            state: "started".into(),
+        }],
+    );
+
+    assert_eq!(report.outcome, StepOutcome::Success);
+    assert_eq!(statuses(&effects), [EffectStatus::Executed]);
+    assert_eq!(
+        bridge.calls()[0].1,
+        json!({
+            "workspaceId": "w1",
+            "marker": "lint:routine",
+            "state": "started",
+            "issue": "ENG-4",
+        })
     );
 }
 
