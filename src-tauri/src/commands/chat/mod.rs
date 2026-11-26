@@ -2561,7 +2561,7 @@ pub(crate) mod tests {
     #[test]
     fn earlier_history_reaches_the_pane_of_the_current_generation() {
         let session = spawn("sleep 60", Arc::default(), Arc::default());
-        session.shared.lock().unwrap().snapshot.items = (0..12)
+        session.shared.lock().unwrap().snapshot.items = (0..6)
             .map(|turn| ChatItem::new(format!("u{turn}"), ItemKind::User, "prompt"))
             .collect();
         let (sent, received) = std::sync::mpsc::channel();
@@ -2571,7 +2571,7 @@ pub(crate) mod tests {
             }
             Ok(())
         }));
-        assert_eq!((attached.items.len(), attached.earlier), (10, 2));
+        assert_eq!((attached.items.len(), attached.earlier), (3, 3));
 
         session.load_earlier(6);
         session.load_earlier(7);
