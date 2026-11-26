@@ -485,3 +485,9 @@ Before non-trivial work, grep `task-logs/` and `task-logs/_archive/` for the dom
 ### Never put secrets in a task log
 
 No tokens, no `.env` contents, no credentials. The vault may be synced.
+
+## WorktreeManager chat
+
+| Trigger | Skill |
+| --- | --- |
+| A static chart, rich table, or mockup would make a chat answer clearer | Read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML. |

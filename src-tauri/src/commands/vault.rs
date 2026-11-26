@@ -154,6 +154,11 @@ const SUPPORT_FILES: &[VaultFile] = &[
         contents: include_str!("../../../vault-kit/skills/wtm-automation/reference.md"),
         executable: false,
     },
+    VaultFile {
+        rel_path: "skills/wtm-html-preview/SKILL.md",
+        contents: include_str!("../../../vault-kit/skills/wtm-html-preview/SKILL.md"),
+        executable: false,
+    },
 ];
 
 struct GuideSection {
@@ -184,6 +189,8 @@ Read the matching skill before acting. When a trigger appears, propose the skill
 
 const AUTOMATION_SKILL_GUIDE: &str = "\n\n## WorktreeManager automations\n\nBefore automating a recurring flow, turning a conversation into an automation or editing one, read [skills/wtm-automation/SKILL.md](skills/wtm-automation/SKILL.md).\n";
 
+const HTML_PREVIEW_SKILL_GUIDE: &str = "\n\n## WorktreeManager chat\n\nWhen a static chart, rich table, or mockup would make a chat answer clearer, read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML.\n";
+
 const GUIDE_SECTIONS: &[GuideSection] = &[
     GuideSection {
         link: "[skills/task-log/SKILL.md](skills/task-log/SKILL.md)",
@@ -196,6 +203,10 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
     GuideSection {
         link: "[skills/wtm-automation/SKILL.md](skills/wtm-automation/SKILL.md)",
         text: AUTOMATION_SKILL_GUIDE,
+    },
+    GuideSection {
+        link: "](skills/wtm-html-preview/SKILL.md)",
+        text: HTML_PREVIEW_SKILL_GUIDE,
     },
 ];
 
@@ -627,7 +638,9 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(&agents).unwrap(),
-            format!("user-edited contents{TASK_NOTE_GUIDE}{WTM_SKILLS_GUIDE}")
+            format!(
+                "user-edited contents{TASK_NOTE_GUIDE}{WTM_SKILLS_GUIDE}{HTML_PREVIEW_SKILL_GUIDE}"
+            )
         );
         assert_eq!(
             fs::read_to_string(root.join("templates/plan.md")).unwrap(),
@@ -701,7 +714,7 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(root.join("AGENTS.md")).unwrap(),
-            format!("{existing}{WTM_SKILLS_GUIDE}")
+            format!("{existing}{WTM_SKILLS_GUIDE}{HTML_PREVIEW_SKILL_GUIDE}")
         );
         assert_eq!(
             fs::read_to_string(root.join("skills/wtm/SKILL.md")).unwrap(),
@@ -728,9 +741,30 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(root.join("AGENTS.md")).unwrap(),
-            format!("{existing}{AUTOMATION_SKILL_GUIDE}")
+            format!("{existing}{AUTOMATION_SKILL_GUIDE}{HTML_PREVIEW_SKILL_GUIDE}")
         );
         assert!(root.join("skills/wtm-automation/reference.md").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skills_upgrade_adds_html_preview_to_an_existing_guide_once() {
+        let root = temp_dir("html-preview-upgrade");
+        let agents = root.join("AGENTS.md");
+        let skill = root.join("skills/wtm-html-preview/SKILL.md");
+        let existing = format!("User instructions\n{TASK_NOTE_GUIDE}{WTM_SKILLS_GUIDE}");
+        fs::write(&agents, &existing).unwrap();
+
+        ensure_task_note_support(&root).unwrap();
+        assert!(skill.is_file());
+        fs::write(&skill, "user skill").unwrap();
+        ensure_task_note_support(&root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(agents).unwrap(),
+            format!("{existing}{HTML_PREVIEW_SKILL_GUIDE}")
+        );
+        assert_eq!(fs::read_to_string(skill).unwrap(), "user skill");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -740,9 +774,9 @@ mod tests {
             .iter()
             .filter(|file| file.rel_path.ends_with("/SKILL.md"))
         {
-            let link = format!("[{0}]({0})", file.rel_path);
+            let link = format!("]({})", file.rel_path);
             assert!(
-                WTM_SKILLS_GUIDE.contains(&link),
+                AGENTS_MD.contains(&link) || WTM_SKILLS_GUIDE.contains(&link),
                 "{} missing from the guide",
                 file.rel_path
             );
