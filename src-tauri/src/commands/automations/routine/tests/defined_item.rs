@@ -61,6 +61,29 @@ fn the_steps_after_a_defining_step_work_on_the_item_it_defined() {
 }
 
 #[test]
+fn a_conversation_that_continues_after_the_item_is_defined_is_sent_the_new_item() {
+    let worktree = Scratch::new();
+    let frontmatter = format!(
+        "{TARGET}steps:\n  - id: orient\n    agent: {{ prompt: Look around. }}\n{SELECT}  - id: report\n    agent: {{ prompt: Report. }}\n"
+    );
+    let harness = Harness::new(
+        &frontmatter,
+        worktree_tasks(&worktree),
+        FakeSessions::default(),
+    );
+
+    harness.run();
+
+    let prompts = harness.prompts();
+    assert!(!prompts[0].contains("unit-7"));
+    let report = &prompts[1];
+    assert!(report.starts_with("Report.\n\n<wtm_context>"), "{report}");
+    assert!(report.contains("Item: unit-7 (version "));
+    assert!(report.contains("The item is inside"));
+    assert!(report.contains("Fix unit"));
+}
+
+#[test]
 fn a_result_that_cannot_define_the_item_fails_the_step() {
     let worktree = Scratch::new();
     let frontmatter = format!(

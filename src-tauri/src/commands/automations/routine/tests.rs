@@ -1515,6 +1515,7 @@ steps:
 mod calls;
 mod campaign;
 mod capacity;
+mod continuation;
 mod decisions;
 mod defined_item;
 mod missing_task;

@@ -1,6 +1,7 @@
 //! The prompt of an agent step: skill invocation, the owner's instructions, the step prompt, the
 //! decisions in force, the engine context and, wrapped as untrusted data, the item, the trigger payload, what earlier
-//! steps produced and the findings that led here.
+//! steps produced and the findings that led here. A step that continues a conversation sends its
+//! prompt and only what the conversation has not seen.
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -44,6 +45,43 @@ impl PriorStep {
     }
 }
 
+/// What a conversation was last sent, so a step that continues it gets only what is new.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Briefing {
+    /// How many earlier attempts it saw.
+    prior: usize,
+    item: String,
+    /// The hash of the definition whose instructions it got.
+    definition: String,
+    /// The decisions it was told to follow; `None` when not known, so all in force are listed.
+    decisions: Option<Vec<Decision>>,
+}
+
+impl Briefing {
+    pub(super) fn new(
+        prior: usize,
+        item: &Item,
+        definition: &str,
+        decisions: Option<&[Decision]>,
+    ) -> Self {
+        Self {
+            prior,
+            item: item_identity(item),
+            definition: definition.to_string(),
+            decisions: decisions.map(<[Decision]>::to_vec),
+        }
+    }
+
+    fn item_changed(&self, item: &Item) -> bool {
+        self.item != item_identity(item)
+    }
+}
+
+fn item_identity(item: &Item) -> String {
+    json!({ "id": item.id, "version": item.version, "title": item.title, "data": item.data })
+        .to_string()
+}
+
 pub(super) struct PromptInput<'a> {
     pub definition: &'a AutomationDefinition,
     pub step: &'a AgentStep,
@@ -59,31 +97,56 @@ pub(super) struct PromptInput<'a> {
     pub decisions: &'a [Decision],
     /// Trusted: what the owner wrote handing the item back after taking it over.
     pub handback_note: Option<&'a str>,
+    /// What the conversation the step continues was last sent; `None` for a new conversation.
+    pub briefing: Option<&'a Briefing>,
 }
 
+/// A step prompt that starts with `/` opens the message, so the agent runs it as a command. A
+/// continued conversation is sent the instructions again only when they changed or the step
+/// brings no prompt or skill of its own.
 pub(super) fn agent_prompt(input: &PromptInput) -> String {
-    let mut sections = Vec::new();
     let suffix = uuid::Uuid::new_v4().simple().to_string();
-    if let Some(skill) = &input.step.skill {
-        sections.push(format!("Use the {skill} skill."));
-    }
+    let suffix = &suffix[..8];
+    let skill = input
+        .step
+        .skill
+        .as_ref()
+        .map(|skill| format!("Use the {skill} skill."));
     let step_prompt = input
         .step
         .prompt
         .as_deref()
-        .map(|prompt| with_outputs(prompt, input.outputs, &suffix[..8]));
-    sections.extend(
-        [Some(input.definition.instructions.clone()), step_prompt]
-            .into_iter()
-            .flatten()
-            .filter(|text| !text.trim().is_empty()),
-    );
-    sections.extend(decisions_in_force(input.decisions));
+        .map(|prompt| with_outputs(prompt, input.outputs, suffix))
+        .filter(|text| !text.trim().is_empty());
+    let own_directive = skill.is_some() || step_prompt.is_some();
+    let instructions = &input.definition.instructions;
+    let instructions_known = input
+        .briefing
+        .is_some_and(|briefing| briefing.definition == input.definition.hash);
+    let instructions = (!instructions_known || !own_directive)
+        .then(|| instructions.clone())
+        .filter(|text| !text.trim().is_empty());
+    let opening = match step_prompt {
+        Some(command) if command.starts_with('/') => [Some(command), skill, instructions],
+        step_prompt => [skill, instructions, step_prompt],
+    };
+    let mut sections: Vec<String> = opening.into_iter().flatten().collect();
+    let (context, untrusted_blocks) = match input.briefing {
+        None => (context(input), untrusted_data(input)),
+        Some(briefing) => (
+            continued_context(input, briefing),
+            untrusted_news(input.item, input.prior, briefing),
+        ),
+    };
+    let told = input
+        .briefing
+        .and_then(|briefing| briefing.decisions.as_deref());
+    sections.extend(decisions_since(input.decisions, told));
     sections.extend(input.handback_note.map(handed_back));
-    sections.push(context(input));
-    let untrusted_blocks = untrusted_data(input)
+    sections.push(context);
+    let untrusted_blocks = untrusted_blocks
         .into_iter()
-        .map(|(label, content)| untrusted(label, &content, &suffix[..8]));
+        .map(|(label, content)| untrusted(label, &content, suffix));
     sections.extend(untrusted_blocks);
     sections.join("\n\n")
 }
@@ -170,6 +233,33 @@ fn with_outputs(prompt: &str, outputs: &StepOutputs, suffix: &str) -> String {
     rendered
 }
 
+/// The decisions in force the conversation was not told, and those it was told that the owner
+/// revoked since.
+fn decisions_since(in_force: &[Decision], told: Option<&[Decision]>) -> Vec<String> {
+    let Some(told) = told else {
+        return decisions_in_force(in_force).into_iter().collect();
+    };
+    let absent_from = |decisions: &[Decision], decision: &Decision| {
+        !decisions.iter().any(|other| other.id == decision.id)
+    };
+    let new: Vec<Decision> = in_force
+        .iter()
+        .filter(|decision| absent_from(told, decision))
+        .cloned()
+        .collect();
+    let revoked: String = told
+        .iter()
+        .filter(|decision| absent_from(in_force, decision))
+        .map(|decision| format!("\n- {}", decision.text))
+        .collect();
+    let revoked = (!revoked.is_empty())
+        .then(|| format!("The owner revoked these decisions; stop following them:{revoked}"));
+    decisions_in_force(&new)
+        .into_iter()
+        .chain(revoked)
+        .collect()
+}
+
 fn decisions_in_force(decisions: &[Decision]) -> Option<String> {
     let rules: String = decisions
         .iter()
@@ -211,6 +301,32 @@ fn untrusted_data(input: &PromptInput) -> Vec<(&'static str, String)> {
     blocks
 }
 
+/// What the conversation has not seen: the item if it changed, the attempts since its last
+/// message and the findings that led here.
+fn untrusted_news(
+    item: &Item,
+    prior: &[PriorStep],
+    briefing: &Briefing,
+) -> Vec<(&'static str, String)> {
+    let item = described_item(item).filter(|_| briefing.item_changed(item));
+    let mut blocks: Vec<_> = item.map(|item| ("item", item)).into_iter().collect();
+    let unseen = prior.get(briefing.prior..).unwrap_or_default();
+    let (findings, earlier) = match unseen.split_last() {
+        Some((last, earlier)) if last.led_here() => (Some(last), earlier),
+        _ => (None, unseen),
+    };
+    if !earlier.is_empty() {
+        blocks.push((
+            "outputs and receipts of the steps since your last message",
+            to_json(earlier),
+        ));
+    }
+    if let Some(findings) = findings {
+        blocks.push(("findings that led here", to_json(findings)));
+    }
+    blocks
+}
+
 /// The item's title and data; routine items carry neither.
 fn described_item(item: &Item) -> Option<String> {
     (item.title.is_some() || !item.data.is_empty())
@@ -233,6 +349,20 @@ fn context(input: &PromptInput) -> String {
         item.version,
         input.attempt.step.id,
         input.attempt.attempt,
+    )
+}
+
+/// The step and attempt, and the item when it changed since the conversation's last prompt.
+fn continued_context(input: &PromptInput, briefing: &Briefing) -> String {
+    let item = input.item;
+    let item_line = if briefing.item_changed(item) {
+        format!("Item: {} (version {})\n", item.id, item.version)
+    } else {
+        String::new()
+    };
+    format!(
+        "<wtm_context>\n{item_line}Step: {} (attempt {})\n</wtm_context>",
+        input.attempt.step.id, input.attempt.attempt,
     )
 }
 
@@ -295,6 +425,87 @@ mod tests {
             steered_decision(&decision("No define_method", "")),
             "The owner recorded a decision for this automation; follow it from now on:\n- No define_method"
         );
+    }
+
+    fn decided(id: &str, text: &str) -> Decision {
+        Decision {
+            id: id.into(),
+            text: text.into(),
+            by: crate::commands::automations::store::Actor::User,
+            at: "2026-11-01T10:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn a_continued_conversation_hears_of_new_and_revoked_decisions_only() {
+        let (kept, revoked, new) = (
+            decided("d1", "No define_method"),
+            decided("d2", "At most 10 open PRs"),
+            decided("d3", "Keep PRs small"),
+        );
+        let told = [kept.clone(), revoked];
+        let in_force = [kept, new];
+
+        assert_eq!(
+            decisions_since(&in_force, Some(&told)),
+            [
+                "Decisions the owner recorded for this automation; follow them:\n- Keep PRs small (recorded 2026-11-01T10:00:00Z)",
+                "The owner revoked these decisions; stop following them:\n- At most 10 open PRs",
+            ]
+        );
+        assert!(decisions_since(&in_force, Some(&in_force)).is_empty());
+        assert_eq!(decisions_since(&in_force, None).len(), 1);
+    }
+
+    fn attempt(step: &str, outcome: StepOutcome) -> PriorStep {
+        PriorStep {
+            step: step.into(),
+            attempt: 1,
+            outcome,
+            verdict: None,
+            cause: None,
+            reply: None,
+            result: None,
+            exit_code: None,
+            receipt: None,
+            log: None,
+        }
+    }
+
+    fn unit(title: &str) -> Item {
+        Item {
+            id: "unit-1".into(),
+            version: "v1".into(),
+            title: Some(title.into()),
+            data: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_continued_conversation_gets_the_attempts_it_has_not_seen_and_a_changed_item() {
+        let prior = [
+            attempt("implement", StepOutcome::Success),
+            attempt("check", StepOutcome::Success),
+            attempt("verify", StepOutcome::Failure),
+        ];
+        let briefing = Briefing::new(1, &unit("Fix cops"), "h1", None);
+
+        let news = untrusted_news(&unit("Fix cops"), &prior, &briefing);
+        let labels: Vec<_> = news.iter().map(|(label, _)| *label).collect();
+        assert_eq!(
+            labels,
+            [
+                "outputs and receipts of the steps since your last message",
+                "findings that led here"
+            ]
+        );
+        assert!(news[0].1.contains(r#""step":"check""#) && !news[0].1.contains("implement"));
+        assert!(news[1].1.contains(r#""step":"verify""#) && !news[0].1.contains("verify"));
+
+        let news = untrusted_news(&unit("Fix more cops"), &prior[..1], &briefing);
+        assert_eq!(news.len(), 1);
+        assert_eq!(news[0].0, "item");
+        assert!(news[0].1.contains("Fix more cops"));
     }
 
     #[test]
