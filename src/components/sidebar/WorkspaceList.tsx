@@ -18,6 +18,7 @@ import {
 } from "../../services/agentActivity";
 import { TaskIndicatorDot } from "../ui/TaskIndicatorDot";
 import { EmptyState } from "../ui/EmptyState";
+import { isTaskActive } from "../../utils";
 
 const WORKSPACE_INDICATOR_LABELS: Record<TaskIndicator, string> = {
   error: "An agent in this workspace has an error that requires attention",
@@ -97,7 +98,7 @@ export function WorkspaceList({
 
   const taskCountByWorkspaceId = useMemo(() => {
     const m = new Map<string, number>();
-    for (const t of tasks) {
+    for (const t of tasks.filter(isTaskActive)) {
       m.set(t.workspaceId, (m.get(t.workspaceId) ?? 0) + 1);
     }
     return m;

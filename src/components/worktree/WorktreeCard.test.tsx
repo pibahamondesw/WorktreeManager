@@ -43,6 +43,7 @@ type CardProps = Omit<ComponentProps<typeof WorktreeCard>, "actions"> & {
   onToast?: (message: string) => void;
   onLinkIssue?: () => void;
   onTogglePin?: () => void;
+  onToggleShelved?: () => void;
 };
 
 function Card({
@@ -52,6 +53,7 @@ function Card({
   onToast,
   onLinkIssue,
   onTogglePin,
+  onToggleShelved,
   ...props
 }: CardProps) {
   const actions: TaskCardActions = {
@@ -62,6 +64,7 @@ function Card({
     deleteRequestHandled: () => undefined,
     linkIssue: onLinkIssue && (() => onLinkIssue()),
     togglePin: onTogglePin && (() => onTogglePin()),
+    toggleShelved: onToggleShelved && (() => onToggleShelved()),
   };
   return <WorktreeCard {...props} actions={actions} />;
 }
@@ -589,5 +592,31 @@ describe("WorktreeCard memoization", () => {
     );
     expect(groupTaskPrs.mock.calls.length).toBeGreaterThan(rendersAfterMount);
     groupTaskPrs.mockRestore();
+  });
+});
+
+describe("WorktreeCard Finished menu entry", () => {
+  it.each([
+    { shelvedAt: undefined, item: "Move to Finished" },
+    { shelvedAt: "2026-02-01T00:00:00.000Z", item: "Move to active" },
+  ])("runs $item from the menu and closes it", ({ shelvedAt, item }) => {
+    const onToggleShelved = vi.fn();
+    const onOpen = vi.fn();
+    render(
+      <Card
+        task={{ ...task, shelvedAt }}
+        workspace={workspace}
+        vault={vault}
+        onDelete={vi.fn()}
+        repoSlugs={{}}
+        onOpen={onOpen}
+        onToggleShelved={onToggleShelved}
+      />
+    );
+    fireEvent.click(screen.getByTitle("More actions"));
+    fireEvent.click(screen.getByText(item));
+    expect(onToggleShelved).toHaveBeenCalledOnce();
+    expect(screen.queryByText(item)).not.toBeInTheDocument();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });

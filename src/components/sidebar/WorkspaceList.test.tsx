@@ -167,3 +167,25 @@ describe("WorkspaceList automations entry point", () => {
     );
   });
 });
+
+it("counts only active tasks per workspace", () => {
+  render(
+    <WorkspaceList
+      workspaces={workspaces}
+      tasks={[task, { ...task, id: "finished", shelvedAt: "2026-09-22T00:00:00Z" }]}
+      selectedWorkspaceId="ws-active"
+      onSelect={vi.fn()}
+      onAdd={vi.fn()}
+      onUpdate={vi.fn()}
+      onRemove={vi.fn()}
+      onReorder={vi.fn()}
+      vault={{ enabled: false, path: null }}
+      onCollapse={vi.fn()}
+      doctorSeverity={null}
+      onOpenSettings={vi.fn()}
+      onOpenAutomations={vi.fn()}
+      automationsNeedAttention={false}
+    />
+  );
+  expect(screen.getByText("1 task")).toBeInTheDocument();
+});

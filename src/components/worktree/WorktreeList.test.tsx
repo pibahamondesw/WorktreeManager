@@ -60,6 +60,7 @@ vi.mock("./WorktreeCard", () => ({
       >
         delete {task.id}
       </button>
+      <button onClick={() => actions.toggleShelved?.(task)}>shelve {task.id}</button>
     </>
   ),
 }));
@@ -95,6 +96,7 @@ function fixture({
   onTaskDeleted?: TaskActions["delete"];
 } = {}) {
   const onTaskPinned = vi.fn().mockResolvedValue(undefined);
+  const onTaskShelved = vi.fn().mockResolvedValue(undefined);
   const onPinnedTasksReordered = vi.fn().mockResolvedValue(undefined);
   const listProps = (tasks: Task[], workspaceId = "w1") => (
     <WorktreeList
@@ -107,6 +109,7 @@ function fixture({
         linkIssue: vi.fn(),
         rename: vi.fn(),
         setPinned: onTaskPinned,
+        setShelved: onTaskShelved,
         reorderPinned: onPinnedTasksReordered,
       }}
       editorApp="cursor"
@@ -135,7 +138,7 @@ function fixture({
   const setTasks = (tasks: Task[]) => view.rerender(listProps(tasks));
   const switchWorkspace = (workspaceId: string, tasks: Task[]) =>
     view.rerender(listProps(tasks, workspaceId));
-  return { onTaskPinned, onPinnedTasksReordered, setTasks, switchWorkspace };
+  return { onTaskPinned, onTaskShelved, onPinnedTasksReordered, setTasks, switchWorkspace };
 }
 
 it("routes pin toggles and only allows pinned tasks to be dragged", async () => {
@@ -429,4 +432,95 @@ it("shows a hidden automation task when returning from it to the list", async ()
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
   expect(screen.getByText("first")).toBeInTheDocument();
   expect(persist).not.toHaveBeenCalled();
+});
+
+const SHELVED_AT = "2026-02-01T00:00:00.000Z";
+
+function withFinished(...ids: string[]) {
+  return TASKS.map((task) => (ids.includes(task.id) ? { ...task, shelvedAt: SHELVED_AT } : task));
+}
+
+function finishedSection({ hidden = false } = {}) {
+  return screen.getByRole("button", { name: /Finished/, hidden });
+}
+
+function keyboardTaskIds() {
+  return vi
+    .mocked(useWorktreeListKeyboardShortcuts)
+    .mock.lastCall?.[0].tasks.map((task) => task.id);
+}
+
+it("keeps finished tasks in a collapsed section out of keyboard navigation", () => {
+  fixture({ tasks: withFinished("second") });
+  expect(finishedSection()).toHaveAttribute("aria-expanded", "false");
+  expect(finishedSection()).toHaveTextContent("1");
+  expect(screen.queryByText("second")).not.toBeInTheDocument();
+  expect(keyboardTaskIds()).toEqual(["first", "unpinned"]);
+});
+
+it("lists finished tasks after the active ones once the section is expanded", () => {
+  fixture({ tasks: withFinished("first") });
+  fireEvent.click(finishedSection());
+  expect(screen.getByText("first")).toBeInTheDocument();
+  expect(screen.getByText("first").parentElement).not.toHaveAttribute("data-reorder-key");
+  expect(keyboardTaskIds()).toEqual(["second", "unpinned", "first"]);
+});
+
+it("shows the Finished section when every task is finished", () => {
+  fixture({ tasks: withFinished("first", "second", "unpinned") });
+  expect(screen.queryByText("No tasks to show")).not.toBeInTheDocument();
+  expect(finishedSection()).toHaveTextContent("3");
+});
+
+it("expands the Finished section to reveal a finished task", () => {
+  fixture({ tasks: withFinished("second"), revealTaskId: "second" });
+  expect(finishedSection()).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("second")).toHaveAttribute("data-selected", "true");
+});
+
+it("expands the Finished section when returning from a finished task", () => {
+  fixture({
+    tasks: withFinished("second"),
+    openedTask: { taskId: "second", surface: { kind: "external" } },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(finishedSection({ hidden: true })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("second")).toBeInTheDocument();
+});
+
+it("moves tasks to Finished and back", async () => {
+  const { onTaskShelved } = fixture({ tasks: withFinished("second") });
+  fireEvent.click(screen.getByText("shelve first"));
+  fireEvent.click(finishedSection());
+  fireEvent.click(screen.getByText("shelve second"));
+  await waitFor(() =>
+    expect(onTaskShelved.mock.calls).toEqual([
+      ["first", true],
+      ["second", false],
+    ])
+  );
+});
+
+it("shows persistence errors from moving a task to Finished", async () => {
+  const { onTaskShelved } = fixture();
+  onTaskShelved.mockRejectedValue(new Error("Could not save changes"));
+  fireEvent.click(screen.getByText("shelve first"));
+  expect(await screen.findByText("Error: Could not save changes")).toBeInTheDocument();
+});
+
+it("keeps the Finished section for the last finished card's exit", async () => {
+  Element.prototype.animate = vi.fn(
+    () => ({ cancel: vi.fn(), onfinish: null }) as unknown as Animation
+  );
+  try {
+    const { deferred, onTaskDeleted } = deferredDeletion();
+    const { setTasks } = fixture({ tasks: withFinished("first").slice(0, 1), onTaskDeleted });
+    fireEvent.click(finishedSection());
+    fireEvent.click(screen.getByText("delete first"));
+    setTasks([]);
+    await act(async () => deferred.resolve({ data: { id: "first" }, warnings: [] }));
+    expect(screen.getByText("first").closest("[inert]")).not.toBeNull();
+  } finally {
+    delete (Element.prototype as Partial<Element>).animate;
+  }
 });

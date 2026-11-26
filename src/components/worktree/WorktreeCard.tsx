@@ -56,6 +56,7 @@ export interface TaskCardActions {
   open: (task: Task) => void;
   delete: (taskId: string, options: DeleteOptions) => Promise<OperationResult<{ id: string }>>;
   togglePin?: (task: Task) => void;
+  toggleShelved?: (task: Task) => void;
   linkIssue?: (taskId: string) => void;
   rename?: (taskId: string, title: string) => Promise<unknown>;
   markPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
@@ -467,6 +468,16 @@ export const WorktreeCard = memo(function WorktreeCard({
                 >
                   {copyPathLabel}
                 </MenuButton>
+                {actions.toggleShelved && (
+                  <MenuButton
+                    onClick={() => {
+                      setMenuOpen(false);
+                      actions.toggleShelved!(task);
+                    }}
+                  >
+                    {task.shelvedAt === undefined ? "Move to Finished" : "Move to active"}
+                  </MenuButton>
+                )}
                 {vault.enabled && (
                   <MenuButton
                     label={shortcutLabel("list.note")}

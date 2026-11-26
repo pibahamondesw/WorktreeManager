@@ -49,6 +49,10 @@ function persistedString(value: unknown): string | undefined {
   return value;
 }
 
+function persistedInstant(value: unknown): string | undefined {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value)) ? value : undefined;
+}
+
 function persistedId(value: unknown): string {
   const id = persistedString(value);
   if (!id) throw new Error("Missing persisted ID");
@@ -239,6 +243,7 @@ export function normalizeTasks(raw: unknown): Task[] {
         typeof t.pinOrder === "number" && Number.isSafeInteger(t.pinOrder) && t.pinOrder >= 0
           ? t.pinOrder
           : undefined,
+      shelvedAt: persistedInstant(t.shelvedAt),
       agent: typeof t.agent === "string" && t.agent ? t.agent : undefined,
       automationId:
         typeof t.automationId === "string" && t.automationId ? t.automationId : undefined,
@@ -315,6 +320,10 @@ export function migrateLegacyToWorkspaces(
   });
 
   return { workspaces, tasks };
+}
+
+export function isTaskActive(task: Task): boolean {
+  return task.shelvedAt === undefined;
 }
 
 export function compareTaskPins(a: Task, b: Task): number {
