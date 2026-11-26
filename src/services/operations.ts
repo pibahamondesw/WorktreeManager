@@ -1132,8 +1132,8 @@ export class Operations {
     return linearFailure(this.linear(workspaceId).getIssue(identifier));
   }
 
-  moveMarkedIssue(workspaceId: string, marker: string, state: string) {
-    return linearFailure(this.linear(workspaceId).moveMarkedIssue(marker, state));
+  moveMarkedIssue(workspaceId: string, marker: string, state: string, issue?: string) {
+    return linearFailure(this.linear(workspaceId).moveMarkedIssue(marker, state, issue));
   }
 
   /**

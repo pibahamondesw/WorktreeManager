@@ -724,6 +724,13 @@ describe("engine-only operations", () => {
       ok: false,
       error: { code: "linear_failed", message: "The Linear request failed." },
     });
+    expect(moveIssue).toHaveBeenLastCalledWith("m:1", "Shipped", undefined);
+    moveIssue.mockResolvedValueOnce({ identifier: "ENG-1", changed: true });
+    expect(await engineCall("linear.issue-state", { ...state, issue: "ENG-1" })).toMatchObject({
+      ok: true,
+      data: { identifier: "ENG-1", changed: true },
+    });
+    expect(moveIssue).toHaveBeenLastCalledWith("m:1", "Shipped", "ENG-1");
     expect(JSON.stringify(upsertIssue.mock.calls)).not.toContain("secret");
     upsertIssue.mockRestore();
     moveIssue.mockRestore();

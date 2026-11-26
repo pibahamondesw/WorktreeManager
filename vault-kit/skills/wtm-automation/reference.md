@@ -98,7 +98,7 @@ Transitions (`on_fail`, `on_reject`): `fail`, `block`, `defer`, `continue` or `{
 | `github.pr_comment`     | `pr_comment`   | `repo`, `body`                                                         |
 | `github.pr_ready`       | `pr_ready`     | `repo`                                                                 |
 | `linear.upsert`         | `linear_write` | overrides of `tracker.linear` fields                                   |
-| `linear.state`          | `linear_write` | `state` (finds the issue by the marker of the item's last upsert)      |
+| `linear.state`          | `linear_write` | `state` (moves `{tracker.issue}`, else finds the issue by the marker of the item's last upsert) |
 | `wtm.task_create`       | `task_create`  | `workspace`, `repos`, `branch`, `from_remote`, `linear_issue`          |
 | `wtm.task_log`          | `task_log`     | `entry`                                                                |
 | `wtm.task_delete_clean` | `task_delete`  | none                                                                   |
