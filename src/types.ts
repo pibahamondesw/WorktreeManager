@@ -61,6 +61,10 @@ export interface Task {
   shelvedAt?: string;
   /** Instant until which the task stays in the Snoozed section. */
   snoozedUntil?: string;
+  /** `false` keeps the task out of the automatic moves to Finished. */
+  autoShelve?: false;
+  /** Last visit or agent event, recorded at most hourly; inactivity counts from it. */
+  lastActiveAt?: string;
   /** Agent the task's chat or terminal last used; reopening the task picks it again. */
   agent?: AgentId;
   /** Automation that created the task; the task list can hide such tasks. */

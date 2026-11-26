@@ -245,6 +245,8 @@ export function normalizeTasks(raw: unknown): Task[] {
           : undefined,
       shelvedAt: persistedInstant(t.shelvedAt),
       snoozedUntil: persistedInstant(t.snoozedUntil),
+      autoShelve: t.autoShelve === false ? false : undefined,
+      lastActiveAt: persistedInstant(t.lastActiveAt),
       agent: typeof t.agent === "string" && t.agent ? t.agent : undefined,
       automationId:
         typeof t.automationId === "string" && t.automationId ? t.automationId : undefined,

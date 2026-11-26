@@ -751,9 +751,15 @@ describe("shared operations", () => {
       operations.setTaskAgent("t1", "codex"),
       operations.setTaskShelved("t1", true),
       operations.snoozeTask("t1", null),
+      operations.setTaskAutoShelve("t1", false),
       operations.deleteWorkspace("w1", { deleteWorktrees: false }),
     ])
       await expect(attempt).rejects.toMatchObject({ code: "task_deleting" });
+    await operations.shelveTasks(["t1"]);
+    expect(operations.task("t1").shelvedAt).toBeUndefined();
+    const tasksBefore = operations.getState().tasks;
+    await operations.recordTaskActivity({ t1: "2026-03-01T00:00:00.000Z" });
+    expect(operations.getState().tasks).toBe(tasksBefore);
     releaseRemoval();
     await deleting;
     expect(operations.getState().tasks).toEqual([]);
@@ -1445,6 +1451,72 @@ describe("pinned tasks", () => {
       code: "invalid_params",
     });
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("moves only the picked tasks that still qualify to Finished", async () => {
+    const { operations } = fixture([
+      task,
+      { ...task, id: "pinned", pinOrder: 0 },
+      { ...task, id: "never", autoShelve: false },
+      { ...task, id: "snoozed", snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      { ...task, id: "finished", shelvedAt: "2026-01-01T00:00:00.000Z" },
+      { ...task, id: "unpicked" },
+    ]);
+    await operations.shelveTasks(["t1", "pinned", "never", "snoozed", "finished", "missing"]);
+    const shelvedAt = new Map(
+      normalizeTasks(operations.getState().tasks).map((item) => [item.id, item.shelvedAt])
+    );
+    expect(Date.parse(shelvedAt.get("t1")!)).not.toBeNaN();
+    for (const id of ["pinned", "never", "snoozed", "unpicked"])
+      expect(shelvedAt.get(id)).toBeUndefined();
+    expect(shelvedAt.get("finished")).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("keeps a task the user brings back from Finished out of the automatic moves", async () => {
+    const finished = { ...task, shelvedAt: "2026-01-01T00:00:00.000Z" };
+    const { operations } = fixture([finished, { ...finished, id: "t2" }]);
+    await operations.setTaskShelved("t1", false);
+    await operations.snoozeTask("t2", "2099-01-01T00:00:00.000Z");
+    for (const id of ["t1", "t2"])
+      expect(
+        normalizeTasks(operations.getState().tasks).find((item) => item.id === id)
+      ).toMatchObject({
+        shelvedAt: undefined,
+        autoShelve: false,
+      });
+  });
+
+  it("keeps an active task in the automatic moves when it is snoozed", async () => {
+    const { operations } = fixture([task]);
+    await operations.snoozeTask("t1", "2099-01-01T00:00:00.000Z");
+    expect(operations.task("t1").autoShelve).toBeUndefined();
+  });
+
+  it("records only newer activity of live tasks", async () => {
+    const { operations } = fixture([
+      { ...task, lastActiveAt: "2026-02-01T00:00:00.000Z" },
+      { ...task, id: "t2", lastActiveAt: "2026-02-01T00:00:00.000Z" },
+      { ...task, id: "t3" },
+    ]);
+    await operations.recordTaskActivity({
+      t1: "2026-03-01T00:00:00.000Z",
+      t2: "2026-01-01T00:00:00.000Z",
+      t3: "2026-03-02T00:00:00.000Z",
+      missing: "2026-03-01T00:00:00.000Z",
+    });
+    expect(normalizeTasks(operations.getState().tasks).map((item) => item.lastActiveAt)).toEqual([
+      "2026-03-01T00:00:00.000Z",
+      "2026-02-01T00:00:00.000Z",
+      "2026-03-02T00:00:00.000Z",
+    ]);
+  });
+
+  it("turns the automatic moves off and on for a task", async () => {
+    const { operations } = fixture([task]);
+    await operations.setTaskAutoShelve("t1", false);
+    expect(normalizeTasks(operations.getState().tasks)[0].autoShelve).toBe(false);
+    await operations.setTaskAutoShelve("t1", true);
+    expect(operations.task("t1").autoShelve).toBeUndefined();
   });
 
   it("moves a task to Finished and back keeping its pin", async () => {

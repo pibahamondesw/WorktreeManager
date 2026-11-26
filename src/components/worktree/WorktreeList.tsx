@@ -3,6 +3,8 @@ import { EmptyState } from "../ui/EmptyState";
 import { CollapsibleSectionHeader } from "../ui/CollapsibleSectionHeader";
 import { isTaskSnoozed } from "../../utils";
 import { useNow } from "../../hooks/useNow";
+import { useAutoShelve } from "../../hooks/useAutoShelve";
+import type { AutoShelveSettings } from "../../services/taskShelf";
 import { matchesProject } from "../../search/projects";
 import {
   ReactNode,
@@ -65,6 +67,8 @@ export interface TaskActions {
   setPinned: (id: string, pinned: boolean) => Promise<void>;
   setShelved: (id: string, shelved: boolean) => Promise<void>;
   snooze: (id: string, until: string | null) => Promise<void>;
+  setAutoShelve: (id: string, enabled: boolean) => Promise<void>;
+  shelveTasks: (ids: string[]) => Promise<void>;
   reorderPinned: (id: string, targetId: string) => Promise<void>;
   linkIssue: (taskId: string, issue: string) => Promise<Task>;
   rename: (taskId: string, title: string) => Promise<Task>;
@@ -103,6 +107,7 @@ interface WorktreeListProps {
   onCloseTask: () => void;
   onSwitchSurface: (taskId: string, surface: TaskSurface) => void;
   navigation: ListNavigation;
+  autoShelve: AutoShelveSettings;
   /** Palette asking this list to open the new-task modal. */
   requestNewTask?: boolean;
   onRequestNewTaskHandled?: () => void;
@@ -223,6 +228,7 @@ export function WorktreeList({
   onSwitchSurface,
   requestNewTask,
   onRequestNewTaskHandled,
+  autoShelve,
 }: WorktreeListProps) {
   const {
     create: onTaskCreated,
@@ -230,6 +236,8 @@ export function WorktreeList({
     setPinned: onTaskPinned,
     setShelved: onTaskShelved,
     snooze: onTaskSnoozed,
+    setAutoShelve: onTaskAutoShelveChanged,
+    shelveTasks: onShelveFinishedTasks,
     reorderPinned: onPinnedTasksReordered,
     linkIssue: onTaskIssueLinked,
     rename: onTaskRenamed,
@@ -319,6 +327,15 @@ export function WorktreeList({
     workspace,
     onWorkspaceReady
   );
+
+  useAutoShelve({
+    tasks: allTasks,
+    linearInfo,
+    gitStatuses,
+    settings: autoShelve,
+    now,
+    shelveTasks: onShelveFinishedTasks,
+  });
 
   useEffect(() => {
     if (!requestNewTask) return;
@@ -458,6 +475,7 @@ export function WorktreeList({
     onTaskPinned,
     onTaskShelved,
     onTaskSnoozed,
+    onTaskAutoShelveChanged,
     onTaskRenamed,
     onPrReady,
     onOpenTask,
@@ -470,6 +488,7 @@ export function WorktreeList({
       onTaskPinned,
       onTaskShelved,
       onTaskSnoozed,
+      onTaskAutoShelveChanged,
       onTaskRenamed,
       onPrReady,
       onOpenTask,
@@ -505,6 +524,11 @@ export function WorktreeList({
           .catch((error) => latest.current.showToast(String(error)));
       },
       pickSnoozeDate: (task) => setSnoozeTaskId(task.id),
+      toggleAutoShelve: (task) => {
+        void latest.current
+          .onTaskAutoShelveChanged(task.id, task.autoShelve === false)
+          .catch((error) => latest.current.showToast(String(error)));
+      },
       linkIssue: setLinkTaskId,
       rename: (id, title) => latest.current.onTaskRenamed(id, title),
       markPrReady: hasPrReady ? (id, pr) => latest.current.onPrReady!(id, pr) : undefined,

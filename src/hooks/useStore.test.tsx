@@ -22,11 +22,12 @@ vi.mock("../services/store", () => ({
   loadSidebarCollapsed: vi.fn().mockResolvedValue(false),
   loadKeepRunningInBackground: vi.fn().mockResolvedValue(true),
   loadCompactIdleChats: vi.fn().mockResolvedValue(true),
+  loadAutoShelve: vi.fn().mockResolvedValue({ inactiveDays: 30, since: null }),
   loadAgentViews: vi.fn().mockResolvedValue({ claude: "chat", codex: "chat" }),
   persist: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { loadState, persist } from "../services/store";
+import { loadAutoShelve, loadState, persist } from "../services/store";
 
 const workspaces = [
   { id: "a", name: "A", repos: [] },
@@ -106,6 +107,36 @@ describe("useStore workspace switching", () => {
 });
 
 describe("useStore preferences", () => {
+  it("starts counting inactivity on the first load after the update", async () => {
+    vi.mocked(persist).mockClear();
+    const { result } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.autoShelve.since).not.toBeNull());
+    expect(result.current.autoShelve.inactiveDays).toBe(30);
+    expect(vi.mocked(persist).mock.calls.flat(2)).toContainEqual([
+      "autoShelve",
+      { inactiveDays: 30, since: result.current.autoShelve.since },
+    ]);
+  });
+
+  it("keeps when inactivity started counting once it is saved", async () => {
+    const since = "2026-11-01T00:00:00.000Z";
+    vi.mocked(loadAutoShelve).mockResolvedValueOnce({ inactiveDays: 30, since });
+    vi.mocked(persist).mockClear();
+    const { result } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.autoShelve.since).toBe(since);
+    expect(JSON.stringify(vi.mocked(persist).mock.calls)).not.toContain("autoShelve");
+  });
+
+  it("restarts the inactivity count when the number of days changes", async () => {
+    const { result } = renderHook(() => useStore());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const before = Date.now();
+    await act(async () => result.current.updateAutoShelveInactiveDays(null));
+    expect(result.current.autoShelve.inactiveDays).toBeNull();
+    expect(Date.parse(result.current.autoShelve.since!)).toBeGreaterThanOrEqual(before);
+  });
+
   it("restores the sidebar and shows a banner when saving fails", async () => {
     const { result } = renderHook(() => useStore());
     await waitFor(() => expect(result.current.loading).toBe(false));

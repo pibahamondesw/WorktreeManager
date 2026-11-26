@@ -38,6 +38,7 @@ const values: Preferences = {
   sidebarCollapsed: true,
   keepRunningInBackground: false,
   compactIdleChats: false,
+  autoShelve: { inactiveDays: 14, since: "2026-11-01T00:00:00.000Z" },
   scriptApprovals: { "/repo": ["sha256"] },
   agentAlerts: {
     sounds: { done: null, waiting: "Ping" },
@@ -187,6 +188,21 @@ describe("normalization", () => {
     expect(normalizers.compactIdleChats(false)).toBe(false);
   });
 
+  it("moves tasks after 30 inactive days unless turned off or set to a valid count", async () => {
+    const { normalizers } = await import("./preferences");
+    expect(normalizers.autoShelve(undefined)).toEqual({ inactiveDays: 30, since: null });
+    expect(normalizers.autoShelve({ inactiveDays: null, since: "yesterday" })).toEqual({
+      inactiveDays: null,
+      since: null,
+    });
+    expect(normalizers.autoShelve({ inactiveDays: 0 }).inactiveDays).toBe(30);
+    expect(normalizers.autoShelve({ inactiveDays: 2.5 }).inactiveDays).toBe(30);
+    expect(normalizers.autoShelve({ inactiveDays: 7, since: "2026-11-01T00:00:00.000Z" })).toEqual({
+      inactiveDays: 7,
+      since: "2026-11-01T00:00:00.000Z",
+    });
+  });
+
   it("shows automation tasks unless explicitly hidden", async () => {
     const { normalizers } = await import("./preferences");
     expect(normalizers.showAutomationTasks(undefined)).toBe(true);
@@ -228,6 +244,7 @@ describe("optimistic preferences", () => {
     "sidebarCollapsed",
     "keepRunningInBackground",
     "compactIdleChats",
+    "autoShelve",
   ];
 
   it.each(interfaceKeys)("publishes and rolls back %s, reporting the failure", async (key) => {

@@ -244,6 +244,7 @@ export const loadScriptApprovals = () => loadPreference("scriptApprovals");
 export const loadSidebarCollapsed = () => loadPreference("sidebarCollapsed");
 export const loadKeepRunningInBackground = () => loadPreference("keepRunningInBackground");
 export const loadCompactIdleChats = () => loadPreference("compactIdleChats");
+export const loadAutoShelve = () => loadPreference("autoShelve");
 export const loadAgentAlerts = () => loadPreference("agentAlerts");
 export const loadNavigationHistory = () => loadPreference("navigationHistory");
 export const loadAutomationInbox = () => loadPreference("automationInbox");

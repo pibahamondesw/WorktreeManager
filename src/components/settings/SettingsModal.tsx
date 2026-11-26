@@ -3,6 +3,7 @@ import { CircleciSettings } from "./CircleciSettings";
 import { TypographySettings } from "./TypographySettings";
 import { FirstPromptSettings } from "./FirstPromptSettings";
 import { ToolVisibilitySettings } from "./ToolVisibilitySettings";
+import { AutoShelveSetting } from "./AutoShelveSetting";
 import type { Operations } from "../../services/operations";
 import { useEffect, useRef } from "react";
 import { Modal } from "../ui/Modal";
@@ -72,6 +73,8 @@ interface SettingsModalProps {
   onKeepRunningInBackgroundChange: (keepRunning: boolean) => void;
   compactIdleChats: boolean;
   onCompactIdleChatsChange: (compact: boolean) => void;
+  autoShelveInactiveDays?: number | null;
+  onAutoShelveInactiveDaysChange?: (inactiveDays: number | null) => void;
   firstPromptTemplate?: string;
   onFirstPromptTemplateChange?: (template: string) => Promise<void>;
   report: DoctorReport | null;
@@ -156,6 +159,15 @@ export function SettingsModal(props: SettingsModalProps) {
                 <h3 className="px-6 pt-5 text-sm font-semibold text-text-primary">{label}</h3>
                 {id === "preferences" && section === id && (
                   <>
+                    {props.onAutoShelveInactiveDaysChange && (
+                      <>
+                        <h4 className="px-6 pt-4 text-xs font-semibold text-text-primary">Tasks</h4>
+                        <AutoShelveSetting
+                          inactiveDays={props.autoShelveInactiveDays ?? null}
+                          onChange={props.onAutoShelveInactiveDaysChange}
+                        />
+                      </>
+                    )}
                     <h4 className="px-6 pt-4 text-xs font-semibold text-text-primary">Chat</h4>
                     <ToolVisibilitySettings />
                     {props.shortcutOperations && (

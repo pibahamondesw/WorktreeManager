@@ -63,6 +63,7 @@ vi.mock("./WorktreeCard", () => ({
       <button onClick={() => actions.toggleShelved?.(task)}>shelve {task.id}</button>
       <button onClick={() => actions.snooze?.(task, LATER)}>snooze {task.id}</button>
       <button onClick={() => actions.pickSnoozeDate?.(task)}>pick snooze {task.id}</button>
+      <button onClick={() => actions.toggleAutoShelve?.(task)}>auto shelve {task.id}</button>
     </>
   ),
 }));
@@ -102,6 +103,8 @@ function fixture({
   const onTaskPinned = vi.fn().mockResolvedValue(undefined);
   const onTaskShelved = vi.fn().mockResolvedValue(undefined);
   const onTaskSnoozed = vi.fn().mockResolvedValue(undefined);
+  const onTaskAutoShelveChanged = vi.fn().mockResolvedValue(undefined);
+  const onShelveTasks = vi.fn().mockResolvedValue(undefined);
   const onPinnedTasksReordered = vi.fn().mockResolvedValue(undefined);
   const listProps = (tasks: Task[], workspaceId = "w1") => (
     <WorktreeList
@@ -116,6 +119,8 @@ function fixture({
         setPinned: onTaskPinned,
         setShelved: onTaskShelved,
         snooze: onTaskSnoozed,
+        setAutoShelve: onTaskAutoShelveChanged,
+        shelveTasks: onShelveTasks,
         reorderPinned: onPinnedTasksReordered,
       }}
       editorApp="cursor"
@@ -138,6 +143,7 @@ function fixture({
       onOpenTask={vi.fn()}
       onCloseTask={vi.fn()}
       onSwitchSurface={vi.fn()}
+      autoShelve={{ inactiveDays: null, since: null }}
     />
   );
   const view = render(listProps(tasks));
@@ -148,6 +154,7 @@ function fixture({
     onTaskPinned,
     onTaskShelved,
     onTaskSnoozed,
+    onTaskAutoShelveChanged,
     onPinnedTasksReordered,
     setTasks,
     switchWorkspace,
@@ -598,4 +605,24 @@ it("snoozes a task until the date picked in the dialog", async () => {
     expect(onTaskSnoozed).toHaveBeenCalledWith("first", new Date(2099, 2, 4).toISOString())
   );
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+it("turns the automatic moves to Finished off and back on for a task", async () => {
+  const { onTaskAutoShelveChanged, setTasks } = fixture();
+  fireEvent.click(screen.getByText("auto shelve first"));
+  setTasks(TASKS.map((task) => (task.id === "second" ? { ...task, autoShelve: false } : task)));
+  fireEvent.click(screen.getByText("auto shelve second"));
+  await waitFor(() =>
+    expect(onTaskAutoShelveChanged.mock.calls).toEqual([
+      ["first", false],
+      ["second", true],
+    ])
+  );
+});
+
+it("shows persistence errors from changing the automatic moves", async () => {
+  const { onTaskAutoShelveChanged } = fixture();
+  onTaskAutoShelveChanged.mockRejectedValue(new Error("Could not save changes"));
+  fireEvent.click(screen.getByText("auto shelve first"));
+  expect(await screen.findByText("Error: Could not save changes")).toBeInTheDocument();
 });

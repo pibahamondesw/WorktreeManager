@@ -6,6 +6,7 @@ A macOS app for managing Git worktrees and Linear issues, built with Tauri, Reac
 
 - Group local repositories into workspaces; create a task with one worktree per repository.
 - Create branches from Linear issues and track Git status and linked PRs.
+- Snooze tasks until a date, and move finished ones (issue done, PRs merged or closed, or inactive) to a collapsed Finished section.
 - Open tasks in Cursor or Zed, or use VSCode, OpenCode, Claude Code and Codex inside the app.
 - Use an independent VSCode editor inside the app per task (macOS 14+).
 - Keep optional Obsidian task notes, archived when tasks are removed.

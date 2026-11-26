@@ -25,6 +25,7 @@ import { isAbsolutePath, joinPath } from "../platform";
 import { compareTaskPins, linearIssueUrl } from "../utils";
 import { LinearService, MarkedIssueInput } from "./linear";
 import { taskLinearStore } from "./taskLinear";
+import { canAutoShelve } from "./taskShelf";
 import { emitAppEvent, taskAppEvent } from "./automationEvents";
 import { persist } from "./store";
 import { persistedEntries } from "./preferences";
@@ -73,6 +74,15 @@ import { scriptCancel } from "./terminal";
 import { tauriWorktreeLifecycle, WorktreeLifecycle } from "./worktreeLifecycle";
 
 export type TaskReady = (task: Task) => Promise<boolean>;
+
+function replaceTask(tasks: Task[], task: Task) {
+  return tasks.map((item) => (item.id === task.id ? task : item));
+}
+
+/** A task the user pulls out of Finished stays out of the automatic moves. */
+function outOfAutoShelf(task: Task): Partial<Task> {
+  return task.shelvedAt !== undefined ? { autoShelve: false } : {};
+}
 
 export class OperationError extends Error {
   code: string;
@@ -491,13 +501,10 @@ export class Operations {
     return this.change((state) => {
       const task = this.liveTask(id);
       if ((task.shelvedAt !== undefined) === shelved) return {};
-      const shelvedAt = shelved ? new Date().toISOString() : undefined;
-      const snoozedUntil = shelved ? undefined : task.snoozedUntil;
-      return {
-        tasks: state.tasks.map((item) =>
-          item.id === id ? { ...item, shelvedAt, snoozedUntil } : item
-        ),
-      };
+      const change: Partial<Task> = shelved
+        ? { shelvedAt: new Date().toISOString(), snoozedUntil: undefined }
+        : { shelvedAt: undefined };
+      return { tasks: replaceTask(state.tasks, { ...task, ...outOfAutoShelf(task), ...change }) };
     });
   }
 
@@ -506,11 +513,48 @@ export class Operations {
       return Promise.reject(new OperationError("invalid_params", "Snooze needs a valid date."));
     return this.change((state) => {
       const task = this.liveTask(id);
-      const snoozedUntil = until ?? undefined;
-      const shelvedAt = until === null ? task.shelvedAt : undefined;
+      const change: Partial<Task> =
+        until === null
+          ? { snoozedUntil: undefined }
+          : { ...outOfAutoShelf(task), snoozedUntil: until, shelvedAt: undefined };
+      return { tasks: replaceTask(state.tasks, { ...task, ...change }) };
+    });
+  }
+
+  setTaskAutoShelve(id: string, enabled: boolean) {
+    return this.change((state) => {
+      const task = this.liveTask(id);
       return {
-        tasks: state.tasks.map((item) =>
-          item.id === id ? { ...item, snoozedUntil, shelvedAt } : item
+        tasks: replaceTask(state.tasks, { ...task, autoShelve: enabled ? undefined : false }),
+      };
+    });
+  }
+
+  /** Saves when tasks were last visited or worked on by an agent, ignoring older times. */
+  recordTaskActivity(activity: Record<string, string>) {
+    return this.change((state) => {
+      const isNewer = (task: Task, at: string | undefined) =>
+        at !== undefined &&
+        !this.deletingTaskIds.has(task.id) &&
+        Date.parse(at) > (Date.parse(task.lastActiveAt ?? "") || 0);
+      if (!state.tasks.some((task) => isNewer(task, activity[task.id]))) return {};
+      return {
+        tasks: state.tasks.map((task) =>
+          isNewer(task, activity[task.id]) ? { ...task, lastActiveAt: activity[task.id] } : task
+        ),
+      };
+    });
+  }
+
+  /** Moves to Finished the tasks the automatic rules picked that still qualify. */
+  shelveTasks(ids: string[]) {
+    return this.change((state) => {
+      const now = Date.now();
+      const shelvedAt = new Date(now).toISOString();
+      const picked = new Set(ids.filter((id) => !this.deletingTaskIds.has(id)));
+      return {
+        tasks: state.tasks.map((task) =>
+          picked.has(task.id) && canAutoShelve(task, now) ? { ...task, shelvedAt } : task
         ),
       };
     });
