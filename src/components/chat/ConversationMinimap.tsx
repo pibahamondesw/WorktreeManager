@@ -13,6 +13,7 @@ import { conversationTurns, turnAt } from "./conversationTurns";
 
 const MIN_TURNS = 2;
 const JUMP_MARGIN_PX = 16;
+const PANE_LEFT_EDGE = "calc(2px - 1rem - max(0px, (100cqw - 48rem) / 2))";
 
 interface Timeline {
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -115,7 +116,8 @@ export function ConversationMinimap({
         onKeyDown={onKeyDown}
         onMouseLeave={() => setPreviewed(null)}
         onBlur={() => setPreviewed(null)}
-        className="pointer-events-auto absolute right-full top-[50cqh] -translate-y-1/2 max-h-[60cqh] flex flex-col"
+        style={{ left: PANE_LEFT_EDGE }}
+        className="pointer-events-auto absolute top-[50cqh] -translate-y-1/2 max-h-[85cqh] flex flex-col"
       >
         <div className="min-h-0 flex flex-col overflow-hidden">
           {turns.map((turn, index) => (
