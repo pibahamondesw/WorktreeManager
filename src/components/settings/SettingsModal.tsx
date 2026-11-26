@@ -2,6 +2,7 @@ import { KeyboardShortcutsSettings } from "./KeyboardShortcutsSettings";
 import { CircleciSettings } from "./CircleciSettings";
 import { TypographySettings } from "./TypographySettings";
 import { FirstPromptSettings } from "./FirstPromptSettings";
+import { ToolVisibilitySettings } from "./ToolVisibilitySettings";
 import type { Operations } from "../../services/operations";
 import { useEffect, useRef } from "react";
 import { Modal } from "../ui/Modal";
@@ -9,6 +10,7 @@ import {
   BellIcon,
   BotIcon,
   DocumentIcon,
+  GearIcon,
   NotebookIcon,
   RefreshIcon,
   SunIcon,
@@ -32,7 +34,7 @@ export type SettingsSection =
   | "alerts"
   | "firstPrompt"
   | "circleci"
-  | "shortcuts";
+  | "preferences";
 
 const SECTIONS = [
   { id: "theme", label: "Theme", icon: SunIcon },
@@ -42,7 +44,7 @@ const SECTIONS = [
   { id: "alerts", label: "Agent alerts", icon: BellIcon },
   { id: "firstPrompt", label: "First prompt", icon: BotIcon },
   { id: "circleci", label: "CircleCI", icon: RefreshIcon },
-  { id: "shortcuts", label: "Keyboard shortcuts", icon: WrenchIcon },
+  { id: "preferences", label: "Preferences", icon: GearIcon },
 ] as const;
 
 interface SettingsModalProps {
@@ -152,13 +154,24 @@ export function SettingsModal(props: SettingsModalProps) {
                 tabIndex={0}
               >
                 <h3 className="px-6 pt-5 text-sm font-semibold text-text-primary">{label}</h3>
-                {id === "shortcuts" && section === id && props.shortcutOperations && (
-                  <KeyboardShortcutsSettings
-                    operations={props.shortcutOperations}
-                    workspaceCount={props.workspaceCount ?? 0}
-                    taskCount={props.taskCount ?? 0}
-                    paletteTaskCount={props.paletteTaskCount}
-                  />
+                {id === "preferences" && section === id && (
+                  <>
+                    <h4 className="px-6 pt-4 text-xs font-semibold text-text-primary">Chat</h4>
+                    <ToolVisibilitySettings />
+                    {props.shortcutOperations && (
+                      <>
+                        <h4 className="px-6 pt-6 text-xs font-semibold text-text-primary">
+                          Keyboard shortcuts
+                        </h4>
+                        <KeyboardShortcutsSettings
+                          operations={props.shortcutOperations}
+                          workspaceCount={props.workspaceCount ?? 0}
+                          taskCount={props.taskCount ?? 0}
+                          paletteTaskCount={props.paletteTaskCount}
+                        />
+                      </>
+                    )}
+                  </>
                 )}
                 {id === "circleci" && section === id && <CircleciSettings />}
                 {id === "firstPrompt" && section === id && props.onFirstPromptTemplateChange && (

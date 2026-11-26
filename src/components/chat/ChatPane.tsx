@@ -17,7 +17,6 @@ import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
 import { visibleRows } from "./toolVisibility";
 import { useToolVisibility } from "./toolVisibilityPreference";
-import { ToolVisibilitySelect } from "./ToolVisibilitySelect";
 import { Composer, ComposerQuotes, ComposerSeed, QueuedMessageEdit } from "./Composer";
 import { ChatQuote, chatQuote } from "./chatQuotes";
 import { QuoteSelectionButton } from "./QuoteSelectionButton";
@@ -458,7 +457,6 @@ export function ChatPane({
           Changes <LineCounts {...totals(conversationFiles)} />
         </Button>
       )}
-      <ToolVisibilitySelect value={toolVisibility} />
       <AgentUsageIndicator agent={agent} />
       {aside && (
         <Button

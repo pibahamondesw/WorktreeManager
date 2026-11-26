@@ -2910,16 +2910,13 @@ describe("Tool calls in chat", () => {
     await screen.findByText("Looking for the bug");
     expect(screen.getByRole("button", { name: /Ran 1 command/ })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Tool calls in chat" }), {
-      target: { value: "zen" },
-    });
+    act(() => saveToolVisibility("zen"));
 
     expect(screen.queryByText("Looking for the bug")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ran 1 command/ })).not.toBeInTheDocument();
     expect(screen.getByText("Fix the bug")).toBeInTheDocument();
     expect(screen.getByText("Network hiccup")).toBeInTheDocument();
     expect(screen.getByText("The bug is fixed")).toBeInTheDocument();
-    expect(localStorage.getItem("worktreemanager.toolVisibility")).toBe("zen");
   });
 
   it("shows the in-between replies to find while the find bar is open in zen", async () => {
