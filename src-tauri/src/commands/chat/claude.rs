@@ -142,6 +142,8 @@ pub fn launch_args(
             "--include-partial-messages",
             "--permission-prompt-tool",
             "stdio",
+            "--thinking-display",
+            "summarized",
         ])
         .map(|arg| arg.to_string())
         .chain(permission.iter().cloned())
@@ -2174,6 +2176,9 @@ mod tests {
         assert!(fresh
             .windows(2)
             .any(|w| w == ["--permission-prompt-tool", "stdio"]));
+        assert!(fresh
+            .windows(2)
+            .any(|w| w == ["--thinking-display", "summarized"]));
         let resumed = launch_args("s1", true, &[], &permission);
         assert!(resumed.windows(2).any(|w| w == ["--resume", "s1"]));
         assert!(!resumed.contains(&"--session-id".to_string()));
