@@ -1,4 +1,5 @@
 import { ChatItem } from "../../services/chat";
+import { launchesOf } from "./subagentLaunches";
 
 const WORK_KINDS = new Set<ChatItem["kind"]>(["command", "fileChange", "tool"]);
 
@@ -8,7 +9,7 @@ export type ChatEntry =
 
 export type SubagentSteps = ReadonlyMap<string, ChatItem[]>;
 
-const isWorkItem = (item: ChatItem) => WORK_KINDS.has(item.kind) && !item.subagentLaunch;
+const isWorkItem = (item: ChatItem) => WORK_KINDS.has(item.kind) && launchesOf(item).length === 0;
 
 export const isMainItem = (item: ChatItem) => !item.parent;
 
