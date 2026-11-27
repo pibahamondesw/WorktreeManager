@@ -1,6 +1,7 @@
 import { ChatItem } from "../../services/chat";
 import { ChatEntry } from "./chatEntries";
 import { isPlanItem } from "./markdownDocument";
+import { launchesOf } from "./subagentLaunches";
 
 export type ToolVisibility = "all" | "hideSuccessful" | "hideAll" | "zen";
 
@@ -48,7 +49,7 @@ function shownRow(
     return items.length === row.items.length ? row : { ...row, items };
   }
   const { item } = row;
-  if (ALWAYS_SHOWN.has(item.kind) || item.subagentLaunch) return row;
+  if (ALWAYS_SHOWN.has(item.kind) || launchesOf(item).length > 0) return row;
   if (item.kind === "agent")
     return visibility === "hideSuccessful" && isRunningOrFailed(item) ? row : null;
   if (visibility !== "zen") return row;

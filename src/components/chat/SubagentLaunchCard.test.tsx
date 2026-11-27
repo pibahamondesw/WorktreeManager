@@ -83,7 +83,7 @@ it("shows no status once the launched chat ended", () => {
 
 it("expands to the command and the reply the launch waited for", () => {
   const expand = vi.fn();
-  const response = { ok: true, data: { subagent: true, reply: "Shipped the PR." } };
+  const response = { ok: true, data: { ...launch, subagent: true, reply: "Shipped the PR." } };
   renderCard(command({ detail: `noise\n{broken\n${JSON.stringify(response)}` }), expand);
   fireEvent.click(screen.getByRole("button", { name: /Subagent · WOR-2/ }));
   expect(expand).toHaveBeenCalledWith("c1", "full");
@@ -92,16 +92,37 @@ it("expands to the command and the reply the launch waited for", () => {
 });
 
 it("shows a structured reply as JSON and no reply when the launch did not wait", () => {
-  const structured = { ok: true, data: { subagent: true, reply: { approved: true } } };
+  const structured = { ok: true, data: { ...launch, subagent: true, reply: { approved: true } } };
   renderCard(command({ detail: JSON.stringify(structured) }));
   fireEvent.click(screen.getByRole("button", { name: /Subagent · WOR-2/ }));
   expect(screen.getByRole("region", { name: "Subagent: WOR-2" })).toHaveTextContent(
     '"approved": true'
   );
   cleanup();
-  renderCard(command({ detail: JSON.stringify({ ok: true, data: { subagent: true } }) }));
+  renderCard(
+    command({ detail: JSON.stringify({ ok: true, data: { ...launch, subagent: true } }) })
+  );
   fireEvent.click(screen.getByRole("button", { name: /Subagent · WOR-2/ }));
   expect(screen.queryByText(/approved/)).toBeNull();
+});
+
+it("shows a card per subagent a command launched, each with its own reply", () => {
+  const second = { ...launch, taskId: "t3", conversationId: "th2", name: "Review" };
+  const replies = [launch, second].map((each, index) =>
+    JSON.stringify({ ok: true, data: { ...each, subagent: true, reply: `Reply ${index}` } })
+  );
+  renderCard(command({ subagentLaunches: [launch, second], detail: replies.join("\n") }));
+  fireEvent.click(screen.getByRole("button", { name: /Subagent · Review/ }));
+  const card = screen.getByRole("region", { name: "Subagent: Review" });
+  expect(card).toHaveTextContent("Reply 1");
+  expect(card).not.toHaveTextContent("Reply 0");
+  expect(screen.getByRole("region", { name: "Subagent: WOR-2" })).toBeInTheDocument();
+});
+
+it("shows only the subagent of a launch no command names", () => {
+  renderCard({ id: "subagent:th1", kind: "command", text: "", subagentLaunches: [launch] });
+  fireEvent.click(screen.getByRole("button", { name: /Subagent · WOR-2/ }));
+  expect(screen.getByRole("region", { name: "Subagent: WOR-2" }).querySelector("pre")).toBeNull();
 });
 
 it("offers no way to a launch whose task is gone", () => {

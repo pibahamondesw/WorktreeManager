@@ -42,7 +42,7 @@ Task input: `{"workspaceId":"…","branchName":"…","repoIds":["…"],"linearIs
 
 `wtm task chat` sends `--message` without a prefix by default. Include the context the agent needs in the message, or pass `--with-template` to prepend the user's configured first-prompt template. Add that flag to callers that relied on the previous default. With `--tab`, the template is never prepended, even with `--with-template`. Manual UI chats still prefill the composer.
 
-Pass `--subagent` when you launch the chat from a task's chat to work for you, such as an orchestrator starting one session per task: your chat shows the call as a subagent with the launched chat's live status and a way to open it, and the new conversation links back to your chat. Continuing a tab with `--tab` links nothing new.
+Pass `--subagent` when you launch the chat from a task's chat to work for you, such as an orchestrator starting one session per task: your chat shows each launched chat as a subagent, however the command ran (chained, in the background or with its output redirected), with its live status and a way to open it, and the new conversation links back to your chat. Continuing a tab with `--tab` links nothing new.
 
 ## Find the current task
 

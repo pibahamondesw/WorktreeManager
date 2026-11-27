@@ -2715,6 +2715,10 @@ fn a_side_chat_is_never_restarted_or_started_over() {
 }
 
 fn launched_by(fixture: &Fixture) -> Vec<(String, Value)> {
+    tab_field(fixture, "launchedBy")
+}
+
+fn tab_field(fixture: &Fixture, field: &str) -> Vec<(String, Value)> {
     let listed = tauri::async_runtime::block_on(tabs::chat_tabs(
         fixture.app.handle().clone(),
         "task".into(),
@@ -2727,12 +2731,7 @@ fn launched_by(fixture: &Fixture) -> Vec<(String, Value)> {
         .as_array()
         .unwrap()
         .iter()
-        .map(|tab| {
-            (
-                tab["id"].as_str().unwrap().to_string(),
-                tab["launchedBy"].clone(),
-            )
-        })
+        .map(|tab| (tab["id"].as_str().unwrap().to_string(), tab[field].clone()))
         .collect()
 }
 
@@ -2774,9 +2773,19 @@ fn a_subagent_hand_over_links_only_the_conversation_it_starts_to_the_launching_c
         [
             (tabs::MAIN_TAB.to_string(), Value::Null),
             (
-                child.tab,
+                child.tab.clone(),
                 json!({ "taskId": "task", "agent": "claude", "tab": "main", "conversationId": "parent" })
             ),
+            (owner.tab.clone(), Value::Null),
+            (orphan.tab.clone(), Value::Null),
+        ]
+    );
+    let launched = json!([{ "taskId": "task", "agent": "claude", "tab": child.tab, "conversationId": child.conversation_id }]);
+    assert_eq!(
+        tab_field(&fixture, "subagents"),
+        [
+            (tabs::MAIN_TAB.to_string(), launched),
+            (child.tab, Value::Null),
             (owner.tab, Value::Null),
             (orphan.tab, Value::Null),
         ]

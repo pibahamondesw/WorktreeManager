@@ -52,6 +52,8 @@ export interface ChatItem {
   limitResetsAt?: number;
   /** The chat a `wtm task chat --subagent` command started. */
   subagentLaunch?: SubagentLaunch;
+  /** The subagents the pane places on this command, from its chat's record. */
+  subagentLaunches?: SubagentLaunch[];
 }
 
 /** A conversation running in a task's chat tab. */
@@ -696,6 +698,8 @@ export interface ChatTab {
   conversationId: string | null;
   /** The chat that started the tab's conversation with `wtm task chat --subagent`. */
   launchedBy?: TabConversation;
+  /** The conversations the tab's conversation launched with `wtm task chat --subagent`. */
+  subagents?: SubagentLaunch[];
 }
 
 /** A task's open chat tabs, in order; `mainAgent` runs its main tab until tabs are recorded. */

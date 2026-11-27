@@ -12,7 +12,7 @@ use tokio::sync::OwnedMutexGuard;
 use super::conversations::ConversationStore;
 use super::headless::HeadlessRequest;
 use super::model::ChatStatus;
-use super::subagents::{self, subagent_store, ParentChat};
+use super::subagents::{self, subagent_store, LaunchedChat, ParentChat};
 use super::tabs::{self, announce, tab_store, ChatTab, TabStore, MAIN_TAB};
 use super::{conversation_store, primary_folder, ChatOwner, ChatRegistry, ChatSession, TurnEnd};
 use crate::commands::agents::permission::PermissionPolicy;
@@ -264,6 +264,7 @@ pub async fn chat_hand_over<R: Runtime>(
     let took_main = request.tab.is_none() && tab == MAIN_TAB;
     let parent = request.parent.clone();
     let (task_id, agent) = (request.task_id.clone(), request.agent.clone());
+    let name = request.name.clone();
     let handed = {
         let (app, tab) = (app.clone(), tab.clone());
         tauri::async_runtime::spawn_blocking(move || {
@@ -290,9 +291,17 @@ pub async fn chat_hand_over<R: Runtime>(
     }
     if let (Ok(started), Some(parent)) = (&handed, parent) {
         if let Some(parent) = registry.parent_chat(parent).filter(|_| !started.continued) {
-            let store = subagent_store(&app);
-            subagents::link(store, &task_id, &agent, &started.conversation_id, parent);
+            let parent_task = parent.task_id.clone();
+            let launched = LaunchedChat {
+                task_id: &task_id,
+                agent: &agent,
+                tab: &started.tab,
+                conversation_id: &started.conversation_id,
+                name: name.as_deref(),
+            };
+            subagents::link(subagent_store(&app), launched, parent);
             announce(&app, &task_id);
+            announce(&app, &parent_task);
         }
     }
     handed

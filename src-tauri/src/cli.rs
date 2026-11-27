@@ -52,7 +52,8 @@ task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
                                      conversation there as a subagent and links it
                                      back to that chat.
 task tabs <id>                       The task's open chat tabs, in order: id, agent,
-                                     conversation and the chat that launched it.
+                                     conversation, the chat that launched it and the
+                                     subagents it launched.
 task tab-close <id> <tab>            Closes the chat tab and stops its agent; the
                                      conversation stays in the task's Conversations.
 task delete <id> <--keep-worktrees|--delete-worktrees> [--force] [--skip-teardown]

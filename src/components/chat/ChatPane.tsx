@@ -15,6 +15,7 @@ import { ConversationMinimap } from "./ConversationMinimap";
 import { useChatFind } from "./useChatFind";
 import { ItemDetailContext } from "./itemDetailContext";
 import { chatEntries, isMainItem, subagentSteps } from "./chatEntries";
+import { withSubagentLaunches } from "./subagentLaunches";
 import { visibleRows } from "./toolVisibility";
 import { useToolVisibility } from "./toolVisibilityPreference";
 import { Composer, ComposerQuotes, ComposerSeed, QueuedMessageEdit } from "./Composer";
@@ -54,6 +55,7 @@ import {
   isLive,
   limitResetsAt,
   QueuedEdit,
+  SubagentLaunch,
   totals,
 } from "../../services/chat";
 import { agentPresentation, describeAgent } from "../../services/agents";
@@ -83,6 +85,8 @@ interface ChatPaneProps {
   onSnooze?: (until: string) => Promise<void>;
   /** The pane is a side chat, whose replies can be added to the main chat's draft. */
   aside?: SideChatRole;
+  /** The conversations the tab's conversation launched with `wtm task chat --subagent`. */
+  subagents?: SubagentLaunch[];
 }
 
 interface SideChatRole {
@@ -99,6 +103,8 @@ interface ReadOnlySession {
 }
 
 const CLOSED: ChatStatus = { kind: "exited", code: null };
+
+const NO_SUBAGENTS: SubagentLaunch[] = [];
 
 /** Conversations whose composer was already offered the first prompt, so clearing it sticks. */
 const seededConversations = new Set<string>();
@@ -152,6 +158,7 @@ export function ChatPane({
   onQueuedEditChange,
   onSnooze,
   aside,
+  subagents = NO_SUBAGENTS,
 }: ChatPaneProps) {
   const session = useChatSession(taskId, agent, folders, takeOpenIntent, tab, readOnly?.sessionId);
   const chatKey = readOnly
@@ -215,7 +222,11 @@ export function ChatPane({
   const status = readOnly?.ended ? CLOSED : snapshot.status;
   const busy = status.kind === "busy";
   const live = isLive(status);
-  const mainItems = useMemo(() => items.filter(isMainItem), [items]);
+  const allLoaded = !snapshot.earlier;
+  const mainItems = useMemo(
+    () => withSubagentLaunches(items.filter(isMainItem), subagents, allLoaded),
+    [items, subagents, allLoaded]
+  );
   const steps = useMemo(() => subagentSteps(items), [items]);
   const ends = turnEnds(mainItems, changes);
   const entries = useMemo(() => chatEntries(mainItems), [mainItems]);

@@ -34,6 +34,7 @@ import { ToolCategoryIcon } from "./ToolCategoryIcon";
 import { LiveElapsed } from "./LiveElapsed";
 import { useForgetRunWhenStopped } from "./runClock";
 import { isFailedStep } from "./toolVisibility";
+import { launchesOf } from "./subagentLaunches";
 
 const STATUS_STYLE: Record<string, string> = {
   inProgress: "text-text-muted motion-pulse-steps",
@@ -242,11 +243,13 @@ function launchStatus(chat: ChatInfo | null): string | undefined {
 }
 
 /** The reply a launch waited for, from the command's output. */
-function launchReply(output?: string): string | null {
+function launchReply(launch: SubagentLaunch, output?: string): string | null {
   for (const line of (output ?? "").split("\n").reverse()) {
     if (!line.trim().startsWith("{")) continue;
     try {
-      const reply = (JSON.parse(line) as { data?: { reply?: unknown } }).data?.reply;
+      const { data } = JSON.parse(line) as { data?: { conversationId?: string; reply?: unknown } };
+      if (data?.conversationId !== launch.conversationId) continue;
+      const reply = data.reply;
       if (reply === undefined) return null;
       return typeof reply === "string"
         ? reply
@@ -266,7 +269,8 @@ function SubagentLaunchCard({ item, launch }: { item: ChatItem; launch: Subagent
   const chat = useTabChat(launch.taskId, launch.agent, launch.tab);
   const task = conversations?.label(launch.taskId) ?? null;
   const title = launch.name ?? task;
-  const reply = open ? launchReply(item.detail) : null;
+  const reply = open ? launchReply(launch, item.detail) : null;
+  const command = item.title ?? item.text;
   return (
     <section
       aria-label={title ? `Subagent: ${title}` : "Subagent"}
@@ -307,9 +311,11 @@ function SubagentLaunchCard({ item, launch }: { item: ChatItem; launch: Subagent
       </div>
       {open && (
         <div className="px-3 pb-2 flex flex-col gap-2">
-          <pre className="font-mono text-text-secondary whitespace-pre-wrap select-text max-h-40 overflow-y-auto p-2 rounded-md bg-bg-secondary">
-            {item.title ?? item.text}
-          </pre>
+          {command && (
+            <pre className="font-mono text-text-secondary whitespace-pre-wrap select-text max-h-40 overflow-y-auto p-2 rounded-md bg-bg-secondary">
+              {command}
+            </pre>
+          )}
           {reply && <MarkdownText text={reply} />}
         </div>
       )}
@@ -712,10 +718,17 @@ function ChatItemContent({
       return <SubagentCard item={item} steps={steps} />;
     case "question":
       return <QuestionCard item={item} />;
-    case "command":
-      if (item.subagentLaunch)
-        return <SubagentLaunchCard item={item} launch={item.subagentLaunch} />;
-      return <Activity item={item} />;
+    case "command": {
+      const launches = launchesOf(item);
+      if (launches.length === 0) return <Activity item={item} />;
+      return (
+        <div className="flex flex-col gap-2">
+          {launches.map((launch) => (
+            <SubagentLaunchCard key={launch.conversationId} item={item} launch={launch} />
+          ))}
+        </div>
+      );
+    }
     default:
       return <Activity item={item} />;
   }

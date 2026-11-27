@@ -32,7 +32,7 @@ vi.mock("../../observeResize", () => import("../../test/fakeObserveResize"));
 
 import { ChatWorkspace } from "./ChatWorkspace";
 import { TaskConversationsContext } from "./taskConversationContext";
-import type { TabConversation } from "../../services/chat";
+import type { SubagentLaunch, TabConversation } from "../../services/chat";
 import { invokeWithAgentCatalog } from "../../services/agents.fixture";
 
 const IDLE_CHAT = {
@@ -57,6 +57,7 @@ type Tab = {
   agent: string;
   conversationId: string | null;
   launchedBy?: TabConversation;
+  subagents?: SubagentLaunch[];
 };
 type Sessions = Record<string, { id: string; title: string }[] | string>;
 
@@ -255,6 +256,21 @@ it("leads a subagent's conversation back to the chat that launched it", async ()
   expect(bar.querySelector("svg.agent-logo-openai")).not.toBeNull();
   fireEvent.click(back);
   expect(open).toHaveBeenCalledWith(parent);
+});
+
+it("shows the subagents a tab's conversation launched, however their command ran", async () => {
+  const launched = { taskId: "t2", agent: "codex" as const, tab: "a1", conversationId: "th2" };
+  backend([{ id: "main", agent: "claude", conversationId: "c1", subagents: [launched] }]);
+  const open = vi.fn(() => true);
+  const label = (taskId: string) => (taskId === "t2" ? "WOR-2" : null);
+  render(
+    <TaskConversationsContext.Provider value={{ label, open }}>
+      <ChatWorkspace taskId="t1" agent="claude" folders={["/wt/a"]} />
+    </TaskConversationsContext.Provider>
+  );
+  const card = await screen.findByRole("region", { name: "Subagent: WOR-2" });
+  fireEvent.click(within(card).getByRole("button", { name: "Open conversation" }));
+  expect(open).toHaveBeenCalledWith(launched);
 });
 
 it("drops the way back once the launching task is gone", async () => {

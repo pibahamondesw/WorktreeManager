@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
+use super::model::SubagentLaunch;
 use super::subagents::{subagent_store, ParentChat};
 use super::{conversation_store, primary_folder, ChatRegistry};
 
@@ -54,6 +55,9 @@ pub struct ChatTabInfo {
     /// The chat that started the tab's conversation with `wtm task chat --subagent`.
     #[serde(skip_serializing_if = "Option::is_none")]
     launched_by: Option<ParentChat>,
+    /// The conversations the tab's conversation launched with `wtm task chat --subagent`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    subagents: Vec<SubagentLaunch>,
 }
 
 #[derive(Clone, Serialize)]
@@ -251,9 +255,13 @@ pub async fn chat_tabs<R: Runtime>(
                 let launched_by = conversation_id.as_ref().and_then(|conversation| {
                     subagents.parent_of(&task_id, &tab.agent, conversation)
                 });
+                let launched = conversation_id.as_ref().map(|conversation| {
+                    subagents.launched_from(&task_id, &tab.agent, conversation)
+                });
                 ChatTabInfo {
                     conversation_id,
                     launched_by,
+                    subagents: launched.unwrap_or_default(),
                     tab,
                 }
             })

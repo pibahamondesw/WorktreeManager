@@ -428,6 +428,7 @@ export function ChatWorkspace({
               onInserted={inserted}
               onQueuedEditChange={setEditingQueued}
               onSnooze={onSnooze}
+              subagents={active.subagents}
             />
           </div>
           {side?.source === active.id && (
