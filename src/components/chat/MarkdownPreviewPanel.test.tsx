@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 
 import { FileEdit, MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
+import { ReferencedDocuments } from "./MarkdownPreviewCard";
+import { MarkdownPreviewContext } from "./markdownPreviewContext";
 
 const PATH = "/wt/a/src/main.ts";
 let documentCount = 0;
@@ -50,11 +52,16 @@ beforeEach(() => {
   documentRequest = `docs/notes-${++documentCount}.md`;
   mocks.invoke.mockReset();
   mocks.invoke.mockImplementation((command: string, args: Record<string, string>) => {
+    if (command === "chat_read_file" && args.path === documentRequest)
+      return Promise.resolve({
+        path: documentPath(),
+        content: { kind: "text", text: documentOnDisk },
+      });
     if (command === "chat_read_file")
       return Promise.resolve({ path: PATH, content: { kind: "text", text: onDisk } });
     if (command === "chat_read_markdown")
       return Promise.resolve({
-        path: `${args.base ?? "/wt/a"}/${args.path}`,
+        path: args.path.startsWith("/") ? args.path : `${args.base ?? "/wt/a"}/${args.path}`,
         text: documentOnDisk,
         editable: documentEditable,
       });
@@ -215,11 +222,11 @@ describe("MarkdownPreviewPanel file editing", () => {
   });
 });
 
-function renderDocument(props: { busy?: boolean } = {}) {
+function renderDocument(props: { busy?: boolean } = {}, kind: "file" | "code" = "file") {
   const onClose = vi.fn();
   render(
     <MarkdownPreviewPanel
-      request={{ source: { kind: "file", path: documentRequest } }}
+      request={{ source: { kind, path: documentRequest } }}
       folders={["/wt/a"]}
       onClose={onClose}
       {...props}
@@ -250,6 +257,40 @@ describe("MarkdownPreviewPanel Markdown editing", () => {
       text: "# Notes\n\nSecond draft.\n",
     });
   });
+
+  it.each(["file", "code"] as const)(
+    "updates mounted cards for the same file after saving from a %s preview",
+    async (kind) => {
+      render(
+        <MarkdownPreviewContext.Provider value={{ folders: ["/wt/a"], open: vi.fn() }}>
+          <ReferencedDocuments
+            text={`[relative](${documentRequest}) [absolute](${documentPath()})`}
+          />
+          <ReferencedDocuments text="[other](docs/other.md)" />
+        </MarkdownPreviewContext.Provider>
+      );
+      await waitFor(() =>
+        expect(screen.getAllByRole("button", { name: "Preview Notes" })).toHaveLength(3)
+      );
+      const { panel } = renderDocument({}, kind);
+      fireEvent.click(await within(panel).findByRole("button", { name: "Edit file" }));
+      fireEvent.change(contents(), { target: { value: "# Revised\n\nNew excerpt.\n" } });
+      mocks.invoke.mockClear();
+
+      fireEvent.click(within(panel).getByRole("button", { name: "Save" }));
+
+      const cards = await screen.findAllByRole("button", { name: "Preview Revised" });
+      expect(cards).toHaveLength(2);
+      expect(cards[0]).toHaveTextContent("New excerpt.");
+      expect(cards[1]).toHaveTextContent("New excerpt.");
+      expect(screen.getByRole("button", { name: "Preview Notes" })).toHaveTextContent(
+        "First draft."
+      );
+      expect(
+        mocks.invoke.mock.calls.filter(([command]) => command === "chat_read_markdown")
+      ).toHaveLength(1);
+    }
+  );
 
   it("does not offer editing a document outside the task repositories", async () => {
     documentEditable = false;

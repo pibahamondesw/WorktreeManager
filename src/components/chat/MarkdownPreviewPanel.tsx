@@ -9,6 +9,7 @@ import {
   directoryOf,
   documentSummary,
   fileName,
+  isMarkdownFilePath,
   MarkdownSource,
   relativeTo,
   splitFrontmatter,
@@ -16,6 +17,7 @@ import {
 import {
   MarkdownPreviewContext,
   MarkdownPreviewRequest,
+  refreshSavedMarkdown,
   useMarkdownDocument,
 } from "./markdownPreviewContext";
 
@@ -129,9 +131,10 @@ export function MarkdownPreviewPanel({
     setSaving(true);
     setSaveError(null);
     try {
-      await chatWriteFile(path, edit.base, withLineEndingsOf(edit.base, edit.text));
+      const saved = await chatWriteFile(path, edit.base, withLineEndingsOf(edit.base, edit.text));
+      if (isMarkdownFilePath(saved.path)) await refreshSavedMarkdown(saved.path);
+      if (source.kind === "code") setRevision((current) => current + 1);
       stopEditing();
-      setRevision((current) => current + 1);
     } catch (e) {
       setSaveError(String(e));
     } finally {
