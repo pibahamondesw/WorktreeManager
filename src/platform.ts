@@ -4,6 +4,10 @@
  */
 export const IS_WINDOWS = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
 
+/** Root URL of a protocol registered with Tauri's `register_uri_scheme_protocol`. */
+export const customProtocolUrl = (scheme: string, windows = IS_WINDOWS): string =>
+  windows ? `http://${scheme}.localhost/` : `${scheme}://localhost/`;
+
 export const isWindowsDrivePath = (path: string): boolean => /^[A-Za-z]:[\\/]/.test(path);
 
 /** True for `/unix/paths`, `C:\windows\paths` (either slash) and `\\server\share` paths. */

@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import "@testing-library/jest-dom/vitest";
 import { MarkdownText } from "./ChatItemView";
 import { applyTheme, themes } from "../../themes";
-import { HTML_PREVIEW_CSP } from "./htmlPreviewPage";
+import { STATIC_HTML_PREVIEW_CSP, htmlPreviewFrameSource } from "./htmlPreviewPage";
 
 vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
 
@@ -19,24 +19,49 @@ const PREVIEW = "```html preview\n" + PAGE + "\n```";
 
 const frames = () => screen.queryAllByTitle("HTML preview") as HTMLIFrameElement[];
 
-it("renders an html preview fence in a sandbox without scripts or same-origin access", () => {
+function framePage(frame: HTMLIFrameElement) {
+  const [base, fragment] = frame.getAttribute("src")!.split("#");
+  expect(base).toBe("wtm-preview://localhost/");
+  const binary = atob(fragment.replace(/-/g, "+").replace(/_/g, "/"));
+  return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+}
+
+const expectIsolated = (frame: HTMLElement) => {
+  expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+  expect(frame).toHaveAttribute("referrerpolicy", "no-referrer");
+  expect(frame).not.toHaveAttribute("srcdoc");
+};
+
+it("loads an html preview fence from the preview protocol in a sandbox without same-origin access", () => {
   render(<MarkdownText text={`Here it is:\n\n${PREVIEW}\n\nDone`} />);
 
   const [frame] = frames();
   expect(frame.tagName).toBe("IFRAME");
-  expect(frame).toHaveAttribute("sandbox", "");
-  expect(frame).toHaveAttribute("referrerpolicy", "no-referrer");
-  expect(frame).not.toHaveAttribute("src");
-  const page = frame.getAttribute("srcdoc")!;
-  expect(
-    page.indexOf(`<meta http-equiv="Content-Security-Policy" content="${HTML_PREVIEW_CSP}">`)
-  ).toBeLessThan(page.indexOf("</head>"));
-  expect(page).toContain(`<body>${PAGE}\n</body>`);
+  expectIsolated(frame);
+  expect(framePage(frame)).toContain(`<body>${PAGE}\n</body>`);
   expect(screen.getByText("Done")).toBeVisible();
 });
 
-it("allows no scripts, connections or remote resources in the page", () => {
-  expect(HTML_PREVIEW_CSP.split("; ")).toEqual([
+it("keeps non-ASCII text intact in the page", () => {
+  render(<MarkdownText text={"```html preview\n<p>Año 📈</p>\n```"} />);
+
+  expect(framePage(frames()[0])).toContain("<p>Año 📈</p>");
+});
+
+it("keeps Windows previews static because WebView2 gives every frame Tauri's invoke key", () => {
+  const frame = htmlPreviewFrameSource(PAGE, true);
+
+  expect(frame.sandbox).toBe("");
+  expect("src" in frame).toBe(false);
+  const page = "srcDoc" in frame ? frame.srcDoc : "";
+  expect(
+    page.indexOf(`<meta http-equiv="Content-Security-Policy" content="${STATIC_HTML_PREVIEW_CSP}">`)
+  ).toBeLessThan(page.indexOf("</head>"));
+  expect(page).toContain(`<body>${PAGE}</body>`);
+});
+
+it("allows no scripts, connections or remote resources in Windows previews", () => {
+  expect(STATIC_HTML_PREVIEW_CSP.split("; ")).toEqual([
     "default-src 'none'",
     "style-src 'unsafe-inline'",
     "img-src data:",
@@ -78,18 +103,20 @@ it("renders a closed tilde fence inside a list", () => {
   expect(frames()).toHaveLength(1);
 });
 
-it("styles the page with the app theme and follows theme changes", () => {
+it("styles the page with the app theme and reloads it on theme changes", () => {
   applyTheme("light");
   render(<MarkdownText text={PREVIEW} />);
-  const page = () => frames()[0].getAttribute("srcdoc")!;
-  expect(page()).toContain(
+  const lightFrame = frames()[0];
+  expect(framePage(lightFrame)).toContain(
     `--color-accent: ${themes.find((t) => t.id === "light")!.colors.accent};`
   );
-  expect(page()).toContain("color-scheme: light;");
+  expect(framePage(lightFrame)).toContain("color-scheme: light;");
 
   act(() => applyTheme("default"));
-  expect(page()).toContain(`--color-accent: ${themes[0].colors.accent};`);
-  expect(page()).toContain("color-scheme: dark;");
+  const darkFrame = frames()[0];
+  expect(darkFrame).not.toBe(lightFrame);
+  expect(framePage(darkFrame)).toContain(`--color-accent: ${themes[0].colors.accent};`);
+  expect(framePage(darkFrame)).toContain("color-scheme: dark;");
 });
 
 it("opens the page full screen with zoom and closes it with Escape", () => {
@@ -100,8 +127,9 @@ it("opens the page full screen with zoom and closes it with Escape", () => {
 
   const viewer = screen.getByRole("dialog", { name: "HTML preview" });
   expect(viewer).toHaveFocus();
-  const frame = within(viewer).getByTitle("HTML preview");
-  expect(frame).toHaveAttribute("sandbox", "");
+  const frame = within(viewer).getByTitle("HTML preview") as HTMLIFrameElement;
+  expectIsolated(frame);
+  expect(frame.getAttribute("src")).toBe(frames()[0].getAttribute("src"));
   const status = within(viewer).getByRole("status");
 
   fireEvent.click(within(viewer).getByRole("button", { name: "Zoom in" }));

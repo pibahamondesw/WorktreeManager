@@ -203,6 +203,7 @@ describe("Rust coverage pipeline", () => {
         "lease::",
         "platform::tests::",
         "commands::code_server::orphan::tests::",
+        "html_preview::tests::",
       ]);
       expect(commands.find((call) => call.tool === "menu")?.args).toEqual([]);
       const tests = commands.filter((call) => call.tool === "unit tests" || call.tool === "menu");
