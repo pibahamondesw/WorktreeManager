@@ -72,6 +72,7 @@ fn without_detail(item: &ChatItem) -> ChatItem {
         detail: None,
         detail_length: None,
         command_activity: item.command_activity.clone(),
+        read_path: item.read_path.clone(),
         status: item.status.clone(),
         checkpoint: item.checkpoint.clone(),
         duration_ms: item.duration_ms,

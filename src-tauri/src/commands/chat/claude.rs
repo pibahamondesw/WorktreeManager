@@ -1337,6 +1337,12 @@ impl BlockCounts {
     }
 }
 
+fn tool_file_path(input: &Value) -> Option<&str> {
+    input["file_path"]
+        .as_str()
+        .or_else(|| input["notebook_path"].as_str())
+}
+
 fn tool_summary(tool: &str, input: &Value) -> Option<String> {
     let field = |key: &str| input[key].as_str().map(String::from);
     match tool {
@@ -1356,7 +1362,7 @@ fn tool_summary(tool: &str, input: &Value) -> Option<String> {
                 )
             )
         }),
-        "Read" | "NotebookEdit" => field("file_path").or_else(|| field("notebook_path")),
+        "Read" | "NotebookEdit" => tool_file_path(input).map(String::from),
         "Glob" | "Grep" => field("pattern"),
         "WebFetch" => field("url"),
         "WebSearch" => field("query"),
@@ -1423,10 +1429,16 @@ fn assistant_block(message_id: &str, index: usize, block: &Value) -> Option<Chat
                 }
                 _ => tool.to_string(),
             };
-            ChatItem::new(block["id"].as_str()?, kind, "")
+            let mut item = ChatItem::new(block["id"].as_str()?, kind, "")
                 .titled(title)
                 .with_detail(tool_summary(tool, input))
-                .with_status("inProgress")
+                .with_status("inProgress");
+            if matches!(tool, "Read" | "NotebookRead") {
+                item.read_path = tool_file_path(input)
+                    .filter(|path| !path.is_empty())
+                    .map(String::from);
+            }
+            item
         }
         _ => return None,
     })
@@ -3251,6 +3263,42 @@ mod tests {
             ]
         );
         assert_eq!(items[2].status.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn read_paths_are_sent_without_details_live_and_after_reopening() {
+        use crate::commands::chat::detail::{for_pane, DetailLimits};
+
+        let message = json!({ "type": "assistant", "message": { "id": "m1", "content": [
+            { "type": "tool_use", "id": "r1", "name": "Read", "input": { "file_path": "/a.txt" } },
+            { "type": "tool_use", "id": "r2", "name": "Read", "input": { "file_path": "/a.txt", "offset": 10 } },
+            { "type": "tool_use", "id": "r3", "name": "NotebookRead", "input": { "notebook_path": "/b.ipynb" } },
+            { "type": "tool_use", "id": "r4", "name": "Read", "input": { "file_path": "" } },
+        ] } });
+        let (mut provider, mut snapshot) = started();
+        feed(&mut provider, &mut snapshot, message.clone());
+        let history = parse_history(&message.to_string());
+
+        for items in [&snapshot.items, &history] {
+            let shown: Vec<_> = items
+                .iter()
+                .map(|item| {
+                    let shown = for_pane(item, None, DetailLimits::default());
+                    let payload = serde_json::to_value(shown).unwrap();
+                    assert!(payload.get("detail").is_none());
+                    payload.get("readPath").cloned()
+                })
+                .collect();
+            assert_eq!(
+                shown,
+                [
+                    Some(json!("/a.txt")),
+                    Some(json!("/a.txt")),
+                    Some(json!("/b.ipynb")),
+                    None
+                ]
+            );
+        }
     }
 
     #[test]
