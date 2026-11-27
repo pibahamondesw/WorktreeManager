@@ -39,6 +39,7 @@ interface ChatWorkspaceProps {
   onStatusChange?: (status: SessionStatus) => void;
   /** The active tab runs another agent, so the task's chat agent follows it. */
   onAgentChange?: (agent: AgentId) => void;
+  onSnooze?: (until: string) => Promise<void>;
 }
 
 /** The tab each task showed last, so coming back to a task shows it again. */
@@ -88,6 +89,7 @@ export function ChatWorkspace({
   folders,
   onStatusChange,
   onAgentChange,
+  onSnooze,
 }: ChatWorkspaceProps) {
   const { tabs, setTabs, error, titleOf, canRename, indicatorOf, reload } = useChatTabs(
     taskId,
@@ -425,6 +427,7 @@ export function ChatWorkspace({
               insertion={side?.source === active.id ? insertion : null}
               onInserted={inserted}
               onQueuedEditChange={setEditingQueued}
+              onSnooze={onSnooze}
             />
           </div>
           {side?.source === active.id && (
