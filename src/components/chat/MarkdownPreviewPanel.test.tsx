@@ -245,7 +245,6 @@ describe("MarkdownPreviewPanel Markdown editing", () => {
     expect(within(panel).getByRole("heading", { level: 1, name: "Notes" })).toBeInTheDocument();
     expect(within(panel).queryByRole("textbox", { name: "File contents" })).toBeNull();
     expect(mocks.invoke).toHaveBeenCalledWith("chat_write_file", {
-      folders: ["/wt/a"],
       path: documentPath(),
       original: "# Notes\n\nFirst draft.\n",
       text: "# Notes\n\nSecond draft.\n",
