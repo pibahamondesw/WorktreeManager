@@ -82,7 +82,6 @@ describe("MarkdownPreviewPanel file editing", () => {
 
     await waitFor(() => expect(panel).toHaveTextContent("1const a = 2;"));
     expect(mocks.invoke).toHaveBeenCalledWith("chat_write_file", {
-      folders: ["/wt/a"],
       path: PATH,
       original: "const a = 1;\n",
       text: "const a = 2;\n",
@@ -176,7 +175,6 @@ describe("MarkdownPreviewPanel file editing", () => {
 
     await waitFor(() => expect(onDisk).toBe("const a = 3;\n"));
     expect(mocks.invoke).toHaveBeenCalledWith("chat_write_file", {
-      folders: ["/wt/a"],
       path: PATH,
       original: "const a = 1;\n",
       text: "const a = 3;\n",
@@ -186,7 +184,7 @@ describe("MarkdownPreviewPanel file editing", () => {
   it("lets a resumed edit be cancelled when the file can no longer be read", async () => {
     mocks.invoke.mockImplementation((command: string) =>
       command === "chat_read_file"
-        ? Promise.reject("File not found in the task repositories: src/main.ts")
+        ? Promise.reject("File not found: src/main.ts")
         : Promise.resolve(undefined)
     );
     const { panel } = renderPanel({

@@ -129,7 +129,7 @@ export function MarkdownPreviewPanel({
     setSaving(true);
     setSaveError(null);
     try {
-      await chatWriteFile(folders, path, edit.base, withLineEndingsOf(edit.base, edit.text));
+      await chatWriteFile(path, edit.base, withLineEndingsOf(edit.base, edit.text));
       stopEditing();
       setRevision((current) => current + 1);
     } catch (e) {

@@ -1,6 +1,5 @@
-//! Files the agent links in chat, read for the file preview. Unlike Markdown documents, only files
-//! inside the task repositories are served, even when the path resolves against the directory of
-//! the document holding the link. Text files can be saved back from the preview.
+//! Files the agent links in chat, read for the file preview. Text files can be saved back from the
+//! preview.
 
 use std::fs;
 use std::path::Path;
@@ -9,7 +8,7 @@ use serde::Serialize;
 
 use super::changes::{content, image_mime, FileContent, MAX_IMAGE_BYTES};
 use crate::commands::user_file::UserFile;
-use crate::commands::validation::{is_inside_any, resolve_worktree_file};
+use crate::commands::validation::resolve_file;
 
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
@@ -34,32 +33,24 @@ pub fn read(
     path: &str,
     home: Option<&Path>,
 ) -> Result<PreviewFile, String> {
-    let found = resolve_worktree_file(folders, base, path, home)?;
-    let size = fs::metadata(&found).map_err(|e| e.to_string())?.len() as usize;
+    let found = resolve_file(folders, base, path, home)?;
+    let unreadable = |e: std::io::Error| format!("Cannot read {path}: {e}");
+    let size = fs::metadata(&found).map_err(unreadable)?.len() as usize;
     let found_path = found.to_string_lossy().to_string();
     if size > size_limit(&found_path) {
         return Err(format!("File is too large to preview: {path}"));
     }
-    let bytes = fs::read(&found).map_err(|e| e.to_string())?;
+    let bytes = fs::read(&found).map_err(unreadable)?;
     Ok(PreviewFile {
         content: content(&found_path, bytes),
         path: found_path,
     })
 }
 
-/// Saves text edited in the preview. Refuses when the file is outside the task repositories or
-/// no longer holds the text the edit started from, so concurrent edits are never overwritten.
-pub fn write(
-    folders: &[String],
-    path: &str,
-    original: &str,
-    text: &str,
-) -> Result<PreviewFile, String> {
-    let found = Path::new(path)
-        .canonicalize()
-        .ok()
-        .filter(|real| real.is_file() && is_inside_any(folders, real))
-        .ok_or_else(|| format!("File not found in the task repositories: {path}"))?;
+/// Saves text edited in the preview. Refuses when the file no longer holds the text the edit
+/// started from, so concurrent edits are never overwritten.
+pub fn write(path: &str, original: &str, text: &str) -> Result<PreviewFile, String> {
+    let found = resolve_file(&[], None, path, None)?;
     if fs::read(&found).ok().as_deref() != Some(original.as_bytes()) {
         return Err(format!(
             "{path} changed on disk since you started editing. Reload it and apply your edit again."
@@ -131,17 +122,86 @@ mod tests {
     }
 
     #[test]
-    fn rejects_files_outside_the_task_repositories_including_through_symlinks() {
+    fn reads_absolute_and_home_paths_outside_the_task_repositories() {
         let scratch = Scratch::new("outside");
         let folders = [scratch.folder("repo")];
-        let secret = scratch.write("secret.txt", b"secret");
-        std::os::unix::fs::symlink(&secret, scratch.0.join("repo/link.txt")).unwrap();
+        let expected = scratch.write("home/.skills/SKILL.txt", b"skill");
 
-        for path in [secret.as_str(), "../secret.txt", "link.txt", "missing.rs"] {
-            assert!(read(&folders, None, path, None)
-                .unwrap_err()
-                .starts_with("File not found"));
+        let absolute = read(&folders, None, &expected, None).unwrap();
+        let home = read(
+            &folders,
+            None,
+            "~/.skills/SKILL.txt",
+            Some(&scratch.0.join("home")),
+        )
+        .unwrap();
+
+        assert_eq!(absolute.path, expected);
+        assert_eq!(
+            absolute.content,
+            FileContent::Text {
+                text: "skill".into()
+            }
+        );
+        assert_eq!(home, absolute);
+    }
+
+    #[test]
+    fn reads_files_outside_the_task_repositories_through_symlinks() {
+        let scratch = Scratch::new("symlink");
+        let folders = [scratch.folder("repo")];
+        let target = scratch.write("shared/config.txt", b"shared");
+        std::os::unix::fs::symlink(&target, scratch.0.join("repo/link.txt")).unwrap();
+
+        assert_eq!(read(&folders, None, "link.txt", None).unwrap().path, target);
+    }
+
+    #[test]
+    fn reports_missing_files_as_not_found() {
+        let scratch = Scratch::new("missing");
+        let folders = [scratch.folder("repo")];
+        scratch.write("repo/file.txt", b"");
+
+        for path in ["missing.rs", "file.txt/child", "/nowhere/missing.rs"] {
+            assert_eq!(
+                read(&folders, None, path, None).unwrap_err(),
+                format!("File not found: {path}")
+            );
         }
+    }
+
+    #[test]
+    fn reports_why_an_unreadable_file_cannot_be_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("unreadable");
+        let folders = [scratch.folder("repo")];
+        let path = scratch.write("private/key.txt", b"secret");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let error = read(&folders, None, &path, None).unwrap_err();
+
+        assert_eq!(
+            error,
+            format!("Cannot read {path}: Permission denied (os error 13)")
+        );
+    }
+
+    #[test]
+    fn reports_why_a_file_in_an_unreadable_directory_cannot_be_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("locked");
+        let folders = [scratch.folder("repo")];
+        let path = scratch.write("locked/key.txt", b"secret");
+        let locked = scratch.0.join("locked");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let error = read(&folders, None, &path, None).unwrap_err();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(
+            error,
+            format!("Cannot read {path}: Permission denied (os error 13)")
+        );
     }
 
     #[test]
@@ -156,11 +216,27 @@ mod tests {
     }
 
     #[test]
-    fn resolves_against_the_linking_document_without_serving_files_outside_the_task() {
+    fn keeps_searching_the_task_repositories_past_an_unreadable_candidate() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("skip-unreadable");
+        let folders = [scratch.folder("locked"), scratch.folder("peer")];
+        let locked = scratch.0.join("locked/src");
+        fs::create_dir_all(&locked).unwrap();
+        let expected = scratch.write("peer/src/x.ts", b"x");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let found = read(&folders, None, "src/x.ts", None);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(found.unwrap().path, expected);
+    }
+
+    #[test]
+    fn resolves_against_the_linking_document_before_the_task_repositories() {
         let scratch = Scratch::new("base");
         let folders = [scratch.folder("repo")];
         let expected = scratch.write("repo/src/x.ts", b"x");
-        scratch.write("notes/key", b"secret");
+        let beside = scratch.write("notes/key", b"note");
         let docs = scratch.folder("repo/docs");
         let notes = scratch.0.join("notes").to_string_lossy().to_string();
 
@@ -170,9 +246,10 @@ mod tests {
                 .path,
             expected
         );
-        assert!(read(&folders, Some(&notes), "key", None)
-            .unwrap_err()
-            .starts_with("File not found"));
+        assert_eq!(
+            read(&folders, Some(&notes), "key", None).unwrap().path,
+            beside
+        );
     }
 
     #[test]
@@ -215,7 +292,7 @@ mod tests {
         let folders = [scratch.folder("repo")];
         let path = scratch.write("repo/src/x.ts", b"const a = 1;\n");
 
-        let saved = write(&folders, &path, "const a = 1;\n", "const a = 2;\n").unwrap();
+        let saved = write(&path, "const a = 1;\n", "const a = 2;\n").unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "const a = 2;\n");
         assert_eq!(saved, read(&folders, None, &path, None).unwrap());
@@ -224,43 +301,50 @@ mod tests {
     #[test]
     fn refuses_to_overwrite_a_file_changed_since_the_edit_started() {
         let scratch = Scratch::new("conflict");
-        let folders = [scratch.folder("repo")];
-        let path = scratch.write("repo/x.ts", b"agent edit\n");
+        let path = scratch.write("x.ts", b"agent edit\n");
 
-        let error = write(&folders, &path, "original\n", "mine\n").unwrap_err();
+        let error = write(&path, "original\n", "mine\n").unwrap_err();
 
         assert!(error.contains("changed on disk"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "agent edit\n");
     }
 
     #[test]
-    fn refuses_to_save_outside_the_task_repositories() {
+    fn saves_outside_the_task_repositories_through_symlinks() {
         let scratch = Scratch::new("save-outside");
-        let folders = [scratch.folder("repo")];
-        let secret = scratch.write("secret.txt", b"secret");
-        std::os::unix::fs::symlink(&secret, scratch.0.join("repo/link.txt")).unwrap();
-        let link = scratch
-            .0
-            .join("repo/link.txt")
-            .to_string_lossy()
-            .to_string();
+        let target = scratch.write("shared/config.txt", b"old\n");
+        let link = scratch.0.join("repo/link.txt");
+        scratch.folder("repo");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        for path in [secret.as_str(), link.as_str(), "missing.rs"] {
-            assert!(write(&folders, path, "secret", "changed")
-                .unwrap_err()
-                .starts_with("File not found"));
-        }
-        assert_eq!(fs::read_to_string(&secret).unwrap(), "secret");
+        let saved = write(&link.to_string_lossy(), "old\n", "new\n").unwrap();
+
+        assert_eq!(saved.path, target);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new\n");
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn refuses_to_save_a_missing_file() {
+        let scratch = Scratch::new("save-missing");
+        let path = scratch.0.join("gone.txt").to_string_lossy().to_string();
+
+        assert_eq!(
+            write(&path, "", "new").unwrap_err(),
+            format!("File not found: {path}")
+        );
+        assert!(!Path::new(&path).exists());
     }
 
     #[test]
     fn the_command_saves_files_off_the_main_thread() {
         let scratch = Scratch::new("save-command");
-        let folder = scratch.folder("repo");
-        let path = scratch.write("repo/a.txt", b"a");
+        let path = scratch.write("a.txt", b"a");
 
         let saved = tauri::async_runtime::block_on(super::super::chat_write_file(
-            vec![folder],
             path.clone(),
             "a".into(),
             "b".into(),

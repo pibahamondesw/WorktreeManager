@@ -1805,7 +1805,7 @@ describe("Markdown previews", () => {
               path: "/wt/a/src/main.ts",
               content: { kind: "text", text: "const a = 1;\nexport default a;" },
             })
-          : Promise.reject("File not found in the task repositories: src/gone.ts");
+          : Promise.reject("File not found: src/gone.ts");
       return Promise.resolve(undefined);
     });
     render(<ChatPane taskId="t1" agent="claude" folders={["/wt/a"]} />);
