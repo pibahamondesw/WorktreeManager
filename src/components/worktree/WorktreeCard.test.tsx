@@ -46,6 +46,7 @@ type CardProps = Omit<ComponentProps<typeof WorktreeCard>, "actions"> & {
   onToggleShelved?: () => void;
   onSnooze?: (until: string | null) => void;
   onPickSnoozeDate?: () => void;
+  onToggleAutoShelve?: () => void;
 };
 
 function Card({
@@ -58,6 +59,7 @@ function Card({
   onToggleShelved,
   onSnooze,
   onPickSnoozeDate,
+  onToggleAutoShelve,
   ...props
 }: CardProps) {
   const actions: TaskCardActions = {
@@ -71,6 +73,7 @@ function Card({
     toggleShelved: onToggleShelved && (() => onToggleShelved()),
     snooze: onSnooze && ((_task, until) => onSnooze(until)),
     pickSnoozeDate: onPickSnoozeDate && (() => onPickSnoozeDate()),
+    toggleAutoShelve: onToggleAutoShelve && (() => onToggleAutoShelve()),
   };
   return <WorktreeCard {...props} actions={actions} />;
 }
@@ -678,5 +681,28 @@ describe("WorktreeCard snooze", () => {
     expect(screen.queryByText("Snooze until…")).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("Unsnooze"));
     expect(onSnooze).toHaveBeenCalledWith(null);
+  });
+});
+
+describe("WorktreeCard automatic moves", () => {
+  it.each([
+    { autoShelve: undefined, item: "Never move to Finished automatically" },
+    { autoShelve: false as const, item: "Move to Finished automatically" },
+  ])("runs $item from the menu and closes it", ({ autoShelve, item }) => {
+    const onToggleAutoShelve = vi.fn();
+    render(
+      <Card
+        task={{ ...task, autoShelve }}
+        workspace={workspace}
+        vault={vault}
+        onDelete={vi.fn()}
+        repoSlugs={{}}
+        onToggleAutoShelve={onToggleAutoShelve}
+      />
+    );
+    fireEvent.click(screen.getByTitle("More actions"));
+    fireEvent.click(screen.getByText(item));
+    expect(onToggleAutoShelve).toHaveBeenCalledOnce();
+    expect(screen.queryByText(item)).not.toBeInTheDocument();
   });
 });

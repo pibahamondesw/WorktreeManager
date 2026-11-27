@@ -15,6 +15,7 @@ import {
   loadSidebarCollapsed,
   loadKeepRunningInBackground,
   loadCompactIdleChats,
+  loadAutoShelve,
   persist,
 } from "../services/store";
 import {
@@ -53,6 +54,7 @@ export function useStore() {
     sidebarCollapsed,
     keepRunningInBackground,
     compactIdleChats,
+    autoShelve,
   } = preferences;
   const [workspaceSwitching, setWorkspaceSwitching] = useState(true);
   const [persistError, setPersistError] = useState<string | null>(null);
@@ -121,6 +123,7 @@ export function useStore() {
       loadAgentViews(),
       loadKeepRunningInBackground(),
       loadCompactIdleChats(),
+      loadAutoShelve(),
       loadTypography(),
       loadContrast(),
     ])
@@ -134,6 +137,7 @@ export function useStore() {
           views,
           keepRunning,
           compactIdle,
+          autoShelveSettings,
           fonts,
           contrastLevel,
         ]) => {
@@ -150,7 +154,15 @@ export function useStore() {
             sidebarCollapsed: collapsed,
             keepRunningInBackground: keepRunning,
             compactIdleChats: compactIdle,
+            autoShelve: autoShelveSettings,
           });
+          if (autoShelveSettings.since === null)
+            void preferenceSession.update(
+              ({ autoShelve: current }) => ({
+                autoShelve: { ...current, since: current.since ?? new Date().toISOString() },
+              }),
+              "Failed to save the Finished preference"
+            );
           setLoading(false);
 
           const basePaths = [
@@ -328,6 +340,15 @@ export function useStore() {
     [preferenceSession]
   );
 
+  const updateAutoShelveInactiveDays = useCallback(
+    (inactiveDays: number | null) =>
+      preferenceSession.update(
+        { autoShelve: { inactiveDays, since: new Date().toISOString() } },
+        "Failed to save the Finished preference"
+      ),
+    [preferenceSession]
+  );
+
   const updateThemeId = useCallback(
     (id: string) =>
       preferenceSession.update(
@@ -407,6 +428,8 @@ export function useStore() {
     updateKeepRunningInBackground,
     compactIdleChats,
     updateCompactIdleChats,
+    autoShelve,
+    updateAutoShelveInactiveDays,
     updateThemeId,
     updateCustomColors,
     typography,

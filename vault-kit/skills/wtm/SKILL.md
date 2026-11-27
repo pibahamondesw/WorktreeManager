@@ -24,7 +24,7 @@ Never create, move or delete worktrees behind the app's back. If `wtm` is missin
 
 ```bash
 wtm workspace list                       # workspaces with their repositories and IDs
-wtm task list [--workspace <id>]         # tasks with branch, issue and member paths
+wtm task list [--workspace <id>]         # tasks with branch, issue, member paths and shelvedAt/snoozedUntil when set
 wtm task get <id> --git                  # plus ahead/behind/dirty per member repository
 wtm task create --input task.json        # or --input - for stdin
 wtm task link-issue <id> --issue WOR-123

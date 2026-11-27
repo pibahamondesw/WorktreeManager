@@ -18,7 +18,8 @@ import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useNavigationHistory } from "./hooks/useNavigationHistory";
 import { usePresence } from "./hooks/usePresence";
 import { useOpenTask } from "./hooks/useOpenTask";
-import { NavigationEntry } from "./navigation/history";
+import { NavigationEntry, lastTaskVisits } from "./navigation/history";
+import { useTaskActivityRecorder } from "./hooks/useTaskActivityRecorder";
 import { withScope } from "./search/query";
 import { WorkspaceAction } from "./search/commands";
 import { CheckSeverity, DoctorConfig } from "./services/doctor";
@@ -85,6 +86,8 @@ function App() {
     updateKeepRunningInBackground,
     compactIdleChats,
     updateCompactIdleChats,
+    autoShelve,
+    updateAutoShelveInactiveDays,
     updateThemeId,
     updateCustomColors,
   } = useStore();
@@ -179,6 +182,12 @@ function App() {
     },
   });
 
+  const lastVisitAt = useMemo(() => lastTaskVisits(history.entries), [history.entries]);
+  const recordTaskActivity = useCallback(
+    (activity: Record<string, string>) => operations.recordTaskActivity(activity),
+    [operations]
+  );
+
   const initialVisitRecorded = useRef(false);
   useEffect(() => {
     if (loading || initialVisitRecorded.current || !state.selectedWorkspaceId) return;
@@ -219,6 +228,8 @@ function App() {
       setPinned: (id, pinned) => operations.setTaskPinned(id, pinned),
       setShelved: (id, shelved) => operations.setTaskShelved(id, shelved),
       snooze: (id, until) => operations.snoozeTask(id, until),
+      setAutoShelve: (id, enabled) => operations.setTaskAutoShelve(id, enabled),
+      shelveTasks: (ids) => operations.shelveTasks(ids),
       reorderPinned: (id, targetId) => operations.reorderPinnedTasks(id, targetId),
       linkIssue: (id, issue) => operations.linkTaskIssue(id, issue),
       rename: (id, title) => operations.renameTask(id, title),
@@ -313,6 +324,12 @@ function App() {
     openedTaskId: openedTask?.taskId ?? null,
     onOpenTarget: openNotificationTarget,
     inboxBadge: automationInbox.badge,
+  });
+  useTaskActivityRecorder({
+    tasks: state.tasks,
+    lastVisitAt,
+    agentActivities: agentActivity.activities,
+    record: recordTaskActivity,
   });
   useCliBridge(operations, !loading, agentActivity.handleAgentEvent);
 
@@ -597,6 +614,7 @@ function App() {
                 onSwitchSurface={switchTaskSurface}
                 requestNewTask={newTaskRequested}
                 onRequestNewTaskHandled={clearNewTaskRequest}
+                autoShelve={autoShelve}
               />
             </FirstPromptContext.Provider>
           </TakenOverTasksContext.Provider>
@@ -673,6 +691,8 @@ function App() {
         }
         compactIdleChats={compactIdleChats}
         onCompactIdleChatsChange={(compact) => void updateCompactIdleChats(compact)}
+        autoShelveInactiveDays={autoShelve.inactiveDays}
+        onAutoShelveInactiveDaysChange={(days) => void updateAutoShelveInactiveDays(days)}
         firstPromptTemplate={state.firstPromptTemplate}
         onFirstPromptTemplateChange={(template) => operations.updateFirstPromptTemplate(template)}
         severity={doctorSeverity}

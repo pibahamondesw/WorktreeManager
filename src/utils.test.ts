@@ -295,6 +295,16 @@ describe("normalizeWorkspaces / normalizeTasks", () => {
     expect(malformed.snoozedUntil).toBeUndefined();
   });
 
+  it("keeps the automatic move opt-out and the last activity, dropping malformed values", () => {
+    const [kept, malformed] = normalizeTasks([
+      { id: "a", workspaceId: "w1", autoShelve: false, lastActiveAt: "2026-02-01T00:00:00.000Z" },
+      { id: "b", workspaceId: "w1", autoShelve: true, lastActiveAt: "soon" },
+    ]);
+    expect(kept).toMatchObject({ autoShelve: false, lastActiveAt: "2026-02-01T00:00:00.000Z" });
+    expect(malformed.autoShelve).toBeUndefined();
+    expect(malformed.lastActiveAt).toBeUndefined();
+  });
+
   it("returns empty arrays for nullish input", () => {
     expect(normalizeWorkspaces(undefined)).toEqual([]);
     expect(normalizeTasks(null)).toEqual([]);

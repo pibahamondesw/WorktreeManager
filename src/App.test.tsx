@@ -170,6 +170,7 @@ beforeEach(() => {
     selectedWorkspace: workspaces[1],
     selectedTasks: [],
     selectWorkspace: mocks.selectWorkspace,
+    autoShelve: { inactiveDays: 30, since: null },
   });
 });
 afterEach(() => {

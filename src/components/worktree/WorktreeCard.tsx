@@ -60,6 +60,7 @@ export interface TaskCardActions {
   toggleShelved?: (task: Task) => void;
   snooze?: (task: Task, until: string | null) => void;
   pickSnoozeDate?: (task: Task) => void;
+  toggleAutoShelve?: (task: Task) => void;
   linkIssue?: (taskId: string) => void;
   rename?: (taskId: string, title: string) => Promise<unknown>;
   markPrReady?: (taskId: string, pr: PullRequestInfo) => Promise<void>;
@@ -491,6 +492,18 @@ export const WorktreeCard = memo(function WorktreeCard({
                     }}
                   >
                     {task.shelvedAt === undefined ? "Move to Finished" : "Move to active"}
+                  </MenuButton>
+                )}
+                {actions.toggleAutoShelve && (
+                  <MenuButton
+                    onClick={() => {
+                      setMenuOpen(false);
+                      actions.toggleAutoShelve!(task);
+                    }}
+                  >
+                    {task.autoShelve === false
+                      ? "Move to Finished automatically"
+                      : "Never move to Finished automatically"}
                   </MenuButton>
                 )}
                 {actions.snooze &&

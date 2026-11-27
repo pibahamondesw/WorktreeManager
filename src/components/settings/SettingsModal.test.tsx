@@ -29,6 +29,7 @@ function renderSettings() {
   const onAlertsChange = vi.fn();
   const onKeepRunningInBackgroundChange = vi.fn();
   const onCompactIdleChatsChange = vi.fn();
+  const onAutoShelveInactiveDaysChange = vi.fn();
   const onRecheck = vi.fn();
   const onClose = vi.fn();
   function Harness() {
@@ -62,6 +63,8 @@ function renderSettings() {
         onKeepRunningInBackgroundChange={onKeepRunningInBackgroundChange}
         compactIdleChats
         onCompactIdleChatsChange={onCompactIdleChatsChange}
+        autoShelveInactiveDays={30}
+        onAutoShelveInactiveDaysChange={onAutoShelveInactiveDaysChange}
         report={null}
         running={false}
         severity="warning"
@@ -76,6 +79,7 @@ function renderSettings() {
     onAlertsChange,
     onKeepRunningInBackgroundChange,
     onCompactIdleChatsChange,
+    onAutoShelveInactiveDaysChange,
     onRecheck,
     onClose,
   };
@@ -253,4 +257,11 @@ it("saves which tool calls every chat shows from preferences", () => {
   });
   expect(screen.getByRole("combobox", { name: "Tool calls in chat" })).toHaveValue("zen");
   expect(localStorage.getItem("worktreemanager.toolVisibility")).toBe("zen");
+});
+
+it("turns off moving inactive tasks to Finished from preferences", () => {
+  const { onAutoShelveInactiveDaysChange } = renderSettings();
+  fireEvent.click(screen.getByRole("tab", { name: "Preferences" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Move tasks inactive for/ }));
+  expect(onAutoShelveInactiveDaysChange).toHaveBeenCalledWith(null);
 });

@@ -25,6 +25,9 @@ import { AgentAlertSettings, normalizeAgentAlerts } from "./agentActivity";
 import type { InboxMarks } from "./automationInbox";
 import { SYSTEM_THEME_ID, CUSTOM_THEME_ID, themes } from "../themes";
 import { Typography, normalizeContrast, normalizeTypography } from "../appearance";
+import type { AutoShelveSettings } from "./taskShelf";
+
+export const DEFAULT_AUTO_SHELVE_INACTIVE_DAYS = 30;
 
 export interface Preferences {
   vault: VaultConfig;
@@ -40,6 +43,7 @@ export interface Preferences {
   keepRunningInBackground: boolean;
   /** Compact idle Claude chats with a large context before the prompt cache expires. */
   compactIdleChats: boolean;
+  autoShelve: AutoShelveSettings;
   scriptApprovals: Record<string, string[]>;
   agentAlerts: AgentAlertSettings;
   navigationHistory: NavigationEntry[];
@@ -114,6 +118,22 @@ export const normalizers: { [K in keyof PersistedValues]: (raw: unknown) => Pers
   sidebarCollapsed: (raw) => raw === true,
   keepRunningInBackground: (raw) => raw !== false,
   compactIdleChats: (raw) => raw !== false,
+  autoShelve: (raw) => {
+    const value = record(raw);
+    const days = value.inactiveDays;
+    return {
+      inactiveDays:
+        days === null
+          ? null
+          : typeof days === "number" && Number.isSafeInteger(days) && days > 0
+            ? days
+            : DEFAULT_AUTO_SHELVE_INACTIVE_DAYS,
+      since:
+        typeof value.since === "string" && !Number.isNaN(Date.parse(value.since))
+          ? value.since
+          : null,
+    };
+  },
   scriptApprovals: (raw) =>
     Object.fromEntries(
       Object.entries(record(raw)).map(([path, hashes]) => [
@@ -228,6 +248,7 @@ export type InterfacePreferences = Pick<
   | "sidebarCollapsed"
   | "keepRunningInBackground"
   | "compactIdleChats"
+  | "autoShelve"
 >;
 
 export function defaultInterfacePreferences(): InterfacePreferences {
@@ -241,6 +262,7 @@ export function defaultInterfacePreferences(): InterfacePreferences {
     sidebarCollapsed: normalizers.sidebarCollapsed(undefined),
     keepRunningInBackground: normalizers.keepRunningInBackground(undefined),
     compactIdleChats: normalizers.compactIdleChats(undefined),
+    autoShelve: normalizers.autoShelve(undefined),
   };
 }
 
