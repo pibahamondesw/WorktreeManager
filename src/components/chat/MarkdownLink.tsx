@@ -1,7 +1,7 @@
 import { ComponentProps, MouseEvent, useContext, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { openFileInEditor } from "../../services/openEditor";
-import { fileReference, markdownPath } from "./markdownDocument";
+import { fileReference, isWindowsPathLink, markdownPath } from "./markdownDocument";
 import { MarkdownFileLink } from "./MarkdownFileLink";
 import { TaskEditorContext, useMarkdownPreview } from "./markdownPreviewContext";
 
@@ -46,6 +46,8 @@ export function MarkdownLink({ href, children, title }: ComponentProps<"a">) {
       </MarkdownFileLink>
     );
   }
+
+  if (href && isWindowsPathLink(href)) return <>{children}</>;
 
   const openLink = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();

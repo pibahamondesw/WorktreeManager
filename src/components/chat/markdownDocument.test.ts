@@ -42,7 +42,7 @@ describe("fileReference", () => {
     expect(fileReference(reference)).toEqual(expected);
   });
 
-  it.each(["https://example.com/x.ts", "mailto:a@b.c", "#section", "", undefined])(
+  it.each(["https://example.com/x.ts", "mailto:a@b.c", "C:src/x.ts", "#section", "", undefined])(
     "ignores %s",
     (reference) => {
       expect(fileReference(reference)).toBeNull();
@@ -61,6 +61,13 @@ describe("markdownReferences", () => {
       "```",
     ].join("\n");
     expect(markdownReferences(text)).toEqual(["docs/plan.md", "README.md"]);
+  });
+
+  it("collects the same Windows document from an encoded link and a literal mention", () => {
+    const path = String.raw`C:\repo\C#\literal%20plan.md`;
+    const text = String.raw`[plan](C:\repo\C%23\literal%2520plan.md)` + " and `" + path + ":12`.";
+
+    expect(markdownReferences(text)).toEqual([path]);
   });
 });
 
@@ -118,6 +125,11 @@ describe("relativeTo", () => {
     expect(relativeTo("/wt/a/docs/plan.md", ["/wt/b", "/wt/a"])).toBe("docs/plan.md");
     expect(relativeTo("/elsewhere/plan.md", ["/wt/a"])).toBe("/elsewhere/plan.md");
   });
+
+  it("keeps a Windows path outside the task folder even when the prefix matches", () => {
+    const path = String.raw`C:\repo-old\src\app.ts`;
+    expect(relativeTo(path, ["c:/repo/"])).toBe(path);
+  });
 });
 
 describe("fileLinkLabel", () => {
@@ -140,6 +152,14 @@ describe("fileLinkCopies", () => {
     expect(fileLinkCopies({ path: "/wt/a/src/x.ts", line: 3 }, folders)).toEqual([
       { label: "Copy relative path", value: "src/x.ts:3" },
       { label: "Copy path", value: "/wt/a/src/x.ts:3" },
+    ]);
+  });
+
+  it("copies a Windows path with its original separators and cited line", () => {
+    const path = String.raw`C:\repo\src\app.ts`;
+    expect(fileLinkCopies({ path, line: 12 }, ["c:/repo/"])).toEqual([
+      { label: "Copy relative path", value: "src/app.ts:12" },
+      { label: "Copy path", value: `${path}:12` },
     ]);
   });
 

@@ -4,9 +4,11 @@
  */
 export const IS_WINDOWS = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
 
+export const isWindowsDrivePath = (path: string): boolean => /^[A-Za-z]:[\\/]/.test(path);
+
 /** True for `/unix/paths`, `C:\windows\paths` (either slash) and `\\server\share` paths. */
 export function isAbsolutePath(path: string): boolean {
-  return /^\/|^[A-Za-z]:[\\/]|^\\\\/.test(path);
+  return path.startsWith("/") || isWindowsDrivePath(path) || path.startsWith("\\\\");
 }
 
 /**
@@ -24,7 +26,7 @@ export function joinPath(base: string, ...parts: string[]): string {
  * or UNC paths, whose file systems ignore case — lowercased. POSIX paths are left as they are.
  */
 function comparablePath(path: string): string {
-  const windows = /^[A-Za-z]:[\\/]|^\\\\/.test(path);
+  const windows = isWindowsDrivePath(path) || path.startsWith("\\\\");
   const slashed = (windows ? path.replace(/\\/g, "/") : path).replace(/\/+$/, "");
   return windows ? slashed.toLowerCase() : slashed;
 }

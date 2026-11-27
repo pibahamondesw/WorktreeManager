@@ -3,12 +3,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import { ChatItemView, MarkdownText, WorkGroup } from "./ChatItemView";
 import { ItemDetailContext } from "./itemDetailContext";
+import { MarkdownPreviewContext, TaskEditorContext } from "./markdownPreviewContext";
 import { renderMermaid } from "./mermaid";
 import { saveDiagramPng } from "./diagramExport";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("./mermaid", () => ({ renderMermaid: vi.fn() }));
 vi.mock("./diagramExport", () => ({ saveDiagramPng: vi.fn() }));
 vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
@@ -131,6 +134,84 @@ it("does not open unsafe URLs stripped by Markdown", () => {
   render(<MarkdownText text="[Unsafe](javascript:alert%281%29)" />);
 
   expect(fireEvent.click(screen.getByText("Unsafe"))).toBe(false);
+  expect(openUrl).not.toHaveBeenCalled();
+});
+
+const windowsFile = String.raw`C:\My Repo\src\app.ts`;
+
+it.each([
+  [`[app.ts](<${windowsFile}:12>)`, windowsFile],
+  ["[app.ts](c:/My%20Repo/src/app.ts#L12)", "c:/My Repo/src/app.ts"],
+  ["`" + windowsFile + ":12`", windowsFile],
+])("opens the Windows file and cited line from %s", (text, path) => {
+  const open = vi.fn();
+  vi.mocked(invoke).mockClear();
+  const folders = ["C:/other", "c:/my repo/"];
+  render(
+    <TaskEditorContext.Provider value="cursor">
+      <MarkdownPreviewContext.Provider value={{ folders, open }}>
+        <MarkdownText text={text} />
+      </MarkdownPreviewContext.Provider>
+    </TaskEditorContext.Provider>
+  );
+
+  const chip = screen.getByRole("link", { name: "src/app.ts:12" });
+  fireEvent.click(chip);
+  expect(open).toHaveBeenCalledExactlyOnceWith({ source: { kind: "code", path, line: 12 } });
+
+  fireEvent.contextMenu(chip);
+  expect(screen.getByRole("menuitem", { name: "Copy relative path" })).toBeVisible();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open in Cursor" }));
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("open_editor_file", {
+    editor: "cursor",
+    folders,
+    path,
+    line: 12,
+    base: undefined,
+  });
+});
+
+it("leaves Windows paths inside fenced code and external link labels as code", () => {
+  const text = `See [\`${windowsFile}\`][external].\n\n[external]: https://example.com\n\n\`\`\`\n${windowsFile}\n\`\`\``;
+  render(
+    <MarkdownPreviewContext.Provider value={{ folders: [], open: vi.fn() }}>
+      <MarkdownText text={text} />
+    </MarkdownPreviewContext.Provider>
+  );
+
+  expect(screen.getAllByText(windowsFile, { selector: "code" })).toHaveLength(2);
+  expect(screen.getAllByRole("link")).toHaveLength(1);
+  expect(screen.getByRole("link", { name: windowsFile })).toHaveAttribute(
+    "href",
+    "https://example.com"
+  );
+});
+
+const windowsFileWithLiteralCharacters = String.raw`C:\repo\C#\literal%20name.ts`;
+
+it.each([
+  "`" + windowsFileWithLiteralCharacters + ":12`",
+  String.raw`[source](C:\repo\C%23\literal%2520name.ts#L12)`,
+  String.raw`[source](<C:\repo\C#\literal%2520name.ts:12>)`,
+])("preserves literal Windows path characters in %s", (text) => {
+  const open = vi.fn();
+  render(
+    <MarkdownPreviewContext.Provider value={{ folders: [], open }}>
+      <MarkdownText text={text} />
+    </MarkdownPreviewContext.Provider>
+  );
+
+  fireEvent.click(screen.getByRole("link"));
+  expect(open).toHaveBeenCalledExactlyOnceWith({
+    source: { kind: "code", path: windowsFileWithLiteralCharacters, line: 12 },
+  });
+});
+
+it("keeps Windows links inert when there is no file preview", () => {
+  render(<MarkdownText text={`[app.ts](<${windowsFile}:12>)`} />);
+
+  fireEvent.click(screen.getByText("app.ts"));
+  expect(screen.queryByRole("link")).toBeNull();
   expect(openUrl).not.toHaveBeenCalled();
 });
 
