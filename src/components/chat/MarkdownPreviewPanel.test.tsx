@@ -9,7 +9,12 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 import { FileEdit, MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 
 const PATH = "/wt/a/src/main.ts";
+let documentCount = 0;
+let documentRequest = "";
+const documentPath = () => `/wt/a/${documentRequest}`;
 let onDisk = "const a = 1;\n";
+let documentOnDisk = "# Notes\n\nFirst draft.\n";
+let documentEditable = true;
 
 function renderPanel(
   props: {
@@ -40,10 +45,24 @@ async function startEditing(panel: HTMLElement) {
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   onDisk = "const a = 1;\n";
+  documentOnDisk = "# Notes\n\nFirst draft.\n";
+  documentEditable = true;
+  documentRequest = `docs/notes-${++documentCount}.md`;
   mocks.invoke.mockReset();
   mocks.invoke.mockImplementation((command: string, args: Record<string, string>) => {
     if (command === "chat_read_file")
       return Promise.resolve({ path: PATH, content: { kind: "text", text: onDisk } });
+    if (command === "chat_read_markdown")
+      return Promise.resolve({
+        path: `${args.base ?? "/wt/a"}/${args.path}`,
+        text: documentOnDisk,
+        editable: documentEditable,
+      });
+    if (command === "chat_write_file" && args.path === documentPath()) {
+      if (args.original !== documentOnDisk) return Promise.reject(`${args.path} changed on disk`);
+      documentOnDisk = args.text;
+      return Promise.resolve({ path: args.path, content: { kind: "text", text: args.text } });
+    }
     if (command === "chat_write_file") {
       if (args.original !== onDisk) return Promise.reject("src/main.ts changed on disk");
       onDisk = args.text;
@@ -195,5 +214,113 @@ describe("MarkdownPreviewPanel file editing", () => {
     expect(await within(panel).findByRole("alert")).toHaveTextContent("changed on disk");
     expect(contents()).toHaveValue("const a = 3;\n");
     expect(onDisk).toBe("const a = 9;\n");
+  });
+});
+
+function renderDocument(props: { busy?: boolean } = {}) {
+  const onClose = vi.fn();
+  render(
+    <MarkdownPreviewPanel
+      request={{ source: { kind: "file", path: documentRequest } }}
+      folders={["/wt/a"]}
+      onClose={onClose}
+      {...props}
+    />
+  );
+  return { panel: screen.getByRole("region", { name: /^Preview of / }), onClose };
+}
+
+async function startEditingDocument(panel: HTMLElement) {
+  fireEvent.click(await within(panel).findByRole("button", { name: "Edit file" }));
+  fireEvent.change(contents(), { target: { value: "# Notes\n\nSecond draft.\n" } });
+}
+
+describe("MarkdownPreviewPanel Markdown editing", () => {
+  it("edits the document as text and renders it again once saved", async () => {
+    const { panel } = renderDocument();
+    await startEditingDocument(panel);
+    expect(within(panel).queryByRole("heading", { level: 1, name: "Notes" })).toBeNull();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(panel).toHaveTextContent("Second draft."));
+    expect(within(panel).getByRole("heading", { level: 1, name: "Notes" })).toBeInTheDocument();
+    expect(within(panel).queryByRole("textbox", { name: "File contents" })).toBeNull();
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_write_file", {
+      folders: ["/wt/a"],
+      path: documentPath(),
+      original: "# Notes\n\nFirst draft.\n",
+      text: "# Notes\n\nSecond draft.\n",
+    });
+  });
+
+  it("does not offer editing a document outside the task repositories", async () => {
+    documentEditable = false;
+    const { panel } = renderDocument();
+
+    await within(panel).findByText("First draft.");
+
+    expect(within(panel).queryByRole("button", { name: "Edit file" })).toBeNull();
+  });
+
+  it("keeps the edit when the document changed on disk meanwhile", async () => {
+    const { panel } = renderDocument();
+    await startEditingDocument(panel);
+    documentOnDisk = "# Notes\n\nAgent draft.\n";
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Save" }));
+
+    expect(await within(panel).findByRole("alert")).toHaveTextContent("changed on disk");
+    expect(contents()).toHaveValue("# Notes\n\nSecond draft.\n");
+    expect(documentOnDisk).toBe("# Notes\n\nAgent draft.\n");
+  });
+
+  it("does not save the document while the agent is working", async () => {
+    const { panel } = renderDocument({ busy: true });
+    await startEditingDocument(panel);
+
+    expect(within(panel).getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("asks before discarding unsaved changes to the document", async () => {
+    const { panel, onClose } = renderDocument();
+    await startEditingDocument(panel);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(within(panel).getByRole("alertdialog", { name: "Unsaved changes" })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Discard" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(documentOnDisk).toBe("# Notes\n\nFirst draft.\n");
+  });
+
+  it("keeps the outline pointing at the document after an edit is cancelled", async () => {
+    documentOnDisk = "# Notes\n\n## Steps\n\n## Risks\n";
+    const { panel } = renderDocument();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Edit file" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Cancel" }));
+
+    const outline = within(panel).getByRole("navigation", { name: "Outline" });
+    fireEvent.click(within(outline).getByRole("button", { name: "Risks" }));
+
+    const scrolled = vi.mocked(Element.prototype.scrollIntoView).mock.contexts[0] as Element;
+    expect(scrolled.isConnected).toBe(true);
+    expect(scrolled).toHaveTextContent("Risks");
+  });
+
+  it("resolves a linked document against the directory of the one linking it", async () => {
+    documentOnDisk = "# Notes\n\nSee [the next notes](next.md).\n";
+    const { panel } = renderDocument();
+
+    fireEvent.click(await within(panel).findByRole("link", { name: "the next notes" }));
+
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("chat_read_markdown", {
+        folders: ["/wt/a"],
+        base: "/wt/a/docs",
+        path: "next.md",
+      })
+    );
   });
 });

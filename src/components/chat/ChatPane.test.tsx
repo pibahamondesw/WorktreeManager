@@ -1764,6 +1764,7 @@ describe("Markdown previews", () => {
     expect(card).not.toHaveTextContent("Celebrate");
     expect(mocks.invoke).toHaveBeenCalledWith("chat_read_markdown", {
       folders: ["/wt/a"],
+      base: null,
       path: "missing.md",
     });
     expect(screen.getAllByRole("button", { name: /^Preview / })).toHaveLength(1);

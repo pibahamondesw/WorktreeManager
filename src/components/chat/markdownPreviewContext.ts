@@ -33,7 +33,7 @@ const MAX_CACHED_CHARACTERS = 2_000_000;
 const readDocuments = new LruCache<LoadedDocument>(MAX_CACHED_DOCUMENTS, MAX_CACHED_CHARACTERS);
 
 const sourceKey = (source: MarkdownSource, folders: string[]) =>
-  source.kind === "file" ? `${(source.folders ?? folders).join("\n")}\n${source.path}` : null;
+  source.kind === "file" ? `${folders.join("\n")}\n${source.base ?? ""}\n${source.path}` : null;
 
 export function useMarkdownDocument(
   source: MarkdownSource,
@@ -47,8 +47,9 @@ export function useMarkdownDocument(
     if (key === null) return;
     const lookup = key.split("\n");
     const path = lookup.pop()!;
+    const base = lookup.pop() || null;
     let stale = false;
-    void chatReadMarkdown(lookup.filter(Boolean), path)
+    void chatReadMarkdown(lookup.filter(Boolean), base, path)
       .then((document) => {
         const state = { kind: "ready" as const, document, text: document.text };
         readDocuments.set(key, state, state.text.length);

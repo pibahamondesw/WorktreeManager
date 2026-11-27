@@ -106,10 +106,14 @@ export function MarkdownPreviewPanel({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmingClose, setConfirmingClose] = useState(false);
-  const editableText =
-    source.kind === "code" && codeFile.kind === "ready" && codeFile.content.kind === "text"
-      ? codeFile.content.text
-      : null;
+  const editableFile =
+    source.kind === "code"
+      ? codeFile.kind === "ready" && codeFile.content.kind === "text"
+        ? { path: codeFile.path, text: codeFile.content.text }
+        : null
+      : loaded.kind === "ready" && loaded.document?.editable
+        ? loaded.document
+        : null;
   const unsaved = fileEdit !== null && hasUnsavedText(fileEdit);
   const changeFileEdit = (edit: FileEdit | null) => {
     setFileEdit(edit);
@@ -148,7 +152,7 @@ export function MarkdownPreviewPanel({
   const panelRef = useRef<HTMLElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const articleRef = useRef<HTMLElement>(null);
-  const outline = useOutline(articleRef, editing ? "" : body);
+  const outline = useOutline(articleRef, editing || fileEdit ? "" : body);
   const showOutline = outline.length >= OUTLINE_MIN_HEADINGS;
 
   const title =
@@ -159,13 +163,8 @@ export function MarkdownPreviewPanel({
       folders,
       base: path ? directoryOf(path) : undefined,
       open: ({ source: next }: MarkdownPreviewRequest) => {
-        const base = path ? [directoryOf(path), ...folders] : folders;
         const resolved =
-          next.kind === "code"
-            ? { ...next, base: path ? directoryOf(path) : undefined }
-            : next.kind === "file" && !next.folders
-              ? { ...next, folders: base }
-              : next;
+          next.kind === "inline" ? next : { ...next, base: path ? directoryOf(path) : undefined };
         setHistory((current) => [...current, resolved]);
       },
     }),
@@ -240,11 +239,11 @@ export function MarkdownPreviewPanel({
             {editing ? "Preview plan" : "Edit plan"}
           </Button>
         )}
-        {editableText !== null && !fileEdit && (
+        {editableFile && !fileEdit && (
           <Button
             variant="secondary"
             className="h-7 px-2 text-xs"
-            onClick={() => changeFileEdit({ base: editableText, text: editableText })}
+            onClick={() => changeFileEdit({ base: editableFile.text, text: editableFile.text })}
           >
             Edit file
           </Button>
@@ -254,12 +253,12 @@ export function MarkdownPreviewPanel({
             Cancel
           </Button>
         )}
-        {fileEdit && codeFile.kind === "ready" && (
+        {fileEdit && editableFile && (
           <Button
             className="h-7 px-2 text-xs"
             disabled={busy || !unsaved}
             loading={saving}
-            onClick={() => void saveFile(fileEdit, codeFile.path)}
+            onClick={() => void saveFile(fileEdit, editableFile.path)}
           >
             Save
           </Button>
@@ -286,7 +285,7 @@ export function MarkdownPreviewPanel({
         </Button>
       </header>
       <div className="flex-1 min-h-0 flex">
-        {!editing && showOutline && loaded.kind === "ready" && (
+        {!editing && !fileEdit && showOutline && loaded.kind === "ready" && (
           <nav
             aria-label="Outline"
             className="hidden @3xl:block w-60 shrink-0 overflow-y-auto border-r border-border py-4"
@@ -345,6 +344,7 @@ export function MarkdownPreviewPanel({
             />
           ) : (
             source.kind !== "code" &&
+            !fileEdit &&
             loaded.kind === "ready" && (
               <article ref={articleRef} className="mx-auto max-w-3xl px-6 py-8 @2xl:px-10">
                 {entries.length > 0 && (

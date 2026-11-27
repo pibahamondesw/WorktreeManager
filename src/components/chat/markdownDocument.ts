@@ -8,7 +8,7 @@ const FENCE = /^\s*(```|~~~)/;
 const PREVIEW_LINES = 5;
 
 export type MarkdownSource =
-  | { kind: "file"; path: string; folders?: string[] }
+  | { kind: "file"; path: string; base?: string }
   | { kind: "code"; path: string; line?: number; base?: string }
   | { kind: "inline"; title: string; text: string };
 
