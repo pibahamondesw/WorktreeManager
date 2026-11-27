@@ -6,7 +6,7 @@ use std::process::Output;
 
 use super::agents::Agents;
 use super::login_shell::{cli_available, LoginShell};
-use super::validation::{is_markdown_path, resolve_markdown_file, resolve_worktree_file};
+use super::validation::resolve_file;
 use super::workspace::TaskWorkspaceFiles;
 
 #[cfg(all(not(test), not(windows)))]
@@ -106,12 +106,7 @@ pub async fn open_editor_file(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = std::env::home_dir();
-        let resolve = if is_markdown_path(Path::new(&path)) {
-            resolve_markdown_file
-        } else {
-            resolve_worktree_file
-        };
-        let file = resolve(&folders, base.as_deref(), &path, home.as_deref())?;
+        let file = resolve_file(&folders, base.as_deref(), &path, home.as_deref())?;
         open_file(&editor, &file.to_string_lossy(), line, find_file_cli)
     })
     .await
@@ -388,39 +383,14 @@ mod tests {
             "missing.txt".into(),
             Some(12),
         ));
-        assert_eq!(
-            error,
-            Err("File not found in the task repositories: missing.txt".into())
-        );
+        assert_eq!(error, Err("File not found: missing.txt".into()));
     }
 
     #[test]
-    fn file_command_cannot_open_code_from_a_document_directory_outside_the_task() {
+    fn file_command_opens_files_beside_a_document_outside_the_task() {
         let folder = std::env::temp_dir();
         let path = folder.join(format!("wtm-editor-{}.txt", uuid::Uuid::new_v4()));
         std::fs::write(&path, "hello").unwrap();
-        let relative = path.file_name().unwrap().to_string_lossy().into_owned();
-        let result = tauri::async_runtime::block_on(open_editor_file(
-            "cursor".into(),
-            vec![],
-            Some(folder.to_string_lossy().into_owned()),
-            relative.clone(),
-            None,
-        ));
-        std::fs::remove_file(path).unwrap();
-        assert_eq!(
-            result,
-            Err(format!(
-                "File not found in the task repositories: {relative}"
-            ))
-        );
-    }
-
-    #[test]
-    fn file_command_opens_markdown_beside_a_document_outside_the_task() {
-        let folder = std::env::temp_dir();
-        let path = folder.join(format!("wtm-editor-{}.md", uuid::Uuid::new_v4()));
-        std::fs::write(&path, "# Hello").unwrap();
         let result = tauri::async_runtime::block_on(open_editor_file(
             "cursor".into(),
             vec![],

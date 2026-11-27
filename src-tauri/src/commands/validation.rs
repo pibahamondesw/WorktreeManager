@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -23,24 +24,26 @@ fn file_candidates(
         .collect()
 }
 
-pub(crate) fn is_inside_any(folders: &[String], path: &Path) -> bool {
-    folders
-        .iter()
-        .filter_map(|folder| Path::new(folder).canonicalize().ok())
-        .any(|folder| path.starts_with(folder))
+fn is_missing(error: &std::io::Error) -> bool {
+    matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
 }
 
-pub(crate) fn resolve_worktree_file(
+/// Absolute and `~/` paths resolve anywhere; relative paths try the base, then each folder.
+pub(crate) fn resolve_file(
     folders: &[String],
     base: Option<&str>,
     path: &str,
     home: Option<&Path>,
 ) -> Result<PathBuf, String> {
-    file_candidates(folders, base, path, home)
-        .into_iter()
-        .filter_map(|candidate| candidate.canonicalize().ok())
-        .find(|real| real.is_file() && is_inside_any(folders, real))
-        .ok_or_else(|| format!("File not found in the task repositories: {path}"))
+    let mut failure = format!("File not found: {path}");
+    for candidate in file_candidates(folders, base, path, home) {
+        match candidate.canonicalize() {
+            Ok(real) if real.is_file() => return Ok(real),
+            Err(error) if !is_missing(&error) => failure = format!("Cannot read {path}: {error}"),
+            _ => {}
+        }
+    }
+    Err(failure)
 }
 
 pub(crate) fn is_markdown_path(path: &Path) -> bool {
@@ -60,10 +63,7 @@ pub(crate) fn resolve_markdown_file(
     if !is_markdown_path(Path::new(path)) {
         return Err(format!("Not a Markdown file: {path}"));
     }
-    let found = file_candidates(folders, base, path, home)
-        .into_iter()
-        .find_map(|candidate| candidate.canonicalize().ok().filter(|real| real.is_file()))
-        .ok_or_else(|| format!("File not found: {path}"))?;
+    let found = resolve_file(folders, base, path, home)?;
     if !is_markdown_path(&found) {
         return Err(format!("Not a Markdown file: {path}"));
     }
