@@ -39,7 +39,7 @@ Everything under [`vault/`](vault/) in this directory, verbatim:
   skills/              # task-log and the wtm-* WorktreeManager skills
 ```
 
-**Scaffolding preserves existing files.** While the vault is enabled, startup repairs a missing vault and registers it with Obsidian. It also installs missing task-note scripts and [skills](#worktreemanager-skills), and appends each missing skill section to the existing `AGENTS.md` once, preserving custom instructions. These support files are repaired if missing; other individually deleted files stay deleted. Existing support files are not overwritten.
+**Scaffolding preserves existing files.** While the vault is enabled, startup repairs a missing vault and registers it with Obsidian. It also installs missing task-note scripts and [skills](#worktreemanager-skills), and appends each missing skill section to the existing `AGENTS.md` once, preserving custom instructions. These support files are repaired if missing; other individually deleted files stay deleted. Existing support files are not overwritten, except an unedited copy of an earlier published version, which is updated along with its unedited `AGENTS.md` section.
 
 New tasks use `task-logs/<task-id>/<note>.md`; deleting them moves the whole folder to `task-logs/_archive/<task-id>/`. Task IDs distinguish separate creations of the same branch. Older tasks keep their flat paths and are always archived too; their historical name collisions are not migrated automatically.
 
@@ -72,7 +72,7 @@ This is plain Markdown, so it works with any agent that supports global instruct
 | [`wtm-finish-task`](skills/wtm-finish-task/SKILL.md) | After merge: keep what matters, then delete the task. |
 | [`wtm-repo-setup`](skills/wtm-repo-setup/SKILL.md) | Workspaces, `.worktreemanager.toml` and `.worktreeinclude`. |
 | [`wtm-automation`](skills/wtm-automation/SKILL.md) | Create, edit, validate and test automations, with a condensed spec reference. |
-| [`wtm-html-preview`](skills/wtm-html-preview/SKILL.md) | Answer with an inline HTML preview when a static chart, rich table, or mockup helps explain the answer. |
+| [`wtm-html-preview`](skills/wtm-html-preview/SKILL.md) | Answer with an inline HTML preview when a chart, rich table, interactive view, or mockup helps explain the answer. On macOS and Linux it can run scripts. |
 
 They are plain Markdown with `SKILL.md` frontmatter, so any agent can read them. To also get slash commands in Claude Code, copy a skill folder into `~/.claude/skills/`.
 
