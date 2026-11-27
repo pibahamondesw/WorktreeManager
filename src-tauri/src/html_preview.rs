@@ -11,8 +11,14 @@ pub const SCHEME: &str = "wtm-preview";
 const PREVIEW_CSP: &str = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'";
 
 /// The page travels base64url-encoded in the URL fragment, which never reaches this handler, so
-/// the request stays small whatever the page size.
+/// the request stays small whatever the page size. Escape keys the page leaves unhandled, checked
+/// once every page listener ran, go to the app, which only accepts them from its own frame, so
+/// full screen closes while the page has focus.
 const BOOTSTRAP: &str = r#"<!doctype html><meta charset="utf-8"><script>
+addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.isComposing) return;
+  setTimeout(() => event.defaultPrevented || parent.postMessage("wtm-preview:escape", "*"));
+});
 const base64 = location.hash.slice(1).replace(/-/g, "+").replace(/_/g, "/");
 const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 document.write(new TextDecoder().decode(bytes));
@@ -95,6 +101,13 @@ mod tests {
                 "base-uri 'none'",
             ]
         );
+    }
+
+    #[test]
+    fn bootstrap_forwards_unhandled_escape_keys_to_the_app() {
+        assert!(BOOTSTRAP.contains(
+            r#"setTimeout(() => event.defaultPrevented || parent.postMessage("wtm-preview:escape", "*"))"#
+        ));
     }
 
     #[test]

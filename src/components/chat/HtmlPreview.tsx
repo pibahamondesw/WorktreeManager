@@ -1,9 +1,13 @@
-import { KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
+import { KeyboardEvent as ReactKeyboardEvent, RefObject, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CloseIcon, ExpandIcon } from "../ui/Icons";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 import { useThemeRevision } from "../../hooks/useThemeRevision";
-import { HtmlPreviewFrameSource, htmlPreviewFrameSource } from "./htmlPreviewPage";
+import {
+  HTML_PREVIEW_ESCAPE_MESSAGE,
+  HtmlPreviewFrameSource,
+  htmlPreviewFrameSource,
+} from "./htmlPreviewPage";
 import { VIEWER_TOOLBAR_BUTTON } from "./viewerToolbar";
 
 const MIN_ZOOM = 0.5;
@@ -13,13 +17,17 @@ const ZOOM_STEP = 0.25;
 function HtmlPreviewFrame({
   frame,
   className,
+  ref,
 }: {
   frame: HtmlPreviewFrameSource;
   className: string;
+  ref?: RefObject<HTMLIFrameElement | null>;
 }) {
   return (
     <iframe
       key={"src" in frame ? frame.src : frame.srcDoc}
+      ref={ref}
+      tabIndex={"src" in frame ? undefined : -1}
       title="HTML preview"
       referrerPolicy="no-referrer"
       className={className}
@@ -34,8 +42,8 @@ export function HtmlPreview({ source }: { source: string }) {
   const [fullScreen, setFullScreen] = useState(false);
   return (
     <figure className="chat-html-preview">
-      <HtmlPreviewFrame frame={frame} className="chat-html-preview-frame" />
-      <div className="chat-html-preview-actions">
+      <figcaption className="chat-html-preview-bar">
+        <span>HTML preview</span>
         <button
           type="button"
           className="chat-mermaid-action"
@@ -45,7 +53,8 @@ export function HtmlPreview({ source }: { source: string }) {
         >
           <ExpandIcon />
         </button>
-      </div>
+      </figcaption>
+      <HtmlPreviewFrame frame={frame} className="chat-html-preview-frame" />
       {fullScreen && <HtmlPreviewViewer frame={frame} onClose={() => setFullScreen(false)} />}
     </figure>
   );
@@ -60,6 +69,9 @@ function HtmlPreviewViewer({
 }) {
   useEditorOcclusion(true);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  useEscapeFromFrame(frameRef, onClose);
+  useStaticFrameReturnsFocus(frame, frameRef, dialogRef);
   const [zoom, setZoom] = useState(1);
   const zoomBy = (delta: number) =>
     setZoom((current) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current + delta)));
@@ -110,7 +122,7 @@ function HtmlPreviewViewer({
             transform: `scale(${zoom})`,
           }}
         >
-          <HtmlPreviewFrame frame={frame} className="block size-full" />
+          <HtmlPreviewFrame frame={frame} className="block size-full" ref={frameRef} />
         </div>
       </div>
       <div
@@ -163,4 +175,38 @@ function HtmlPreviewViewer({
     </div>,
     document.body
   );
+}
+
+function useEscapeFromFrame(frameRef: RefObject<HTMLIFrameElement | null>, onEscape: () => void) {
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const fromFrame = !!event.source && event.source === frameRef.current?.contentWindow;
+      if (fromFrame && event.data === HTML_PREVIEW_ESCAPE_MESSAGE) onEscape();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [frameRef, onEscape]);
+}
+
+/** A static page can't forward Escape, so the dialog takes focus back when the page takes it. */
+function useStaticFrameReturnsFocus(
+  frame: HtmlPreviewFrameSource,
+  frameRef: RefObject<HTMLIFrameElement | null>,
+  dialogRef: RefObject<HTMLDivElement | null>
+) {
+  const isStatic = !("src" in frame);
+  useEffect(() => {
+    if (!isStatic) return;
+    let timer: number | undefined;
+    const onBlur = () => {
+      timer = window.setTimeout(() => {
+        if (document.activeElement === frameRef.current) dialogRef.current?.focus();
+      });
+    };
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.clearTimeout(timer);
+    };
+  }, [isStatic, frameRef, dialogRef]);
 }
