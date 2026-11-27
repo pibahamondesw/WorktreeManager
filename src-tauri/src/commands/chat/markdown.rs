@@ -1,12 +1,14 @@
 //! Markdown documents the agent references in chat, read for the inline preview cards. Relative
-//! paths resolve against the task repositories in order; only Markdown files are served.
+//! paths resolve against the linking document's directory, then the task repositories in order;
+//! only Markdown files are served. Documents inside the task repositories can be saved back from
+//! the preview.
 
 use std::fs;
 use std::path::Path;
 
 use serde::Serialize;
 
-use crate::commands::validation::resolve_markdown_file;
+use crate::commands::validation::{is_inside_any, resolve_markdown_file};
 
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -15,14 +17,16 @@ const MAX_BYTES: u64 = 2 * 1024 * 1024;
 pub struct MarkdownDocument {
     pub path: String,
     pub text: String,
+    pub editable: bool,
 }
 
 pub fn read(
     folders: &[String],
+    base: Option<&str>,
     path: &str,
     home: Option<&Path>,
 ) -> Result<MarkdownDocument, String> {
-    let found = resolve_markdown_file(folders, None, path, home)?;
+    let found = resolve_markdown_file(folders, base, path, home)?;
     let size = fs::metadata(&found).map_err(|e| e.to_string())?.len();
     if size > MAX_BYTES {
         return Err(format!("File is too large to preview: {path}"));
@@ -31,6 +35,7 @@ pub fn read(
     Ok(MarkdownDocument {
         path: found.to_string_lossy().to_string(),
         text: String::from_utf8_lossy(&bytes).to_string(),
+        editable: std::str::from_utf8(&bytes).is_ok() && is_inside_any(folders, &found),
     })
 }
 
@@ -77,10 +82,25 @@ mod tests {
         let peer = scratch.folder("peer");
         let expected = scratch.write("peer/docs/plan.md", "# Plan");
 
-        let document = read(&[primary, peer], "docs/plan.md", None).unwrap();
+        let document = read(&[primary, peer], None, "docs/plan.md", None).unwrap();
 
         assert_eq!(document.path, expected);
         assert_eq!(document.text, "# Plan");
+        assert!(document.editable);
+    }
+
+    #[test]
+    fn resolves_against_the_linking_document_first() {
+        let scratch = Scratch::new("base");
+        let repo = scratch.folder("repo");
+        let linking = scratch.folder("plans");
+        scratch.write("repo/next.md", "repo");
+        scratch.write("plans/next.md", "plans");
+
+        let beside = read(std::slice::from_ref(&repo), Some(&linking), "next.md", None).unwrap();
+        assert_eq!(beside.text, "plans");
+        assert!(!beside.editable);
+        assert_eq!(read(&[repo], None, "next.md", None).unwrap().text, "repo");
     }
 
     #[test]
@@ -89,9 +109,14 @@ mod tests {
         let absolute = scratch.write("notes/a.md", "a");
         scratch.write(".claude/plans/b.markdown", "b");
 
-        assert_eq!(read(&[], &absolute, None).unwrap().text, "a");
-        let home = read(&[], "~/.claude/plans/b.markdown", Some(&scratch.0)).unwrap();
+        let repo = scratch.folder("repo");
+
+        let outside = read(&[repo], None, &absolute, None).unwrap();
+        assert_eq!(outside.text, "a");
+        assert!(!outside.editable);
+        let home = read(&[], None, "~/.claude/plans/b.markdown", Some(&scratch.0)).unwrap();
         assert_eq!(home.text, "b");
+        assert!(!home.editable);
     }
 
     #[test]
@@ -105,15 +130,28 @@ mod tests {
         )
         .unwrap();
 
-        assert!(read(&folders, "secret.txt", None)
+        assert!(read(&folders, None, "secret.txt", None)
             .unwrap_err()
             .starts_with("Not a Markdown"));
-        assert!(read(&folders, "missing.md", None)
+        assert!(read(&folders, None, "missing.md", None)
             .unwrap_err()
             .starts_with("File not found"));
-        assert!(read(&folders, "link.md", None)
+        assert!(read(&folders, None, "link.md", None)
             .unwrap_err()
             .starts_with("Not a Markdown"));
+    }
+
+    #[test]
+    fn a_document_that_is_not_utf8_cannot_be_edited() {
+        let scratch = Scratch::new("latin1");
+        let repo = scratch.folder("repo");
+        let path = scratch.0.join("repo/notes.md");
+        fs::write(&path, b"caf\xe9").unwrap();
+
+        let document = read(&[repo], None, "notes.md", None).unwrap();
+
+        assert_eq!(document.text, "caf\u{fffd}");
+        assert!(!document.editable);
     }
 
     #[test]
@@ -127,7 +165,7 @@ mod tests {
             .set_len(MAX_BYTES + 1)
             .unwrap();
 
-        assert!(read(&[], &path, None)
+        assert!(read(&[], None, &path, None)
             .unwrap_err()
             .starts_with("File is too large"));
     }
@@ -140,6 +178,7 @@ mod tests {
 
         let document = tauri::async_runtime::block_on(super::super::chat_read_markdown(
             vec![folder],
+            None,
             "README.md".into(),
         ))
         .unwrap();

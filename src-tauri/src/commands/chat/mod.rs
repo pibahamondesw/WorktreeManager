@@ -1588,11 +1588,12 @@ pub async fn chat_clipboard_text() -> Result<String, String> {
 #[tauri::command]
 pub async fn chat_read_markdown(
     folders: Vec<String>,
+    base: Option<String>,
     path: String,
 ) -> Result<markdown::MarkdownDocument, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        markdown::read(&folders, &path, home.as_deref())
+        markdown::read(&folders, base.as_deref(), &path, home.as_deref())
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))?

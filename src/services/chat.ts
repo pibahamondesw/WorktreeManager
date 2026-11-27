@@ -567,6 +567,7 @@ export const chatClipboardText = () => invoke<string>("chat_clipboard_text");
 export interface MarkdownDocument {
   path: string;
   text: string;
+  editable: boolean;
 }
 
 export interface PreviewFile {
@@ -580,8 +581,8 @@ export const chatReadFile = (folders: string[], base: string | null, path: strin
 export const chatWriteFile = (folders: string[], path: string, original: string, text: string) =>
   invoke<PreviewFile>("chat_write_file", { folders, path, original, text });
 
-export const chatReadMarkdown = (folders: string[], path: string) =>
-  invoke<MarkdownDocument>("chat_read_markdown", { folders, path });
+export const chatReadMarkdown = (folders: string[], base: string | null, path: string) =>
+  invoke<MarkdownDocument>("chat_read_markdown", { folders, base, path });
 
 export const chatInterrupt = (taskId: string, agent: AgentId, tab?: string) =>
   invoke<void>("chat_interrupt", { taskId, agent, tab });
