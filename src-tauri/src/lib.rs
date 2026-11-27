@@ -7,6 +7,7 @@ use commands::automations::actions::circleci;
 pub mod cli;
 mod cli_bridge;
 mod commands;
+mod html_preview;
 mod lease;
 mod lifecycle;
 mod menu;
@@ -20,6 +21,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
+        .register_uri_scheme_protocol(html_preview::SCHEME, |_context, request| {
+            html_preview::respond(&request)
+        })
         .manage(commands::terminal::TerminalRegistry::default())
         .manage(commands::chat::ChatRegistry::default())
         .manage(commands::code_server::EditorRegistry::default())

@@ -3,32 +3,38 @@ import { createPortal } from "react-dom";
 import { CloseIcon, ExpandIcon } from "../ui/Icons";
 import { useEditorOcclusion } from "../../hooks/useEditorOcclusion";
 import { useThemeRevision } from "../../hooks/useThemeRevision";
-import { HTML_PREVIEW_SANDBOX, htmlPreviewDocument } from "./htmlPreviewPage";
+import { HtmlPreviewFrameSource, htmlPreviewFrameSource } from "./htmlPreviewPage";
 import { VIEWER_TOOLBAR_BUTTON } from "./viewerToolbar";
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 2;
 const ZOOM_STEP = 0.25;
 
-function HtmlPreviewFrame({ page, className }: { page: string; className: string }) {
+function HtmlPreviewFrame({
+  frame,
+  className,
+}: {
+  frame: HtmlPreviewFrameSource;
+  className: string;
+}) {
   return (
     <iframe
+      key={"src" in frame ? frame.src : frame.srcDoc}
       title="HTML preview"
-      sandbox={HTML_PREVIEW_SANDBOX}
       referrerPolicy="no-referrer"
-      srcDoc={page}
       className={className}
+      {...frame}
     />
   );
 }
 
 export function HtmlPreview({ source }: { source: string }) {
   useThemeRevision();
-  const page = htmlPreviewDocument(source);
+  const frame = htmlPreviewFrameSource(source);
   const [fullScreen, setFullScreen] = useState(false);
   return (
     <figure className="chat-html-preview">
-      <HtmlPreviewFrame page={page} className="chat-html-preview-frame" />
+      <HtmlPreviewFrame frame={frame} className="chat-html-preview-frame" />
       <div className="chat-html-preview-actions">
         <button
           type="button"
@@ -40,12 +46,18 @@ export function HtmlPreview({ source }: { source: string }) {
           <ExpandIcon />
         </button>
       </div>
-      {fullScreen && <HtmlPreviewViewer page={page} onClose={() => setFullScreen(false)} />}
+      {fullScreen && <HtmlPreviewViewer frame={frame} onClose={() => setFullScreen(false)} />}
     </figure>
   );
 }
 
-function HtmlPreviewViewer({ page, onClose }: { page: string; onClose: () => void }) {
+function HtmlPreviewViewer({
+  frame,
+  onClose,
+}: {
+  frame: HtmlPreviewFrameSource;
+  onClose: () => void;
+}) {
   useEditorOcclusion(true);
   const dialogRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -98,7 +110,7 @@ function HtmlPreviewViewer({ page, onClose }: { page: string; onClose: () => voi
             transform: `scale(${zoom})`,
           }}
         >
-          <HtmlPreviewFrame page={page} className="block size-full" />
+          <HtmlPreviewFrame frame={frame} className="block size-full" />
         </div>
       </div>
       <div
