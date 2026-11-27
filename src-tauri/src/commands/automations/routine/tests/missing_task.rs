@@ -16,12 +16,20 @@ const STEPS: &str = "steps:
     command: [/bin/sh, -c, 'echo noted']
 ";
 
-/// Pending until it is given a verdict; the item's task may be gone.
+/// Pending until it is given a verdict; the item's task may be gone. Records the main checkouts
+/// it was offered while the task was gone.
 #[derive(Default)]
-struct PullRequest(Mutex<Option<&'static str>>);
+struct PullRequest(Mutex<Option<&'static str>>, Mutex<Vec<String>>);
 
 impl Watcher for PullRequest {
-    fn check(&self, _: &serde_json::Map<String, Value>, _: &Watch) -> WatchVerdict {
+    fn check(&self, _: &serde_json::Map<String, Value>, watch: &Watch) -> WatchVerdict {
+        if watch.task.is_none() {
+            let checkouts = watch
+                .repos
+                .iter()
+                .filter_map(|repo| repo.local_path.clone());
+            self.1.lock().unwrap().extend(checkouts);
+        }
         match *self.0.lock().unwrap() {
             Some(verdict) => WatchVerdict::Succeeded(Some(json!({ "verdict": verdict }))),
             None => WatchVerdict::Pending,
@@ -107,6 +115,13 @@ fn an_integrated_item_whose_task_was_deleted_skips_its_worktree_steps_and_comple
     let automation = harness.automation();
     assert_eq!(automation.consecutive_failures, 0);
     assert!(automation.enabled);
+    assert!(pull_request
+        .1
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|checkout| checkout == "/repos/rails"));
+    assert!(!pull_request.1.lock().unwrap().is_empty());
 }
 
 #[test]

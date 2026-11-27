@@ -27,6 +27,7 @@ use pr_checks::{BotLgtm, PrChecks};
 use pr_integrated::PrIntegrated;
 use script::ShellScripts;
 
+use super::definition::TargetRepo;
 use super::instants::parse_rfc3339;
 use super::publish::pushed_commits;
 use super::store::events::{EffectStatus, RunEvent};
@@ -37,6 +38,7 @@ pub const PR_INTEGRATED: &str = "pr_integrated";
 pub const COMMAND: &str = "command";
 const CONFLICT: &str = "conflict";
 const PR_CLOSED: &str = "pr_closed";
+const NO_CHECKOUT: &str = "no_checkout";
 /// Below this many GraphQL points left, GitHub is not asked again until the limit resets.
 const RATE_LIMIT_FLOOR: u64 = 100;
 const DEFAULT_INTERVAL_SECS: u64 = 60;
@@ -239,6 +241,33 @@ fn conflict(evidence: Value, base: &str) -> WatchVerdict {
         "The PR conflicts with {base}: rebase it onto origin/{base} and resolve the conflicts"
     ));
     WatchVerdict::Failed(CONFLICT.into(), Some(evidence))
+}
+
+/// A PR closed without merging whose base branch has nowhere to be checked fails the wait, so the
+/// item stops with the reason instead of waiting for an answer that cannot come.
+fn unchecked(evidence: Value, base: &str) -> WatchVerdict {
+    let mut evidence = evidence;
+    evidence["verdict"] = json!(NO_CHECKOUT);
+    let pr = evidence["pr"].as_str().unwrap_or_default().to_string();
+    evidence["summary"] = json!(format!(
+        "The PR {pr} was closed without merging, and neither the task's worktree nor the repository's main checkout is there to check whether its changes are on {base}"
+    ));
+    WatchVerdict::Failed(NO_CHECKOUT.into(), Some(evidence))
+}
+
+/// Where a closed PR's base branch is checked: the task's worktree of `repo`, or the repository's
+/// main checkout, while it is on disk, once the task is gone.
+fn base_checkout(watch: &Watch, repo: Option<&str>) -> Option<PathBuf> {
+    worktree(watch, repo).or_else(|| main_checkout(watch.repos, repo))
+}
+
+fn main_checkout(repos: &[TargetRepo], repo: Option<&str>) -> Option<PathBuf> {
+    let target = match repo {
+        Some(repo) => repos.iter().find(|target| target.id == repo)?,
+        None => repos.first()?,
+    };
+    let checkout = PathBuf::from(target.local_path.as_deref()?);
+    checkout.is_dir().then_some(checkout)
 }
 
 fn worktree(watch: &Watch, repo: Option<&str>) -> Option<PathBuf> {

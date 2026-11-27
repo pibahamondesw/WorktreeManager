@@ -5,6 +5,7 @@ use std::path::Path;
 use serde_json::json;
 
 use super::*;
+use crate::commands::automations::definition::TargetRepo;
 use crate::commands::automations::routine::ResolvedTask;
 use crate::commands::automations::store::events::LoggedEvent;
 use crate::commands::git::git_command;
@@ -172,9 +173,44 @@ fn task() -> ResolvedTask {
     }
 }
 
+/// The repositories the automation targets, with their main checkouts in `root`.
+fn main_checkouts(root: &Path) -> Vec<TargetRepo> {
+    let repo = |id: &str| {
+        let checkout = root.join(id);
+        fs::create_dir_all(&checkout).unwrap();
+        TargetRepo {
+            id: id.into(),
+            name: id.into(),
+            base: None,
+            local_path: Some(checkout.to_string_lossy().into_owned()),
+        }
+    };
+    vec![repo("app"), repo("web")]
+}
+
+/// The PR closed without merging, its task deleted and the main checkout as the only place to
+/// check its base branch.
+fn closed_without_task(main_checkouts: Vec<TargetRepo>) -> Waiting {
+    Waiting {
+        task: None,
+        repos: main_checkouts,
+        ..Waiting::published()
+    }
+}
+
+fn no_checkout(evidence: Value) -> WatchVerdict {
+    let mut evidence = evidence;
+    evidence["verdict"] = json!("no_checkout");
+    evidence["summary"] = json!(format!(
+        "The PR {PR_URL} was closed without merging, and neither the task's worktree nor the repository's main checkout is there to check whether its changes are on main"
+    ));
+    WatchVerdict::Failed("no_checkout".into(), Some(evidence))
+}
+
 struct Waiting {
     history: Vec<LoggedEvent>,
     task: Option<ResolvedTask>,
+    repos: Vec<TargetRepo>,
     armed_at_ms: u64,
     test: bool,
 }
@@ -184,6 +220,7 @@ impl Waiting {
         Self {
             history: published(),
             task: Some(task()),
+            repos: Vec::new(),
             armed_at_ms: COMMITTED_MS,
             test: false,
         }
@@ -196,6 +233,7 @@ impl Waiting {
             now_ms,
             history: &self.history,
             task: self.task.as_ref(),
+            repos: &self.repos,
             test: self.test,
             wait_per_head_secs: 3_600,
             scripts: None,
@@ -639,21 +677,38 @@ fn a_pr_closed_without_its_changes_on_the_base_blocks_the_checks_for_its_owner()
             )
         )
     );
-    let without_task = Waiting {
-        task: None,
-        ..Waiting::published()
-    };
-    assert_eq!(
-        without_task.checks(&watchers, json!({}), NOW + HOUR_MS),
-        WatchVerdict::Blocked(
-            "pr_closed".into(),
-            Some(
-                json!({ "verdict": "pr_closed", "pr": PR_URL, "head": HEAD, "state": "closed",
-                "summary": format!("The PR {PR_URL} was closed before its checks passed") })
-            )
-        )
-    );
     assert_eq!(forge.integration_checks.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_pr_closed_after_its_task_was_deleted_is_checked_in_the_main_checkout() {
+    let forge = FakeForge::answering(closed_pr("CLOSED", None));
+    *forge.on_base.lock().unwrap() = Some(Ok(true));
+    let root = TempDir::new("checkouts");
+
+    assert_eq!(
+        closed_without_task(main_checkouts(&root.0)).checks(
+            &inline_registry(&forge),
+            json!({ "repo": "web" }),
+            NOW
+        ),
+        integrated_checks("closed")
+    );
+    assert_eq!(
+        forge.integration_checks.lock().unwrap()[0].0,
+        root.0.join("web")
+    );
+}
+
+#[test]
+fn a_pr_closed_with_nowhere_to_check_its_base_fails_the_checks() {
+    let forge = FakeForge::answering(closed_pr("CLOSED", None));
+
+    assert_eq!(
+        closed_without_task(Vec::new()).checks(&inline_registry(&forge), json!({}), NOW),
+        no_checkout(json!({ "pr": PR_URL, "head": HEAD, "state": "closed" }))
+    );
+    assert!(forge.integration_checks.lock().unwrap().is_empty());
 }
 
 #[test]

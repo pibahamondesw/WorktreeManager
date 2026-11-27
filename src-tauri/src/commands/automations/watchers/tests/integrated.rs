@@ -107,7 +107,6 @@ fn a_pr_closed_without_merged_at_is_integrated_when_its_changes_are_on_the_base(
         task: None,
         ..Waiting::published()
     };
-    assert_eq!(integrated(&without_task, &forge), WatchVerdict::Pending);
     assert_eq!(forge.integration_checks.lock().unwrap().len(), 3);
     assert_eq!(
         without_task.at(&inline_registry(&forge), PR_INTEGRATED, json!({ "x": 1 }), NOW),
@@ -122,4 +121,61 @@ fn a_pr_closed_without_merged_at_is_integrated_when_its_changes_are_on_the_base(
         integrated(&unpublished, &forge),
         WatchVerdict::Failed("no_task".into(), None)
     );
+}
+
+#[test]
+fn a_pr_closed_after_its_task_was_deleted_is_integrated_when_the_main_checkout_has_its_changes() {
+    let forge = FakeForge::answering(closed(None));
+    *forge.on_base.lock().unwrap() = Some(Ok(true));
+    let root = TempDir::new("checkouts");
+
+    assert_eq!(
+        closed_without_task(main_checkouts(&root.0)).at(
+            &inline_registry(&forge),
+            PR_INTEGRATED,
+            json!({}),
+            NOW
+        ),
+        WatchVerdict::Succeeded(evidence("integrated", None))
+    );
+    assert_eq!(
+        forge.integration_checks.lock().unwrap()[0],
+        (root.0.join("app"), 7, HEAD.to_string(), "main".to_string())
+    );
+}
+
+#[test]
+fn a_pr_closed_with_nowhere_to_check_its_base_fails_the_wait() {
+    let forge = FakeForge::answering(closed(None));
+    let root = TempDir::new("checkouts");
+    let unknown_repo = closed_without_task(main_checkouts(&root.0));
+
+    assert_eq!(
+        integrated(&closed_without_task(Vec::new()), &forge),
+        no_checkout(json!({ "pr": PR_URL, "head": HEAD, "base": "main", "merged_at": null }))
+    );
+    assert_eq!(
+        unknown_repo.at(
+            &inline_registry(&forge),
+            PR_INTEGRATED,
+            json!({ "repo": "api" }),
+            NOW
+        ),
+        no_checkout(json!({ "pr": PR_URL, "head": HEAD, "base": "main", "merged_at": null }))
+    );
+    assert!(forge.integration_checks.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_main_checkout_gone_from_disk_is_nowhere_to_check_the_base() {
+    let forge = FakeForge::answering(closed(None));
+    let root = TempDir::new("checkouts");
+    let moved = closed_without_task(main_checkouts(&root.0));
+    drop(root);
+
+    assert_eq!(
+        integrated(&moved, &forge),
+        no_checkout(json!({ "pr": PR_URL, "head": HEAD, "base": "main", "merged_at": null }))
+    );
+    assert!(forge.integration_checks.lock().unwrap().is_empty());
 }

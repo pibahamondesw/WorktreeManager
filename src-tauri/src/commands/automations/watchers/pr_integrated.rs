@@ -8,8 +8,8 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use super::{
-    closed, conflict, staged, worktree, Github, Mergeability, Polls, Spawn, Target, WatchParams,
-    PR_INTEGRATED,
+    base_checkout, closed, conflict, staged, unchecked, Github, Mergeability, Polls, Spawn, Target,
+    WatchParams, NO_CHECKOUT, PR_INTEGRATED,
 };
 use crate::commands::automations::wait::{Watch, WatchVerdict, Watcher};
 
@@ -39,7 +39,8 @@ struct PullRequest {
 
 pub(super) struct Integration {
     pr: PullRequest,
-    /// For a PR closed without merging: whether its changes are on the base branch.
+    /// For a PR closed without merging: whether its changes are on the base branch, `None` when
+    /// there is no checkout to tell.
     on_base: Option<bool>,
 }
 
@@ -54,13 +55,14 @@ impl PrIntegrated {
     fn watch(&self, params: &WatchParams, watch: &Watch) -> Result<WatchVerdict, WatchVerdict> {
         let target = Target::of(watch, params)?;
         let (github, now_ms) = (self.github.clone(), watch.now_ms);
-        let (fetch_target, worktree) = (target.clone(), worktree(watch, params.repo.as_deref()));
+        let (fetch_target, checkout) =
+            (target.clone(), base_checkout(watch, params.repo.as_deref()));
         let latest = self.polls.latest(
             &target.key(),
             now_ms,
             watch.armed_at_ms,
             params.interval_ms(),
-            move || integration(&github, &fetch_target, worktree, now_ms),
+            move || integration(&github, &fetch_target, checkout, now_ms),
         );
         Ok(latest.map_or(WatchVerdict::Pending, |latest| latest.verdict()))
     }
@@ -80,16 +82,15 @@ impl Watcher for PrIntegrated {
 pub(super) fn integration(
     github: &Github,
     target: &Target,
-    worktree: Option<PathBuf>,
+    checkout: Option<PathBuf>,
     now_ms: u64,
 ) -> Result<Integration, String> {
     let pr: PullRequest =
         github.pull_request(QUERY, &target.resolve(github.forge.as_ref())?, now_ms)?;
-    let on_base = match (pr.state.as_str(), &pr.merged_at) {
-        ("CLOSED", None) => {
-            let worktree = worktree.ok_or("No worktree to check the base branch in")?;
+    let on_base = match (pr.state.as_str(), &pr.merged_at, checkout) {
+        ("CLOSED", None, Some(checkout)) => {
             let forge = github.forge.as_ref();
-            Some(forge.integrated(&worktree, pr.number, &pr.head_ref_oid, &pr.base_ref_name)?)
+            Some(forge.integrated(&checkout, pr.number, &pr.head_ref_oid, &pr.base_ref_name)?)
         }
         _ => None,
     };
@@ -97,9 +98,13 @@ pub(super) fn integration(
 }
 
 impl Integration {
-    /// Whether the PR merged, or was closed with its changes on the base branch.
-    pub(super) fn integrated(&self) -> bool {
-        self.pr.merged_at.is_some() || self.on_base == Some(true)
+    /// Whether a PR no longer open merged, or was closed with its changes on the base branch;
+    /// `None` when it was closed without merging and there is no checkout to tell.
+    pub(super) fn integrated(&self) -> Option<bool> {
+        if self.pr.merged_at.is_some() {
+            return Some(true);
+        }
+        self.on_base
     }
 
     fn verdict(&self) -> WatchVerdict {
@@ -116,6 +121,7 @@ impl Integration {
         match (pr.merged_at.is_some(), pr.state.as_str(), self.on_base) {
             (true, _, _) => WatchVerdict::Succeeded(Some(evidence("merged"))),
             (false, "CLOSED", Some(true)) => WatchVerdict::Succeeded(Some(evidence("integrated"))),
+            (false, "CLOSED", None) => unchecked(evidence(NO_CHECKOUT), &pr.base_ref_name),
             (false, "CLOSED", _) => closed(
                 evidence("pr_closed"),
                 &format!("closed without its changes on {}", pr.base_ref_name),
