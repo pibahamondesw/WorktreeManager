@@ -14,7 +14,7 @@ use serde_json::{json, Map, Value};
 
 use super::actions::check_payload;
 use super::definition::{
-    ApprovalDefault, ApprovalStep, AutomationDefinition, Step, StepKind, WaitStep,
+    ApprovalDefault, ApprovalStep, AutomationDefinition, Step, StepKind, TargetRepo, WaitStep,
 };
 use super::instants::parse_rfc3339;
 use super::routine::ResolvedTask;
@@ -45,6 +45,9 @@ pub struct Watch<'a> {
     /// The run log, where the item's published effects are.
     pub history: &'a [LoggedEvent],
     pub task: Option<&'a ResolvedTask>,
+    /// The repositories the automation targets, whose main checkouts stand in for the task's
+    /// worktrees once the task is gone.
+    pub repos: &'a [TargetRepo],
     /// A Test run: its publish effects were staged, so there is nothing published to watch.
     pub test: bool,
     pub wait_per_head_secs: u64,

@@ -75,6 +75,7 @@ const WATCH: Watch = Watch {
     now_ms: 0,
     history: &[],
     task: None,
+    repos: &[],
     test: false,
     wait_per_head_secs: 3_600,
     scripts: None,
