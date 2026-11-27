@@ -35,4 +35,10 @@ export class LruCache<V> {
     this.entries.delete(key);
     this.totalSize -= entry.size;
   }
+
+  deleteWhere(matches: (value: V) => boolean) {
+    for (const [key, entry] of this.entries) {
+      if (matches(entry.value)) this.delete(key);
+    }
+  }
 }

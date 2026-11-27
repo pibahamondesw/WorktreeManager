@@ -59,9 +59,11 @@ export function fileReference(reference: string | undefined): FileReference | nu
   return line > 0 ? { path, line } : { path };
 }
 
+export const isMarkdownFilePath = (path: string) => MARKDOWN_PATH.test(path);
+
 export function markdownPath(reference: string | undefined): string | null {
   const path = fileReference(reference)?.path;
-  return path && MARKDOWN_PATH.test(path) ? path : null;
+  return path && isMarkdownFilePath(path) ? path : null;
 }
 
 const withoutFencedCode = (text: string) => {
