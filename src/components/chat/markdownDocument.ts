@@ -1,8 +1,10 @@
 import { ChatItem } from "../../services/chat";
+import { isWindowsDrivePath, isWithinPath } from "../../platform";
 
 const MARKDOWN_PATH = /\.(md|markdown|mdx)$/i;
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:(?!\d)/i;
 const LINE_FRAGMENT = /#L(\d+)/;
+const WINDOWS_LINE_FRAGMENT = /#L(\d+)(?:-L\d+)?$/;
 const LINE_NUMBER = /:(\d+)(:\d+)*$/;
 const FENCE = /^\s*(```|~~~)/;
 const PREVIEW_LINES = 5;
@@ -22,13 +24,18 @@ export interface Frontmatter {
   body: string;
 }
 
-const safeDecode = (value: string) => {
+const safeDecode = (value: string, decode = decodeURI) => {
   try {
-    return decodeURI(value);
+    return decode(value);
   } catch {
     return value;
   }
 };
+
+export const isWindowsPathLink = (url: string) => isWindowsDrivePath(safeDecode(url));
+
+export const windowsPathMentionHref = (path: string) =>
+  isWindowsDrivePath(path) ? path.replaceAll("%", "%25").replaceAll("#", "%23") : null;
 
 export interface FileReference {
   path: string;
@@ -38,14 +45,17 @@ export interface FileReference {
 export function fileReference(reference: string | undefined): FileReference | null {
   if (!reference) return null;
   let path = reference.trim().replace(/^<|>$/g, "");
+  const windows = isWindowsPathLink(path);
   if (path.startsWith("file://")) path = path.slice("file://".length);
-  else if (URL_SCHEME.test(path) || path.startsWith("#")) return null;
-  const fragmentLine = LINE_FRAGMENT.exec(path)?.[1];
-  path = safeDecode(path.split(/[?#]/)[0]);
+  else if (path.startsWith("#") || (!windows && URL_SCHEME.test(path))) return null;
+  const fragment = (windows ? WINDOWS_LINE_FRAGMENT : LINE_FRAGMENT).exec(path);
+  path = windows
+    ? safeDecode(path.slice(0, fragment?.index).split("?")[0], decodeURIComponent)
+    : safeDecode(path.split(/[?#]/)[0]);
   const suffixLine = LINE_NUMBER.exec(path)?.[1];
   path = path.replace(LINE_NUMBER, "");
   if (!path) return null;
-  const line = Number(fragmentLine ?? suffixLine);
+  const line = Number(fragment?.[1] ?? suffixLine);
   return line > 0 ? { path, line } : { path };
 }
 
@@ -69,7 +79,9 @@ const withoutFencedCode = (text: string) => {
 export function markdownReferences(text: string): string[] {
   const prose = withoutFencedCode(text);
   const links = [...prose.matchAll(/\]\(\s*(<[^>]+>|[^)\s]+)/g)].map((match) => match[1]);
-  const code = [...prose.matchAll(/`([^`\s]+)`/g)].map((match) => match[1]);
+  const code = [...prose.matchAll(/`([^`\s]+)`/g)].map(
+    ([, value]) => windowsPathMentionHref(value) ?? value
+  );
   const paths = [...links, ...code].map(markdownPath).filter((path) => path !== null);
   return [...new Set(paths)];
 }
@@ -130,6 +142,12 @@ export const fileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 export const directoryOf = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
 
 export function relativeTo(path: string, folders: string[]) {
+  if (isWindowsDrivePath(path)) {
+    const folder = folders.find((candidate) => isWithinPath(path, candidate));
+    if (!folder) return path;
+    const root = folder.replace(/[\\/]+$/, "");
+    return path.slice(root.length + 1).replaceAll("\\", "/") || path;
+  }
   const folder = folders.find((candidate) => path.startsWith(`${candidate}/`));
   return folder ? path.slice(folder.length + 1) : path;
 }
@@ -138,6 +156,11 @@ const withLine = (path: string, line?: number) => (line ? `${path}:${line}` : pa
 
 const namesPath = (text: string, path: string) => {
   const written = text.trim().replace(LINE_NUMBER, "");
+  if (isWindowsDrivePath(path) && written) {
+    const target = path.replaceAll("\\", "/").toLowerCase();
+    const label = written.replaceAll("\\", "/").toLowerCase();
+    return target === label || target.endsWith(`/${label}`);
+  }
   return written !== "" && (path === written || path.endsWith(`/${written}`));
 };
 

@@ -1,5 +1,5 @@
 import { lazy, memo, ReactElement, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import Markdown, { Options } from "react-markdown";
+import Markdown, { defaultUrlTransform, Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { remarkLatexDelimiters } from "./remarkLatexDelimiters";
@@ -20,12 +20,13 @@ import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { HistoryMenu } from "./HistoryMenu";
 import { PlanCard, ReferencedDocuments } from "./MarkdownPreviewCard";
 import { useMarkdownPreview } from "./markdownPreviewContext";
-import { isPlanItem } from "./markdownDocument";
+import { isPlanItem, isWindowsPathLink } from "./markdownDocument";
 import { SubagentSteps } from "./chatEntries";
 import { splitMarkdownBlocks } from "./markdownBlocks";
 import { LruCache } from "./lruCache";
 import { rehypeCachedHighlight } from "./rehypeCachedHighlight";
 import { rehypeHtmlPreview } from "./htmlPreviewPage";
+import { rehypeWindowsPathMentions } from "./rehypeWindowsPathMentions";
 import { useExpandedDetail } from "./itemDetailContext";
 import { formatSize } from "./formatSize";
 import { summarizeWork, toolCategory } from "./toolCategory";
@@ -58,7 +59,11 @@ const REMARK_PLUGINS: Options["remarkPlugins"] = [
   [remarkMath, { singleDollarTextMath: false }],
   remarkLatexDelimiters,
 ];
-const REHYPE_PLUGINS: Options["rehypePlugins"] = [rehypeHtmlPreview, rehypeCachedHighlight];
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [
+  rehypeHtmlPreview,
+  rehypeCachedHighlight,
+  rehypeWindowsPathMentions,
+];
 const MAX_RENDERED_BLOCKS = 1_000;
 const MAX_RENDERED_CHARACTERS = 200_000;
 
@@ -93,6 +98,10 @@ const renderMarkdown = (text: string) =>
     remarkPlugins: REMARK_PLUGINS,
     rehypePlugins: REHYPE_PLUGINS,
     components: MARKDOWN_COMPONENTS,
+    urlTransform: (url, key, node) =>
+      key === "href" && node.tagName === "a" && isWindowsPathLink(url)
+        ? url
+        : defaultUrlTransform(url),
   });
 
 /** Remembers the block as last shown, so a streaming block isn't cached at every step. */
