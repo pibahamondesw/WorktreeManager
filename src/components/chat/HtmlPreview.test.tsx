@@ -1,15 +1,29 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { MarkdownText } from "./ChatItemView";
 import { applyTheme, themes } from "../../themes";
-import { STATIC_HTML_PREVIEW_CSP, htmlPreviewFrameSource } from "./htmlPreviewPage";
+import {
+  HTML_PREVIEW_ESCAPE_MESSAGE,
+  STATIC_HTML_PREVIEW_CSP,
+  htmlPreviewFrameSource,
+} from "./htmlPreviewPage";
+
+const platform = vi.hoisted(() => ({ windows: false }));
 
 vi.mock("../../hooks/useEditorOcclusion", () => ({ useEditorOcclusion: vi.fn() }));
+vi.mock("../../platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../platform")>()),
+  get IS_WINDOWS() {
+    return platform.windows;
+  },
+}));
 
 afterEach(() => {
   cleanup();
+  platform.windows = false;
+  vi.useRealTimers();
   document.documentElement.removeAttribute("style");
   delete document.documentElement.dataset.appearance;
 });
@@ -168,4 +182,71 @@ it("closes full screen from its close button", () => {
   fireEvent.click(screen.getByRole("button", { name: "Close HTML preview full screen" }));
 
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+function openFullScreen() {
+  render(<MarkdownText text={PREVIEW} />);
+  fireEvent.click(screen.getByRole("button", { name: "Open HTML preview full screen" }));
+  const viewer = screen.getByRole("dialog", { name: "HTML preview" });
+  return { viewer, frame: within(viewer).getByTitle("HTML preview") as HTMLIFrameElement };
+}
+
+const postFrom = (frame: HTMLIFrameElement, data: unknown) =>
+  act(() => {
+    window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow }));
+  });
+
+it("closes full screen when its page forwards Escape", () => {
+  const { frame } = openFullScreen();
+
+  postFrom(frame, HTML_PREVIEW_ESCAPE_MESSAGE);
+
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("ignores Escape messages from other frames and other messages from its page", () => {
+  const { frame } = openFullScreen();
+  const inlineFrame = frames().find((candidate) => candidate !== frame)!;
+
+  postFrom(inlineFrame, HTML_PREVIEW_ESCAPE_MESSAGE);
+  postFrom(frame, "other");
+  act(() => {
+    window.dispatchEvent(new MessageEvent("message", { data: HTML_PREVIEW_ESCAPE_MESSAGE }));
+  });
+
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
+
+it("takes focus back from a static page so Escape still closes full screen", async () => {
+  platform.windows = true;
+  const { viewer, frame } = openFullScreen();
+  expect(frame).toHaveAttribute("srcdoc");
+  expect(frame).toHaveAttribute("tabindex", "-1");
+
+  frame.focus();
+  fireEvent.blur(window);
+
+  await waitFor(() => expect(viewer).toHaveFocus());
+});
+
+it("leaves focus in a page with scripts", () => {
+  vi.useFakeTimers();
+  const { frame } = openFullScreen();
+  expect(frame).not.toHaveAttribute("tabindex");
+
+  frame.focus();
+  fireEvent.blur(window);
+  act(() => {
+    vi.runAllTimers();
+  });
+
+  expect(frame).toHaveFocus();
+});
+
+it("keeps the full screen action outside the page", () => {
+  render(<MarkdownText text={PREVIEW} />);
+
+  const bar = screen.getByRole("button", { name: "Open HTML preview full screen" }).parentElement!;
+  expect(bar.tagName).toBe("FIGCAPTION");
+  expect(bar).not.toContainElement(frames()[0]);
 });

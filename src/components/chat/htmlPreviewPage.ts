@@ -9,6 +9,8 @@ const HTML_PREVIEW_SCHEME = "wtm-preview";
 export const STATIC_HTML_PREVIEW_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:";
 export const HTML_PREVIEW_PROPERTY = "dataHtmlPreview";
+/** Posted by the preview protocol's bootstrap (src-tauri/src/html_preview.rs) on Escape. */
+export const HTML_PREVIEW_ESCAPE_MESSAGE = "wtm-preview:escape";
 
 const OPENING_FENCE = /^[ \t>]*(`{3,}|~{3,})/;
 const CLOSING_FENCE = /\n[ \t>]*(`{3,}|~{3,})[ \t]*\n?$/;
