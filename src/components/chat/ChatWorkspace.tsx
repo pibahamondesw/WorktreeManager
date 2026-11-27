@@ -220,7 +220,9 @@ export function ChatWorkspace({
 
   const stopSide = useCallback(
     async (closing: SideChat | null) => {
-      if (closing) await chatStop(taskId, closing.agent, closing.tab);
+      if (!closing) return;
+      intents.current.delete(closing.tab);
+      await chatStop(taskId, closing.agent, closing.tab);
     },
     [taskId]
   );
@@ -243,6 +245,7 @@ export function ChatWorkspace({
   /** Each question opens a fresh side chat, so it knows the conversation as it is now. */
   const askAside = (about: ChatTab, question: string) =>
     void run(async () => {
+      const previous = sideChats.get(taskId) ?? null;
       const next = { tab: newSideTab(), agent: about.agent, source: about.id };
       intents.current.set(next.tab, {
         agent: next.agent,
@@ -251,7 +254,7 @@ export function ChatWorkspace({
         prompt: question.trim() || undefined,
       });
       showSide(next);
-      await stopSide(side);
+      await stopSide(previous);
     });
 
   const bringBack = useCallback(

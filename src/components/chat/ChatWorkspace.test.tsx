@@ -755,6 +755,70 @@ it("opens a fresh side chat for each question and stops the one it replaces", as
   });
 });
 
+it.each([
+  { action: "close", launchSucceeds: true },
+  { action: "replace", launchSucceeds: true },
+  { action: "close", launchSucceeds: false },
+])(
+  "stops a pending side chat on $action (launch succeeds: $launchSucceeds)",
+  async ({ action, launchSucceeds }) => {
+    sideBackend();
+    let finishLaunch!: () => void;
+    const launch = new Promise<void>((resolve) => {
+      finishLaunch = resolve;
+    });
+    const live = new Set<string>();
+    const fallback = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command, args) => {
+      const tab = (args as { tab?: string } | undefined)?.tab;
+      if (typeof tab === "string" && tab.startsWith("side-")) {
+        if (command === "chat_open") {
+          if (sideOpens().length === 1) {
+            await launch;
+            if (!launchSucceeds) throw new Error("Could not start the agent");
+          }
+          live.add(tab);
+        }
+        if (command === "chat_stop") live.delete(tab);
+      }
+      return fallback(command, args);
+    });
+
+    const taskId = `side-pending-${action}-${launchSucceeds}`;
+    renderWorkspace({ taskId });
+    await screen.findByRole("textbox", { name: "Message Claude Code" });
+    await askAside("first");
+    const [first] = sideOpens();
+    expect(first).toBeDefined();
+
+    if (action === "close") {
+      fireEvent.click(screen.getByRole("button", { name: "Close side chat" }));
+      expect(screen.queryByRole("complementary", { name: "Side chat" })).toBeNull();
+    } else {
+      await askAside("second");
+      expect(sideOpens()).toHaveLength(2);
+    }
+
+    expect(mocks.invoke).not.toHaveBeenCalledWith("chat_stop", expect.anything());
+    await act(async () => finishLaunch());
+
+    expect([...live]).toEqual(
+      sideOpens()
+        .slice(1)
+        .map(({ tab }) => tab)
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("chat_stop", {
+      taskId,
+      agent: "claude",
+      tab: first.tab,
+    });
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      "chat_send",
+      expect.objectContaining({ tab: first.tab })
+    );
+  }
+);
+
 it("blocks adding a side reply until the queued edit is finished", async () => {
   sideBackend();
   const fallback = mocks.invoke.getMockImplementation()!;

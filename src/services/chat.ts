@@ -336,10 +336,26 @@ interface ChatOpenArgs {
 
 export type OpenedChat = ChatSnapshot & { sessionId: string };
 
-export function chatOpen({ onEvents, ...args }: ChatOpenArgs): Promise<OpenedChat> {
+const sideOpenings = new Map<string, { opened: Promise<OpenedChat>; closing: boolean }>();
+const openingKey = (taskId: string, agent: AgentId, tab: string) =>
+  JSON.stringify([taskId, agent, tab]);
+
+export async function chatOpen({ onEvents, ...args }: ChatOpenArgs): Promise<OpenedChat> {
   const channel = new Channel<{ generation: number; events: ChatEvent[] }>();
   channel.onmessage = (message) => onEvents(message.generation, message.events);
-  return invoke<OpenedChat>("chat_open", { ...args, onEvent: channel });
+  const opened = invoke<OpenedChat>("chat_open", { ...args, onEvent: channel });
+  if (args.asideOf === undefined || args.tab === undefined) return opened;
+
+  const key = openingKey(args.taskId, args.agent, args.tab);
+  const opening = { opened, closing: false };
+  sideOpenings.set(key, opening);
+  try {
+    const snapshot = await opened;
+    if (opening.closing) throw new Error("The side chat was closed while opening");
+    return snapshot;
+  } finally {
+    sideOpenings.delete(key);
+  }
 }
 
 export interface ChatSessionSummary {
@@ -648,8 +664,14 @@ export const chatExpandDetail = (
 export const chatLoadEarlier = (sessionId: string, generation: number) =>
   invoke<void>("chat_load_earlier", { sessionId, generation }).catch(() => undefined);
 
-export const chatStop = (taskId: string, agent: AgentId, tab?: string) =>
-  invoke<void>("chat_stop", { taskId, agent, tab });
+export async function chatStop(taskId: string, agent: AgentId, tab?: string): Promise<void> {
+  const opening = tab === undefined ? undefined : sideOpenings.get(openingKey(taskId, agent, tab));
+  if (opening) {
+    opening.closing = true;
+    await opening.opened.catch(() => undefined);
+  }
+  return invoke<void>("chat_stop", { taskId, agent, tab });
+}
 
 export const chatClose = (taskId: string) => invoke<void>("chat_close", { taskId });
 
