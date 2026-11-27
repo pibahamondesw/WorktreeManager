@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::commands::validation::{is_inside_any, resolve_markdown_file};
+use crate::commands::validation::resolve_markdown_file;
 
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -18,6 +18,13 @@ pub struct MarkdownDocument {
     pub path: String,
     pub text: String,
     pub editable: bool,
+}
+
+fn is_inside_any(folders: &[String], path: &Path) -> bool {
+    folders
+        .iter()
+        .filter_map(|folder| Path::new(folder).canonicalize().ok())
+        .any(|folder| path.starts_with(folder))
 }
 
 pub fn read(
