@@ -72,6 +72,8 @@ pub struct ChatItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command_activity: Option<CommandActivity>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<String>,
@@ -139,6 +141,7 @@ impl ChatItem {
             detail: None,
             detail_length: None,
             command_activity: None,
+            read_path: None,
             status: None,
             checkpoint: None,
             duration_ms: None,

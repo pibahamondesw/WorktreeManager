@@ -48,7 +48,7 @@ const readFiles = (reads: ChatItem[]) =>
     reads.flatMap((read) =>
       read.commandActivity?.kind === "read"
         ? read.commandActivity.paths
-        : [read.detail?.split("\n", 1)[0] ?? read.id]
+        : [read.readPath ?? read.id]
     )
   ).size;
 

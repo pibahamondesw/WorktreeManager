@@ -45,23 +45,30 @@ it("omits the remainder when every step is named", () => {
   );
 });
 
-it("counts a file read in several parts once", () => {
-  const read = (id: string, detail?: string): ChatItem => ({ ...tool(id, "Read"), detail });
+it.each([false, true])("counts unique read paths with details loaded = %s", (expanded) => {
   const steps = [
-    read("r1", "/a.ts"),
-    read("r2", "/a.ts\n\nFile changed on disk"),
-    read("r3", "/b.ts"),
-    read("r4"),
+    { ...tool("r1", "Read"), readPath: "/a.ts", detail: expanded ? "/a.ts" : undefined },
+    { ...tool("r2", "Read"), readPath: "/a.ts", detail: expanded ? "File changed" : undefined },
+    { ...tool("r3", "NotebookRead"), readPath: "/b.ipynb" },
   ];
 
-  expect(summarizeWork(steps)).toBe("Read 3 files");
+  expect(summarizeWork(steps)).toBe("Read 2 files");
+});
+
+it("counts each read with an unknown path separately even when details match", () => {
+  const steps = [
+    { ...tool("r1", "Read"), detail: "Missing path" },
+    { ...tool("r2", "Read"), detail: "Missing path" },
+  ];
+
+  expect(summarizeWork(steps)).toBe("Read 2 files");
 });
 
 it("summarizes Codex exploration like Claude and counts distinct paths without command output", () => {
   const steps = [
     command("r1", { kind: "read", paths: ["/a.ts", "/b.ts"] }),
     { ...command("r2", { kind: "read", paths: ["/a.ts"] }), detail: "file contents" },
-    { ...tool("r3", "Read"), detail: "/b.ts" },
+    { ...tool("r3", "Read"), readPath: "/b.ts" },
     command("s", { kind: "search" }),
   ];
 

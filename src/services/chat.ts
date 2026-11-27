@@ -39,6 +39,7 @@ export interface ChatItem {
   /** Bytes in the full output when `detail` holds only its end, or none of it. */
   detailLength?: number;
   commandActivity?: { kind: "read"; paths: string[] } | { kind: "search" };
+  readPath?: string;
   status?: string;
   checkpoint?: string;
   durationMs?: number;
