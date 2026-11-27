@@ -1495,6 +1495,9 @@ fn tool_result(block: &Value, launch: &Value, snapshot: &ChatSnapshot) -> Option
             None => output,
         });
     }
+    if item.kind == ItemKind::Command {
+        return Some(item.with_subagent_launch());
+    }
     Some(item)
 }
 
@@ -2559,6 +2562,36 @@ mod tests {
         let item = snapshot.item("tu1").unwrap();
         assert_eq!(item.status.as_deref(), Some("failed"));
         assert!(item.detail.as_deref().unwrap().contains("User rejected"));
+    }
+
+    #[test]
+    fn a_subagent_launch_command_links_the_chat_it_started() {
+        let (mut provider, mut snapshot) = started();
+        let command = "wtm task chat t2 --agent codex --message hi --subagent";
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "assistant", "message": { "id": "m1", "content": [
+                { "type": "tool_use", "id": "tu1", "name": "Bash", "input": { "command": command } },
+            ] } }),
+        );
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({ "type": "user", "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "tu1", "content": r#"{"data":{"agent":"codex","continued":false,"conversationId":"th2","sessionId":"s2","subagent":true,"tab":"a1","taskId":"t2"},"ok":true}"# },
+            ] } }),
+        );
+        let launch = snapshot
+            .item("tu1")
+            .unwrap()
+            .subagent_launch
+            .clone()
+            .unwrap();
+        assert_eq!(
+            (launch.task_id.as_str(), launch.conversation_id.as_str()),
+            ("t2", "th2")
+        );
     }
 
     #[test]

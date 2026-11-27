@@ -6,6 +6,7 @@ import { ComposerSeed } from "./Composer";
 import { SideChatPanel } from "./SideChatPanel";
 import { quotedReply } from "./sideChat";
 import { ChatTabBar, ChatTabView } from "./ChatTabBar";
+import { LaunchedByBar } from "./LaunchedByBar";
 import { SessionList } from "./SessionList";
 import { tabIndicator, useChatTabs } from "../../hooks/useChatTabs";
 import { AutomationSession, useAutomationSessions } from "../../hooks/useAutomationSessions";
@@ -384,6 +385,7 @@ export function ChatWorkspace({
           {actionError ?? error}
         </p>
       )}
+      {!activeAutomation && active?.launchedBy && <LaunchedByBar parent={active.launchedBy} />}
       {activeAutomation ? (
         <ChatPane
           key={automationTabId(activeAutomation)}

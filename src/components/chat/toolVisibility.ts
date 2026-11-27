@@ -48,7 +48,7 @@ function shownRow(
     return items.length === row.items.length ? row : { ...row, items };
   }
   const { item } = row;
-  if (ALWAYS_SHOWN.has(item.kind)) return row;
+  if (ALWAYS_SHOWN.has(item.kind) || item.subagentLaunch) return row;
   if (item.kind === "agent")
     return visibility === "hideSuccessful" && isRunningOrFailed(item) ? row : null;
   if (visibility !== "zen") return row;

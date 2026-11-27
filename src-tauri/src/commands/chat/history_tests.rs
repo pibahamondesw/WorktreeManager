@@ -11,7 +11,7 @@ use super::history::{chat_history, chat_rewind_preview, HistoryAction};
 use super::*;
 
 const AGENT: &str = r#"#!/usr/bin/env python3
-import json, pathlib, sys, time
+import json, os, pathlib, sys, time
 root = pathlib.Path(__file__).parent
 def config():
     return json.loads((root / 'control.json').read_text())
@@ -21,6 +21,7 @@ def log(name, entry):
     with open(root / name, 'a') as f:
         f.write(entry.rstrip('\n') + '\n')
 log('argv.jsonl', json.dumps(sys.argv[1:]))
+log('env.jsonl', json.dumps({k: v for k, v in os.environ.items() if k.startswith('WTM_')}))
 if '--session-id' in sys.argv and 'wm-claude-probe-' in str(pathlib.Path.cwd()):
     probe = root / 'agent-state/.claude/projects/probe'
     probe.mkdir(parents=True, exist_ok=True)
@@ -2711,4 +2712,112 @@ fn a_side_chat_is_never_restarted_or_started_over() {
         ));
         assert_eq!(reopened.map(|_| ()), Err(SIDE_CHAT_ENDED.into()));
     }
+}
+
+fn launched_by(fixture: &Fixture) -> Vec<(String, Value)> {
+    let listed = tauri::async_runtime::block_on(tabs::chat_tabs(
+        fixture.app.handle().clone(),
+        "task".into(),
+        Some("claude".into()),
+        fixture.repositories.folders.clone(),
+    ))
+    .unwrap();
+    serde_json::to_value(listed)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tab| {
+            (
+                tab["id"].as_str().unwrap().to_string(),
+                tab["launchedBy"].clone(),
+            )
+        })
+        .collect()
+}
+
+fn main_tab_parent() -> Value {
+    json!({ "taskId": "task", "agent": "claude", "tab": "main" })
+}
+
+fn open_parent(fixture: &Fixture) {
+    fixture.open("claude", OpenMode::Attach).unwrap();
+}
+
+#[test]
+fn a_subagent_hand_over_links_only_the_conversation_it_starts_to_the_launching_chat() {
+    let fixture = Fixture::new();
+    fixture.settings(json!({ "reply": "On it." }));
+    open_parent(&fixture);
+    let child = hand_over(
+        &fixture,
+        json!({ "agent": "claude", "parent": main_tab_parent() }),
+    )
+    .unwrap();
+    let owner = hand_over(&fixture, json!({ "agent": "claude" })).unwrap();
+    wait_until("the owner's turn did not finish", || {
+        fixture
+            .snapshot(&tabs::slot("claude", Some(&owner.tab)))
+            .status
+            == ChatStatus::Idle
+    });
+    let continued = hand_over(
+        &fixture,
+        json!({ "agent": "claude", "message": "Go on", "tab": owner.tab, "parent": main_tab_parent() }),
+    )
+    .unwrap();
+    assert!(continued.continued);
+    let gone = json!({ "taskId": "task", "agent": "claude", "tab": "gone" });
+    let orphan = hand_over(&fixture, json!({ "agent": "claude", "parent": gone })).unwrap();
+    assert_eq!(
+        launched_by(&fixture),
+        [
+            (tabs::MAIN_TAB.to_string(), Value::Null),
+            (
+                child.tab,
+                json!({ "taskId": "task", "agent": "claude", "tab": "main", "conversationId": "parent" })
+            ),
+            (owner.tab, Value::Null),
+            (orphan.tab, Value::Null),
+        ]
+    );
+}
+
+#[test]
+fn a_codex_subagent_links_its_thread_to_the_launching_chat() {
+    let fixture = Fixture::new();
+    remember_codex_selection(&fixture);
+    open_parent(&fixture);
+    let child = hand_over(
+        &fixture,
+        json!({ "agent": "codex", "parent": main_tab_parent() }),
+    )
+    .unwrap();
+    let store = subagents::subagent_store(fixture.app.handle()).unwrap();
+    let parent = store
+        .parent_of("task", "codex", &child.conversation_id)
+        .unwrap();
+    assert_eq!(
+        (parent.agent.as_str(), parent.conversation_id.as_str()),
+        ("claude", "parent")
+    );
+}
+
+#[test]
+fn owner_chats_tell_the_agent_their_tab_so_it_can_launch_subagents() {
+    let fixture = Fixture::new();
+    fixture.settings(json!({ "reply": "On it." }));
+    open_parent(&fixture);
+    let child = hand_over(&fixture, json!({ "agent": "claude" })).unwrap();
+    let exported = || -> Vec<Value> {
+        let logged = fixture.logged("env.jsonl").into_iter();
+        logged
+            .filter(|env| env.get("WTM_CHAT_TAB").is_some())
+            .collect()
+    };
+    wait_until("the chats did not start", || exported().len() == 2);
+    let chat_env = |tab: &str| json!({ "WTM_TASK_ID": "task", "WTM_SURFACE": "chat", "WTM_CHAT_AGENT": "claude", "WTM_CHAT_TAB": tab });
+    let exported = exported();
+    assert!(exported.contains(&chat_env("main")), "{exported:?}");
+    assert!(exported.contains(&chat_env(&child.tab)), "{exported:?}");
 }

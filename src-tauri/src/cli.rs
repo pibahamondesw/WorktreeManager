@@ -32,6 +32,7 @@ task create --input <file|->
 task link-issue <id> --issue <identifier>
 task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
           [--name <name>] [--tab <tab>] [--with-template] [--schema <file> --wait] [--wait]
+          [--subagent]
                                      Sends the message to the task's chat as you would
                                      type it: in a new conversation, named with --name
                                      (agents that cannot name one leave it unnamed), in
@@ -47,8 +48,11 @@ task chat <id> --agent <id> --message <text|@file> [--model <m>] [--effort <e>]
                                      which --schema holds to a JSON schema (the chat
                                      then closes, so opening the tab resumes it
                                      without the schema).
-task tabs <id>                       The task's open chat tabs, in order: id, agent
-                                     and conversation.
+                                     --subagent, run from a task's chat, shows the new
+                                     conversation there as a subagent and links it
+                                     back to that chat.
+task tabs <id>                       The task's open chat tabs, in order: id, agent,
+                                     conversation and the chat that launched it.
 task tab-close <id> <tab>            Closes the chat tab and stops its agent; the
                                      conversation stays in the task's Conversations.
 task delete <id> <--keep-worktrees|--delete-worktrees> [--force] [--skip-teardown]
@@ -211,6 +215,9 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
             "--wait" if !params.contains_key("wait") => {
                 params.insert("wait".into(), json!(true));
             }
+            "--subagent" if !params.contains_key("subagent") => {
+                params.insert("subagent".into(), json!(true));
+            }
             "--before" if !params.contains_key("before") => {
                 params.insert(
                     "before".into(),
@@ -326,6 +333,8 @@ fn parse(args: &[String]) -> Result<Arguments, String> {
                 "wait",
                 "tab",
                 "withTemplate",
+                "subagent",
+                "parent",
             ],
         ),
         "task.tabs" => (&["id"], false, &[]),
@@ -647,7 +656,7 @@ fn run_cli(
         return Some(0);
     }
     let arguments = match parse(&args) {
-        Ok(arguments) => arguments,
+        Ok(arguments) => with_parent_chat(arguments, |key| std::env::var(key).ok()),
         Err(error) => {
             println!("{}", failure("invalid_args", &error));
             return Some(2);
@@ -731,6 +740,28 @@ fn agent_event_state(requested: &str, payload: &Value) -> String {
     } else {
         requested.into()
     }
+}
+
+/// A subagent launched from the owner's chat names that chat's tab, which its chat exports;
+/// terminals keep the surface they report as, so a tab inherited from elsewhere is ignored.
+fn with_parent_chat(mut arguments: Arguments, env: impl Fn(&str) -> Option<String>) -> Arguments {
+    if arguments.method != "task.chat" || arguments.params.get("subagent") != Some(&json!(true)) {
+        return arguments;
+    }
+    let exported = |key| env(key).filter(|value| !value.is_empty());
+    if exported(agent_alerts::SURFACE_ENV).as_deref() != Some("chat") {
+        return arguments;
+    }
+    let parent = (
+        exported(agent_alerts::TASK_ENV),
+        exported(agent_alerts::CHAT_AGENT_ENV),
+        exported(agent_alerts::CHAT_TAB_ENV),
+    );
+    if let (Some(task_id), Some(agent), Some(tab)) = parent {
+        let parent = json!({ "taskId": task_id, "agent": agent, "tab": tab });
+        arguments.params.insert("parent".into(), parent);
+    }
+    arguments
 }
 
 /// Embedded sessions export their task and surface; external ones are matched by cwd. `at`
@@ -1494,6 +1525,52 @@ mod tests {
         );
         assert!(parse(&args(&format!("{plain} --with-template --with-template"))).is_err());
         assert!(parse(&args("task get t1 --with-template")).is_err());
+    }
+
+    #[test]
+    fn task_chat_marks_a_subagent_only_when_asked() {
+        let plain = "task chat t1 --agent claude --message hi";
+        assert!(!parse(&args(plain)).unwrap().params.contains_key("subagent"));
+        assert_eq!(
+            Value::Object(parse(&args(&format!("{plain} --subagent"))).unwrap().params),
+            json!({ "id": "t1", "agent": "claude", "message": "hi", "subagent": true })
+        );
+        assert!(parse(&args(&format!("{plain} --subagent --subagent"))).is_err());
+        assert!(parse(&args("task get t1 --subagent")).is_err());
+    }
+
+    #[test]
+    fn a_subagent_names_the_chat_tab_launching_it() {
+        let chat = [
+            ("WTM_TASK_ID", "orchestrator"),
+            ("WTM_CHAT_AGENT", "codex"),
+            ("WTM_CHAT_TAB", "main"),
+            ("WTM_SURFACE", "chat"),
+        ];
+        let parent = |line: &str, pairs: &[(&str, &str)]| {
+            let env = |key: &str| {
+                let found = pairs.iter().find(|(name, _)| *name == key);
+                found.map(|(_, value)| value.to_string())
+            };
+            let arguments = with_parent_chat(parse(&args(line)).unwrap(), env);
+            arguments.params.get("parent").cloned()
+        };
+        let subagent = "task chat t1 --agent claude --message hi --subagent";
+        assert_eq!(
+            parent(subagent, &chat),
+            Some(json!({ "taskId": "orchestrator", "agent": "codex", "tab": "main" }))
+        );
+        assert_eq!(
+            parent("task chat t1 --agent claude --message hi", &chat),
+            None
+        );
+        assert_eq!(parent("task get t1", &chat), None);
+        assert_eq!(parent(subagent, &[chat[0], chat[1], chat[3]]), None);
+        let blank_task = [("WTM_TASK_ID", ""), chat[1], chat[2], chat[3]];
+        assert_eq!(parent(subagent, &blank_task), None);
+        let terminal = [chat[0], chat[1], chat[2], ("WTM_SURFACE", "terminal")];
+        assert_eq!(parent(subagent, &terminal), None);
+        assert_eq!(parent(subagent, &chat[..3]), None);
     }
 
     #[test]

@@ -3,9 +3,18 @@ import Markdown, { Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { remarkLatexDelimiters } from "./remarkLatexDelimiters";
-import { ChevronDownIcon, CloseIcon, PencilIcon, SteerIcon } from "../ui/Icons";
+import { AgentIcon, ChevronDownIcon, CloseIcon, PencilIcon, SteerIcon } from "../ui/Icons";
+import { agentPresentation } from "../../services/agents";
 import { Button } from "../ui/Button";
-import { AskedQuestion, ChatItem, HistoryAction } from "../../services/chat";
+import {
+  AskedQuestion,
+  ChatInfo,
+  ChatItem,
+  HistoryAction,
+  SubagentLaunch,
+} from "../../services/chat";
+import { useTabChat } from "../../hooks/useTabChat";
+import { useTaskConversations } from "./taskConversationContext";
 import { MarkdownLink } from "./MarkdownLink";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { HistoryMenu } from "./HistoryMenu";
@@ -31,6 +40,7 @@ const STATUS_STYLE: Record<string, string> = {
   failed: "text-danger",
   declined: "text-warning",
   stopped: "text-warning",
+  waiting: "text-warning",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -39,6 +49,7 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "failed",
   declined: "rejected",
   stopped: "stopped",
+  waiting: "waiting",
 };
 
 const LazyMath = lazy(() => import("./MarkdownMath"));
@@ -207,6 +218,90 @@ function SubagentCard({ item, steps }: { item: ChatItem; steps?: SubagentSteps }
             </div>
           )}
           {item.text && <MarkdownText text={item.text} />}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** How the chat a subagent launch started is doing, while the app runs it. */
+function launchStatus(chat: ChatInfo | null): string | undefined {
+  if (!chat) return undefined;
+  if (chat.waiting) return "waiting";
+  if (chat.status.kind === "busy" || chat.status.kind === "starting") return "inProgress";
+  return chat.status.kind === "idle" ? "completed" : undefined;
+}
+
+/** The reply a launch waited for, from the command's output. */
+function launchReply(output?: string): string | null {
+  for (const line of (output ?? "").split("\n").reverse()) {
+    if (!line.trim().startsWith("{")) continue;
+    try {
+      const reply = (JSON.parse(line) as { data?: { reply?: unknown } }).data?.reply;
+      if (reply === undefined) return null;
+      return typeof reply === "string"
+        ? reply
+        : `\`\`\`json\n${JSON.stringify(reply, null, 2)}\n\`\`\``;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/** A chat another task's agent runs for this one, started by `wtm task chat --subagent`. */
+function SubagentLaunchCard({ item, launch }: { item: ChatItem; launch: SubagentLaunch }) {
+  const [open, setOpen] = useState(false);
+  useExpandedDetail(item.id, open ? "full" : null);
+  const conversations = useTaskConversations();
+  const chat = useTabChat(launch.taskId, launch.agent, launch.tab);
+  const task = conversations?.label(launch.taskId) ?? null;
+  const title = launch.name ?? task;
+  const reply = open ? launchReply(item.detail) : null;
+  return (
+    <section
+      aria-label={title ? `Subagent: ${title}` : "Subagent"}
+      className="rounded-lg border border-border bg-bg-secondary/40 text-xs"
+    >
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          className="flex-1 min-w-0 flex items-center gap-2 text-left cursor-pointer"
+        >
+          <span className="text-text-muted">↳</span>
+          <AgentIcon
+            agent={launch.agent}
+            size={12}
+            className={`flex-shrink-0 ${agentPresentation(launch.agent).tone.text}`}
+          />
+          <span className="flex-1 min-w-0 truncate text-text-secondary select-text">
+            <span className="font-medium">Subagent</span>
+            {title && ` · ${title}`}
+            {task && task !== title && <span className="text-text-muted"> · {task}</span>}
+          </span>
+          <StatusLabel status={launchStatus(chat)} />
+          <ChevronDownIcon
+            className={`opacity-50 transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+        {conversations && task && (
+          <Button
+            variant="ghost"
+            className="h-6 px-2 text-xs"
+            onClick={() => conversations.open(launch)}
+          >
+            Open conversation
+          </Button>
+        )}
+      </div>
+      {open && (
+        <div className="px-3 pb-2 flex flex-col gap-2">
+          <pre className="font-mono text-text-secondary whitespace-pre-wrap select-text max-h-40 overflow-y-auto p-2 rounded-md bg-bg-secondary">
+            {item.title ?? item.text}
+          </pre>
+          {reply && <MarkdownText text={reply} />}
         </div>
       )}
     </section>
@@ -608,6 +703,10 @@ function ChatItemContent({
       return <SubagentCard item={item} steps={steps} />;
     case "question":
       return <QuestionCard item={item} />;
+    case "command":
+      if (item.subagentLaunch)
+        return <SubagentLaunchCard item={item} launch={item.subagentLaunch} />;
+      return <Activity item={item} />;
     default:
       return <Activity item={item} />;
   }

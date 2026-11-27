@@ -189,7 +189,7 @@ pub async fn chat_history<R: Runtime>(
             let fork_item = item_id.clone();
             let new_id = uuid::Uuid::new_v4().to_string();
             let fork_id = new_id.clone();
-            let fork_task = task_id.clone();
+            let fork_owner = ChatOwner::user(&task_id, &agent, tab);
             let fork_notify = notify.clone();
             let fork_remember = remember.clone();
             let fork_generation = registry.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -229,7 +229,7 @@ pub async fn chat_history<R: Runtime>(
                     questions: Some(super::questions::QuestionLog::new(&app_data)),
                     idle_compaction: Some(fork_idle_compaction),
                 };
-                let session = start_session(&fork_task, launch, handoff, setup)?;
+                let session = start_session(&fork_owner, launch, handoff, setup)?;
                 let deadline = Instant::now() + history_timeout;
                 loop {
                     match session.status() {

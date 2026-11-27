@@ -146,6 +146,17 @@ export interface TaskChatInput {
   /** Values for the first-prompt template beyond the task's own, such as an automation's. */
   variables?: Record<string, string>;
   withTemplate?: boolean;
+  /** Another agent launches it: its chat shows the conversation as a subagent. */
+  subagent?: boolean;
+  /** The chat tab launching the subagent, which a new conversation links back to. */
+  parent?: ChatTabRef;
+}
+
+/** A task's chat tab and the agent running in it. */
+export interface ChatTabRef {
+  taskId: string;
+  agent: AgentId;
+  tab: string;
 }
 
 export interface TaskChat {
@@ -156,6 +167,9 @@ export interface TaskChat {
   conversationId: string;
   /** The message went to the tab's chat still running. */
   continued: boolean;
+  /** The launching chat shows this conversation as a subagent; see `ChatItem.subagentLaunch`. */
+  subagent?: true;
+  name?: string;
   reply?: unknown;
 }
 
@@ -1232,10 +1246,12 @@ export class Operations {
         schema: input.schema ?? null,
         tab: input.tab ?? null,
         mainAgent: task.agent ?? input.agent,
+        parent: input.subagent ? (input.parent ?? null) : null,
       },
     }).catch(chatFailure);
     await this.setTaskAgent(id, input.agent);
-    const chat: TaskChat = { taskId: id, agent: input.agent, ...started };
+    const launch = input.subagent ? { subagent: true as const, name: input.name } : {};
+    const chat: TaskChat = { taskId: id, agent: input.agent, ...started, ...launch };
     if (!input.wait) return chat;
     const reply = await invoke("chat_await_reply", {
       sessionId: started.sessionId,

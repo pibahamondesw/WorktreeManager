@@ -306,8 +306,23 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
       schema: null,
       tab: null,
       mainAgent: "claude",
+      parent: null,
     },
   });
+  const parent = { taskId: "t0", agent: "codex", tab: "main" };
+  expect(
+    await call("task.chat", {
+      id: "t1",
+      agent: "claude",
+      message: "Implement",
+      subagent: true,
+      parent,
+    })
+  ).toMatchObject({ ok: true, data: { subagent: true } });
+  expect(invokeCommand.mock.lastCall).toMatchObject([
+    "chat_hand_over",
+    { request: { message: "Implement", parent } },
+  ]);
   const schema = { type: "object" };
   expect(
     await call("task.chat", {
@@ -372,6 +387,9 @@ it("sends a task chat message as typed and rejects invalid chat requests", async
     { id: "t1", agent: "claude", message: " " },
     { id: "t1", agent: "claude", message: "Hi", wait: "yes" },
     { id: "t1", agent: "claude", message: "Hi", withTemplate: "yes" },
+    { id: "t1", agent: "claude", message: "Hi", subagent: "yes" },
+    { id: "t1", agent: "claude", message: "Hi", subagent: true, parent: "main" },
+    { id: "t1", agent: "claude", message: "Hi", subagent: true, parent: { taskId: "t0" } },
     { id: "t1", agent: "claude", message: "Hi", schema: [], wait: true },
     { id: "t1", agent: "claude", message: "Hi", schema },
     { id: "t1", agent: "claude", message: "Hi", name: " " },

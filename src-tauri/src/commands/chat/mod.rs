@@ -38,6 +38,7 @@ pub mod resume;
 mod sessions;
 #[cfg(test)]
 mod snapshot_budget_tests;
+mod subagents;
 pub mod tabs;
 mod turns;
 mod window;
@@ -529,7 +530,7 @@ struct SessionSetup {
 /// Spawns a launch as the task's chat, with its history and the conversation it continues.
 /// Shared by opening a chat and relaunching one on a fork.
 fn start_session(
-    task_id: &str,
+    owner: &ChatOwner,
     launch: Launch,
     handoff: Option<Handoff>,
     setup: SessionSetup,
@@ -540,8 +541,18 @@ fn start_session(
         history,
     } = launch;
     command
-        .env(agent_alerts::TASK_ENV, task_id)
+        .env(agent_alerts::TASK_ENV, &owner.task_id)
         .env(agent_alerts::SURFACE_ENV, "chat");
+    if owner.origin == ChatOrigin::User && !owner.is_side() {
+        let tab = owner.tab.as_deref().unwrap_or(tabs::MAIN_TAB);
+        command
+            .env(agent_alerts::CHAT_AGENT_ENV, &owner.agent)
+            .env(agent_alerts::CHAT_TAB_ENV, tab);
+    } else {
+        command
+            .env_remove(agent_alerts::CHAT_AGENT_ENV)
+            .env_remove(agent_alerts::CHAT_TAB_ENV);
+    }
     let session = ChatSession::spawn(command, provider, setup)?;
     {
         let mut state = session.shared.lock().unwrap();
@@ -1434,7 +1445,7 @@ pub async fn chat_open<R: Runtime>(
         handoff.as_ref().map(|handoff| handoff.link.clone()),
         expected_conversation,
     );
-    let session = start_session(&task_id, launch, handoff, setup?)?;
+    let session = start_session(&target.owner, launch, handoff, setup?)?;
     let snapshot = session.attach(on_event);
     let SessionTarget {
         session_id, owner, ..
@@ -1856,6 +1867,7 @@ pub async fn chat_close<R: Runtime>(
             store.forget_task(&task_id);
         }
         tabs::forget_task(tabs::tab_store(&app), &task_id);
+        subagents::forget_task(subagents::subagent_store(&app), &task_id);
         interrupted::forget_task(&app, &task_id);
         resume::forget_task(&app, &task_id);
     })

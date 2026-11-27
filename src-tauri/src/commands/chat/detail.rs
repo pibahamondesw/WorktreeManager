@@ -79,6 +79,7 @@ fn without_detail(item: &ChatItem) -> ChatItem {
         parent: item.parent.clone(),
         questions: item.questions.clone(),
         limit_resets_at: item.limit_resets_at,
+        subagent_launch: item.subagent_launch.clone(),
     }
 }
 

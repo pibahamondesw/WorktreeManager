@@ -12,6 +12,7 @@ use tokio::sync::OwnedMutexGuard;
 use super::conversations::ConversationStore;
 use super::headless::HeadlessRequest;
 use super::model::ChatStatus;
+use super::subagents::{self, subagent_store, ParentChat};
 use super::tabs::{self, announce, tab_store, ChatTab, TabStore, MAIN_TAB};
 use super::{conversation_store, primary_folder, ChatOwner, ChatRegistry, ChatSession, TurnEnd};
 use crate::commands::agents::permission::PermissionPolicy;
@@ -40,6 +41,18 @@ pub struct HandOver {
     /// The agent of the task's main tab, when the task has no tabs recorded yet.
     #[serde(default)]
     pub main_agent: Option<String>,
+    /// The chat tab of another agent that sends it: a new conversation links back to it.
+    #[serde(default)]
+    pub parent: Option<ParentTab>,
+}
+
+/// The owner's chat tab running the agent that calls `wtm task chat --subagent`.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ParentTab {
+    pub task_id: String,
+    pub agent: String,
+    pub tab: String,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -84,6 +97,24 @@ fn model(request: &HandOver) -> Option<&str> {
 }
 
 impl ChatRegistry {
+    /// The conversation the parent tab's chat runs, while it runs one.
+    fn parent_chat(&self, parent: ParentTab) -> Option<ParentChat> {
+        let slot = tabs::slot(&parent.agent, Some(&parent.tab));
+        let conversation_id = self
+            .sessions
+            .lock()
+            .unwrap()
+            .primary(&parent.task_id, &slot)?
+            .1
+            .conversation()?;
+        Some(ParentChat {
+            task_id: parent.task_id,
+            agent: parent.agent,
+            tab: parent.tab,
+            conversation_id,
+        })
+    }
+
     /// Continues the tab's live chat or starts a new one in it, and sends the message.
     fn hand_over<R: Runtime>(
         &self,
@@ -231,6 +262,7 @@ pub async fn chat_hand_over<R: Runtime>(
         }
     };
     let took_main = request.tab.is_none() && tab == MAIN_TAB;
+    let parent = request.parent.clone();
     let (task_id, agent) = (request.task_id.clone(), request.agent.clone());
     let handed = {
         let (app, tab) = (app.clone(), tab.clone());
@@ -255,6 +287,13 @@ pub async fn chat_hand_over<R: Runtime>(
     }
     if handed.is_err() && took_main {
         stop_main_chat(&registry, &task_id, &agent).await;
+    }
+    if let (Ok(started), Some(parent)) = (&handed, parent) {
+        if let Some(parent) = registry.parent_chat(parent).filter(|_| !started.continued) {
+            let store = subagent_store(&app);
+            subagents::link(store, &task_id, &agent, &started.conversation_id, parent);
+            announce(&app, &task_id);
+        }
     }
     handed
 }
@@ -460,6 +499,7 @@ mod tests {
             schema: None,
             tab: None,
             main_agent: None,
+            parent: None,
         }
     }
 

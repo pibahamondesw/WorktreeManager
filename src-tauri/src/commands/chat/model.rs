@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::commands::agents::permission::PendingDefault;
 
@@ -87,6 +88,36 @@ pub struct ChatItem {
     /// When the usage limit that stopped the turn renews, in unix seconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_resets_at: Option<i64>,
+    /// The chat a `wtm task chat --subagent` command started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_launch: Option<SubagentLaunch>,
+}
+
+/// A chat another task's agent runs for this conversation, as `wtm task chat --subagent` prints it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentLaunch {
+    pub task_id: String,
+    pub agent: String,
+    pub tab: String,
+    pub conversation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+fn subagent_launch(output: &str) -> Option<SubagentLaunch> {
+    output.lines().rev().find_map(|line| {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            return None;
+        }
+        let response: Value = serde_json::from_str(line).ok()?;
+        let data = &response["data"];
+        if response["ok"] != true || data["subagent"] != true {
+            return None;
+        }
+        serde_json::from_value(data.clone()).ok()
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -115,6 +146,7 @@ impl ChatItem {
             parent: None,
             questions: Vec::new(),
             limit_resets_at: None,
+            subagent_launch: None,
         }
     }
 
@@ -140,6 +172,12 @@ impl ChatItem {
 
     pub fn with_limit_resets_at(mut self, resets_at: Option<i64>) -> Self {
         self.limit_resets_at = resets_at;
+        self
+    }
+
+    /// Reads from a command's output the chat it started with `wtm task chat --subagent`.
+    pub fn with_subagent_launch(mut self) -> Self {
+        self.subagent_launch = self.detail.as_deref().and_then(subagent_launch);
         self
     }
 
@@ -864,5 +902,40 @@ mod tests {
             status: ChatStatus::Exited { code: Some(1) },
         });
         assert!(snapshot.pending.is_empty());
+    }
+
+    fn command(output: &str) -> ChatItem {
+        ChatItem::new("c1", ItemKind::Command, "")
+            .with_detail(Some(output.into()))
+            .with_subagent_launch()
+    }
+
+    #[test]
+    fn a_subagent_launch_is_read_from_the_cli_response() {
+        let response = r#"{"data":{"agent":"codex","continued":false,"conversationId":"th1","name":"WOR-1","sessionId":"s1","subagent":true,"tab":"a1","taskId":"t2"},"ok":true}"#;
+        let launch = command(&format!("Launch the subagent\n\n{response}\n"))
+            .subagent_launch
+            .unwrap();
+        assert_eq!(
+            launch,
+            SubagentLaunch {
+                task_id: "t2".into(),
+                agent: "codex".into(),
+                tab: "a1".into(),
+                conversation_id: "th1".into(),
+                name: Some("WOR-1".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn other_outputs_launch_no_subagent() {
+        let owner = r#"{"data":{"agent":"claude","conversationId":"c1","tab":"a1","taskId":"t2"},"ok":true}"#;
+        let failed = r#"{"error":{"code":"not_found"},"ok":false}"#;
+        for output in [owner, failed, "{not json", "plain output"] {
+            assert_eq!(command(output).subagent_launch, None, "{output}");
+        }
+        let unread = ChatItem::new("c1", ItemKind::Command, "").with_subagent_launch();
+        assert_eq!(unread.subagent_launch, None);
     }
 }

@@ -1926,7 +1926,8 @@ pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
             let mut command = ChatItem::new(id, ItemKind::Command, "")
                 .titled(text("command"))
                 .with_detail(item["aggregatedOutput"].as_str().map(String::from))
-                .with_status(status_of(item));
+                .with_status(status_of(item))
+                .with_subagent_launch();
             command.command_activity = command_activity(item);
             command
         }
@@ -1984,6 +1985,8 @@ pub(super) fn map_item(item: &Value) -> Option<ChatItem> {
 mod tests {
     use super::*;
 
+    const LAUNCH: &str = r#"{"data":{"agent":"codex","continued":false,"conversationId":"th2","sessionId":"s2","subagent":true,"tab":"a1","taskId":"t2"},"ok":true}"#;
+
     #[test]
     fn command_reads_keep_paths_in_live_and_restored_items() {
         let (mut provider, mut snapshot) = ready(None);
@@ -2020,6 +2023,26 @@ mod tests {
         let completed = serde_json::to_value(&restored[0]).unwrap();
         assert_eq!(completed["commandActivity"], activity);
         assert_eq!(completed["detail"], "file contents");
+    }
+
+    #[test]
+    fn a_subagent_launch_command_links_the_chat_it_started_live_and_restored() {
+        let (mut provider, mut snapshot) = ready(None);
+        provider.thread_id = Some("th1".into());
+        let item = json!({
+            "id": "launch", "type": "commandExecution", "status": "completed",
+            "command": "wtm task chat t2 --agent codex --message hi --subagent",
+            "aggregatedOutput": LAUNCH,
+        });
+        feed(
+            &mut provider,
+            &mut snapshot,
+            json!({"method": "item/completed", "params": {"threadId": "th1", "item": item}}),
+        );
+        let launch = snapshot.items[0].subagent_launch.clone().unwrap();
+        assert_eq!((launch.task_id.as_str(), launch.tab.as_str()), ("t2", "a1"));
+        let restored = thread_items(&json!({"turns": [{"items": [item]}]}));
+        assert_eq!(restored, snapshot.items);
     }
 
     #[test]
