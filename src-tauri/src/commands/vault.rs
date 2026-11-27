@@ -189,7 +189,36 @@ Read the matching skill before acting. When a trigger appears, propose the skill
 
 const AUTOMATION_SKILL_GUIDE: &str = "\n\n## WorktreeManager automations\n\nBefore automating a recurring flow, turning a conversation into an automation or editing one, read [skills/wtm-automation/SKILL.md](skills/wtm-automation/SKILL.md).\n";
 
-const HTML_PREVIEW_SKILL_GUIDE: &str = "\n\n## WorktreeManager chat\n\nWhen a static chart, rich table, or mockup would make a chat answer clearer, read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML.\n";
+const HTML_PREVIEW_SKILL_GUIDE: &str = "\n\n## WorktreeManager chat\n\nWhen a chart, rich table, interactive view, or mockup would make a chat answer clearer, read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML.\n";
+
+const HTML_PREVIEW_SKILL_ROW: &str = "| A chart, rich table, interactive view, or mockup would make a chat answer clearer | Read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML. |";
+
+/// Text an earlier release installed, updated only while the vault still holds it verbatim.
+struct SupersededText {
+    previous: &'static str,
+    current: &'static str,
+}
+
+const SUPERSEDED_GUIDE_TEXT: &[SupersededText] = &[
+    SupersededText {
+        previous: "\n\n## WorktreeManager chat\n\nWhen a static chart, rich table, or mockup would make a chat answer clearer, read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML.\n",
+        current: HTML_PREVIEW_SKILL_GUIDE,
+    },
+    SupersededText {
+        previous: "| A static chart, rich table, or mockup would make a chat answer clearer | Read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML. |",
+        current: HTML_PREVIEW_SKILL_ROW,
+    },
+];
+
+struct SupersededFile {
+    rel_path: &'static str,
+    previous: &'static str,
+}
+
+const SUPERSEDED_SUPPORT_FILES: &[SupersededFile] = &[SupersededFile {
+    rel_path: "skills/wtm-html-preview/SKILL.md",
+    previous: include_str!("superseded_vault_files/wtm-html-preview-SKILL.md"),
+}];
 
 const GUIDE_SECTIONS: &[GuideSection] = &[
     GuideSection {
@@ -210,10 +239,34 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
     },
 ];
 
+fn update_unedited_support_file(path: &Path, file: &VaultFile) -> Result<(), String> {
+    let Some(superseded) = SUPERSEDED_SUPPORT_FILES
+        .iter()
+        .find(|superseded| superseded.rel_path == file.rel_path)
+    else {
+        return Ok(());
+    };
+    if fs::read_to_string(path).ok().as_deref() != Some(superseded.previous) {
+        return Ok(());
+    }
+    UserFile::new(path)
+        .unchanged_from(superseded.previous)
+        .replace(file.contents)
+}
+
+fn update_unedited_guide_text(guide: &str) -> String {
+    SUPERSEDED_GUIDE_TEXT
+        .iter()
+        .fold(guide.to_string(), |guide, superseded| {
+            guide.replace(superseded.previous, superseded.current)
+        })
+}
+
 fn ensure_task_note_support(root: &Path) -> Result<(), String> {
     for file in SUPPORT_FILES {
         let path = root.join(file.rel_path);
         if path.exists() {
+            update_unedited_support_file(&path, file)?;
             continue;
         }
         fs::create_dir_all(path.parent().unwrap())
@@ -229,7 +282,7 @@ fn ensure_task_note_support(root: &Path) -> Result<(), String> {
     let agents = root.join("AGENTS.md");
     if agents.exists() {
         let contents = fs::read_to_string(&agents).map_err(|e| format!("read AGENTS.md: {e}"))?;
-        let mut guided = contents.clone();
+        let mut guided = update_unedited_guide_text(&contents);
         for section in GUIDE_SECTIONS {
             if !guided.contains(section.link) {
                 guided.push_str(section.text);
@@ -765,6 +818,98 @@ mod tests {
             format!("{existing}{HTML_PREVIEW_SKILL_GUIDE}")
         );
         assert_eq!(fs::read_to_string(skill).unwrap(), "user skill");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn html_preview_skill_contents() -> &'static str {
+        SUPPORT_FILES
+            .iter()
+            .find(|file| file.rel_path == "skills/wtm-html-preview/SKILL.md")
+            .unwrap()
+            .contents
+    }
+
+    #[test]
+    fn upgrade_updates_an_unedited_html_preview_skill_once() {
+        let root = temp_dir("html-preview-skill-unedited");
+        let skill = root.join("skills/wtm-html-preview/SKILL.md");
+        fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        fs::write(&skill, SUPERSEDED_SUPPORT_FILES[0].previous).unwrap();
+
+        ensure_task_note_support(&root).unwrap();
+        ensure_task_note_support(&root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(skill).unwrap(),
+            html_preview_skill_contents()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn upgrade_keeps_an_edited_html_preview_skill() {
+        let root = temp_dir("html-preview-skill-edited");
+        let skill = root.join("skills/wtm-html-preview/SKILL.md");
+        let edited = format!("{}\nPrefer tables.\n", SUPERSEDED_SUPPORT_FILES[0].previous);
+        fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        fs::write(&skill, &edited).unwrap();
+
+        ensure_task_note_support(&root).unwrap();
+
+        assert_eq!(fs::read_to_string(skill).unwrap(), edited);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn upgrade_updates_the_unedited_appended_html_preview_section_once() {
+        let root = temp_dir("html-preview-section-unedited");
+        let agents = root.join("AGENTS.md");
+        let user_instructions = format!("User instructions\n{TASK_NOTE_GUIDE}{WTM_SKILLS_GUIDE}");
+        fs::write(
+            &agents,
+            format!("{user_instructions}{}", SUPERSEDED_GUIDE_TEXT[0].previous),
+        )
+        .unwrap();
+
+        ensure_task_note_support(&root).unwrap();
+        ensure_task_note_support(&root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(agents).unwrap(),
+            format!("{user_instructions}{HTML_PREVIEW_SKILL_GUIDE}")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn upgrade_updates_the_unedited_html_preview_row_of_a_scaffolded_guide() {
+        let root = temp_dir("html-preview-row-unedited");
+        let agents = root.join("AGENTS.md");
+        scaffold_vault_at(&root).unwrap();
+        let current = fs::read_to_string(&agents).unwrap();
+        let scaffolded = current.replace(HTML_PREVIEW_SKILL_ROW, SUPERSEDED_GUIDE_TEXT[1].previous);
+        assert_ne!(scaffolded, current);
+        fs::write(&agents, scaffolded).unwrap();
+
+        ensure_task_note_support(&root).unwrap();
+
+        assert_eq!(fs::read_to_string(agents).unwrap(), current);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn upgrade_keeps_an_edited_html_preview_section() {
+        let root = temp_dir("html-preview-section-edited");
+        let agents = root.join("AGENTS.md");
+        let edited = SUPERSEDED_GUIDE_TEXT[0]
+            .previous
+            .replace("static chart", "static SVG chart");
+        let existing = format!("User instructions\n{TASK_NOTE_GUIDE}{WTM_SKILLS_GUIDE}{edited}");
+        fs::write(&agents, &existing).unwrap();
+
+        ensure_task_note_support(&root).unwrap();
+
+        assert_eq!(fs::read_to_string(agents).unwrap(), existing);
         fs::remove_dir_all(root).unwrap();
     }
 

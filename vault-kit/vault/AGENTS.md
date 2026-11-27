@@ -490,4 +490,4 @@ No tokens, no `.env` contents, no credentials. The vault may be synced.
 
 | Trigger | Skill |
 | --- | --- |
-| A static chart, rich table, or mockup would make a chat answer clearer | Read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML. |
+| A chart, rich table, interactive view, or mockup would make a chat answer clearer | Read and use [the HTML preview skill](skills/wtm-html-preview/SKILL.md) directly, even if the user did not request HTML. |
