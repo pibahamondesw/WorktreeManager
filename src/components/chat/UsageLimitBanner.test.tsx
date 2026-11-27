@@ -5,7 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import { UsageLimitBanner } from "./UsageLimitBanner";
 import { ScheduledResume } from "../../services/chat";
 
-const invoke = vi.hoisted(() => vi.fn());
+const invoke = vi.hoisted(() => vi.fn<(command: string, args?: unknown) => Promise<unknown>>());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 afterEach(() => {
@@ -27,7 +27,7 @@ function answer(commands: Record<string, () => Promise<unknown>>) {
   invoke.mockImplementation((command: string) => commands[command]?.() ?? Promise.resolve(null));
 }
 
-function banner(resetsAt: number | null, prompts = 1) {
+function banner(resetsAt: number | null, prompts = 1, onSnooze?: (until: string) => Promise<void>) {
   return (
     <UsageLimitBanner
       taskId="t1"
@@ -37,6 +37,7 @@ function banner(resetsAt: number | null, prompts = 1) {
       folders={["/wt"]}
       resetsAt={resetsAt}
       prompts={prompts}
+      onSnooze={onSnooze}
     />
   );
 }
@@ -76,6 +77,58 @@ it("shows a resume scheduled before a restart until a prompt ends it", async () 
   found = null;
   rerender(banner(null, 2));
   await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+});
+
+it("snoozes until the limit renews and leaves a scheduled resume in place", async () => {
+  answer({ chat_resume_scheduled: () => Promise.resolve(scheduled) });
+  const onSnooze = vi.fn().mockResolvedValue(undefined);
+  render(banner(inAnHour, 1, onSnooze));
+  await screen.findByRole("button", { name: "Cancel resume" });
+
+  const snooze = screen.getByRole("button", { name: "Snooze until it renews" });
+  fireEvent.click(snooze);
+  expect(snooze).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel resume" })).toBeDisabled();
+  await waitFor(() => expect(snooze).toBeEnabled());
+  expect(onSnooze).toHaveBeenCalledExactlyOnceWith(new Date(inAnHour * 1000).toISOString());
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["chat_resume_scheduled"]);
+  expect(screen.getByRole("button", { name: "Cancel resume" })).toBeEnabled();
+});
+
+it("shows a failed snooze and allows retrying without scheduling a resume", async () => {
+  answer({});
+  const onSnooze = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Could not save task"))
+    .mockResolvedValue(undefined);
+  render(banner(inAnHour, 1, onSnooze));
+
+  const snooze = screen.getByRole("button", { name: "Snooze until it renews" });
+  fireEvent.click(snooze);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not save task");
+  expect(snooze).toBeEnabled();
+  fireEvent.click(snooze);
+  await waitFor(() => expect(snooze).toBeEnabled());
+  expect(onSnooze).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["chat_resume_scheduled"]);
+});
+
+it("ignores a snooze click if the limit renewed while the banner was visible", async () => {
+  vi.useFakeTimers();
+  answer({});
+  const onSnooze = vi.fn();
+  render(banner(inAnHour, 1, onSnooze));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const snooze = screen.getByRole("button", { name: "Snooze until it renews" });
+
+  vi.setSystemTime(inAnHour * 1000);
+  await act(async () => {
+    fireEvent.click(snooze);
+  });
+
+  expect(onSnooze).not.toHaveBeenCalled();
+  expect(snooze).not.toBeInTheDocument();
 });
 
 it("stays hidden without a limit in force and reports a failed schedule", async () => {

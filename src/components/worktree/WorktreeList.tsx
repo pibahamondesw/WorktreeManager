@@ -621,6 +621,10 @@ export function WorktreeList({
                 openTask.linearIssueId ? (title) => onTaskRenamed(openTask.id, title) : undefined
               }
               onRenameError={showToast}
+              onSnooze={async (until) => {
+                await onTaskSnoozed(openTask.id, until);
+                showToast("Task snoozed");
+              }}
               setupControls={setupControls}
             />
           </TaskEditorContext.Provider>

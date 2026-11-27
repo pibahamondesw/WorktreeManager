@@ -31,7 +31,18 @@ vi.mock("./WorktreeListHeader", () => ({
 }));
 vi.mock("./NewWorktreeModal", () => ({ NewWorktreeModal: () => null }));
 vi.mock("../task/TaskView", () => ({
-  TaskView: ({ onBack }: { onBack: () => void }) => <button onClick={onBack}>Back</button>,
+  TaskView: ({
+    onBack,
+    onSnooze,
+  }: {
+    onBack: () => void;
+    onSnooze: (until: string) => Promise<void>;
+  }) => (
+    <>
+      <button onClick={onBack}>Back</button>
+      <button onClick={() => void onSnooze(LATER)}>Snooze from chat</button>
+    </>
+  ),
 }));
 vi.mock("./WorktreeCard", () => ({
   WorktreeCard: ({
@@ -173,6 +184,17 @@ it("routes pin toggles and only allows pinned tasks to be dragged", async () => 
   );
   expect(screen.getByText("unpinned").parentElement).not.toHaveAttribute("data-reorder-key");
   expect(screen.getByText("first").parentElement).toHaveAttribute("data-reorder-key", "first");
+});
+
+it("saves a snooze for the open task and confirms it in the chat view", async () => {
+  const { onTaskSnoozed } = fixture({
+    openedTask: { taskId: "second", surface: { kind: "chat", agent: "codex" } },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Snooze from chat" }));
+
+  expect(onTaskSnoozed).toHaveBeenCalledExactlyOnceWith("second", LATER);
+  expect(await screen.findByText("Task snoozed")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Back" })).toBeVisible();
 });
 
 function drag(source: Element, target: Element) {

@@ -25,6 +25,7 @@ interface TaskViewProps {
   agentActivity?: AgentActivity;
   onRename?: (title: string) => Promise<unknown>;
   onRenameError?: (message: string) => void;
+  onSnooze?: (until: string) => Promise<void>;
   setupControls?: SetupControls;
 }
 
@@ -42,6 +43,7 @@ export function TaskView({
   agentActivity,
   onRename,
   onRenameError,
+  onSnooze,
   setupControls,
 }: TaskViewProps) {
   const [switching, setSwitching] = useState(false);
@@ -128,6 +130,7 @@ export function TaskView({
         closing={closing}
         onStatusChange={setSessionStatus}
         onChatAgentChange={followChatAgent}
+        onSnooze={onSnooze}
       />
     </div>
   );
@@ -139,12 +142,14 @@ function TaskSurfaceView({
   closing,
   onStatusChange,
   onChatAgentChange,
+  onSnooze,
 }: {
   task: Task;
   surface: TaskSurface;
   closing: boolean;
   onStatusChange: (status: SessionStatus) => void;
   onChatAgentChange: (agent: AgentId) => void;
+  onSnooze?: TaskViewProps["onSnooze"];
 }) {
   switch (surface.kind) {
     case "editor":
@@ -179,6 +184,7 @@ function TaskSurfaceView({
           folders={task.members.map((m) => m.path)}
           onStatusChange={onStatusChange}
           onAgentChange={onChatAgentChange}
+          onSnooze={onSnooze}
         />
       );
     default:

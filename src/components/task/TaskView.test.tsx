@@ -111,6 +111,36 @@ function renderView(onBack = vi.fn(), onSwitchSurface = vi.fn()) {
 }
 
 describe("TaskView", () => {
+  it("snoozes from the active chat until its usage limit renews", async () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    mocks.invoke.mockImplementation(async (command) =>
+      command === "chat_open"
+        ? {
+            ...IDLE_CHAT,
+            items: [
+              { id: "prompt", kind: "user", text: "Continue" },
+              { id: "limit", kind: "error", text: "Usage limit", limitResetsAt: resetsAt },
+            ],
+          }
+        : undefined
+    );
+    const onSnooze = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TaskView
+        task={task}
+        surface={{ kind: "chat", agent: "codex" }}
+        sidebarCollapsed={false}
+        onExpandSidebar={vi.fn()}
+        onBack={vi.fn()}
+        onSwitchSurface={vi.fn()}
+        onSnooze={onSnooze}
+      />
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Snooze until it renews" }));
+
+    expect(onSnooze).toHaveBeenCalledExactlyOnceWith(new Date(resetsAt * 1000).toISOString());
+  });
+
   it("switches agents without closing either session and detaches the previous agent", async () => {
     mocks.invoke.mockResolvedValue({ created: true, status: { kind: "running" }, replay: "" });
     const props = {

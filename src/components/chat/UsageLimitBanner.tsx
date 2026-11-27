@@ -22,9 +22,9 @@ interface UsageLimitBannerProps {
   resetsAt: number | null;
   /** Changes when a message is sent, which ends a scheduled resume. */
   prompts: number;
+  onSnooze?: (until: string) => Promise<void>;
 }
 
-/** Offers to continue the chat once the usage limit renews, and shows when it will. */
 export function UsageLimitBanner({
   taskId,
   agent,
@@ -33,9 +33,10 @@ export function UsageLimitBanner({
   folders,
   resetsAt,
   prompts,
+  onSnooze,
 }: UsageLimitBannerProps) {
   const [scheduled, setScheduled] = useState<ScheduledResume | null>(null);
-  const [working, setWorking] = useState(false);
+  const [working, setWorking] = useState<"resume" | "snooze" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checks, setChecks] = useState(0);
 
@@ -58,74 +59,68 @@ export function UsageLimitBanner({
     return () => clearTimeout(timer);
   }, [scheduled]);
 
-  const perform = async (action: () => Promise<ScheduledResume | null>) => {
-    setWorking(true);
+  const perform = async (kind: "resume" | "snooze", action: () => Promise<void>) => {
+    setWorking(kind);
     setError(null);
     try {
-      setScheduled(await action());
+      await action();
     } catch (reason) {
       setError(String(reason));
     } finally {
-      setWorking(false);
+      setWorking(null);
     }
   };
 
-  const renewsAt = resetsAt !== null && resetsAt * 1000 > Date.now() ? resetsAt : null;
-  if (scheduled) {
-    return (
-      <Banner
-        message={`${formatReset(scheduled.resumeAt, Date.now(), "Continues")}, when the usage limit renews.`}
-        action="Cancel resume"
-        working={working}
-        error={error}
-        onAction={() =>
-          void perform(async () => {
-            await chatResumeCancel(taskId, agent, tab);
-            return null;
-          })
-        }
-      />
-    );
-  }
-  if (renewsAt === null) return null;
-  return (
-    <Banner
-      message={`${agentLabel} hit its usage limit. ${formatReset(renewsAt)}.`}
-      action="Resume when it renews"
-      title="Sends “Continue” once the limit renews, even after a restart"
-      working={working}
-      error={error}
-      onAction={() => void perform(() => chatResumeSchedule(taskId, agent, folders, renewsAt, tab))}
-    />
-  );
-}
+  const now = Date.now();
+  const renewsAt = resetsAt !== null && resetsAt * 1000 > now ? resetsAt : null;
+  const displayReset = scheduled?.resumeAt ?? renewsAt;
+  if (displayReset === null) return null;
 
-interface BannerProps {
-  message: string;
-  action: string;
-  title?: string;
-  working: boolean;
-  error: string | null;
-  onAction: () => void;
-}
+  const updateResume = async () => {
+    if (scheduled) {
+      await chatResumeCancel(taskId, agent, tab);
+      setScheduled(null);
+    } else {
+      setScheduled(await chatResumeSchedule(taskId, agent, folders, displayReset, tab));
+    }
+  };
 
-function Banner({ message, action, title, working, error, onAction }: BannerProps) {
   return (
     <div className="max-w-3xl mx-auto mb-2 flex flex-col gap-1.5 text-xs">
-      <div className="flex items-center gap-3 rounded-md border border-border bg-bg-secondary px-3 py-2">
-        <p role="status" className="flex-1 text-text-secondary select-text">
-          {message}
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-bg-secondary px-3 py-2">
+        <p role="status" className="basis-48 grow text-text-secondary select-text">
+          {scheduled
+            ? `${formatReset(scheduled.resumeAt, now, "Continues")}, when the usage limit renews.`
+            : `${agentLabel} hit its usage limit. ${formatReset(displayReset, now)}.`}
         </p>
         <Button
           variant="secondary"
           className="h-6 px-2 text-xs"
-          loading={working}
-          disabled={working}
-          title={title}
-          onClick={onAction}
+          loading={working === "resume"}
+          disabled={working !== null}
+          title={
+            scheduled ? undefined : "Sends “Continue” once the limit renews, even after a restart"
+          }
+          onClick={() => void perform("resume", updateResume)}
         >
-          {action}
+          {scheduled ? "Cancel resume" : "Resume when it renews"}
         </Button>
+        {onSnooze && renewsAt !== null && (
+          <Button
+            variant="secondary"
+            className="h-6 px-2 text-xs"
+            loading={working === "snooze"}
+            disabled={working !== null}
+            onClick={() =>
+              void perform("snooze", async () => {
+                const until = new Date(renewsAt * 1000);
+                if (until.getTime() > Date.now()) await onSnooze(until.toISOString());
+              })
+            }
+          >
+            Snooze until it renews
+          </Button>
+        )}
       </div>
       {error && (
         <p role="alert" className="text-danger break-words select-text">

@@ -80,6 +80,7 @@ interface ChatPaneProps {
   insertion?: ComposerSeed | null;
   onInserted?: () => void;
   onQueuedEditChange?: (editing: boolean) => void;
+  onSnooze?: (until: string) => Promise<void>;
   /** The pane is a side chat, whose replies can be added to the main chat's draft. */
   aside?: SideChatRole;
 }
@@ -149,6 +150,7 @@ export function ChatPane({
   insertion,
   onInserted,
   onQueuedEditChange,
+  onSnooze,
   aside,
 }: ChatPaneProps) {
   const session = useChatSession(taskId, agent, folders, takeOpenIntent, tab, readOnly?.sessionId);
@@ -644,6 +646,7 @@ export function ChatPane({
               folders={folders}
               resetsAt={limitResetsAt(mainItems)}
               prompts={users}
+              onSnooze={onSnooze}
             />
           )}
           {readOnly ? (
